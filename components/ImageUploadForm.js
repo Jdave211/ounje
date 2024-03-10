@@ -45,7 +45,11 @@ export default function ImagePickerExample() {
           </TouchableOpacity>
         )}
       </View>
-      <Button title="Generate" onPress={() => { /* Add your generate function here */ }} />
+      <View style={styles.buttonContainer}>
+      <TouchableOpacity style={styles.buttonContainer} onPress={() => {}}>
+        <Text style={styles.buttonText}>Generate</Text>
+    </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -61,10 +65,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginBottom: 20,
+    
   },
   imageBox: {
-    width: 100,
-    height: 100,
+    width: 70,
+    height: 70,
     margin: 5,
     position: 'relative',
   },
@@ -73,8 +78,8 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   addButton: {
-    width: 100,
-    height: 100,
+    width: 30,
+    height: 30,
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
@@ -99,5 +104,17 @@ const styles = StyleSheet.create({
   removeButtonText: {
     color: 'white',
     fontSize: 15,
+  },
+  buttonContainer: {
+    width: 200,
+    height: 50,
+    backgroundColor: 'green',
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
 });
