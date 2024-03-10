@@ -4,6 +4,8 @@ import * as ImagePicker from 'expo-image-picker';
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
+  const [imageUris, setImageUris] = useState([]);
+
 
   const pickImage = async () => {
     if (images.length >= 4) {
@@ -27,6 +29,24 @@ export default function ImagePickerExample() {
     newImages.splice(index, 1);
     setImages(newImages);
   };
+
+  async function generateRecipes() {
+    try {
+        const base64Image = await convertToBase64(imageUri);  // You'll need this conversion
+
+        const response = await axios.post('https://api.openai.com/v1/images/generations', {
+            input: base64Image,
+        }, {
+            headers: {
+               'Authorization': `Bearer ${process.env.YOUR_OPENAI_API_KEY}`  
+            }
+        }); 
+
+       console.log(response.data); // Process OpenAI's response here
+    } catch (error) {
+        console.error('Error calling OpenAI:', error);
+    }
+  }
 
   return (
     <View style={styles.container}>
