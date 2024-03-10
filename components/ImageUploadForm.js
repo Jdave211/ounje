@@ -78,8 +78,8 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   addButton: {
-    width: 30,
-    height: 30,
+    width: 50,
+    height: 50,
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
