@@ -13,6 +13,8 @@
     "@react-navigation/bottom-tabs": "^6.5.17",
     "@react-navigation/native": "^6.1.15",
     "@react-navigation/stack": "^6.3.26",
+    "@react-three/drei": "^9.101.0",
+    "@react-three/fiber": "^8.15.19",
     "expo": "~50.0.11",
     "expo-image-picker": "~14.7.1",
     "expo-status-bar": "~1.11.1",
@@ -23,7 +25,8 @@
     "react-native-document-picker": "^9.1.1",
     "react-native-dotenv": "^3.4.11",
     "react-native-image-picker": "^7.1.0",
-    "react-native-web": "~0.19.6"
+    "react-native-web": "~0.19.6",
+    "three": "^0.162.0"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0"

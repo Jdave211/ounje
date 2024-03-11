@@ -26,6 +26,9 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "extra": {
+      "openAIKey": "@env:OPENAI_API_KEY"
+    },
     "plugins": [
       [
         "expo-image-picker",

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Button, Image, View, StyleSheet, TouchableOpacity, Text } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import Constants from 'expo-constants';
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
   const [imageUris, setImageUris] = useState([]);
+  const { openAIKey } = Constants.manifest2.extra;
 
 
   const pickImage = async () => {
