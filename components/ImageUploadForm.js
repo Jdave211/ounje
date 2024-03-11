@@ -32,30 +32,28 @@ export default function ImagePickerExample() {
     setImages(newImages);
   };
 
-  const formData = new FormData();
+  const sendImages = async () => {
+    const formData = new FormData();
 
-// Assuming `image1` and `image2` are file URIs obtained from something like react-native-image-picker
-// formData.append('images', {
-//   uri: image1,
-//   type: 'image/jpeg', // or whichever type your image is
-//   name: 'image1.jpg',
-// });
-// formData.append('images', {
-//   uri: image2,
-//   type: 'image/jpeg', // or whichever type your image is
-//   name: 'image2.jpg',
-// });
-
-// fetch('http://localhost:8080/', {
-//   method: 'POST',
-//   body: formData,
-// })
-//   .then(response => response.json())
-//   .then(data => {
-//     console.log(data);
-//     // Here you can handle the response from the server
-//   })
-//   .catch(error => console.error('Error:', error));
+    images.forEach((imageUri, index) => {
+      formData.append('images', {
+        uri: imageUri,
+        type: 'image/jpeg', // or whichever type your image is
+        name: `image${index + 1}.jpg`,
+      });
+    });
+    
+    fetch('http://localhost:8080/', {
+      method: 'POST',
+      body: formData,
+    })
+      .then(response => response.json())
+      .then(data => {
+        console.log(data);
+        // Here you can handle the response from the server
+      })
+      .catch(error => console.error('Error:', error));
+  };
 
   return (
     <View style={styles.container}>
@@ -75,7 +73,7 @@ export default function ImagePickerExample() {
         )}
       </View>
       <View style={styles.buttonContainer}>
-      <TouchableOpacity style={styles.buttonContainer} onPress={() => {}}>
+      <TouchableOpacity style={styles.buttonContainer} onPress={sendImages}>
         <Text style={styles.buttonText}>Generate</Text>
     </TouchableOpacity>
       </View>
