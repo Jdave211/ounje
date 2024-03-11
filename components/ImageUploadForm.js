@@ -38,8 +38,8 @@ export default function ImagePickerExample() {
     images.forEach((imageUri, index) => {
       formData.append('images', {
         uri: imageUri,
-        type: 'image/jpeg', // or whichever type your image is
-        name: `image${index + 1}.jpg`,
+        type: 'image/png', // or whichever type your image is
+        name: `image${index + 1}.png`,
       });
     });
     
@@ -52,7 +52,7 @@ export default function ImagePickerExample() {
         console.log(data);
         // Here you can handle the response from the server
       })
-      .catch(error => console.error('Error:', error));
+      .catch(error => console.error('Openai Sending Error:', error));
   };
 
   return (
