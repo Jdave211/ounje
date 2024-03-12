@@ -6,7 +6,7 @@ import ImageUploadForm from '../components/ImageUploadForm';
 const Generate = () => {
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>Generate Some Recipes</Text>
+      <Text style={styles.text}>Generate</Text>
       <ImageUploadForm/>
       <View style={styles.foodRowContainer}>
         <FoodRow/>

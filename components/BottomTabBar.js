@@ -4,12 +4,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { FontAwesome5 } from '@expo/vector-icons';
 import { Entypo } from '@expo/vector-icons';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 
 const BottomTabBar = () => {
     const [selectedTab, setSelectedTab] = React.useState('dna');
 
     const renderIcon = (name, iconComponent, size = 24) => (
-        <TouchableOpacity style={selectedTab === name ? styles.selectedIcon : null} onPress={() => setSelectedTab(name)}>
+        <TouchableOpacity 
+            style={selectedTab === name ? styles.selectedIcon : null} 
+            // onPress={() => setSelectedTab(name)} 
+            >
             {React.createElement(iconComponent, { name, size, color: 'white' })}
         </TouchableOpacity>
     );

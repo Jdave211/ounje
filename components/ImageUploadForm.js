@@ -38,8 +38,8 @@ export default function ImagePickerExample() {
     images.forEach((imageUri, index) => {
       formData.append('images', {
         uri: imageUri,
-        type: 'image/png', // or whichever type your image is
-        name: `image${index + 1}.png`,
+        type: 'image/jpeg', // or whichever type your image is
+        name: `image${index + 1}.jpeg`,
       });
     });
     
