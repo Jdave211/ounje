@@ -21,7 +21,7 @@ export default function Profile() {
             />
         </View>
         <View style={styles.textContainer}>
-            <Text style={styles.text}>Name: John Doe</Text>
+            <Text style={styles.text}>Name: Jonathan Doe</Text>
             <Text style={styles.text}>Email: jagadave@gmail.com</Text>
 
         </View>
