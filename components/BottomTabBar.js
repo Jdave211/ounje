@@ -7,23 +7,31 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
 const BottomTabBar = () => {
-    const [selectedTab, setSelectedTab] = React.useState('dna');
+    const [selectedTab, setSelectedTab] = React.useState('Generate');
+    const navigation = useNavigation();
 
-    const renderIcon = (name, iconComponent, size = 24) => (
+    const tabs = [
+        { screenName: 'Generate', iconName: 'dna', iconComponent: FontAwesome5 },
+        { screenName: 'SavedRecipes', iconName: 'scroll', iconComponent: FontAwesome5 },
+        { screenName: 'Community', iconName: 'cloud', iconComponent: Entypo },
+        { screenName: 'Profile', iconName: 'person', iconComponent: MaterialIcons },
+    ];
+
+    const renderIcon = (tab, size = 24) => (
         <TouchableOpacity 
-            style={selectedTab === name ? styles.selectedIcon : null} 
-            // onPress={() => setSelectedTab(name)} 
-            >
-            {React.createElement(iconComponent, { name, size, color: 'white' })}
+            style={selectedTab === tab.screenName ? styles.selectedIcon : null} 
+            onPress={() => {
+                setSelectedTab(tab.screenName);
+                navigation.navigate(tab.screenName);
+            }}
+        >
+            {React.createElement(tab.iconComponent, { name: tab.iconName, size, color: 'white' })}
         </TouchableOpacity>
     );
 
     return (
         <View style={styles.tabBar}>
-            {renderIcon('dna', FontAwesome5, 25)}
-            {renderIcon('scroll', FontAwesome5, 25)}
-            {renderIcon('cloud', Entypo, 25)}
-            {renderIcon('person', MaterialIcons, 25)}
+            {tabs.map(tab => renderIcon(tab, 25))}
         </View>
     );
 };

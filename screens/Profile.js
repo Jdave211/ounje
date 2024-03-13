@@ -1,30 +1,44 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import SignIn from './SignIn'; // Import the SignIn component
+import { View, Text, Button, StyleSheet } from 'react-native';
 
-export default function Profile() {
-    const [signedIn, setSignedIn] = useState(false); // Add a state variable for tracking sign-in status
+const Profile = () => {
+    const [isSignedIn, setIsSignedIn] = useState(false); // replace this with actual sign in status
 
-    const navigation = useNavigation();
+    const handleSignIn = () => {
+        setIsSignedIn(true);
+    };
 
-    if (!signedIn) {
-        return <SignIn onSignIn={() => setSignedIn(true)} />; // Render the SignIn component if the user is not signed in
-    }
+    const handleSignOut = () => {
+        setIsSignedIn(false);
+    };
 
     return (
         <View style={styles.container}>
-        <View style={styles.imageContainer}>
-            <Image
-            source={require('../assets/profile.png')}
-            style={styles.image}
-            />
+            {isSignedIn ? (
+                <>
+                    <Text style={styles.text}>User Profile</Text>
+                    <Button title="Sign Out" onPress={handleSignOut} />
+                </>
+            ) : (
+                <>
+                    <Text style={styles.text}>Please Sign In</Text>
+                    <Button title="Sign In" onPress={handleSignIn} />
+                </>
+            )}
         </View>
-        <View style={styles.textContainer}>
-            <Text style={styles.text}>Name: Jonathan Doe</Text>
-            <Text style={styles.text}>Email: jagadave@gmail.com</Text>
-
-        </View>
-        </View>
-    )
+    );
 };
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: 'black',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    text: {
+        color: 'white',
+    },
+});
+
+export default Profile;

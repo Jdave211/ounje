@@ -6,7 +6,7 @@ import ImageUploadForm from '../components/ImageUploadForm';
 const Generate = () => {
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>Generate</Text>
+      <Text style={styles.text}></Text>
       <ImageUploadForm/>
       <View style={styles.foodRowContainer}>
         <FoodRow/>
@@ -18,15 +18,16 @@ const Generate = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: 'black',
   },
   text: {
     color: 'white',
   },
   foodRowContainer: {
-    position: 'absolute', // Add this line
-    bottom: 0, // Add this line
-    width: '100%', // Add this line
-    marginBottom: 150, 
+    position: 'absolute',
+    bottom: 0,
+    width: '100%',
+    marginBottom: 70, 
   },
 });
 
