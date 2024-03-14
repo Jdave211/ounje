@@ -19,6 +19,7 @@ const BottomTabBar = () => {
 
     const renderIcon = (tab, size = 24) => (
         <TouchableOpacity 
+            key={tab.screenName}
             style={selectedTab === tab.screenName ? styles.selectedIcon : null} 
             onPress={() => {
                 setSelectedTab(tab.screenName);
