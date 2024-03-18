@@ -31,6 +31,7 @@ export default function App() {
               component={Profile}
               options={{ headerShown: false }}
             />
+            
           </Tab.Navigator>
         </Layout>
         <StatusBar style="light" />
