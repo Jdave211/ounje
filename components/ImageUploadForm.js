@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Button, Image, View, StyleSheet, TouchableOpacity, Text } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
 
 export default function ImagePickerExample() {
@@ -32,28 +33,42 @@ export default function ImagePickerExample() {
     setImages(newImages);
   };
 
-  const sendImages = async () => {
-    const formData = new FormData();
+  const convertToBase64 = async (uri) => {
+    try {
+        const fileContent = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+        return fileContent; 
+    } catch (error) {
+        console.error('Error reading image:', error);
+        // Handle the error appropriately 
+    }
+};
 
-    images.forEach((imageUri, index) => {
-      formData.append('images', {
-        uri: imageUri,
-        type: 'image/jpeg', // or whichever type your image is
-        name: `image${index + 1}.jpeg`,
-      });
+
+const sendImages = async () => {
+  const formData = new FormData();
+
+  for (let i = 0; i < images.length; i++) {
+    const imageUri = images[i];
+    const base64Image = await convertToBase64(imageUri);
+
+    formData.append('images', {
+      uri: `data:image/jpeg;base64,${base64Image}`,
+      type: 'image/jpeg', // or whichever type your image is
+      name: `image${i + 1}.jpeg`,
     });
-    
-    fetch('http://localhost:8080/', {
-      method: 'POST',
-      body: formData,
+  }
+
+  fetch('http://localhost:8080/', {
+    method: 'POST',
+    body: formData,
+  })
+    .then(response => response.json())
+    .then(data => {
+      console.log(data);
+      // Here you can handle the response from the server
     })
-      .then(response => response.json())
-      .then(data => {
-        console.log(data);
-        // Here you can handle the response from the server
-      })
-      .catch(error => console.error('Openai Sending Error:', error));
-  };
+    .catch(error => console.error('Openai Sending Error:', error));
+};
 
   return (
     <View style={styles.container}>
@@ -73,9 +88,13 @@ export default function ImagePickerExample() {
         )}
       </View>
       <View style={styles.buttonContainer}>
-      <TouchableOpacity style={styles.buttonContainer} onPress={sendImages}>
+      <TouchableOpacity 
+        style={styles.buttonContainer} 
+        onPress={sendImages} 
+        disabled={images.length === 0}
+      >
         <Text style={styles.buttonText}>Generate</Text>
-    </TouchableOpacity>
+      </TouchableOpacity>
       </View>
     </View>
   );
