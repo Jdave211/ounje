@@ -1,13 +1,16 @@
-import React from 'react';
+import React, {useState} from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import FoodRow from '../components/FoodRow';
 import ImageUploadForm from '../components/ImageUploadForm';
+import Loading from '../components/Loading';
 
 const Generate = () => {
+  const [isLoading, setIsLoading] = useState(false);
+
   return (
     <View style={styles.container}>
       <Text style={styles.text}></Text>
-      <ImageUploadForm/>
+      {isLoading ? <Loading /> : <ImageUploadForm />}
       <View style={styles.foodRowContainer}>
         <FoodRow/>
       </View>

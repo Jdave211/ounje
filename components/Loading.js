@@ -7,19 +7,26 @@ const LoadingScreen = () => {
   const quotes = [
     "Patience is a virtue...",
     "Amazing things are about to happen...",
-    "Just a few more moments...",
-    "Success is just around the corner...",
+    "Who let you cook?...",
+    "Greatness is just around the corner...",
     "Good things come to those who wait...",
     "Cook better than a regis boy...",
     "Ramsey Gordon who?...",
+    "An empty stomach is not a good political adviser...",
+    "Tell me what you eat, and I will tell you what you are...",
+    "One cannot think well, love well, sleep well, if one has not dined well...",
+    "Ask not what you can do for your country. Ask what's for lunch...",
+    "Food is our common ground, a universal experience...",
+
+
 
     // Add more quotes here
   ];
 
   useEffect(() => {
     const quoteInterval = setInterval(() => {
-      setQuoteIndex((prevIndex) => (prevIndex + 1) % quotes.length);
-    }, 4000); // Change quotes every 2 seconds
+      setQuoteIndex(Math.floor(Math.random() * quotes.length));
+    }, 5000);
 
     // Simulate loading progress
     const progressInterval = setInterval(() => {
