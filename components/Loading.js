@@ -17,6 +17,8 @@ const LoadingScreen = () => {
     "One cannot think well, love well, sleep well, if one has not dined well...",
     "Ask not what you can do for your country. Ask what's for lunch...",
     "Food is our common ground, a universal experience...",
+    "Cooking is like love. It should be entered into with abandon or not at all...",
+    
 
 
 
