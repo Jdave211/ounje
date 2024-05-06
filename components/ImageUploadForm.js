@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
 import { ActionSheetIOS } from 'react-native';
+import { Linking } from 'react-native';
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
@@ -13,6 +14,22 @@ export default function ImagePickerExample() {
 
   const pickImage = async () => {
     if (images.length >= 4) {
+      return;
+    }
+
+    const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (cameraRollPerm !== 'granted') {
+      alert('Sorry, we need camera roll permissions to make this work! Please go to Settings > Oúnje and enable the permission.');
+      Linking.openSettings();
+      return;
+    }
+  
+    const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
+  
+    if (cameraPerm !== 'granted') {
+      alert('Sorry, we need camera permissions to make this work! Please go to Settings > Oúnje and enable the permission.');
+      Linking.openSettings();
       return;
     }
   
