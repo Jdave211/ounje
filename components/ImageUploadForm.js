@@ -3,6 +3,7 @@ import { Button, Image, View, StyleSheet, TouchableOpacity, Text } from 'react-n
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
+import { ActionSheetIOS } from 'react-native';
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
