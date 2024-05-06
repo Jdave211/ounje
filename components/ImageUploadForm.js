@@ -48,7 +48,7 @@ export default function ImagePickerExample() {
           });
   
           if (!result.cancelled) {
-            setImages([...images, result.uri]);
+            setImages([...images, result.assets[0].uri]);
           }
         } else if (buttonIndex === 2) {
           let result = await ImagePicker.launchImageLibraryAsync({
