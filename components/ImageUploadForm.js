@@ -15,17 +15,38 @@ export default function ImagePickerExample() {
     if (images.length >= 4) {
       return;
     }
-
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
-
-    if (!result.cancelled) {
-      setImages([...images, result.assets[0].uri]);
-    }
+  
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ['Cancel', 'Take Photo', 'Choose from Library'],
+        cancelButtonIndex: 0,
+      },
+      async (buttonIndex) => {
+        if (buttonIndex === 1) {
+          let result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+  
+          if (!result.cancelled) {
+            setImages([...images, result.uri]);
+          }
+        } else if (buttonIndex === 2) {
+          let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+  
+          if (!result.cancelled) {
+            setImages([...images, result.assets[0].uri]);
+          }
+        }
+      }
+    );
   };
 
   const removeImage = (index) => {
