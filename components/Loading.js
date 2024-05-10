@@ -19,9 +19,6 @@ const LoadingScreen = () => {
     "Food is our common ground, a universal experience...",
     "Cooking is like love. It should be entered into with abandon or not at all...",
     
-
-
-
     // Add more quotes here
   ];
 
