@@ -11,7 +11,7 @@ const LoadingScreen = () => {
     "Greatness is just around the corner...",
     "Good things come to those who wait...",
     "Cook better than a regis boy...",
-    "Ramsey Gordon who??...",
+    "Ramsey Gordon who?...",
     "An empty stomach is not a good political adviser...",
     "Tell me what you eat, and I will tell you what you are...",
     "One cannot think well, love well, sleep well, if one has not dined well...",
