@@ -1,0 +1,1 @@
+{"ast":null,"code":"import './CoreModule';","map":{"version":3,"names":[],"sources":["/Users/davejaga/Desktop/Projects/ounje/client/node_modules/expo-modules-core/src/web/index.web.ts"],"sourcesContent":["import './CoreModule';\n"],"mappings":"AAAA,OAAO,cAAc","ignoreList":[]},"metadata":{},"sourceType":"module","externalDependencies":[]}
