@@ -91,7 +91,7 @@ const sendImages = async () => {
     console.log(formData);
 
     formData.append('images', {
-      uri: `data:image/jpeg;base64,${base64Image}`,
+      uri: `${base64Image}`,
       type: 'image/jpeg', // or whichever type your image is
       name: `image${i + 1}.jpeg`,
     });
