@@ -20,7 +20,7 @@
     "@react-three/fiber": "^8.15.19",
     "@supabase/supabase-js": "^2.39.8",
     "crypto-browserify": "^3.12.0",
-    "expo": "^51.0.2",
+    "expo": "~51.0.4",
     "expo-file-system": "~17.0.1",
     "expo-image-picker": "~15.0.4",
     "expo-status-bar": "~1.12.1",
