@@ -9,8 +9,6 @@ import { Linking } from 'react-native';
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
   const [imageUris, setImageUris] = useState([]);
-  const API_KEY = process.env.OPENAI_API_KEY;
-  const genAI = new GoogleGenerativeAI(API_KEY);
 
 
   const pickImage = async () => {
