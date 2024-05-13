@@ -72,15 +72,14 @@ export default function ImagePickerExample() {
     setImages(newImages);
   };
 
-  const convertToBase64 = async (uri) => {
+  async function convertImageToBase64(uri) {
     try {
-        const fileContent = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
-        return fileContent; 
+      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      return base64; // Prefix with 'data:image/jpeg;base64,' if needed
     } catch (error) {
-        console.error('Error reading image:', error);
-        // Handle the error appropriately 
+      console.error('Error converting to base64:', error);
     }
-};
+  }
 
 
 const sendImages = async () => {
@@ -88,7 +87,8 @@ const sendImages = async () => {
 
   for (let i = 0; i < images.length; i++) {
     const imageUri = images[i];
-    const base64Image = await convertToBase64(imageUri);
+    const base64Image = await convertImageToBase64(imageUri);
+    console.log(base64Image);
 
     formData.append('images', {
       uri: `data:image/jpeg;base64,${base64Image}`,
@@ -104,7 +104,6 @@ const sendImages = async () => {
     .then(response => response.json())
     .then(data => {
       console.log(data);
-      // Here you can handle the response from the server
     })
     .catch(error => console.error('Openai Sending Error:', error));
 };
