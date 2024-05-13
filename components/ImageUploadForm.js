@@ -82,22 +82,9 @@ export default function ImagePickerExample() {
 
 
 const sendImages = async () => {
-  const formData = new FormData();
-
-  for (let i = 0; i < images.length; i++) {
-    const imageUri = images[i];
-    const base64Image = await convertImageToBase64(imageUri);
-    console.log(formData);
-
-    formData.append('images', {
-      uri: `${base64Image}`,
-      type: 'image/jpeg', // or whichever type your image is
-      name: `image${i + 1}.jpeg`,
-    });
-  }
 
   const base64Images = await Promise.all(images.map(convertImageToBase64));
-    const prompt = "List all the food items (not brand names) in this image and store them in an array. Try and be really specific. The format should be: ['oatmeal', 'sugar', 'crushed tomatoes'...]";
+    const prompt = "List all the food items (not brand names) in this image and store them in an array. Try and be really specific. The format should be similiar to this: ['oatmeal', 'sugar', 'crushed tomatoes', 'icecream']";
 
     try {
       const response = await fetch('http://10.0.0.162:8080/', { // Call your backend endpoint
