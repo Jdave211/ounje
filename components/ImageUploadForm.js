@@ -88,7 +88,7 @@ const sendImages = async () => {
   for (let i = 0; i < images.length; i++) {
     const imageUri = images[i];
     const base64Image = await convertImageToBase64(imageUri);
-    console.log(base64Image);
+    console.log(formData);
 
     formData.append('images', {
       uri: `data:image/jpeg;base64,${base64Image}`,
@@ -97,7 +97,7 @@ const sendImages = async () => {
     });
   }
 
-  fetch('http://localhost:8080/', {
+  fetch('http://10.0.0.162:8080/', {
     method: 'POST',
     body: formData,
   })
