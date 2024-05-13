@@ -5,11 +5,13 @@ import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
 import { ActionSheetIOS } from 'react-native';
 import { Linking } from 'react-native';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
   const [imageUris, setImageUris] = useState([]);
-  const { openAIKey } = Constants.manifest2.extra;
+  const API_KEY = process.env.OPENAI_API_KEY;
+  const genAI = new GoogleGenerativeAI(API_KEY);
 
 
   const pickImage = async () => {
@@ -97,15 +99,35 @@ const sendImages = async () => {
     });
   }
 
-  fetch('http://10.0.0.162:8080/', {
-    method: 'POST',
-    body: formData,
-  })
-    .then(response => response.json())
-    .then(data => {
-      console.log(data);
-    })
-    .catch(error => console.error('Openai Sending Error:', error));
+  async function fileToGenerativePart(file) {
+    const base64EncodedDataPromise = new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result.split(',')[1]);
+      reader.readAsDataURL(file);
+    });
+    return {
+      inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+    };
+  }
+  
+  async function run() {
+    // For text-and-images input (multimodal), use the gemini-pro-vision model
+    const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
+  
+    const prompt = "List all the food items (not brand names) in this image and store them in an array. Try and be really specific. The format should be: ['oatmeal', 'sugar', 'crushed tomatoes'...]";
+  
+    const fileInputEl = document.querySelector("input[type=file]");
+    const imageParts = await Promise.all(
+      [...fileInputEl.files].map(fileToGenerativePart)
+    );
+  
+    const result = await model.generateContent([prompt, ...imageParts]);
+    const response = await result.response;
+    const text = response.text();
+    console.log(text);
+  }
+  
+  run();
 };
 
   return (
