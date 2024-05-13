@@ -6,6 +6,7 @@ import Constants from 'expo-constants';
 import { ActionSheetIOS } from 'react-native';
 import { Linking } from 'react-native';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import * as fs from 'fs'; 
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
@@ -99,35 +100,25 @@ const sendImages = async () => {
     });
   }
 
-  async function fileToGenerativePart(file) {
-    const base64EncodedDataPromise = new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result.split(',')[1]);
-      reader.readAsDataURL(file);
-    });
-    return {
-      inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
-    };
-  }
-  
-  async function run() {
-    // For text-and-images input (multimodal), use the gemini-pro-vision model
-    const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" });
-  
+  const base64Images = await Promise.all(images.map(convertImageToBase64));
     const prompt = "List all the food items (not brand names) in this image and store them in an array. Try and be really specific. The format should be: ['oatmeal', 'sugar', 'crushed tomatoes'...]";
-  
-    const fileInputEl = document.querySelector("input[type=file]");
-    const imageParts = await Promise.all(
-      [...fileInputEl.files].map(fileToGenerativePart)
-    );
-  
-    const result = await model.generateContent([prompt, ...imageParts]);
-    const response = await result.response;
-    const text = response.text();
-    console.log(text);
-  }
-  
-  run();
+
+    try {
+      const response = await fetch('/analyze', { // Call your backend endpoint
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, images: base64Images }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(data.result); // Handle the API response (display, etc.)
+      } else {
+        console.error('Error:', response.statusText); // Handle API errors
+      }
+    } catch (error) {
+      console.error('Network error:', error); // Handle network errors
+    }
 };
 
   return (
