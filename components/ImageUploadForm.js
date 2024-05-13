@@ -100,7 +100,7 @@ const sendImages = async () => {
     const prompt = "List all the food items (not brand names) in this image and store them in an array. Try and be really specific. The format should be: ['oatmeal', 'sugar', 'crushed tomatoes'...]";
 
     try {
-      const response = await fetch('/analyze', { // Call your backend endpoint
+      const response = await fetch('http://10.0.0.162:8080/', { // Call your backend endpoint
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, images: base64Images }),
