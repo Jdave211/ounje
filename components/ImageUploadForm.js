@@ -84,7 +84,7 @@ export default function ImagePickerExample() {
 const sendImages = async () => {
 
   const base64Images = await Promise.all(images.map(convertImageToBase64));
-    const prompt = "List all the food items (not brand names) in this image and store them in an array. Try and be really specific. The format should be similiar to this: ['oatmeal', 'sugar', 'crushed tomatoes', 'icecream']";
+    const prompt = "List all the food items located in this image on and then output them in an array. If you cannot locate the location of any of these items, do not include them in the final list. The format should be similiar to this: ['oatmeal', 'sugar', 'crushed tomatoes', 'icecream']";
 
     try {
       const response = await fetch('http://10.0.0.162:8080/', { // Call your backend endpoint
