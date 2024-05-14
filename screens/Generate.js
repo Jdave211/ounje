@@ -5,7 +5,7 @@ import ImageUploadForm from '../components/ImageUploadForm';
 import Loading from '../components/Loading';
 
 const Generate = () => {
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   return (
     <View style={styles.container}>

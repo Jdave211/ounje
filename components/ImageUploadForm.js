@@ -5,6 +5,7 @@ import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
 import { ActionSheetIOS } from 'react-native';
 import { Linking } from 'react-native';
+import LoadingScreen from './Loading';
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
