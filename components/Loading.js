@@ -24,7 +24,12 @@ const LoadingScreen = () => {
     "In cooking, as in all of life, attitude is everything.",
     "A messy kitchen is a sign of a happy cook.",
     "My cooking skills are so unpredictable, I surprise even myself.",
-    "Breakfast, how about a scotch?"
+    "Breakfast, how about a scotch?",
+    "In the short run, salt isnt everything, in the long run, its almost everything.",
+    "Risk comes from not knowing what you're doing.",
+    "In cooking, what is comfortable is rarely profitable.",
+    "The four most dangerous words in cooking are: 'I don't need a recipe.''",
+    
   ];
 
   useEffect(() => {
