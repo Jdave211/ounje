@@ -12,7 +12,7 @@ export default function ImagePickerExample() {
 
 
   const pickImage = async () => {
-    if (images.length >= 4) {
+    if (images.length >= 3) {
       return;
     }
 
@@ -115,7 +115,7 @@ const sendImages = async () => {
             <Image source={{ uri: image }} style={styles.image} />
           </View>
         ))}
-        {images.length < 4 && (
+        {images.length < 3 && (
           <TouchableOpacity style={styles.addButton} onPress={pickImage}>
             <Text style={styles.addButtonText}>+</Text>
           </TouchableOpacity>

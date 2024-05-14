@@ -11,13 +11,14 @@ const LoadingScreen = () => {
     "Greatness is just around the corner...",
     "Good things come to those who wait...",
     "Cook better than a regis boy...",
-    "Ramsey Gordon who??...",
+    "Gordon Ramsay who??...",
     "An empty stomach is not a good political adviser...",
     "Tell me what you eat, and I will tell you what you are...",
     "One cannot think well, love well, sleep well, if one has not dined well...",
     "Ask not what you can do for your country. Ask what's for lunch...",
     "Food is our common ground, a universal experience...",
     "Cooking is like love. It should be entered into with abandon or not at all...",
+    "The key to the common breakfast",
     
     // Add more quotes here
   ];
