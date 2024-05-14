@@ -5,12 +5,10 @@ import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
 import { ActionSheetIOS } from 'react-native';
 import { Linking } from 'react-native';
-import Loading from './Loading';
 
-export default function ImagePickerExample() {
+export default function ImageUploadForm({ onLoading}) {
   const [images, setImages] = useState([]);
   const [imageUris, setImageUris] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
 
 
   const pickImage = async () => {
@@ -29,7 +27,7 @@ export default function ImagePickerExample() {
     const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
   
     if (cameraPerm !== 'granted') {
-      alert('Sorry, we need your camera permissions to make this work! Please go to Settings > Oúnje and enable the permission.');
+      alert('Sorry, we need camera permissions to make this work! Please go to Settings > Oúnje and enable the permission.');
       Linking.openSettings();
       return;
     }
@@ -84,12 +82,13 @@ export default function ImagePickerExample() {
 
 
 const sendImages = async () => {
+  onLoading(true);
 
   const base64Images = await Promise.all(images.map(convertImageToBase64));
-    const prompt = "List all the food items located in this image and then output them in an array. Ensure you are including every single food items that you can see. The format should be similiar to this: ['oatmeal', 'sugar', 'crushed tomatoes', 'icecream']";
+    const prompt = "List all the food items in this image in an array. Be as specific as possible for each individual item even if they are in a category and include the quantity of each item such that we have enough information to create a recipe for a meal. Include the position of each food item in the image, the starting point is the top most and left most point, and the height and width of the bounding box. categories them into this format:{ 'category_name': {name: text, quantity: number, position: {x: number, y: number, height: number, width: number} } }.In addition to the food items, include the size of the image in pixels as a separate object with the keys 'height' and 'width'.";
 
     try {
-      const response = await fetch('http://10.0.0.162:8080/', { // Call your backend endpoint
+      const response = await fetch('http://10.24.209.2:8080/', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, images: base64Images }),
@@ -97,14 +96,15 @@ const sendImages = async () => {
 
       if (response.ok) {
         const data = await response.json();
-        console.log(data.result); // Handle the API response (display, etc.)'
-        setIsLoading(true);
+        console.log(data.result); // Handle the API response (display, etc.)
       } else {
         console.error('Error:', response.statusText); // Handle API errors
       }
     } catch (error) {
       console.error('Network error:', error); // Handle network errors
     }
+
+    onLoading(false);
 };
 
   return (

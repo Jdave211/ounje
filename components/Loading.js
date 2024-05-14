@@ -18,18 +18,19 @@ const LoadingScreen = () => {
     "Ask not what you can do for your country. Ask what's for lunch...",
     "Food is our common ground, a universal experience...",
     "Cooking is like love. It should be entered into with abandon or not at all...",
-    "The key to the common breakfast",
+    "The cure for the common breakfast",
     "Cooking is not just about ingredients, it's about weaving flavors into a story.",
     "Anyone can cook, but only the fearless can be great.",
     "In cooking, as in all of life, attitude is everything.",
     "A messy kitchen is a sign of a happy cook.",
     "My cooking skills are so unpredictable, I surprise even myself.",
+    "Breakfast, how about a scotch?"
   ];
 
   useEffect(() => {
     const quoteInterval = setInterval(() => {
       setQuoteIndex(Math.floor(Math.random() * quotes.length));
-    }, 7000);
+    }, 4000);
 
     // Simulate loading progress
     const progressInterval = setInterval(() => {

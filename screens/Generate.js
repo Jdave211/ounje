@@ -2,20 +2,26 @@ import React, {useState} from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import FoodRow from '../components/FoodRow';
 import ImageUploadForm from '../components/ImageUploadForm';
+import Loading from '../components/Loading';
 
 const Generate = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleLoading = (loading) => {
+    setIsLoading(loading);
+  };
 
   return (
     <View style={styles.container}>
       <Text style={styles.text}></Text>
-      <ImageUploadForm/>
+      {isLoading ? <Loading /> : <ImageUploadForm onLoading={handleLoading} />}
       <View style={styles.foodRowContainer}>
         <FoodRow/>
       </View>
     </View>
   );
 };
+
 
 const styles = StyleSheet.create({
   container: {
