@@ -5,11 +5,12 @@ import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
 import { ActionSheetIOS } from 'react-native';
 import { Linking } from 'react-native';
-import LoadingScreen from './Loading';
+import Loading from './Loading';
 
 export default function ImagePickerExample() {
   const [images, setImages] = useState([]);
   const [imageUris, setImageUris] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
 
 
   const pickImage = async () => {
@@ -96,7 +97,8 @@ const sendImages = async () => {
 
       if (response.ok) {
         const data = await response.json();
-        console.log(data.result); // Handle the API response (display, etc.)
+        console.log(data.result); // Handle the API response (display, etc.)'
+        setIsLoading(true);
       } else {
         console.error('Error:', response.statusText); // Handle API errors
       }
