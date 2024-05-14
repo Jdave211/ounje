@@ -23,6 +23,7 @@ const LoadingScreen = () => {
     "Anyone can cook, but only the fearless can be great.",
     "In cooking, as in all of life, attitude is everything.",
     "A messy kitchen is a sign of a happy cook.",
+    "My cooking skills are so unpredictable, I surprise even myself.",
   ];
 
   useEffect(() => {
