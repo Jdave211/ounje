@@ -3,7 +3,6 @@ import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 
 const LoadingScreen = () => {
   const [quoteIndex, setQuoteIndex] = useState(0);
-  const [isLoading, setIsLoading] = useState(true); // For loading state
   const quotes = [
     "You're not a bad cook, you just have experimental taste buds.",
     "Amazing things are about to happen...",
@@ -29,7 +28,10 @@ const LoadingScreen = () => {
     "Risk comes from not knowing what you're doing.",
     "In cooking, what is comfortable is rarely profitable.",
     "The four most dangerous words in cooking are: 'I don't need a recipe.''",
-    
+    "The grocery store is filled with individuals who know the price of everything, but the flavor of nothing.",
+    "The biggest risk of all is not taking one.",
+    "How many Michelin-starred chefs do you know who became good by cooking only pre-packaged meals?",
+
   ];
 
   useEffect(() => {
@@ -37,18 +39,8 @@ const LoadingScreen = () => {
       setQuoteIndex(Math.floor(Math.random() * quotes.length));
     }, 4000);
 
-    // Simulate loading progress
-    const progressInterval = setInterval(() => {
-      // Replace with your actual loading logic
-      if (Math.random() > 0.95) { // Simulating completion
-        setIsLoading(false);
-        clearInterval(progressInterval);
-      }
-    }, 500);
-
     return () => {
       clearInterval(quoteInterval);
-      clearInterval(progressInterval);
     };
   }, []);
 
@@ -61,6 +53,7 @@ const LoadingScreen = () => {
     </View>
   );
 };
+
 
 const styles = StyleSheet.create({
   container: {
