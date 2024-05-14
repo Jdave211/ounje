@@ -29,7 +29,7 @@ export default function ImagePickerExample() {
     const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
   
     if (cameraPerm !== 'granted') {
-      alert('Sorry, we need camera permissions to make this work! Please go to Settings > Oúnje and enable the permission.');
+      alert('Sorry, we need your camera permissions to make this work! Please go to Settings > Oúnje and enable the permission.');
       Linking.openSettings();
       return;
     }
