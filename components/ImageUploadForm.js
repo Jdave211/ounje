@@ -88,7 +88,7 @@ const sendImages = async () => {
     const prompt = "List all the food items in this image in an array. Be as specific as possible for each individual item even if they are in a category and include the quantity of each item such that we have enough information to create a recipe for a meal. Categorize them into this format:[{ 'category_name': {name: text, quantity: number, adjective:  text} }]. ";
 
     try {
-      const response = await fetch('http://10.24.209.2:8080/', { 
+      const response = await fetch('http://10.0.0.162:8080/', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, images: base64Images }),
