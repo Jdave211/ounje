@@ -41,7 +41,7 @@ AppState.addEventListener('change', (state) => {
               placeholder="email@address.com"
               autoCapitalize={'none'}
               inputStyle={{ color: 'white' }} // Add this line
-              placeholderTextColor='white' // Add this line
+              placeholderTextColor='gray' // Add this line
             />
           </View>
           <View style={styles.verticallySpaced}>
@@ -53,8 +53,8 @@ AppState.addEventListener('change', (state) => {
               secureTextEntry={true}
               placeholder="Password"
               autoCapitalize={'none'}
-              inputStyle={{ color: 'gray' }} // Add this line
-              placeholderTextColor='black' // Add this line
+              inputStyle={{ color: 'white' }} // Add this line
+              placeholderTextColor='gray' // Add this line
             />
           </View>
           <View style={[styles.verticallySpaced, styles.mt20]}>
