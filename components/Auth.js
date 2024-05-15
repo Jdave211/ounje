@@ -30,51 +30,46 @@ AppState.addEventListener('change', (state) => {
         setLoading(false)   
       }    
       
-      return (
-        <View style={styles.container}>
-          <View style={[styles.verticallySpaced, styles.mt20]}>
-            <Input
-              label="Email"
-              leftIcon={{ type: 'font-awesome', name: 'envelope' }}
-              onChangeText={(text) => setEmail(text)}
-              value={email}
-              placeholder="email@address.com"
-              autoCapitalize={'none'}
-            />
-          </View>
-          <View style={styles.verticallySpaced}>
-            <Input
-              label="Password"
-              leftIcon={{ type: 'font-awesome', name: 'lock' }}
-              onChangeText={(text) => setPassword(text)}
-              value={password}
-              secureTextEntry={true}
-              placeholder="Password"
-              autoCapitalize={'none'}
-            />
-          </View>
-          <View style={[styles.verticallySpaced, styles.mt20]}>
-            <Button title="Sign in" disabled={loading} onPress={() => signInWithEmail()} />
-          </View>
-          <View style={styles.verticallySpaced}>
-            <Button title="Sign up" disabled={loading} onPress={() => signUpWithEmail()} />
-          </View>
-        </View>
-      )
-    }
-    
-    const styles = StyleSheet.create({
-      container: {
-        marginTop: 40,
-        padding: 12,
-        backgroundColor: 'black', // Add this line
-      },
-      verticallySpaced: {
-        paddingTop: 4,
-        paddingBottom: 4,
-        alignSelf: 'stretch',
-      },
-      mt20: {
-        marginTop: 20,
-      },
-    })
+      import 'react-native-url-polyfill/auto'
+import { useState, useEffect } from 'react'
+import { supabase } from '../utils/supabase'
+import Auth from '../components/Auth'
+import Account from '../components/Account'
+import { View, StyleSheet } from 'react-native'
+
+export default function Profile() {
+  const [session, setSession] = useState(null)
+
+  useEffect(() => {
+    const getSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error("Error fetching session:", error);
+        return;
+      }
+      setSession(session);
+    };
+  
+    getSession();
+  
+    const subscription = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+  
+    return () => subscription.unsubscribe();
+  }, []);
+  
+
+  return (
+    <View style={styles.container}>
+      {session && session.user ? <Account key={session.user.id} session={session} /> : <Auth />}
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'black',
+  },
+});
