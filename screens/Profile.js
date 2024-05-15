@@ -8,7 +8,6 @@ export default function Profile() {
 
   useEffect(() => {
     const subscription = supabase.auth.onAuthStateChange((_event, session) => {
-        console.log(session)
       setSession(session);
     });
     if (subscription.unsubscribe){
