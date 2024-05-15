@@ -98,11 +98,14 @@ export default function Account({ session }) {
       </View>
   
       <View style={styles.verticallySpaced}>
+      <View style={{ alignItems: 'center' }}>
         <Button 
-        title="Sign Out" 
-        titleStyle={{ color: 'red' }}
-        buttonStyle={{ backgroundColor: 'black' }}
-        onPress={() => supabase.auth.signOut()} />
+            title="Sign Out" 
+            type="clear"
+            titleStyle={{ color: 'red' }}
+            onPress={() => supabase.auth.signOut()} 
+        />
+        </View>
       </View>
     </View>
     )
