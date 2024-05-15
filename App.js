@@ -31,8 +31,9 @@ export default function App() {
     const subscription = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
-  
+    if (subscription.unsubscribe) {
     return () => subscription.unsubscribe();
+    }
   }, []);
 
   return (
