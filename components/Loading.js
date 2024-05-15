@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 
 const LoadingScreen = () => {
-  const [quoteIndex, setQuoteIndex] = useState(0);
+  const [quoteIndex, setQuoteIndex] = useState(Math.floor(Math.random() * 9));;
   const quotes = [
     "You're not a bad cook, you just have experimental taste buds.",
     "Amazing things are about to happen...",
@@ -17,21 +17,21 @@ const LoadingScreen = () => {
     "Ask not what you can do for your country. Ask what lunch is saying...",
     "Food is our common ground, a universal experience...",
     "Cooking is like love. It should be entered into with abandon or not at all...",
-    "The cure for the common breakfast",
-    "Cooking is not just about ingredients, it's about weaving flavors into a story.",
-    "Anyone can cook, but only the fearless can be great.",
-    "In cooking, as in all of life, attitude is everything.",
-    "A messy kitchen is a sign of a happy cook.",
-    "My cooking skills are so unpredictable, I surprise even myself.",
-    "Breakfast, how about a scotch?",
-    "In the short run, salt isnt everything, in the long run, its almost everything.",
-    "Risk comes from not knowing what you're doing.",
-    "In cooking, what is comfortable is rarely profitable.",
-    "The four most dangerous words in cooking are: 'I don't need a recipe.''",
-    "The grocery store is filled with individuals who know the price of everything, but the flavor of nothing.",
-    "The biggest risk of all is not taking one with your salt.",
-    "How many Michelin-starred chefs do you know who became good by cooking only pre-packaged meals?",
-    "Think outside the pot",
+    "The cure for the common breakfast...",
+    "Cooking is not just about ingredients, it's about weaving flavors into a story...",
+    "Anyone can cook, but only the fearless can be great...",
+    "In cooking, as in all of life, attitude is everything...",
+    "A messy kitchen is a sign of a happy cook...",
+    "My cooking skills are so unpredictable, I surprise even myself...",
+    "Breakfast, how about a scotch?...",
+    "In the short run, salt isnt everything, in the long run, its almost everything...",
+    "Risk comes from not knowing what you're doing...",
+    "In cooking, what is comfortable is rarely profitable...",
+    "The four most dangerous words in cooking are: 'I don't need a recipe...'",
+    "The grocery store is filled with individuals who know the price of everything, but the flavor of nothing...",
+    "The biggest risk of all is not taking one with your salt...",
+    "How many Michelin-starred chefs do you know who became good by cooking only pre-packaged meals?...",
+    "Think outside the pot...",
 
   ];
 
