@@ -67,6 +67,7 @@ AppState.addEventListener('change', (state) => {
       container: {
         marginTop: 40,
         padding: 12,
+        backgroundColor: 'black', // Add this line
       },
       verticallySpaced: {
         paddingTop: 4,
@@ -76,4 +77,4 @@ AppState.addEventListener('change', (state) => {
       mt20: {
         marginTop: 20,
       },
-    })    // ... (the same JSX as in the TypeScript version)   ) } 
+    })

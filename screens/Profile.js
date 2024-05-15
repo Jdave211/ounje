@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../utils/supabase'
 import Auth from '../components/Auth'
 import Account from '../components/Account'
-import { View } from 'react-native'
+import { View, StyleSheet } from 'react-native'
 
 export default function Profile() {
   const [session, setSession] = useState(null)
@@ -29,8 +29,15 @@ export default function Profile() {
   
 
   return (
-    <View>
+    <View style={styles.container}>
       {session && session.user ? <Account key={session.user.id} session={session} /> : <Auth />}
     </View>
   )
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'black',
+  },
+});
