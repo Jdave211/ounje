@@ -17,16 +17,15 @@ export default function Profile() {
       }
       setSession(session);
     };
-  
+
     getSession();
-  
+
     const subscription = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
-  
+
     return () => subscription.unsubscribe();
-  }, []);
-  
+  }, []); // Dependency array: empty array [] to run only once
 
   return (
     <View style={styles.container}>
