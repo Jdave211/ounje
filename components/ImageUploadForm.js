@@ -85,7 +85,7 @@ const sendImages = async () => {
   onLoading(true);
 
   const base64Images = await Promise.all(images.map(convertImageToBase64));
-    const prompt = "List all the food items in this image in an array. Be as specific as possible for each individual item even if they are in a category and include the quantity of each item such that we have enough information to create a recipe for a meal. Categorize them into this format:[{ 'category_name': {name: text, quantity: number, adjective:  text} }]. ";
+    const prompt = "Analyze this image and extract every single food item, and list them in an array. Be as specific as possible for each individual item even if they are in a category and include the quantity of each item such that we have enough information to create a recipe for a meal. Categorize them into this format:[{ 'category_name': {name: text, quantity: number, adjective:  text} }]. ";
 
     try {
       const response = await fetch('http://10.0.0.162:8080/', { 

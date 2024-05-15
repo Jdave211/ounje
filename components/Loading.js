@@ -31,13 +31,14 @@ const LoadingScreen = () => {
     "The grocery store is filled with individuals who know the price of everything, but the flavor of nothing.",
     "The biggest risk of all is not taking one with your salt.",
     "How many Michelin-starred chefs do you know who became good by cooking only pre-packaged meals?",
+    "Think outside the pot",
 
   ];
 
   useEffect(() => {
     const quoteInterval = setInterval(() => {
       setQuoteIndex(Math.floor(Math.random() * quotes.length));
-    }, 4000);
+    }, 5000);
 
     return () => {
       clearInterval(quoteInterval);
