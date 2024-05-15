@@ -3,8 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { supabase } from './utils/supabase'; // Import your supabase client
-import SignIn from './components/Auth'; // Import your SignIn component
+import { supabase } from './utils/supabase';
+import SignIn from './components/Auth';
 import Layout from './_layout';
 import Generate from './screens/Generate';
 import SavedRecipes from './screens/SavedRecipes';
@@ -38,8 +38,9 @@ export default function App() {
   return (
     <NavigationContainer>
       <View style={styles.container}>
-        <Layout>
+        
           {session ? (
+            <Layout>
             <Tab.Navigator>
               <Tab.Screen 
                 name='Generate' 
@@ -57,10 +58,11 @@ export default function App() {
                 options={{ headerShown: false }}
               />
             </Tab.Navigator>
+            </Layout>
           ) : (
-            <SignIn /> // Render the SignIn component if there's no session
+            <SignIn />
           )}
-        </Layout>
+        
         <StatusBar style="light" />
       </View>
     </NavigationContainer>

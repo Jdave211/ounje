@@ -1,5 +1,5 @@
 import React, { useState } from 'react' 
-import { Alert, StyleSheet, View, AppState } from 'react-native' 
+import { Alert, StyleSheet, View, AppState, Text } from 'react-native' 
 import { supabase } from '../utils/supabase' 
 import { Button, Input } from 'react-native-elements'  
 
@@ -32,6 +32,9 @@ AppState.addEventListener('change', (state) => {
       
       return (
         <View style={styles.container}>
+          <View style={styles.header}>
+                <Text style={styles.headerText}>Oúnje</Text>
+            </View>
           <View style={[styles.verticallySpaced, styles.mt20]}>
             <Input
               label="Email"
@@ -79,8 +82,22 @@ AppState.addEventListener('change', (state) => {
     
     const styles = StyleSheet.create({
       container: {
-        marginTop: 40,
+        marginTop: -12,
         padding: 12,
+      },
+      header: {
+        paddingTop: 58,
+        height: 100,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 100,
+        marginBottom: 20,
+      },
+      headerText: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: 'white',
+        textAlign: 'center',
       },
       verticallySpaced: {
         paddingTop: 4,
