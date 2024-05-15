@@ -1,44 +1,26 @@
-import React, { useState } from 'react';
-import { View, Text, Button, StyleSheet } from 'react-native';
+import 'react-native-url-polyfill/auto'
+import { useState, useEffect } from 'react'
+import { supabase } from './utils/supabase'
+import Auth from './components/Auth'
+import Account from './components/Account'
+import { View } from 'react-native'
 
-const Profile = () => {
-    const [isSignedIn, setIsSignedIn] = useState(false); // replace this with actual sign in status
+export default function App() {
+  const [session, setSession] = useState(null)
 
-    const handleSignIn = () => {
-        setIsSignedIn(true);
-    };
+  useEffect(() => {
+    supabase.auth.session().then(session => {
+      setSession(session)
+    })
 
-    const handleSignOut = () => {
-        setIsSignedIn(false);
-    };
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+  }, [])
 
-    return (
-        <View style={styles.container}>
-            {isSignedIn ? (
-                <>
-                    <Text style={styles.text}>User Profile</Text>
-                    <Button title="Sign Out" onPress={handleSignOut} />
-                </>
-            ) : (
-                <>
-                    <Text style={styles.text}>Please Sign In</Text>
-                    <Button title="Sign In" onPress={handleSignIn} />
-                </>
-            )}
-        </View>
-    );
-};
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: 'black',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    text: {
-        color: 'white',
-    },
-});
-
-export default Profile;
+  return (
+    <View>
+      {session && session.user ? <Account key={session.user.id} session={session} /> : <Auth />}
+    </View>
+  )
+}
