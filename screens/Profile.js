@@ -5,21 +5,28 @@ import Auth from '../components/Auth'
 import Account from '../components/Account'
 import { View } from 'react-native'
 
-export default function App() {
+export default function Profile() {
   const [session, setSession] = useState(null)
 
   useEffect(() => {
-    const currentSession = supabase.auth.session();
-    setSession(currentSession);
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const getSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error("Error fetching session:", error);
+        return;
+      }
+      setSession(session);
+    };
+  
+    getSession();
+  
+    const subscription = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
-
-    return () => {
-      authListener.unsubscribe();
-    };
+  
+    return () => subscription.unsubscribe();
   }, []);
+  
 
   return (
     <View>
