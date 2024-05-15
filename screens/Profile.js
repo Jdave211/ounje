@@ -1,35 +1,22 @@
-import 'react-native-url-polyfill/auto'
 import { useState, useEffect } from 'react'
-import { supabase } from '../utils/supabase'
-import Auth from '../components/Auth'
+import { supabase } from '../utils/supabase' // Import your Supabase client (optional)
 import Account from '../components/Account'
-import { View, StyleSheet } from 'react-native'
+import { View, StyleSheet, Text } from 'react-native'
 
 export default function Profile() {
-  const [session, setSession] = useState(null)
+  const [session, setSession] = useState(null) // Optional: Keep session for other purposes
 
   useEffect(() => {
-    const getSession = async () => {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error) {
-        console.error("Error fetching session:", error);
-        return;
-      }
-      setSession(session);
-    };
-
-    getSession();
-
     const subscription = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
     });
 
     return () => subscription.unsubscribe();
-  }, []); // Dependency array: empty array [] to run only once
+  }, []);
 
   return (
     <View style={styles.container}>
-      {session && session.user ? <Account key={session.user.id} session={session} /> : <Auth />}
+      <Account session={session} />
     </View>
   )
 }
