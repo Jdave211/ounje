@@ -58,10 +58,20 @@ AppState.addEventListener('change', (state) => {
             />
           </View>
           <View style={[styles.verticallySpaced, styles.mt20]}>
-            <Button title="Sign in" disabled={loading} onPress={() => signInWithEmail()} />
+          <Button 
+            title="Sign in" 
+            disabled={loading} 
+            onPress={() => signInWithEmail()} 
+            buttonStyle={{ backgroundColor: 'green' }} // Add this line
+          />          
           </View>
           <View style={styles.verticallySpaced}>
-            <Button title="Sign up" disabled={loading} onPress={() => signUpWithEmail()} />
+          <Button 
+            title="Sign up" 
+            disabled={loading} 
+            onPress={() => signUpWithEmail()} 
+            buttonStyle={{ backgroundColor: 'green' }} // Add this line
+          />
           </View>
         </View>
       )

@@ -66,27 +66,46 @@ export default function Account({ session }) {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { flex: 1, justifyContent: 'space-between' }]}>
+        <View>
       <View style={[styles.verticallySpaced, styles.mt20]}>
-        <Input label="Email" value={session?.user?.email} disabled />
+        <Input 
+          label="Email" 
+          value={session?.user?.email} 
+          disabled 
+          inputStyle={{ color: 'white' }} // Add this line
+          placeholderTextColor='white' // Add this line
+        />
       </View>
       <View style={styles.verticallySpaced}>
-        <Input label="Username" value={username || ''} onChangeText={(text) => setUsername(text)} />
+        <Input 
+          label="Username" 
+          value={username || ''} 
+          onChangeText={(text) => setUsername(text)} 
+          inputStyle={{ color: 'white' }} // Add this line
+          placeholderTextColor='white' // Add this line
+        />
       </View>
-
+  
       <View style={[styles.verticallySpaced, styles.mt20]}>
         <Button
           title={loading ? 'Loading ...' : 'Update'}
           onPress={() => updateProfile({ username, avatar_url: avatarUrl })}
           disabled={loading}
+          buttonStyle={{ backgroundColor: 'green' }}
         />
       </View>
-
-      <View style={styles.verticallySpaced}>
-        <Button title="Sign Out" onPress={() => supabase.auth.signOut()} />
+      </View>
+  
+      <View style={[styles.verticallySpaced]}>
+        <Button 
+        title="Sign Out" 
+        titleStyle={{ color: 'red' }}
+        buttonStyle={{ backgroundColor: 'black' }}
+        onPress={() => supabase.auth.signOut()} />
       </View>
     </View>
-  )
+    )
 }
 
 const styles = StyleSheet.create({
