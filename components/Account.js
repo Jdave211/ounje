@@ -97,7 +97,7 @@ export default function Account({ session }) {
       </View>
       </View>
   
-      <View style={[styles.verticallySpaced]}>
+      <View style={styles.verticallySpaced}>
         <Button 
         title="Sign Out" 
         titleStyle={{ color: 'red' }}
