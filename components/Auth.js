@@ -33,8 +33,9 @@ AppState.addEventListener('change', (state) => {
       return (
         <View style={styles.container}>
           <View style={styles.header}>
-                <Text style={styles.headerText}>Oúnje</Text>
-            </View>
+              <Text style={styles.headerText}>Oúnje</Text>
+          </View>
+          <View style={styles.body}>
           <View style={[styles.verticallySpaced, styles.mt20]}>
             <Input
               label="Email"
@@ -76,6 +77,7 @@ AppState.addEventListener('change', (state) => {
             buttonStyle={{ backgroundColor: 'green' }} // Add this line
           />
           </View>
+          </View>
         </View>
       )
     }
@@ -98,6 +100,11 @@ AppState.addEventListener('change', (state) => {
         fontWeight: 'bold',
         color: 'white',
         textAlign: 'center',
+      },
+      body: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 120,
       },
       verticallySpaced: {
         paddingTop: 4,

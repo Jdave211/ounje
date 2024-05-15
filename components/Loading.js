@@ -66,7 +66,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
     fontSize: 18,
     color: 'white',
-    width: '80%', // This will make the text take up 80% of the screen width
+    width: '75%', // This will make the text take up 80% of the screen width
     padding: 10, // This will add some space around the text
     textAlign: 'center',
   }
