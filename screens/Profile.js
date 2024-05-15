@@ -9,14 +9,17 @@ export default function App() {
   const [session, setSession] = useState(null)
 
   useEffect(() => {
-    supabase.auth.session().then(session => {
-      setSession(session)
-    })
+    const currentSession = supabase.auth.session();
+    setSession(currentSession);
 
-    supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-    })
-  }, [])
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => {
+      authListener.unsubscribe();
+    };
+  }, []);
 
   return (
     <View>
