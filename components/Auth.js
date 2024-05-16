@@ -25,8 +25,7 @@ AppState.addEventListener('change', (state) => {
       async function signUpWithEmail() {     
         setLoading(true)     
         const { data, error } = await supabase.auth.signUp({       email,       password,     })     
-        if (error) Alert.alert(error.message)     
-        if (!data.session) Alert.alert('Please check your inbox for email verification!')     
+        if (error) Alert.alert(error.message)
         setLoading(false)   
       }    
       
