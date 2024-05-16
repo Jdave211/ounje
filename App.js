@@ -8,6 +8,7 @@ import SignIn from './components/Auth';
 import Layout from './_layout';
 import Generate from './screens/Generate';
 import SavedRecipes from './screens/SavedRecipes';
+import Inventory from './screens/Inventory';
 import Profile from './screens/Profile';
 
 const Tab = createBottomTabNavigator();
@@ -51,6 +52,11 @@ export default function App() {
               <Tab.Screen 
                 name='SavedRecipes' 
                 component={SavedRecipes}
+                options={{ headerShown: false }}
+              />
+              <Tab.Screen
+                name='Inventory'
+                component={Inventory}
                 options={{ headerShown: false }}
               />
               <Tab.Screen 
