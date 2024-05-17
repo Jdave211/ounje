@@ -14,7 +14,7 @@ const BottomTabBar = () => {
         { screenName: 'Generate', iconName: 'dna', iconComponent: FontAwesome5 },
         { screenName: 'SavedRecipes', iconName: 'scroll', iconComponent: FontAwesome5 },
         { screenName: 'Community', iconName: 'cloud', iconComponent: Entypo },
-        { screenName: 'Inventory', iconName: 'search', iconComponent: Ionicons},
+        { screenName: 'Inventory', iconName: 'inventory', iconComponent: MaterialIcons},
         { screenName: 'Profile', iconName: 'person', iconComponent: MaterialIcons },
     ];
 
