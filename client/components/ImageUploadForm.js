@@ -13,13 +13,14 @@ import Constants from "expo-constants";
 import { ActionSheetIOS } from "react-native";
 import { Linking } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { customAlphabet } from 'nanoid/non-secure'; 
+import { customAlphabet } from "nanoid/non-secure";
 import { Buffer } from "buffer";
 
-import openai from "../utils/openai";
+import { FOOD_ITEMS_PROMPT, RECIPES_PROMPT } from "../utils/prompts";
+import { openai, extract_json } from "../utils/openai";
 import { supabase } from "../utils/supabase";
 
-const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10); 
+const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 
 export default function ImageUploadForm({ onLoading }) {
   const [images, setImages] = useState([]);
@@ -35,7 +36,7 @@ export default function ImageUploadForm({ onLoading }) {
 
     if (cameraRollPerm !== "granted") {
       alert(
-        "Sorry, we need camera roll permissions to make this work! Please go to Settings > Oúnje and enable the permission."
+        "Sorry, we need camera roll permissions to make this work! Please go to Settings > Oúnje and enable the permission.",
       );
       Linking.openSettings();
       return;
@@ -46,7 +47,7 @@ export default function ImageUploadForm({ onLoading }) {
 
     if (cameraPerm !== "granted") {
       alert(
-        "Sorry, we need camera permissions to make this work! Please go to Settings > Oúnje and enable the permission."
+        "Sorry, we need camera permissions to make this work! Please go to Settings > Oúnje and enable the permission.",
       );
       Linking.openSettings();
       return;
@@ -81,7 +82,7 @@ export default function ImageUploadForm({ onLoading }) {
             setImages([...images, result.assets[0].uri]);
           }
         }
-      }
+      },
     );
   };
 
@@ -114,30 +115,21 @@ export default function ImageUploadForm({ onLoading }) {
     return bytes.buffer;
   }
 
-  const sendImages = async () => {
-    onLoading(true);
-
-    const user_id = await AsyncStorage.getItem("user_id");
-    console.log("user_id: ", user_id);
-
-    const base64Images = await Promise.all(images.map(convertImageToBase64));
-
-    console.log("storing images");
-
+  const store_images = async (user_id, base_64_images) => {
     const inventory_image_bucket = "inventory_images";
     const inventory_image_bucket_path = user_id;
 
     const image_paths = [];
-    
-    for (const base64_image of base64Images) {
+
+    for (const base64_image of base_64_images) {
       console.log("base64_image: ", base64_image.length);
-      let binary_image = Buffer.from(base64_image, 'base64');
+      let binary_image = Buffer.from(base64_image, "base64");
       console.log("binary_image: ", binary_image?.length);
       let nano_id = nanoid();
       let image_path = inventory_image_bucket_path + `/${nano_id}.jpeg`;
 
-      console.log({nano_id})
-      console.log({image_path})
+      console.log({ nano_id });
+      console.log({ image_path });
 
       let { data, error } = await supabase.storage
         .from(inventory_image_bucket)
@@ -146,44 +138,27 @@ export default function ImageUploadForm({ onLoading }) {
       console.log("data: ", data);
       console.log("error: ", error);
 
-      image_paths.push(image_path);
+      image_paths.push(data.fullPath);
     }
 
-    let system_prompt = {
-      role: "system",
-      content: `List all the food items in each of these food inventories in an array. 
-    Within each inventory, break the food items in similar food categories that describe the food items (e.g. fruits, condiments, drinks, meats, etc.).
-    Be as specific as possible for each individual item even if they are in a category and include the quantity of each item such that we have enough 
-    information to create a recipe for a meal. 
-    The quantity should only be a number indicating the amount of the named item in the inventory.
-    Categorize them into this format:
-    { "inventory_name": { "category_name": {name: text, quantity: number} }}.
-    Follow the types in the format strictly. numbers should only be numbers and text should only be text.
-    The image name should represent the environment where the food items are found.`,
-    };
+    return image_paths;
+  };
+
+  const sendImages = async () => {
+    onLoading(true);
+
+    const user_id = await AsyncStorage.getItem("user_id");
+    console.log("user_id: ", user_id);
+
+    console.log("storing images");
+    const base64Images = await Promise.all(images.map(convertImageToBase64));
+    const image_paths = await store_images(user_id, base64Images);
+
+    let system_prompt = { role: "system", content: FOOD_ITEMS_PROMPT };
 
     let user_prompt = {
       role: "user",
       content: base64Images.map((image) => ({ image })),
-    };
-
-    const extract_json = (data) => {
-      console.log("messages: ", data.choices.length);
-
-      const content = data.choices
-        .map((choice) => choice.message.content)
-        .join("");
-      const regex = /^```json([\s\S]*?)^```/gm;
-      const matches = regex.exec(content);
-
-      let json_text = matches?.[0].replace(/^```json\n|\n```$/g, "") || content; // Remove the code block markers
-      console.log({ json_text });
-      let object = JSON.parse(json_text);
-
-      return {
-        object,
-        text: json_text,
-      };
     };
 
     console.log("calling chatgpt");
@@ -199,11 +174,15 @@ export default function ImageUploadForm({ onLoading }) {
 
     console.log("food_items: ", food_items);
 
-    await supabase.from("inventory")
-      .upsert({ user_id, images: image_paths },  { onConflict: ['user_id'] })
+    await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
+
+    await supabase
+      .from("inventory")
+      .upsert({ user_id, images: image_paths }, { onConflict: ["user_id"] })
       .throwOnError();
 
-    let { data: runs, error: runs_error } = await supabase.from("runs")
+    let { data: runs, error: runs_error } = await supabase
+      .from("runs")
       .insert([{ user_id, images: image_paths }])
       .select()
       .throwOnError();
@@ -238,9 +217,22 @@ export default function ImageUploadForm({ onLoading }) {
 
     console.log("food_item_records: ", food_item_records);
 
-    await supabase.from("food_items")
-      .upsert(food_item_records)
-      .throwOnError();
+    await supabase.from("food_items").upsert(food_item_records).throwOnError();
+
+    console.log("starting recipes");
+
+    let recipe_system_prompt = { role: "system", content: RECIPES_PROMPT };
+    let recipe_user_prompt = { role: "user", content: food_items };
+    let recipe_response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [recipe_system_prompt, recipe_user_prompt],
+    });
+
+    let { object: recipes } = extract_json(recipe_response);
+
+    console.log("recipes: ", recipes);
+
+    await AsyncStorage.setItem("recipes_options", JSON.stringify(recipes));
 
     onLoading(false);
   };
