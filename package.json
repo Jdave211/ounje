@@ -1,0 +1,11 @@
+{
+  "name": "ounje",
+  "version": "1.0.0",
+  "description": "Generate recipes based off pictures of your fridge and or cupboard",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}

@@ -3,6 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+// import './shim.js' // important to import this shim for crypto
+
 import { supabase } from './utils/supabase';
 import SignIn from './components/Auth';
 import Layout from './_layout';
@@ -21,7 +23,6 @@ export default function App() {
       const { data: { session }, error } = await supabase.auth.getSession();
       if (error) {
         console.error("Error fetching session:", error);
-        // Handle the error here (e.g., display an error message to the user)
         return; // Exit the function if there's an error
       }
       setSession(session);
