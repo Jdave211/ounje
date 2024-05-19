@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
   },
   verticallySpaced: {
     paddingTop: 4,
-    paddingBottom: 4,
+    paddingBottom: 25,
     alignSelf: 'stretch',
   },
   mt20: {

@@ -38,7 +38,7 @@ const Inventory = () => {
       let retrieved_text = await AsyncStorage.getItem("food_items");
       let retrieved_food_items = JSON.parse(retrieved_text);
 
-      setFoodItems(() => retrieved_food_items);
+      if (retrieved_food_items) setFoodItems(() => retrieved_food_items);
     };
 
     const fetch_inventory_images = async () => {
@@ -199,7 +199,8 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     width: 150, // Adjust as needed
-    marginRight: 4, // Adjust as needed
+    marginLeft: 110, // Adjust as needed
+    justifyContent: "center",
   },
   image: {
     width: "100%",
