@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { CheckBox } from 'react-native-elements';
-import axios from 'axios';
+import { MultipleSelectList } from 'react-native-dropdown-select-list'
+import { FontAwesome5 } from '@expo/vector-icons';
+import RecipeCard from '../components/RecipeCard';
 
 const Inventory = () => {
   const [selectedItems, setSelectedItems] = useState({});
+  const [selected, setSelected] = useState([]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [emojiData, setEmojiData] = useState(null);
 
   const food = 
@@ -34,7 +38,7 @@ const Inventory = () => {
           { "name": "bottled beverages", "quantity": 3 }
         ]
       },
-      "pantry_cupboard": {
+      "pantry": {
         "top_shelf": [
           { "name": "applesauce jar", "quantity": 1 },
           { "name": "pickled vegetables jar", "quantity": 1 },
@@ -71,60 +75,90 @@ const Inventory = () => {
     };
   
 
-    useEffect(() => {
-      const options = {
-        method: 'GET',
-        url: 'https://emoji-ai.p.rapidapi.com/getEmoji',
-        headers: {
-          'X-RapidAPI-Key': '',
-          'X-RapidAPI-Host': 'emoji-ai.p.rapidapi.com'
-        }
-      };
+    // useEffect(() => {
+    //   const options = {
+    //     method: 'GET',
+    //     url: 'https://emoji-ai.p.rapidapi.com/getEmoji',
+    //     headers: {
+    //       'X-RapidAPI-Key': '',
+    //       'X-RapidAPI-Host': 'emoji-ai.p.rapidapi.com'
+    //     }
+    //   };
     
-      Object.entries(food).forEach(([section, items]) => {
-        Object.entries(items).forEach(([shelf, shelfItems]) => {
-          shelfItems.forEach(item => {
-            axios.request({
-              ...options,
-              params: { query: item.name }
-            })
-            .then(response => {
-              setEmojiData(prevState => ({
-                ...prevState,
-                [item.name]: response.data
-              }));
-            })
-            .catch(error => {
-              console.error(error);
-            });
-          });
-        });
-      });
-    }, []);
+    //   Object.entries(food).forEach(([section, items]) => {
+    //     Object.entries(items).forEach(([shelf, shelfItems]) => {
+    //       shelfItems.forEach(item => {
+    //         axios.request({
+    //           ...options,
+    //           params: { query: item.name }
+    //         })
+    //         .then(response => {
+    //           setEmojiData(prevState => ({
+    //             ...prevState,
+    //             [item.name]: response.data
+    //           }));
+    //         })
+    //         .catch(error => {
+    //           console.error(error);
+    //         });
+    //       });
+    //     });
+    //   });
+    // }, []);
 
+    const mapFoodData = (sectionFilter) => {
+      return Object.entries(food).flatMap(([section, items]) =>
+        sectionFilter(section)
+          ? Object.entries(items).flatMap(([shelf, shelfItems]) =>
+              shelfItems.map(item => ({
+                key: `${section}-${shelf}-${item.name}`,
+                value: `${item.name}`
+              }))
+            )
+          : []
+      );
+    };
+    
+    const data1 = mapFoodData(() => true);
+    const data2 = mapFoodData(section => section === 'pantry');
+  
     return (
       <ScrollView style={styles.container}>
-        <View style={styles.eachsection}>
-        {Object.entries(food).map(([section, items]) => (
-          <View key={section}>
-            <Text style={[styles.text, styles.title]}>{section}</Text>
-            {Object.entries(items).map(([shelf, shelfItems]) => (
-              <View key={shelf}>
-                <Text style={styles.text}>{shelf}</Text>
-                {shelfItems.map(item => (
-                  <View key={item.name} style={styles.item}>
-                    <CheckBox
-                      value={selectedItems[section]?.[item.name] || false}
-                      onValueChange={() => handleCheck(section, item)}
-                    />
-                    <Text style={styles.text}>{item.name}</Text>
-                  </View>
-                ))}
-              </View>
-            ))}
-          </View>
-        ))}
-        </View>
+        <MultipleSelectList
+          setSelected={setSelected}
+          selectedTextStyle={styles.selectedTextStyle}
+          dropdownTextStyles={{color: 'white'}}
+          data={data1}
+          save="value"
+          maxHeight={900}
+          placeholder="Fridge"
+          pla
+          arrowicon={<FontAwesome5 name="chevron-down" size={12} color={'black'} />}
+          searchicon={<FontAwesome5 name="search" size={12} color={'white'} />}
+          searchPlaceholder="Search..."
+          search={false}
+          boxStyles={{marginTop:25, marginBottom:25, borderColor: 'white'}}
+          label="Fridge"
+          labelStyles={{color: 'green', fontSize: 20, fontWeight: 'bold'}}
+          badgeStyles={{backgroundColor: 'green'}}
+        />
+        <MultipleSelectList
+          setSelected={setSelected}
+          data={data2}
+          save="value"
+          dropdownTextStyles={{color: 'white'}}
+          maxHeight={900}
+          placeholder="Pantry"
+          arrowicon={<FontAwesome5 name="chevron-down" size={12} color={'black'} />} 
+          searchicon={<FontAwesome5 name="search" size={12} color={'white'} />} 
+          searchPlaceholder="Search..."
+          search={false}
+          boxStyles={{marginTop:2, marginBottom:25, borderColor: 'white'}}
+          checkBoxStyles={{borderColor: 'green', color: 'green', back}}
+          label="Pantry"
+          labelStyles={{color: 'green', fontSize: 20, fontWeight: 'bold'}}
+          badgeStyles={{backgroundColor: 'green'}}
+        />
       </ScrollView>
     );
   };
@@ -139,6 +173,14 @@ const Inventory = () => {
     },
     text: {
       color: 'white',
+    },
+    selectedTextStyle: {
+      color: 'blue',
+      fontSize: 16,
+    },
+    inputSearchStyle: {
+      color: 'white',
+      backgroundColor: 'black',
     },
     title: {
       fontSize: 25,
