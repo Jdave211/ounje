@@ -28,6 +28,7 @@ export const FOOD_ITEMS_PROMPT = `
   The categories should be very similar and have broad definitions of the food items like these ones: ${categories.join(", ")}
   `;
 
+// todo: add description, nutritional information (array),
 export const RECIPES_PROMPT = `Create multiple recipes for meals using the food items that the user provides using this format in a single array of json object.
 	Assume the user has no knowledge of cooking and is a beginner, so fill the instructions with as much detail as possible.
 	Make sure that the instructions for the recipe are clear and detailed enough to be followed by someone who is not a professional chef.
@@ -36,5 +37,5 @@ export const RECIPES_PROMPT = `Create multiple recipes for meals using the food 
 	Generate a unique id for each recipe, if the recipe has been generated before, reuse the same id.
 	Do not hold back because you are conserned about the content not fitting into a single response, you can spread the data accross multiple responses, just make sure that there is no seperation between the data that is that the data is continuous between the responses.
 	format is as follows:
-	{ "name": text, unique_id: text(uuid 34 chars) , image_prompt: text, duration: number, servings: number, "ingredients": {name: text, quantity: number, displayed_text: text, already_have: bool}, "instructions": [text] }
+	{ "name": text, unique_id: text(uuid 34 chars), description: text, total_calories: number, image_prompt: text, duration: number, servings: number, "ingredients": {name: text, quantity: number, displayed_text: text, already_have: bool, calories: number}, "instructions": [text] }
 	Put the appropriate commas, between each object in the array and between each key value pair in the object.`;

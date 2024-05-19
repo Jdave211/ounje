@@ -81,50 +81,47 @@ const Inventory = () => {
     );
   };
 
-  const data1 = mapFoodData(() => true);
-  const data2 = mapFoodData((section) => section === "pantry");
+  const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const entitle = (name) => capitalize(name.split("_").join(" "));
 
   return (
     <ScrollView style={styles.container}>
-      <MultipleSelectList
-        setSelected={setSelected}
-        selectedTextStyle={styles.selectedTextStyle}
-        dropdownTextStyles={{ color: "white" }}
-        data={data1}
-        save="value"
-        maxHeight={900}
-        placeholder="Fridge"
-        pla
-        arrowicon={
-          <FontAwesome5 name="chevron-down" size={12} color={"black"} />
-        }
-        searchicon={<FontAwesome5 name="search" size={12} color={"white"} />}
-        searchPlaceholder="Search..."
-        search={false}
-        boxStyles={{ marginTop: 25, marginBottom: 25, borderColor: "white" }}
-        label="Fridge"
-        labelStyles={{ color: "green", fontSize: 20, fontWeight: "bold" }}
-        badgeStyles={{ backgroundColor: "green" }}
-      />
-      <MultipleSelectList
-        setSelected={setSelected}
-        data={data2}
-        save="value"
-        dropdownTextStyles={{ color: "white" }}
-        maxHeight={900}
-        placeholder="Pantry"
-        arrowicon={
-          <FontAwesome5 name="chevron-down" size={12} color={"black"} />
-        }
-        searchicon={<FontAwesome5 name="search" size={12} color={"white"} />}
-        searchPlaceholder="Search..."
-        search={false}
-        boxStyles={{ marginTop: 2, marginBottom: 25, borderColor: "white" }}
-        checkBoxStyles={{ borderColor: "green", color: "green" }}
-        label="Pantry"
-        labelStyles={{ color: "green", fontSize: 20, fontWeight: "bold" }}
-        badgeStyles={{ backgroundColor: "green" }}
-      />
+      {Object.entries(food_items).map(([section, categories]) => {
+        let data = Object.entries(categories).flatMap(([category, items], i) =>
+          items.map((item, i) => ({
+            key: `${section}-${category}-${item.name}`,
+            value: item.name,
+          })),
+        );
+        return (
+          <MultipleSelectList
+            key={section}
+            setSelected={setSelected}
+            selectedTextStyle={styles.selectedTextStyle}
+            dropdownTextStyles={{ color: "white" }}
+            data={data}
+            save="value"
+            maxHeight={900}
+            placeholder={entitle(section)}
+            arrowicon={
+              <FontAwesome5 name="chevron-down" size={12} color={"black"} />
+            }
+            searchicon={
+              <FontAwesome5 name="search" size={12} color={"white"} />
+            }
+            searchPlaceholder="Search..."
+            search={false}
+            boxStyles={{
+              marginTop: 25,
+              marginBottom: 25,
+              borderColor: "white",
+            }}
+            label={entitle(section)}
+            labelStyles={{ color: "green", fontSize: 20, fontWeight: "bold" }}
+            badgeStyles={{ backgroundColor: "green" }}
+          />
+        );
+      })}
     </ScrollView>
   );
 };
