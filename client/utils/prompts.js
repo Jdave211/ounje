@@ -1,3 +1,20 @@
+const categories = [
+  "juices",
+  "dairy",
+  "condiments",
+  "vegetables",
+  "spreads",
+  "protein",
+  "grains",
+  "fruits",
+  "frozen",
+  "canned",
+  "spices",
+  "sauces",
+  "snacks",
+  "desserts",
+];
+
 export const FOOD_ITEMS_PROMPT = `
   List all the food items in each of these food inventories in an array.
   Within each inventory, break the food items in similar food categories that describe the food items (e.g. fruits, condiments, drinks, meats, etc.).
@@ -7,7 +24,9 @@ export const FOOD_ITEMS_PROMPT = `
   Categorize them into this format:
   { "inventory_name": { "category_name": {name: text, quantity: number} }}.
   Follow the types in the format strictly. numbers should only be numbers and text should only be text.
-  The image name should represent the environment where the food items are found.`;
+  The image name should represent the environment where the food items are found.
+  The categories should be very similar and have broad definitions of the food items like these ones: ${categories.join(", ")}
+  `;
 
 export const RECIPES_PROMPT = `Create multiple recipes for meals using the food items that the user provides using this format in a single array of json object.
 	Assume the user has no knowledge of cooking and is a beginner, so fill the instructions with as much detail as possible.
