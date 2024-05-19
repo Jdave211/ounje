@@ -272,7 +272,7 @@ export default function ImageUploadForm({ onLoading }) {
       const recipe_image = Buffer.from(response.data);
 
       const recipe_image_bucket = "recipe_images";
-      const recipe_image_bucket_path = `${recipe_option.name}/${current_run.id}.jpeg`;
+      const recipe_image_bucket_path = `${current_run.id}/${recipe_option.name}.jpeg`;
 
       const bucket_upload_response = await supabase.storage
         .from(recipe_image_bucket)
