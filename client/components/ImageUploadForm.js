@@ -15,6 +15,7 @@ import { Linking } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { customAlphabet } from "nanoid/non-secure";
 import { Buffer } from "buffer";
+import axios from "axios";
 
 import { FOOD_ITEMS_PROMPT, RECIPES_PROMPT } from "../utils/prompts";
 import { openai, extract_json } from "../utils/openai";
@@ -170,9 +171,10 @@ export default function ImageUploadForm({ onLoading }) {
 
     console.log("chatgpt response: ", food_items_response);
 
-    const { object: food_items } = extract_json(food_items_response);
+    const { object: food_items, text: food_items_text } =
+      extract_json(food_items_response);
 
-    console.log("food_items: ", food_items);
+    console.log({ food_items });
 
     await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
 
@@ -222,17 +224,113 @@ export default function ImageUploadForm({ onLoading }) {
     console.log("starting recipes");
 
     let recipe_system_prompt = { role: "system", content: RECIPES_PROMPT };
-    let recipe_user_prompt = { role: "user", content: food_items };
+    let recipe_user_prompt = { role: "user", content: food_items_text };
     let recipe_response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [recipe_system_prompt, recipe_user_prompt],
     });
 
-    let { object: recipes } = extract_json(recipe_response);
+    console.log({ recipe_response });
 
-    console.log("recipes: ", recipes);
+    let { object: recipe_options } = extract_json(recipe_response);
 
-    await AsyncStorage.setItem("recipes_options", JSON.stringify(recipes));
+    console.log("recipe_options: ", recipe_options);
+
+    await AsyncStorage.setItem(
+      "recipe_options",
+      JSON.stringify(recipe_options),
+    );
+
+    const recipe_option_records = [];
+
+    for (let recipe_option of recipe_options) {
+      const recipe_image_form_data = {
+        prompt:
+          "a zoomed out image showing the full dish of " +
+          recipe_option.image_prompt,
+        output_format: "jpeg",
+        model: "sd3",
+      };
+
+      const response = await axios.postForm(
+        `https://api.stability.ai/v2beta/stable-image/generate/sd3`,
+        axios.toFormData(recipe_image_form_data, new FormData()),
+        {
+          validateStatus: undefined,
+          responseType: "arraybuffer",
+          headers: {
+            Authorization: `Bearer ${process.env.STABILITY_API_KEY}`,
+            Accept: "image/*",
+          },
+        },
+      );
+
+      if (response.status !== 200) {
+        throw new Error(`${response.status}: ${response.data.toString()}`);
+      }
+
+      const recipe_image = Buffer.from(response.data);
+
+      const recipe_image_bucket = "recipe_images";
+      const recipe_image_bucket_path = `${recipe_option.name}/${current_run.id}.jpeg`;
+
+      const bucket_upload_response = await supabase.storage
+        .from(recipe_image_bucket)
+        .upload(recipe_image_bucket_path, recipe_image);
+
+      console.log("bucket_upload_response: ", bucket_upload_response);
+
+      const {
+        data: { publicUrl: recipe_image_url },
+      } = supabase.storage
+        .from(recipe_image_bucket)
+        .getPublicUrl(recipe_image_bucket_path);
+
+      console.log("recipe_image_url: ", recipe_image_url);
+
+      recipe_option["image_url"] = recipe_image_url;
+
+      console.log({ recipe_option });
+
+      delete recipe_option.image_prompt;
+
+      recipe_option_records.push(recipe_option);
+    }
+
+    console.log("recipe_option_records: ", recipe_option_records);
+
+    const { data: existing_items, error: fetchError } = await supabase
+      .from("recipes")
+      .select("unique_id")
+      .in(
+        "unique_id",
+        recipe_option_records.map((recipe) => recipe.unique_id),
+      )
+      .throwOnError();
+
+    console.log({ existing_items });
+
+    let existing_unique_ids = new Set(
+      existing_items.map((item) => item.unique_id),
+    );
+
+    console.log({ existing_unique_ids });
+
+    const filtered_recipe_option_records = recipe_option_records.filter(
+      (recipe) => !existing_unique_ids.has(recipe.unique_id),
+    );
+
+    console.log({ filtered_recipe_option_records });
+
+    console.assert(
+      filtered_recipe_option_records.length + existing_unique_ids.length ===
+        recipe_option_records.length,
+    );
+
+    await supabase
+      .from("recipes")
+      .insert(filtered_recipe_option_records)
+      .throwOnError();
 
     onLoading(false);
   };
