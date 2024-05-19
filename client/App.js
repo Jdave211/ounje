@@ -5,13 +5,14 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 // import './shim.js' // important to import this shim for crypto
 
-import { supabase } from "./utils/supabase";
-import SignIn from "./components/Auth";
-import Layout from "./_layout";
-import Generate from "./screens/Generate";
-import SavedRecipes from "./screens/SavedRecipes";
-import Inventory from "./screens/Inventory";
-import Profile from "./screens/Profile";
+import { supabase } from './utils/supabase';
+import SignIn from './components/Auth';
+import Layout from './_layout';
+import Generate from './screens/Generate';
+import SavedRecipes from './screens/SavedRecipes';
+import Inventory from './screens/Inventory';
+import Profile from './screens/Profile';
+import Community from './screens/Community';
 
 const Tab = createBottomTabNavigator();
 
@@ -55,6 +56,11 @@ export default function App() {
               <Tab.Screen
                 name="SavedRecipes"
                 component={SavedRecipes}
+                options={{ headerShown: false }}
+              />
+              <Tab.Screen 
+                name='Community' 
+                component={Community}
                 options={{ headerShown: false }}
               />
               <Tab.Screen

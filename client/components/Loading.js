@@ -27,7 +27,7 @@ const LoadingScreen = () => {
     "In the short run, salt isnt everything, in the long run, its almost everything...",
     "Risk comes from not knowing what you're doing...",
     "In cooking, what is comfortable is rarely profitable...",
-    "The four most dangerous words in cooking are: 'I don't need a recipe...'",
+    "The four most dangerous words in cooking are:\" I don't need a recipe \"...",
     "The grocery store is filled with individuals who know the price of everything, but the flavor of nothing...",
     "The biggest risk of all is not taking one with your salt...",
     "How many Michelin-starred chefs do you know who became good by cooking only pre-packaged meals?...",
