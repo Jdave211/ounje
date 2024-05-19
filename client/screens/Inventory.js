@@ -10,7 +10,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FOOD_ITEMS } from "../utils/constants";
 
 const Inventory = () => {
-  const [selectedItems, setSelectedItems] = useState({});
   const [selected, setSelected] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [emojiData, setEmojiData] = useState(null);
@@ -18,15 +17,6 @@ const Inventory = () => {
   const [inventoryImages, setInventoryImages] = useState([]);
   const [user_id, setUserId] = useState(null);
 
-  const handleCheck = (section, item) => {
-    setSelectedItems((prevState) => ({
-      ...prevState,
-      [section]: {
-        ...prevState[section],
-        [item.name]: !prevState[section]?.[item.name],
-      },
-    }));
-  };
 
   useEffect(() => {
     const get_user_id = async () => {
@@ -38,7 +28,17 @@ const Inventory = () => {
       let retrieved_text = await AsyncStorage.getItem("food_items");
       let retrieved_food_items = JSON.parse(retrieved_text);
 
-      if (retrieved_food_items) setFoodItems(() => retrieved_food_items);
+      if (retrieved_food_items) {
+        setFoodItems(() => retrieved_food_items);
+
+      // Set selected items to all items
+      const allItems = Object.entries(retrieved_food_items).flatMap(([section, items]) =>
+        Object.entries(items).flatMap(([shelf, shelfItems]) =>
+          shelfItems.map((item) => item.name),
+        ),
+      );
+      setSelected(allItems);
+    };
     };
 
     const fetch_inventory_images = async () => {
@@ -146,8 +146,9 @@ const Inventory = () => {
             save="value"
             maxHeight={900}
             placeholder={entitle(section)}
+            placeholderStyles={{ color: "white" }}
             arrowicon={
-              <FontAwesome5 name="chevron-down" size={12} color={"black"} />
+              <FontAwesome5 name="chevron-down" size={12} color={"white"} />
             }
             searchicon={
               <FontAwesome5 name="search" size={12} color={"white"} />
@@ -172,7 +173,7 @@ const Inventory = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "black",
+    backgroundColor: "white",
   },
   eachsection: {
     margin: 10,
