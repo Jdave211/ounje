@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Image } from "react-native";
 import { CheckBox } from "react-native-elements";
 import { MultipleSelectList } from "react-native-dropdown-select-list";
 import { FontAwesome5 } from "@expo/vector-icons";
@@ -15,6 +15,8 @@ const Inventory = () => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [emojiData, setEmojiData] = useState(null);
   const [food_items, setFoodItems] = useState(FOOD_ITEMS);
+  const [inventoryImages, setInventoryImages] = useState([]);
+  const [user_id, setUserId] = useState(null);
 
   const handleCheck = (section, item) => {
     setSelectedItems((prevState) => ({
@@ -27,14 +29,47 @@ const Inventory = () => {
   };
 
   useEffect(() => {
+    const get_user_id = async () => {
+      let retrieved_user_id = await AsyncStorage.getItem("user_id");
+      setUserId(() => retrieved_user_id);
+    };
+
     const fetch_food_items = async () => {
       let retrieved_text = await AsyncStorage.getItem("food_items");
       let retrieved_food_items = JSON.parse(retrieved_text);
 
       setFoodItems(() => retrieved_food_items);
     };
-    fetch_food_items();
-  }, []);
+
+    const fetch_inventory_images = async () => {
+      let {
+        data: [inventory],
+      } = await supabase
+        .from("inventory")
+        .select("images")
+        .eq("user_id", user_id);
+
+      let image_paths = inventory.images.map((image) =>
+        image.replace("inventory_images/", ""),
+      );
+
+      let { data: url_responses } = await supabase.storage
+        .from("inventory_images")
+        .createSignedUrls(image_paths, 60 * 10);
+
+      let image_urls = url_responses.map((response) => response.signedUrl);
+
+      setInventoryImages(() => image_urls);
+    };
+
+    if (!user_id) {
+      get_user_id();
+      fetch_food_items();
+    } else {
+      fetch_inventory_images();
+      fetch_food_items();
+    }
+  }, [user_id]);
 
   // useEffect(() => {
   //   const options = {
@@ -86,6 +121,13 @@ const Inventory = () => {
 
   return (
     <ScrollView style={styles.container}>
+      <View style={styles.imageContainer}>
+        {inventoryImages.map((image_url, index) => (
+          <View key={index}>
+            <Image source={{ uri: image_url }} style={styles.image} />
+          </View>
+        ))}
+      </View>
       {Object.entries(food_items).map(([section, categories]) => {
         let data = Object.entries(categories).flatMap(([category, items], i) =>
           items.map((item, i) => ({
@@ -93,6 +135,7 @@ const Inventory = () => {
             value: item.name,
           })),
         );
+
         return (
           <MultipleSelectList
             key={section}
@@ -153,6 +196,14 @@ const styles = StyleSheet.create({
   item: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  imageContainer: {
+    width: 150, // Adjust as needed
+    marginRight: 4, // Adjust as needed
+  },
+  image: {
+    width: "100%",
+    height: 130, // Adjust as needed
   },
 });
 
