@@ -9,10 +9,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-<<<<<<< HEAD
     "expo": "^51.0.8"
-=======
-    "axios": "^1.6.8"
->>>>>>> c9ff71fe970e17420c7a2bc73e006534551593cd
   }
 }
