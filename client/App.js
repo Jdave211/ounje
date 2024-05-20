@@ -2,17 +2,18 @@ import React, { useState, useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
+import Toast from "react-native-toast-message";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 // import './shim.js' // important to import this shim for crypto
 
-import { supabase } from './utils/supabase';
-import SignIn from './components/Auth';
-import Layout from './_layout';
-import Generate from './screens/Generate';
-import SavedRecipes from './screens/SavedRecipes';
-import Inventory from './screens/Inventory';
-import Profile from './screens/Profile';
-import Community from './screens/Community';
+import { supabase } from "./utils/supabase";
+import SignIn from "./components/Auth";
+import Layout from "./_layout";
+import Generate from "./screens/Generate";
+import SavedRecipes from "./screens/SavedRecipes";
+import Inventory from "./screens/Inventory";
+import Profile from "./screens/Profile";
+import Community from "./screens/Community";
 
 const Tab = createBottomTabNavigator();
 
@@ -58,8 +59,8 @@ export default function App() {
                 component={SavedRecipes}
                 options={{ headerShown: false }}
               />
-              <Tab.Screen 
-                name='Community' 
+              <Tab.Screen
+                name="Community"
                 component={Community}
                 options={{ headerShown: false }}
               />
@@ -81,6 +82,7 @@ export default function App() {
 
         <StatusBar style="light" />
       </View>
+      <Toast />
     </NavigationContainer>
   );
 }

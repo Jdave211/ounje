@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
 } from "react-native";
 import MultipleSelectList from "../components/MultipleSelectList";
+import Toast from "react-native-toast-message";
 
 const CheckIngredients = () => {
   const [selected, setSelected] = useState([]);
@@ -19,6 +20,14 @@ const CheckIngredients = () => {
   const [inputValue, setInputValue] = useState("");
 
   const handleAddIngredient = () => {
+    if (inputValue.length === 0) {
+      Toast.show({
+        type: "error",
+        text1: "Empty Ingredient",
+        text2: "Please enter an ingredient to add.",
+      });
+      return;
+    }
     if (inputValue.trim()) {
       const newIngredient = {
         key: (data.length + 1).toString(),
@@ -27,14 +36,30 @@ const CheckIngredients = () => {
       setData([...data, newIngredient]);
       setInputValue("");
     }
-    alert("Ingredient added.");
+    Toast.show({
+      type: "success",
+      text1: "Ingredient Added",
+      text2: `${inputValue.trim()} has been added to the list.`,
+    });
   };
 
   const handleRemoveIngredient = () => {
+    if (selected.length === 0) {
+      Toast.show({
+        type: "error",
+        text1: "No Ingredients Selected",
+        text2: "Please select ingredients to remove.",
+      });
+      return;
+    }
     const newData = data.filter((item) => !selected.includes(item.key));
     setData(newData);
     setSelected([]);
-    alert("Selected ingredients removed.");
+    Toast.show({
+      type: "info",
+      text1: "Ingredients Removed",
+      text2: `Ingredients have been removed from the list.`,
+    });
   };
 
   return (
@@ -126,7 +151,6 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   generateButtonWrapper: {
-    flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -135,8 +159,6 @@ const styles = StyleSheet.create({
     height: 50,
     backgroundColor: "green",
     borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
   },
   generateButton: {
     width: "100%",
