@@ -62,6 +62,16 @@ const CheckIngredients = () => {
     });
   };
 
+  const handleGenerateRecipes = () => {
+    if (data.length === 0) {
+      Toast.show({
+        type: "error",
+        text1: "Empty Ingredient List",
+        text2: "Please add ingredients to generate a recipe.",
+      });
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View>
@@ -111,6 +121,7 @@ const CheckIngredients = () => {
           <TouchableOpacity
             style={styles.generateButton}
             disabled={data.length === 0}
+            onPress={handleGenerateRecipes}
           >
             <Text style={styles.generateButtonText}>Generate Recipes</Text>
           </TouchableOpacity>
@@ -136,7 +147,7 @@ const styles = StyleSheet.create({
   },
   dropdownContainer2: {
     backgroundColor: "black",
-    marginTop: 20,
+    marginTop: 10,
     marginBottom: 20,
   },
   input: {
@@ -151,11 +162,12 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
   },
   generateButtonWrapper: {
+    marginTop: 20,
     justifyContent: "center",
     alignItems: "center",
   },
   generateButtonContainer: {
-    width: "80%", // Adjust this as needed
+    width: 200, // Adjust this as needed
     height: 50,
     backgroundColor: "green",
     borderRadius: 10,
