@@ -23,7 +23,7 @@ const Generate = () => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>what text is in here?</Text>
+      <Text style={styles.text}></Text>
       <View style={styles.foodRowContainer}>
         <FoodRow />
       </View>
