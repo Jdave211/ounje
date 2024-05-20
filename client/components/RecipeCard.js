@@ -80,7 +80,7 @@ const styles = StyleSheet.create({
   },
   recipeContent: {
     backgroundColor: "#f8f8f8",
-    padding: 20,
+    padding: 10,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "green",
@@ -92,6 +92,7 @@ const styles = StyleSheet.create({
   image: {
     width: 100,
     height: 100,
+    position: "absolute",
   },
   subheading: {
     fontSize: 18,
