@@ -5,7 +5,6 @@ import ImageUploadForm from "../components/ImageUploadForm";
 import Loading from "../components/Loading";
 import { useNavigation } from "@react-navigation/native";
 import Inventory from "./Inventory";
-import RecipeCard from "../components/RecipeCard";
 
 const Generate = () => {
   const [isLoading, setIsLoading] = useState(false);

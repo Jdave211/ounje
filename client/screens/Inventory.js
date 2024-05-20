@@ -28,7 +28,6 @@ const Inventory = () => {
   const [food_items_array, setFoodItemsArray] = useState([]);
   const [inventoryImages, setInventoryImages] = useState([]);
   const [user_id, setUserId] = useState(null);
-  const close = { iconName: "inventory", iconComponent: "FontAwesome5" };
 
   useEffect(() => {
     const get_user_id = async () => {

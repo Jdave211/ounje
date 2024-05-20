@@ -1,8 +1,13 @@
 import React from "react";
-import { View, Text, StyleSheet, Image } from "react-native";
+import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import pasta from "../assets/pasta.png";
+import { Feather } from "@expo/vector-icons";
 
 const RecipeCard = ({ recipe }) => {
+  const [isSaved, setIsSaved] = React.useState(false);
+  const handleBookmarkPress = () => {
+    setIsSaved(!isSaved);
+  };
   const generatedRecipes = {
     name: "Easy Veggie Pasta",
     image_prompt:
@@ -52,9 +57,10 @@ const RecipeCard = ({ recipe }) => {
           <Image style={styles.image} source={pasta} />
         </View>
         <View style={styles.underHeading}>
-          <Text style={styles.subheading}>
-            Duration: {generatedRecipes.duration} minutes
-          </Text>
+          <View style={{ flexDirection: "row" }}>
+            <Text style={styles.subheading}> Duration: </Text>
+            <Text style={styles.text}>{generatedRecipes.duration} minutes</Text>
+          </View>
           <Text style={styles.subheading}>Ingredients:</Text>
           {generatedRecipes.ingredients.map((ingredient, index) => (
             <Text style={styles.text} key={index}>
@@ -63,6 +69,13 @@ const RecipeCard = ({ recipe }) => {
           ))}
           <Text style={styles.subheading}>Instructions:</Text>
           <Text style={styles.text}>{generatedRecipes.instructions[0]}</Text>
+          <TouchableOpacity style={styles.save} onPress={handleBookmarkPress}>
+            <Feather
+              name="bookmark"
+              size={30}
+              color={isSaved ? "black" : "white"}
+            />
+          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -77,14 +90,16 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "bold",
     marginRight: 20,
-    color: "green",
+    color: "black",
+    marginTop: -29,
+    textDecorationLine: "underline",
   },
   recipeContent: {
-    backgroundColor: "black",
+    backgroundColor: "#c7a27c",
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "green",
+    borderColor: "black",
   },
   underHeading: {
     marginTop: -20,
@@ -102,11 +117,14 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 5,
-    color: "white",
+    color: "black",
   },
   text: {
     fontSize: 16,
     color: "white",
+  },
+  save: {
+    alignSelf: "flex-end",
   },
 });
 
