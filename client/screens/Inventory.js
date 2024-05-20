@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, Image } from "react-native";
 import { CheckBox } from "react-native-elements";
-import { MultipleSelectList } from "react-native-dropdown-select-list";
 import { FontAwesome5 } from "@expo/vector-icons";
+
 import RecipeCard from "../components/RecipeCard";
+import { MultipleSelectList } from "../components/MultipleSelectList";
 import axios from "axios";
 import { supabase } from "../utils/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -16,7 +17,6 @@ const Inventory = () => {
   const [food_items, setFoodItems] = useState(FOOD_ITEMS);
   const [inventoryImages, setInventoryImages] = useState([]);
   const [user_id, setUserId] = useState(null);
-
 
   useEffect(() => {
     const get_user_id = async () => {
@@ -31,14 +31,15 @@ const Inventory = () => {
       if (retrieved_food_items) {
         setFoodItems(() => retrieved_food_items);
 
-      // Set selected items to all items
-      const allItems = Object.entries(retrieved_food_items).flatMap(([section, items]) =>
-        Object.entries(items).flatMap(([shelf, shelfItems]) =>
-          shelfItems.map((item) => item.name),
-        ),
-      );
-      setSelected(allItems);
-    };
+        // Set selected items to all items
+        const allItems = Object.entries(retrieved_food_items).flatMap(
+          ([section, items]) =>
+            Object.entries(items).flatMap(([shelf, shelfItems]) =>
+              shelfItems.map((item) => item.name),
+            ),
+        );
+        setSelected(allItems);
+      }
     };
 
     const fetch_inventory_images = async () => {
@@ -103,19 +104,6 @@ const Inventory = () => {
   //   });
   // }, [food_items]);
 
-  const mapFoodData = (sectionFilter) => {
-    return Object.entries(food_items).flatMap(([section, items]) =>
-      sectionFilter(section)
-        ? Object.entries(items).flatMap(([shelf, shelfItems]) =>
-            shelfItems.map((item) => ({
-              key: `${section}-${shelf}-${item.name}`,
-              value: `${item.name}`,
-            })),
-          )
-        : [],
-    );
-  };
-
   const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const entitle = (name) => capitalize(name.split("_").join(" "));
 
@@ -142,10 +130,11 @@ const Inventory = () => {
             setSelected={setSelected}
             selectedTextStyle={styles.selectedTextStyle}
             dropdownTextStyles={{ color: "white" }}
+            // defaultOptions={[data[0].value]}
             data={data}
             save="value"
             maxHeight={900}
-            placeholder={entitle(section)}
+            placeholder={"placeholder"}
             placeholderStyles={{ color: "white" }}
             arrowicon={
               <FontAwesome5 name="chevron-down" size={12} color={"white"} />
@@ -173,7 +162,7 @@ const Inventory = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "white",
+    backgroundColor: "black",
   },
   eachsection: {
     margin: 10,
