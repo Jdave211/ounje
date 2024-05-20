@@ -15,8 +15,10 @@ const categories = [
   "desserts",
 ];
 
+let inventory = ["fridge", "freezer", "pantry", "counter", "table", "storage"];
+
 export const FOOD_ITEMS_PROMPT = `
-  List all the food items in each of these food inventories in an array.
+  List all the food items in each of these food images/inventories in an array.
   Within each inventory, break the food items in similar food categories that describe the food items (e.g. fruits, condiments, drinks, meats, etc.).
   Be as specific as possible for each individual item even if they are in a category and include the quantity of each item such that we have enough
   information to create a recipe for a meal.
@@ -26,10 +28,12 @@ export const FOOD_ITEMS_PROMPT = `
   Follow the types in the format strictly. numbers should only be numbers and text should only be text.
   The image name should represent the environment where the food items are found.
   The categories should be very similar and have broad definitions of the food items like these ones: ${categories.join(", ")}
+  The inventories should be very similar to these ones: ${inventory.join(", ")}.
+  For duplicate inventories you can increment the name of the inventory by adding a number to the end of the name.
   `;
 
 // todo: add description, nutritional information (array),
-export const RECIPES_PROMPT = `Create multiple recipes for meals using the food items that the user provides using this format in a single array of json object.
+export const RECIPES_PROMPT = `Create multiple recipes for meals inspired by the food items that the user provides using this format in a single array of json object.
 	Assume the user has no knowledge of cooking and is a beginner, so fill the instructions with as much detail as possible.
 	Make sure that the instructions for the recipe are clear and detailed enough to be followed by someone who is not a professional chef.
 	if there might be specific instructions for items included in their packaging, give them the instructions for doing that activity along with pointing them to the package in case the instructions differ.

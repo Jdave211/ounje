@@ -20,3 +20,21 @@ export const extract_json = (data) => {
     text: json_text,
   };
 };
+
+export const flatten_nested_objects = (nestedObject, keys) => {
+  const flatten = (obj, keys, parentKeys = {}) => {
+    if (keys.length === 0) {
+      return obj.map((item) => ({ ...parentKeys, ...item }));
+    }
+
+    const [currentKey, ...remainingKeys] = keys;
+    const entries = Object.entries(obj);
+
+    return entries.flatMap(([key, value]) => {
+      const newParentKeys = { ...parentKeys, [currentKey]: key };
+      return flatten(value, remainingKeys, newParentKeys);
+    });
+  };
+
+  return flatten(nestedObject, keys);
+};

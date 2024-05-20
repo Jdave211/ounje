@@ -195,16 +195,20 @@ const styles = StyleSheet.create({
   },
   item: {
     flexDirection: "row",
-    alignItems: "center",
+    // alignItems: "center",
   },
   imageContainer: {
-    width: 150, // Adjust as needed
-    marginLeft: 110, // Adjust as needed
-    justifyContent: "center",
+    width: "100%", // Adjust as needed
+    justifyContent: "space-evenly",
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
   },
   image: {
-    width: "100%",
-    height: 130, // Adjust as needed
+    margin: 10,
+    borderRadius: 10,
+    width: 100,
+    height: 100, // Adjust as needed
   },
 });
 

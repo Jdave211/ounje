@@ -36,8 +36,6 @@ const FoodRow = () => {
         .from("recipes") // Replace with your bucket name
         .select("image_url");
 
-      console.log({ retrieved_images });
-
       let image_urls = retrieved_images.map((response, i) => ({
         id: i,
         src: response.image_url,
