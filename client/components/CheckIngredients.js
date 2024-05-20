@@ -1,6 +1,13 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, Button, StyleSheet } from "react-native";
-import { MultipleSelectList } from "../components/MultipleSelectList";
+import {
+  View,
+  Text,
+  TextInput,
+  Button,
+  StyleSheet,
+  TouchableOpacity,
+} from "react-native";
+import MultipleSelectList from "../components/MultipleSelectList";
 
 const CheckIngredients = () => {
   const [selected, setSelected] = useState([]);
@@ -20,6 +27,14 @@ const CheckIngredients = () => {
       setData([...data, newIngredient]);
       setInputValue("");
     }
+    alert("Ingredient added.");
+  };
+
+  const handleRemoveIngredient = () => {
+    const newData = data.filter((item) => !selected.includes(item.key));
+    setData(newData);
+    setSelected([]);
+    alert("Selected ingredients removed.");
   };
 
   return (
@@ -34,15 +49,23 @@ const CheckIngredients = () => {
         </Text>
         <View style={styles.dropdownContainer}>
           <MultipleSelectList
-            setSelected={(val) => setSelected(val)}
+            setSelected={setSelected}
             data={data}
-            save="value"
+            selected={selected}
+            save="key"
             search={false}
             label="Remove Ingredients"
             labelStyles={{ color: "white" }}
             dropdownTextStyles={{ color: "white" }}
             badgeStyles={{ backgroundColor: "red" }}
           />
+          <View style={styles.addButtonContainer}>
+            <Button
+              title="remove"
+              color="red"
+              onPress={handleRemoveIngredient}
+            />
+          </View>
         </View>
         <View style={styles.dropdownContainer2}>
           <TextInput
@@ -53,9 +76,19 @@ const CheckIngredients = () => {
             placeholderTextColor="white"
             autoCapitalize="none"
           />
-          <View style={styles.buttonContainer}>
+          <View style={styles.addButtonContainer}>
             <Button title="add" color="green" onPress={handleAddIngredient} />
           </View>
+        </View>
+      </View>
+      <View style={styles.generateButtonWrapper}>
+        <View style={styles.generateButtonContainer}>
+          <TouchableOpacity
+            style={styles.generateButton}
+            disabled={data.length === 0}
+          >
+            <Text style={styles.generateButtonText}>Generate Recipes</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -79,6 +112,7 @@ const styles = StyleSheet.create({
   dropdownContainer2: {
     backgroundColor: "black",
     marginTop: 20,
+    marginBottom: 20,
   },
   input: {
     height: 40,
@@ -88,8 +122,31 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     paddingHorizontal: 10,
   },
-  buttonContainer: {
+  addButtonContainer: {
     alignItems: "flex-end",
+  },
+  generateButtonWrapper: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  generateButtonContainer: {
+    width: "80%", // Adjust this as needed
+    height: 50,
+    backgroundColor: "green",
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  generateButton: {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  generateButtonText: {
+    color: "white",
+    fontWeight: "bold",
   },
 });
 
