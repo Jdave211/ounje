@@ -6,10 +6,10 @@ import {
   ScrollView,
   Image,
   TouchableOpacity,
+  Modal,
 } from "react-native";
-import { CheckBox } from "react-native-elements";
 import { FontAwesome5 } from "@expo/vector-icons";
-
+import { AntDesign } from "@expo/vector-icons";
 import RecipeCard from "../components/RecipeCard";
 import { MultipleSelectList } from "../components/MultipleSelectList";
 import axios from "axios";
@@ -22,11 +22,13 @@ import { generate_image } from "../utils/stability";
 const Inventory = () => {
   const [selected, setSelected] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [emojiData, setEmojiData] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
   const [food_items, setFoodItems] = useState(FOOD_ITEMS);
   const [food_items_array, setFoodItemsArray] = useState([]);
   const [inventoryImages, setInventoryImages] = useState([]);
   const [user_id, setUserId] = useState(null);
+  const close = { iconName: "inventory", iconComponent: "FontAwesome5" };
 
   useEffect(() => {
     const get_user_id = async () => {
@@ -79,7 +81,6 @@ const Inventory = () => {
       fetch_food_items();
     }
   }, [user_id]);
-
 
   const generate_recipes = async () => {
     let async_run_response = supabase
@@ -209,11 +210,35 @@ const Inventory = () => {
       {/* Inventory Images */}
       <View style={styles.imageContainer}>
         {inventoryImages.map((image_url, index) => (
-          <View key={index}>
+          <TouchableOpacity
+            key={index}
+            onPress={() => {
+              setSelectedImage(image_url);
+              setModalVisible(true);
+            }}
+          >
             <Image source={{ uri: image_url }} style={styles.image} />
-          </View>
+          </TouchableOpacity>
         ))}
       </View>
+
+      <Modal
+        animationType="slide"
+        transparent={false}
+        visible={modalVisible}
+        style
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.close}
+          onPress={() => setModalVisible(false)}
+        >
+          <AntDesign name="closecircle" size={30} color="white" />
+        </TouchableOpacity>
+        <View style={[styles.centeredView, styles.modalView]}>
+          <Image source={{ uri: selectedImage }} style={styles.modalImage} />
+        </View>
+      </Modal>
 
       {/* Inventory Images */}
       {Object.entries(food_items).map(([section, categories]) => {
@@ -280,6 +305,28 @@ const styles = StyleSheet.create({
   },
   text: {
     color: "white",
+  },
+  close: {
+    position: "absolute",
+    top: 40,
+    right: 20,
+    zIndex: 1,
+    marginTop: 30,
+  },
+  centeredView: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 22,
+  },
+  modalView: {
+    backgroundColor: "black",
+    marginTop: 0,
+  },
+  modalImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "contain",
   },
   selectedTextStyle: {
     color: "blue",
