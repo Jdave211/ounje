@@ -51,17 +51,19 @@ const RecipeCard = ({ recipe }) => {
           <Text style={styles.name}>{generatedRecipes.name}</Text>
           <Image style={styles.image} source={pasta} />
         </View>
-        <Text style={styles.subheading}>
-          Duration: {generatedRecipes.duration} minutes
-        </Text>
-        <Text style={styles.subheading}>Ingredients:</Text>
-        {generatedRecipes.ingredients.map((ingredient, index) => (
-          <Text style={styles.text} key={index}>
-            {ingredient.displayed_text}
+        <View style={styles.underHeading}>
+          <Text style={styles.subheading}>
+            Duration: {generatedRecipes.duration} minutes
           </Text>
-        ))}
-        <Text style={styles.subheading}>Instructions:</Text>
-        <Text style={styles.text}>{generatedRecipes.instructions[0]}</Text>
+          <Text style={styles.subheading}>Ingredients:</Text>
+          {generatedRecipes.ingredients.map((ingredient, index) => (
+            <Text style={styles.text} key={index}>
+              {ingredient.displayed_text}
+            </Text>
+          ))}
+          <Text style={styles.subheading}>Instructions:</Text>
+          <Text style={styles.text}>{generatedRecipes.instructions[0]}</Text>
+        </View>
       </View>
     </View>
   );
@@ -70,20 +72,22 @@ const RecipeCard = ({ recipe }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
   },
   name: {
     fontSize: 24,
     fontWeight: "bold",
-    marginRight: 10,
+    marginRight: 20,
     color: "green",
   },
   recipeContent: {
-    backgroundColor: "#f8f8f8",
+    backgroundColor: "black",
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "green",
+  },
+  underHeading: {
+    marginTop: -20,
   },
   imageTextContainer: {
     flexDirection: "row",
@@ -98,9 +102,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 5,
+    color: "white",
   },
   text: {
     fontSize: 16,
+    color: "white",
   },
 });
 
