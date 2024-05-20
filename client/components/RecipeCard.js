@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
   image: {
     width: 100,
     height: 100,
-    position: "absolute",
+    marginLeft: 15,
   },
   subheading: {
     fontSize: 18,
