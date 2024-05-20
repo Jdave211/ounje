@@ -80,37 +80,6 @@ const Inventory = () => {
     }
   }, [user_id]);
 
-  // useEffect(() => {
-  //   const options = {
-  //     method: "GET",
-  //     url: "https://emoji-ai.p.rapidapi.com/getEmoji",
-  //     headers: {
-  //       "X-RapidAPI-Key": "",
-  //       "X-RapidAPI-Host": "emoji-ai.p.rapidapi.com",
-  //     },
-  //   };
-
-  //   Object.entries(food_items).forEach(([section, items]) => {
-  //     Object.entries(items).forEach(([shelf, shelfItems]) => {
-  //       shelfItems.forEach((item) => {
-  //         axios
-  //           .request({
-  //             ...options,
-  //             params: { query: item.name },
-  //           })
-  //           .then((response) => {
-  //             setEmojiData((prevState) => ({
-  //               ...prevState,
-  //               [item.name]: response.data,
-  //             }));
-  //           })
-  //           .catch((error) => {
-  //             console.error(error);
-  //           });
-  //       });
-  //     });
-  //   });
-  // }, [food_items]);
 
   const generate_recipes = async () => {
     let async_run_response = supabase
