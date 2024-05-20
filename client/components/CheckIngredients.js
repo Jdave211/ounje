@@ -44,7 +44,7 @@ const CheckIngredients = () => {
             badgeStyles={{ backgroundColor: "red" }}
           />
         </View>
-        <View style={styles.dropdownContainer}>
+        <View style={styles.dropdownContainer2}>
           <TextInput
             style={styles.input}
             placeholder="Add Ingredients"
@@ -53,7 +53,9 @@ const CheckIngredients = () => {
             placeholderTextColor="white"
             autoCapitalize="none"
           />
-          <Button title="add" color="green" onPress={handleAddIngredient} />
+          <View style={styles.buttonContainer}>
+            <Button title="add" color="green" onPress={handleAddIngredient} />
+          </View>
         </View>
       </View>
     </View>
@@ -74,13 +76,20 @@ const styles = StyleSheet.create({
   dropdownContainer: {
     backgroundColor: "black",
   },
+  dropdownContainer2: {
+    backgroundColor: "black",
+    marginTop: 20,
+  },
   input: {
     height: 40,
     borderColor: "gray",
     borderWidth: 1,
     color: "white",
-    marginBottom: 10,
+    marginBottom: 6,
     paddingHorizontal: 10,
+  },
+  buttonContainer: {
+    alignItems: "flex-end",
   },
 });
 
