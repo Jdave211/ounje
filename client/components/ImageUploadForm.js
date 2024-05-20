@@ -17,10 +17,10 @@ import { customAlphabet } from "nanoid/non-secure";
 import { Buffer } from "buffer";
 import axios from "axios";
 
-import { FOOD_ITEMS_PROMPT, RECIPES_PROMPT } from "../utils/prompts";
+import { FOOD_ITEMS_PROMPT } from "../utils/prompts";
 import { openai, extract_json, flatten_nested_objects } from "../utils/openai";
-import { supabase } from "../utils/supabase";
-
+import { supabase, store_image } from "../utils/supabase";
+import { generate_image } from "../utils/stability";
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 
 export default function ImageUploadForm({ onLoading }) {
@@ -143,58 +143,6 @@ export default function ImageUploadForm({ onLoading }) {
     return await Promise.all(base_64_images.map(upload_image));
   };
 
-  const generate_and_store_images = async (bucket, image_data) => {
-    const generate_recipe_image = async (prompt) => {
-      const recipe_image_form_data = {
-        prompt: prompt,
-        output_format: "jpeg",
-        model: "sd3",
-      };
-
-      const response = await axios.postForm(
-        `https://api.stability.ai/v2beta/stable-image/generate/sd3`,
-        axios.toFormData(recipe_image_form_data, new FormData()),
-        {
-          validateStatus: undefined,
-          responseType: "arraybuffer",
-          headers: {
-            Authorization: `Bearer ${process.env.STABILITY_API_KEY}`,
-            Accept: "image/*",
-          },
-        },
-      );
-
-      if (response.status !== 200) {
-        throw new Error(`${response.status}: ${response.data.toString()}`);
-      }
-
-      const recipe_image = Buffer.from(response.data);
-
-      return recipe_image;
-    };
-
-    const store_image = async (bucket, image_path, image) => {
-      let { data: response, error } = await supabase.storage
-        .from(bucket)
-        .upload(image_path, image);
-
-      if (error) throw new Error(error);
-
-      return response;
-    };
-
-    let responses = await Promise.allSettled(
-      image_data.map(async (image_data) => {
-        const { storage_path, prompt } = image_data;
-        const recipe_image = await generate_recipe_image(image_data);
-        const response = await store_image(bucket, storage_path, recipe_image);
-        return response;
-      }),
-    );
-
-    return responses;
-  };
-
   const sendImages = async () => {
     onLoading(true);
 
@@ -225,151 +173,21 @@ export default function ImageUploadForm({ onLoading }) {
 
     console.log({ food_items });
 
-    let async_cache_food_items = AsyncStorage.setItem(
-      "food_items",
-      JSON.stringify(food_items),
-    );
+    await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
 
-    let async_inventory_response = supabase
+    await supabase
       .from("inventory")
       .upsert({ user_id, images: image_paths }, { onConflict: ["user_id"] })
       .throwOnError();
 
-    let async_run_response = supabase
-      .from("runs")
-      .insert([{ user_id, images: image_paths }])
-      .select()
-      .throwOnError();
-
-    const [
-      {
-        value: { data: runs, error: runs_error },
-      },
-    ] = await Promise.allSettled([
-      async_run_response,
-      async_inventory_response,
-      async_cache_food_items,
-    ]);
-
-    if (runs_error) console.log("Error:", runs_error);
-    else console.log("Added User Run:", runs);
-
-    console.log("runs: ", runs);
-    current_run = runs[runs.length - 1];
-
-    console.log("current_run: ", current_run);
-
-    const food_item_records = flatten_nested_objects(food_items, [
+    const food_items_array = flatten_nested_objects(food_items, [
       "inventory",
       "category",
-    ]).map((record) => ({ run_id: current_run.id, ...record }));
-
-    console.log("food_item_records: ", food_item_records);
-
-    await supabase.from("food_items").upsert(food_item_records).throwOnError();
-
-    console.log("starting recipes");
-
-    let recipe_system_prompt = { role: "system", content: RECIPES_PROMPT };
-    let recipe_user_prompt = { role: "user", content: food_items_text };
-    let recipe_response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [recipe_system_prompt, recipe_user_prompt],
-    });
-
-    console.log({ recipe_response });
-
-    let { object: recipe_options } = extract_json(recipe_response);
-
-    console.log("recipe_options: ", recipe_options);
+    ]);
 
     await AsyncStorage.setItem(
-      "recipe_options",
-      JSON.stringify(recipe_options),
-    );
-
-    const recipe_image_bucket = "recipe_images";
-
-    const image_data = recipe_options.map((recipe_option) => ({
-      prompt:
-        "a zoomed out image showing the full dish of " +
-        recipe_option.image_prompt,
-      storage_path: `${current_run.id}/${recipe_option.name}.jpeg`,
-    }));
-
-    const async_generate_recipe_images_response = generate_and_store_images(
-      recipe_image_bucket,
-      image_data,
-    );
-
-    const recipe_option_records = recipe_options.map((recipe_option) => {
-      delete recipe_option.image_prompt;
-
-      let storage_path = `${current_run.id}/${recipe_option.name}.jpeg`;
-
-      let {
-        data: { publicUrl: image_url },
-      } = supabase.storage.from(recipe_image_bucket).getPublicUrl(storage_path);
-
-      recipe_option["image_url"] = image_url;
-
-      return recipe_option;
-    });
-
-    console.log("recipe_option_records: ", recipe_option_records);
-
-    const store_new_recipes = async (recipe_option_records) => {
-      const { data: existing_items, error: fetchError } = await supabase
-        .from("recipes")
-        .select("unique_id")
-        .in(
-          "unique_id",
-          recipe_option_records.map((recipe) => recipe.unique_id),
-        )
-        .throwOnError();
-
-      console.log({ existing_items });
-
-      let existing_unique_ids = new Set(
-        existing_items.map((item) => item.unique_id),
-      );
-
-      console.log({ existing_unique_ids });
-
-      const filtered_recipe_option_records = recipe_option_records.filter(
-        (recipe) => !existing_unique_ids.has(recipe.unique_id),
-      );
-
-      console.log({ filtered_recipe_option_records });
-
-      console.assert(
-        filtered_recipe_option_records.length + existing_unique_ids.length ===
-          recipe_option_records.length,
-      );
-
-      return await supabase
-        .from("recipes")
-        .insert(filtered_recipe_option_records)
-        .throwOnError();
-    };
-
-    const [recipe_image_gen_res, store_recipe_records_res] =
-      await Promise.allSettled([
-        async_generate_recipe_images_response,
-        store_new_recipes(recipe_option_records),
-      ]);
-
-    console.log({ recipe_image_gen_res });
-    console.log({ store_recipe_records_res });
-
-    console.assert(
-      recipe_image_gen_res.status === "fulfilled",
-      "generating recipe images failed",
-    );
-
-    console.assert(
-      store_recipe_records_res.status == "fulfilled",
-      "failed to store recipe records",
+      "food_items_array",
+      JSON.stringify(food_items_array),
     );
 
     onLoading(false);

@@ -14,3 +14,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false,
   },
 });
+
+export const store_image = async (bucket, image_path, image) => {
+  let { data: response, error } = await supabase.storage
+    .from(bucket)
+    .upload(image_path, image);
+
+  if (error) throw new Error(error);
+
+  return response;
+};
