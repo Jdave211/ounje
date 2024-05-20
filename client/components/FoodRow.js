@@ -25,18 +25,10 @@ const FoodRow = () => {
   const [food_images, set_food_images] = useState([]);
 
   useEffect(() => {
-    let recipe_bucket_paths = [
-      "Veggie Stir-Fry/28.jpeg",
-      "Tofu Stir-Fry/22.jpeg",
-      "Simple Chicken Salad/26.jpeg",
-    ];
-
     const fetch_food_images = async () => {
       const { data: retrieved_images, error } = await supabase
         .from("recipes") // Replace with your bucket name
         .select("image_url");
-
-      console.log({ retrieved_images });
 
       let image_urls = retrieved_images.map((response, i) => ({
         id: i,
