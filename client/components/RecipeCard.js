@@ -46,9 +46,9 @@ const RecipeCard = ({ recipe }) => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.name}>{generatedRecipes.name}</Text>
       <View style={styles.recipeContent}>
-        <View>
+        <View style={styles.imageTextContainer}>
+          <Text style={styles.name}>{generatedRecipes.name}</Text>
           <Image style={styles.image} source={pasta} />
         </View>
         <Text style={styles.subheading}>
@@ -69,31 +69,37 @@ const RecipeCard = ({ recipe }) => {
 
 const styles = StyleSheet.create({
   container: {
-    borderColor: "green",
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 10,
+    flex: 1,
+    padding: 20,
   },
-  recipeContent: {},
   name: {
-    color: "green",
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
+    marginRight: 10,
+    color: "green",
+  },
+  recipeContent: {
+    backgroundColor: "#f8f8f8",
+    padding: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "green",
+  },
+  imageTextContainer: {
+    flexDirection: "row",
+    alignItems: "center",
   },
   image: {
     width: 100,
-    alignSelf: "flex-end",
     height: 100,
   },
   subheading: {
-    color: "white",
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: "bold",
+    marginBottom: 5,
   },
   text: {
-    color: "white",
-    fontSize: 10,
-    fontWeight: "semi-bold",
+    fontSize: 16,
   },
 });
 
