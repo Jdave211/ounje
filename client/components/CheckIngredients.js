@@ -47,12 +47,13 @@ const CheckIngredients = () => {
         <View style={styles.dropdownContainer}>
           <TextInput
             style={styles.input}
-            placeholder="Include Ingredients"
+            placeholder="Add Ingredients"
             value={inputValue}
             onChangeText={setInputValue}
             placeholderTextColor="white"
+            autoCapitalize="none"
           />
-          <Button title="Add Ingredient" onPress={handleAddIngredient} />
+          <Button title="add" color="green" onPress={handleAddIngredient} />
         </View>
       </View>
     </View>
@@ -72,7 +73,6 @@ const styles = StyleSheet.create({
   },
   dropdownContainer: {
     backgroundColor: "black",
-    marginBottom: 20,
   },
   input: {
     height: 40,
