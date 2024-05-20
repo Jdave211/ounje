@@ -41,8 +41,6 @@ const styles = StyleSheet.create({
     color: "white",
   },
   foodRowContainer: {
-    // position: "absolute",
-    // bottom: 0,
     width: "100%",
     marginTop: 70,
   },
