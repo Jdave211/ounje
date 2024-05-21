@@ -2,11 +2,26 @@ import React from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import pasta from "../assets/pasta.png";
 import { Feather } from "@expo/vector-icons";
+import Toast from "react-native-toast-message";
 
 const RecipeCard = ({ recipe }) => {
   const [isSaved, setIsSaved] = React.useState(false);
-  const handleBookmarkPress = () => {
+  const handleSave = () => {
     setIsSaved(!isSaved);
+    if (isSaved) {
+      Toast.show({
+        type: "success",
+        text1: "Recipe Removed",
+        text2: `${generatedRecipes.name} has been removed.`,
+      });
+      return;
+    } else {
+      Toast.show({
+        type: "success",
+        text1: "Recipe Saved",
+        text2: `${generatedRecipes.name} has been saved to your recipes.`,
+      });
+    }
   };
   const generatedRecipes = {
     name: "Easy Veggie Pasta",
@@ -69,7 +84,7 @@ const RecipeCard = ({ recipe }) => {
           ))}
           <Text style={styles.subheading}>Instructions:</Text>
           <Text style={styles.text}>{generatedRecipes.instructions[0]}</Text>
-          <TouchableOpacity style={styles.save} onPress={handleBookmarkPress}>
+          <TouchableOpacity style={styles.save} onPress={handleSave}>
             <Feather
               name="bookmark"
               size={30}
