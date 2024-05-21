@@ -8,6 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web"
   },
+  "type": "module",
   "dependencies": {
     "@expo/metro-runtime": "@3.2.1",
     "@google/generative-ai": "^0.11.1",
