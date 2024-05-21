@@ -7,7 +7,8 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 // import './shim.js' // important to import this shim for crypto
 
 import { supabase } from "./utils/supabase";
-import SignIn from "./components/Auth";
+import Auth from "./components/Onboarding/Auth";
+import Welcome from "./components/Onboarding/Welcome";
 import CheckIngredients from "./components/CheckIngredients";
 import Layout from "./_layout";
 import Generate from "./screens/Generate";
@@ -80,10 +81,15 @@ export default function App() {
                 component={CheckIngredients}
                 options={{ headerShown: false }}
               />
+              <Tab.Screen
+                name="Auth"
+                component={Auth}
+                options={{ headerShown: false }}
+              />
             </Tab.Navigator>
           </Layout>
         ) : (
-          <SignIn />
+          <Welcome />
         )}
 
         <StatusBar style="light" />

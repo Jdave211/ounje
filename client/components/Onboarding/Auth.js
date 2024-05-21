@@ -1,6 +1,6 @@
 import React, { useState } from 'react' 
 import { Alert, StyleSheet, View, AppState, Text } from 'react-native' 
-import { supabase } from '../utils/supabase' 
+import { supabase } from '../../utils/supabase' 
 import { Button, Input } from 'react-native-elements'  
 
 AppState.addEventListener('change', (state) => {   
@@ -60,15 +60,7 @@ AppState.addEventListener('change', (state) => {
               placeholderTextColor='gray' // Add this line
             />
           </View>
-          <View style={[styles.verticallySpaced, styles.mt20]}>
-          <Button 
-            title="Sign in" 
-            disabled={loading} 
-            onPress={() => signInWithEmail()} 
-            buttonStyle={{ backgroundColor: 'green' }} // Add this line
-          />          
-          </View>
-          <View style={styles.verticallySpaced}>
+          <View style={[styles.verticallySpaced, styles.signupButton]}>
           <Button 
             title="Sign up" 
             disabled={loading} 
@@ -83,16 +75,14 @@ AppState.addEventListener('change', (state) => {
     
     const styles = StyleSheet.create({
       container: {
-        marginTop: -12,
+        flex: 1,
         padding: 12,
+        justifyContent: 'flex-start',
       },
       header: {
-        paddingTop: 58,
-        height: 100,
-        justifyContent: 'center',
-        alignItems: 'center',
         zIndex: 100,
         marginBottom: 20,
+        marginTop: 20,
       },
       headerText: {
         fontSize: 20,
@@ -101,16 +91,16 @@ AppState.addEventListener('change', (state) => {
         textAlign: 'center',
       },
       body: {
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: 120,
       },
       verticallySpaced: {
         paddingTop: 4,
         paddingBottom: 4,
-        alignSelf: 'stretch',
+        borderRadius: 10,
       },
       mt20: {
+        marginTop: 20,
+      },
+      signupButton: {
         marginTop: 20,
       },
     })    // ... (the same JSX as in the TypeScript version)   ) } 

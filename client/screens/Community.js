@@ -1,11 +1,12 @@
 import React from "react";
 import { View, Text } from "react-native";
 import CommunityCard from "../components/CommunityCard";
+import Welcome from "../components/Onboarding/Welcome";
 
 const Community = () => {
   return (
     <View style={styles.container}>
-      <CommunityCard />
+      <Welcome />
     </View>
   );
 };
