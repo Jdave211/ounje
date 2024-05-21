@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../utils/supabase' // Import your Supabase client (optional)
-import Account from '../components/Account'
+import Account from '../components/Onboarding/Account'
 import { View, StyleSheet, Text } from 'react-native'
 
 export default function Profile() {

@@ -1,25 +1,24 @@
-import React from "react";
+import React, { useState } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import pasta from "../assets/pasta.png";
-import { Entypo } from "@expo/vector-icons";
+import { FontAwesome } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 
-const RecipeCard = ({ recipe }) => {
-  const [isSaved, setIsSaved] = React.useState(false);
-  const handleSave = () => {
-    setIsSaved(!isSaved);
-    if (isSaved) {
+const CommunityCard = () => {
+  const [isLiked, setIsLiked] = useState(false);
+  const handleLike = () => {
+    setIsLiked(!isLiked);
+    if (isLiked) {
       Toast.show({
         type: "success",
-        text1: "Recipe Unsaved",
-        text2: `${generatedRecipes.name} has been unsaved from your recipes.`,
+        text1: "Recipe Unliked",
+        text2: `${generatedRecipes.name} has been unliked.`,
       });
-      return;
     } else {
       Toast.show({
         type: "success",
-        text1: "Recipe Saved",
-        text2: `${generatedRecipes.name} has been saved to your recipes.`,
+        text1: "Recipe Liked",
+        text2: `${generatedRecipes.name} has been liked.`,
       });
     }
   };
@@ -29,6 +28,7 @@ const RecipeCard = ({ recipe }) => {
       "A bowl of colorful pasta with mixed vegetables, topped with grated cheese, and garnished with a sprig of parsley.",
     duration: 30,
     servings: 4,
+    rating: 6.5,
     ingredients: [
       {
         name: "boxed pasta",
@@ -76,19 +76,15 @@ const RecipeCard = ({ recipe }) => {
             <Text style={styles.subheading}> Duration: </Text>
             <Text style={styles.text}>{generatedRecipes.duration} minutes</Text>
           </View>
-          <Text style={styles.subheading}>Ingredients:</Text>
-          {generatedRecipes.ingredients.map((ingredient, index) => (
-            <Text style={styles.text} key={index}>
-              {ingredient.displayed_text}
-            </Text>
-          ))}
-          <Text style={styles.subheading}>Instructions:</Text>
-          <Text style={styles.text}>{generatedRecipes.instructions[0]}</Text>
-          <TouchableOpacity style={styles.save} onPress={handleSave}>
-            <Entypo
-              name="bookmark"
-              size={24}
-              color={isSaved ? "green" : "white"}
+          <View style={{ flexDirection: "row" }}>
+            <Text style={styles.subheading}> Rating: </Text>
+            <Text style={styles.text}>{generatedRecipes.rating} / 10</Text>
+          </View>
+          <TouchableOpacity style={styles.like} onPress={handleLike}>
+            <FontAwesome
+              name="heartbeat"
+              size={30}
+              color={isLiked ? "red" : "white"}
             />
           </TouchableOpacity>
         </View>
@@ -114,9 +110,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "black",
+    flexDirection: "column",
   },
   underHeading: {
-    marginTop: -28,
+    marginTop: -20,
   },
   imageTextContainer: {
     flexDirection: "row",
@@ -136,10 +133,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "white",
   },
-  save: {
+  like: {
     alignSelf: "flex-end",
-    marginBottom: -20,
+    marginRight: 5,
   },
 });
 
-export default RecipeCard;
+export default CommunityCard;

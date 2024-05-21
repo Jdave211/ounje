@@ -1,10 +1,11 @@
 import React from "react";
 import { View, Text } from "react-native";
+import CommunityCard from "../components/CommunityCard";
 
 const Community = () => {
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>Community</Text>
+      <CommunityCard />
     </View>
   );
 };
@@ -12,8 +13,6 @@ const Community = () => {
 const styles = {
   container: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
     backgroundColor: "black",
   },
   text: {

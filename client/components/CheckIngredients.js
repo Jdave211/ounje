@@ -58,7 +58,7 @@ const CheckIngredients = () => {
     Toast.show({
       type: "info",
       text1: "Ingredients Removed",
-      text2: `Ingredients have been removed from the list.`,
+      text2: "Selected ingredients have been removed from the list.",
     });
   };
 
