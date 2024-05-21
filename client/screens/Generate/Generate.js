@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet } from "react-native";
-import FoodRow from "../components/FoodRow";
-import ImageUploadForm from "../components/ImageUploadForm";
-import Loading from "../components/Loading";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import Inventory from "./Inventory";
+
+// can import directories in the root directory now by using the @ symbol
+// instead of using long relative paths like ../../components/FoodRow :)
+// check out the babel.config.js file to see how this is configured
+import FoodRow from "@components/FoodRow";
+import ImageUploadForm from "@components/ImageUploadForm";
+import Loading from "@components/Loading";
 
 const Generate = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -23,6 +26,17 @@ const Generate = () => {
   return (
     <View style={styles.container}>
       <Text style={styles.text}>"[Insert intro]"</Text>
+      {__DEV__ && (
+        <View>
+          <Text style={styles.text}>This is a development environment</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate("CheckIngredients")}
+          >
+            <Text style={styles.text}>Developement navigation</Text>
+            <Text style={styles.text}>- Check Ingredients</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <View style={styles.foodRowContainer}>
         <FoodRow />
       </View>
