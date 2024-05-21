@@ -16,7 +16,7 @@ const Generate = () => {
 
   useEffect(() => {
     if (!isLoading) {
-      navigation.navigate("Inventory");
+      navigation.navigate("CheckIngredients");
     }
   }, [isLoading]);
 

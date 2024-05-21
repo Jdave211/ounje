@@ -8,6 +8,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 
 import { supabase } from "./utils/supabase";
 import SignIn from "./components/Auth";
+import CheckIngredients from "./components/CheckIngredients";
 import Layout from "./_layout";
 import Generate from "./screens/Generate";
 import SavedRecipes from "./screens/SavedRecipes";
@@ -72,6 +73,11 @@ export default function App() {
               <Tab.Screen
                 name="Profile"
                 component={Profile}
+                options={{ headerShown: false }}
+              />
+              <Tab.Screen
+                name="CheckIngredients"
+                component={CheckIngredients}
                 options={{ headerShown: false }}
               />
             </Tab.Navigator>
