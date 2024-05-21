@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,8 +9,34 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import RecipeCard from "@components/RecipeCard";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const SavedRecipes = () => {
+  const [user_id, setUserId] = useState(null);
+  const [recipeOptions, setRecipeOptions] = useState([]);
+
+  useEffect(() => {
+    const get_user_id = async () => {
+      let retrieved_user_id = await AsyncStorage.getItem("user_id");
+      setUserId(() => retrieved_user_id);
+    };
+
+    const fetch_recipe_options = async () => {
+      let retrieved_text = await AsyncStorage.getItem("recipe_options");
+      let retrieved_recipe_options = JSON.parse(retrieved_text);
+
+      console.log({ retrieved_text });
+      if (retrieved_recipe_options?.length > 0) {
+        setRecipeOptions(() => retrieved_recipe_options);
+      }
+    };
+
+    if (!user_id) {
+      get_user_id();
+    }
+    fetch_recipe_options();
+  }, [user_id]);
+
   const store_selected_recipes = async (selected_recipes) => {
     const recipe_image_bucket = "recipe_images";
 
@@ -64,10 +90,18 @@ const SavedRecipes = () => {
       .throwOnError();
   };
 
+  console.log({ recipeOptions });
+
   return (
     <View style={styles.container}>
       <Text style={styles.text}>Generated Recipe Options</Text>
-      <RecipeCard />
+      <ScrollView>
+        {recipeOptions.map((recipeOption, index) => (
+          <View key={index}>
+            <RecipeCard key={index} recipe={recipeOption} />
+          </View>
+        ))}
+      </ScrollView>
     </View>
   );
 };

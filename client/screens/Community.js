@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text } from "react-native";
 import CommunityCard from "../components/CommunityCard";
-import Welcome from "../components/Onboarding/Welcome";
+import Welcome from "../screens/Onboarding/Welcome";
 
 const Community = () => {
   return (

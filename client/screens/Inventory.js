@@ -19,8 +19,11 @@ import { FOOD_ITEMS } from "../utils/constants";
 import { RECIPES_PROMPT } from "@utils/prompts";
 import { generate_image } from "../utils/stability";
 import { entitle } from "@utils/helpers";
+import { useNavigation } from "@react-navigation/native";
 
 const Inventory = () => {
+  const navigation = useNavigation();
+
   const [selected, setSelected] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -85,7 +88,7 @@ const Inventory = () => {
   const generate_recipes = async () => {
     let async_run_response = supabase
       .from("runs")
-      .insert([{ user_id, images: image_paths }])
+      .insert([{ user_id, images: inventoryImages }])
       .select()
       .throwOnError();
 
@@ -120,19 +123,23 @@ const Inventory = () => {
 
     console.log("starting recipes");
 
-    let recipe_system_prompt = { role: "system", content: RECIPES_PROMPT };
-    let recipe_user_prompt = {
-      role: "user",
-      content: selected_food_items.join(", "),
-    };
-    let recipe_response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [recipe_system_prompt, recipe_user_prompt],
-    });
+    const { data: recipe_response } = await axios.get(
+      "https://api.spoonacular.com/recipes/findByIngredients",
+      {
+        params: {
+          apiKey: process.env.SPOONACULAR_API_KEY,
+          ingredients: food_items_array.map(({ name }) => name).join(", "),
+          number: 7,
+          ranking: 1,
+        },
+      },
+    );
 
-    console.log({ recipe_response });
+    let recipe_options = recipe_response;
 
-    let { object: recipe_options } = extract_json(recipe_response);
+    console.log({ recipe_options });
+
+    // let { object: recipe_options } = extract_json(recipe_response);
 
     console.log("recipe_options: ", recipe_options);
 
@@ -143,6 +150,7 @@ const Inventory = () => {
 
     // navigate to recipes screen to select options to keep
     // once selected, save the selected options to the database
+    navigation.navigate("RecipeOptions");
   };
 
   return (

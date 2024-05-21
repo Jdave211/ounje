@@ -29,11 +29,18 @@ const Generate = () => {
       {__DEV__ && (
         <View>
           <Text style={styles.text}>This is a development environment</Text>
+          <Text style={styles.text}>Developement navigation</Text>
+
           <TouchableOpacity
             onPress={() => navigation.navigate("CheckIngredients")}
           >
-            <Text style={styles.text}>Developement navigation</Text>
             <Text style={styles.text}>- Check Ingredients</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate("RecipeOptions")}
+          >
+            <Text style={styles.text}>- Recipe Options</Text>
           </TouchableOpacity>
         </View>
       )}

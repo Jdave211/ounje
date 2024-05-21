@@ -10,17 +10,6 @@ axios
       apiKey: api_key,
       ingredients: "apples,flour,sugar",
       number: 5,
-      ranking: 1,
-    },
-  })
-  .then((res) => console.log(res.data));
-
-axios
-  .get("https://api.spoonacular.com/recipes/findByIngredients", {
-    params: {
-      apiKey: api_key,
-      ingredients: "apples,flour,sugar",
-      number: 5,
       ranking: 2,
     },
   })

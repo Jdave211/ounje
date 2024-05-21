@@ -1,55 +1,72 @@
 import React from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
-import pasta from "../assets/pasta.png";
 import { Entypo } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 
+// recipe:
+// - id
+// usedIngredients: [],
+// missedIngredients: [],
+// title: Text,
+// image: Text,
+// usedIngredientCount: Number,
+// missedIngredientCount: Number,
+//
+// retrieve from database if recipes are stored
+// - likes: Number
+// - bookmarks: Number
+//
+
 const RecipeCard = ({ recipe }) => {
+  // const [recipeDetails, setRecipeDetails] = useState(null);
   const [isSaved, setIsSaved] = React.useState(false);
+
+  // useEffect()
   const handleSave = () => {
     setIsSaved(!isSaved);
     if (isSaved) {
       Toast.show({
         type: "success",
         text1: "Recipe Unsaved",
-        text2: `${generatedRecipes.name} has been unsaved from your recipes.`,
+        text2: `${recipe.title} has been unsaved from your recipes.`,
       });
       return;
     } else {
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${generatedRecipes.name} has been saved to your recipes.`,
+        text2: `${recipe.title} has been saved to your recipes.`,
       });
     }
   };
+
   const generatedRecipes = {
-    name: "Easy Veggie Pasta",
+    title: "Easy Veggie Pasta",
     image_prompt:
       "A bowl of colorful pasta with mixed vegetables, topped with grated cheese, and garnished with a sprig of parsley.",
     duration: 30,
     servings: 4,
     ingredients: [
       {
-        name: "boxed pasta",
+        title: "boxed pasta",
         quantity: 1,
         displayed_text: "1 box of pasta",
         already_have: false,
       },
       {
-        name: "canned tomatoes",
+        title: "canned tomatoes",
         quantity: 1,
         displayed_text: "1 can of tomatoes",
         already_have: false,
       },
       {
-        name: "frozen mixed vegetables",
+        title: "frozen mixed vegetables",
         quantity: 1,
         displayed_text: "1 bag of frozen mixed vegetables",
         already_have: false,
       },
       {
-        name: "cheese blocks",
+        title: "cheese blocks",
         quantity: 1,
         displayed_text: "1 block of cheese (for grating)",
         already_have: false,
@@ -68,22 +85,22 @@ const RecipeCard = ({ recipe }) => {
     <View style={styles.container}>
       <View style={styles.recipeContent}>
         <View style={styles.imageTextContainer}>
-          <Text style={styles.name}>{generatedRecipes.name}</Text>
-          <Image style={styles.image} source={pasta} />
+          <Text style={styles.title}>{recipe.title}</Text>
+          <Image style={styles.image} source={{ uri: recipe.image }} />
         </View>
         <View style={styles.underHeading}>
           <View style={{ flexDirection: "row" }}>
             <Text style={styles.subheading}> Duration: </Text>
-            <Text style={styles.text}>{generatedRecipes.duration} minutes</Text>
+            {/* <Text style={styles.text}>{recipe.duration} minutes</Text> */}
           </View>
           <Text style={styles.subheading}>Ingredients:</Text>
-          {generatedRecipes.ingredients.map((ingredient, index) => (
+          {recipe.usedIngredients.map((ingredient, index) => (
             <Text style={styles.text} key={index}>
-              {ingredient.displayed_text}
+              {ingredient.originalName}
             </Text>
           ))}
           <Text style={styles.subheading}>Instructions:</Text>
-          <Text style={styles.text}>{generatedRecipes.instructions[0]}</Text>
+          {/* <Text style={styles.text}>{recipe.instructions[0]}</Text> */}
           <TouchableOpacity style={styles.save} onPress={handleSave}>
             <Entypo
               name="bookmark"
@@ -101,7 +118,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  name: {
+  title: {
     fontSize: 24,
     fontWeight: "bold",
     marginRight: 20,

@@ -7,9 +7,8 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 // import './shim.js' // important to import this shim for crypto
 
 import { supabase } from "./utils/supabase";
-import Auth from "./components/Onboarding/Auth";
-import Welcome from "./components/Onboarding/Welcome";
-import CheckIngredients from "./components/CheckIngredients";
+import Auth from "./screens/Onboarding/Auth";
+import Welcome from "./screens/Onboarding/Welcome";
 import Layout from "./_layout";
 import SavedRecipes from "./screens/SavedRecipes";
 import Inventory from "./screens/Inventory";
