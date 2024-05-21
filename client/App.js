@@ -8,13 +8,14 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 
 import { supabase } from "./utils/supabase";
 import SignIn from "./components/Auth";
-import CheckIngredients from "./components/CheckIngredients";
 import Layout from "./_layout";
-import Generate from "./screens/Generate";
 import SavedRecipes from "./screens/SavedRecipes";
 import Inventory from "./screens/Inventory";
 import Profile from "./screens/Profile";
 import Community from "./screens/Community";
+import Generate from "./screens/Generate/Generate";
+import CheckIngredients from "./screens/Generate/CheckIngredients";
+import RecipeOptions from "./screens/Generate/RecipeOptions";
 
 const Tab = createBottomTabNavigator();
 
@@ -80,6 +81,11 @@ export default function App() {
                 component={CheckIngredients}
                 options={{ headerShown: false }}
               />
+              <Tab.Screen
+                name="RecipeOptions"
+                component={RecipeOptions}
+                options={{ headerShown: false }}
+              />
             </Tab.Navigator>
           </Layout>
         ) : (
@@ -97,6 +103,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "black",
+    color: "white",
   },
   text: {
     fontSize: 20,
@@ -113,6 +120,6 @@ const styles = StyleSheet.create({
     backgroundColor: "red",
     opacity: 0.8,
     borderWidth: 2,
-    borderColor: "pink",
+    borderColor: "pink", // hun?
   },
 });

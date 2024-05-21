@@ -1,7 +1,9 @@
-const flattenNestedObjects = (nestedObject, keys) => {
+export const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+export const entitle = (name) => capitalize(name.split("_").join(" "));
+
+export const flatten_nested_objects = (nestedObject, keys) => {
   const flatten = (obj, keys, parentKeys = {}) => {
     if (keys.length === 0) {
-      console.log({ obj });
       return obj.map((item) => ({ ...parentKeys, ...item }));
     }
 
@@ -17,28 +19,42 @@ const flattenNestedObjects = (nestedObject, keys) => {
   return flatten(nestedObject, keys);
 };
 
-// Example usage
-const food_items = {
-  fridge: {
-    fruits: [
-      { name: "apple", quantity: 5 },
-      { name: "banana", quantity: 7 },
-    ],
-    vegetables: [{ name: "carrot", quantity: 10 }],
-  },
-  pantry: {
-    grains: [{ name: "rice", quantity: 20 }],
-    spices: [{ name: "pepper", quantity: 15 }],
-  },
-};
+/* Example Usage
+  const records = [
+    { inventory: "fridge", category: "fruits", name: "apple", quantity: 5 },
+    { inventory: "fridge", category: "fruits", name: "banana", quantity: 7 },
+    { inventory: "fridge", category: "vegetables", name: "carrot", quantity: 10 },
+    { inventory: "pantry", category: "grains", name: "rice", quantity: 20 },
+    { inventory: "pantry", category: "spices", name: "pepper", quantity: 15 },
+  ];
+  const keys = ["inventory", "category"];
+  const grouped_records = group_nested_objects(records, keys);
 
-const keys = ["inventory", "category"];
+  console.log(grouped_records);
 
-const flattenedRecords = flattenNestedObjects(food_items, keys);
+  // outputs:
+  {
+    "fridge": {
+      "fruits": [
+        { "name": "apple", "quantity": 5 },
+        { "name": "banana", "quantity": 7 }
+      ],
+      "vegetables": [
+        { "name": "carrot", "quantity": 10 }
+      ]
+    },
+    "pantry": {
+      "grains": [
+        { "name": "rice", "quantity": 20 }
+      ],
+      "spices": [
+        { "name": "pepper", "quantity": 15 }
+      ]
+    }
+  }
+*/
 
-console.log(flattenedRecords);
-
-const groupNestedObjects = (records, keys) => {
+export const group_nested_objects = (records, keys) => {
   const group = (records, keys) => {
     if (keys.length === 0) {
       return records;
@@ -76,18 +92,3 @@ const groupNestedObjects = (records, keys) => {
 
   return buildNestedStructure(group(records, keys), keys);
 };
-
-// Example usage
-const records = [
-  { inventory: "fridge", category: "fruits", name: "apple", quantity: 5 },
-  { inventory: "fridge", category: "fruits", name: "banana", quantity: 7 },
-  { inventory: "fridge", category: "vegetables", name: "carrot", quantity: 10 },
-  { inventory: "pantry", category: "grains", name: "rice", quantity: 20 },
-  { inventory: "pantry", category: "spices", name: "pepper", quantity: 15 },
-];
-
-const group_keys = ["inventory", "category"];
-
-const groupedRecords = groupNestedObjects(records, group_keys);
-
-console.log(JSON.stringify(groupedRecords, null, 2));
