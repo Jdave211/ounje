@@ -6,7 +6,8 @@ import Toast from "react-native-toast-message";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { supabase } from "./utils/supabase";
 import Welcome from "./screens/Onboarding/Welcome";
-import FirstLogin from "./screens/Onboarding/FirstLogin"; 
+import FirstLogin from "./screens/Onboarding/FirstLogin";
+import Auth from "./screens/Onboarding/Auth";
 import Layout from "./_layout";
 import SavedRecipes from "./screens/SavedRecipes";
 import Inventory from "./screens/Inventory";
@@ -25,7 +26,10 @@ export default function App() {
   useEffect(() => {
     const getSession = async () => {
       setLoading(true);
-      const { data: { session }, error } = await supabase.auth.getSession();
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession();
       if (error) {
         console.error("Error fetching session:", error);
         setLoading(false);
@@ -36,18 +40,18 @@ export default function App() {
 
       if (session?.user) {
         const userId = session.user.id;
-        console.log('User signed in, fetching profile...'); // Debug log
+        console.log("User signed in, fetching profile..."); // Debug log
 
         const { data: userData, error: userError } = await supabase
-          .from('profiles')
-          .select('name')
-          .eq('id', userId)
+          .from("profiles")
+          .select("name")
+          .eq("id", userId)
           .single();
 
         if (userError) {
           console.error("Error fetching user metadata:", userError);
         } else if (!userData || !userData.name) {
-          console.log('First login detected'); // Debug log
+          console.log("First login detected"); // Debug log
           setFirstLogin(true);
         } else {
           setFirstLogin(false);
@@ -57,28 +61,30 @@ export default function App() {
 
     getSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session?.user) {
-        const userId = session.user.id;
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setSession(session);
+        if (session?.user) {
+          const userId = session.user.id;
 
-        supabase
-          .from('profiles')
-          .select('name')
-          .eq('id', userId)
-          .single()
-          .then(({ data: userData, error: userError }) => {
-            if (userError) {
-              console.error("Error fetching user metadata:", userError);
-            } else if (!userData || !userData.name) {
-              console.log('First login detected in subscription'); // Debug log
-              setFirstLogin(true);
-            } else {
-              setFirstLogin(false);
-            }
-          });
+          supabase
+            .from("profiles")
+            .select("name")
+            .eq("id", userId)
+            .single()
+            .then(({ data: userData, error: userError }) => {
+              if (userError) {
+                console.error("Error fetching user metadata:", userError);
+              } else if (!userData || !userData.name) {
+                console.log("First login detected in subscription"); // Debug log
+                setFirstLogin(true);
+              } else {
+                setFirstLogin(false);
+              }
+            });
+        }
       }
-    });
+    );
 
     return () => {
       if (authListener?.subscription) {
@@ -100,7 +106,10 @@ export default function App() {
       <View style={styles.container}>
         {session ? (
           firstLogin ? (
-            <FirstLogin onProfileComplete={() => setFirstLogin(false)} session={session} /> 
+            <FirstLogin
+              onProfileComplete={() => setFirstLogin(false)}
+              session={session}
+            />
           ) : (
             <Layout>
               <Tab.Navigator screenOptions={{ tabBarStyle: styles.navigator }}>
@@ -108,7 +117,7 @@ export default function App() {
                   name="Generate"
                   component={Generate}
                   options={{ headerShown: false }}
-                  initialParams={{ session }} 
+                  initialParams={{ session }}
                 />
                 <Tab.Screen
                   name="SavedRecipes"
@@ -129,11 +138,21 @@ export default function App() {
                   name="Profile"
                   component={Profile}
                   options={{ headerShown: false }}
-                  initialParams={{ session }} 
+                  initialParams={{ session }}
                 />
                 <Tab.Screen
                   name="CheckIngredients"
                   component={CheckIngredients}
+                  options={{ headerShown: false }}
+                />
+                <Tab.Screen
+                  name="RecipeOptions"
+                  component={RecipeOptions}
+                  options={{ headerShown: false }}
+                />
+                <Tab.Screen
+                  name="Auth"
+                  component={Auth}
                   options={{ headerShown: false }}
                 />
               </Tab.Navigator>

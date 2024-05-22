@@ -35,28 +35,31 @@ const Inventory = () => {
       setUserId(retrieved_user_id);
     };
 
-    const fetch_food_items = async (userId) => {
-      const { data: inventory, error } = await supabase
-        .from("inventory")
-        .select("food_items, images")
-        .eq("user_id", userId)
-        .single();
+    const fetch_food_items = async () => {
+      let retrieved_text = await AsyncStorage.getItem("food_items");
+      let retrieved_food_items = JSON.parse(retrieved_text);
 
-      if (error) {
-        console.error("Error fetching food items:", error);
-      } else if (inventory) {
-        const foodItems = inventory.food_items ? JSON.parse(inventory.food_items) : [];
-        setFoodItems(foodItems);
-        await AsyncStorage.setItem("food_items", JSON.stringify(foodItems)); // Store updated food items in AsyncStorage
-        console.log("Food Items:", foodItems);
-        fetch_inventory_images(inventory.images);
-      } else {
-        console.log("No inventory found for user_id:", userId);
+      retrieved_text = await AsyncStorage.getItem("food_items_array");
+      let retrieved_food_items_array = JSON.parse(retrieved_text);
+
+      if (retrieved_food_items) {
+        setFoodItems(() => retrieved_food_items);
+      }
+
+      if (retrieved_food_items_array?.length > 0) {
+        setFoodItemsArray(() => retrieved_food_items_array);
       }
     };
 
-    const fetch_inventory_images = async (images) => {
-      const image_paths = images.map((image) =>
+    const fetch_inventory_images = async () => {
+      let {
+        data: [inventory],
+      } = await supabase
+        .from("inventory")
+        .select("images")
+        .eq("user_id", user_id);
+
+      let image_paths = inventory.images.map((image) =>
         image.replace("inventory_images/", "")
       );
 
@@ -92,6 +95,73 @@ const Inventory = () => {
     // Optionally, you can also update the food_items in the database here
     // Example:
     // await supabase.from("inventory").update({ food_items: JSON.stringify(updatedFoodItems) }).eq("user_id", user_id);
+  };
+  const generate_recipes = async () => {
+    let async_run_response = supabase
+      .from("runs")
+      .insert([{ user_id, images: inventoryImages }])
+      .select()
+      .throwOnError();
+
+    const [
+      {
+        value: { data: runs, error: runs_error },
+      },
+    ] = await Promise.allSettled([async_run_response]);
+
+    if (runs_error) console.log("Error:", runs_error);
+    else console.log("Added User Run:", runs);
+
+    console.log("runs: ", runs);
+    current_run = runs[runs.length - 1];
+
+    console.log("current_run: ", current_run);
+
+    let selected_set = new Set(selected);
+    const selected_food_items = food_items_array.filter(
+      (item) =>
+        // selected_set.has(item.name),
+        true
+    );
+    const food_item_records = selected_food_items.map((record) => ({
+      run_id: current_run.id,
+      ...record,
+    }));
+
+    console.log("food_item_records: ", food_item_records);
+
+    await supabase.from("food_items").upsert(food_item_records).throwOnError();
+
+    console.log("starting recipes");
+
+    const { data: recipe_response } = await axios.get(
+      "https://api.spoonacular.com/recipes/findByIngredients",
+      {
+        params: {
+          apiKey: process.env.SPOONACULAR_API_KEY,
+          ingredients: food_items_array.map(({ name }) => name).join(", "),
+          number: 7,
+          ranking: 1,
+        },
+      }
+    );
+
+    let recipe_options = recipe_response;
+
+    console.log({ recipe_options });
+
+    // let { object: recipe_options } = extract_json(recipe_response);
+
+    console.log("recipe_options: ", recipe_options);
+
+    await AsyncStorage.setItem(
+      "recipe_options",
+      JSON.stringify(recipe_options)
+    );
+
+    // navigate to recipes screen to select options to keep
+    // once selected, save the selected options to the database
+    navigation.navigate("RecipeOptions");
   };
 
   return (
@@ -135,7 +205,7 @@ const Inventory = () => {
         <ScrollView style={styles.overlay}>
           {/* Food Items */}
           <MultipleSelectList
-          selectAll={true}
+            selectAll={true}
             setSelected={setSelected}
             selectedTextStyle={styles.selectedTextStyle}
             dropdownTextStyles={{ color: "white" }}

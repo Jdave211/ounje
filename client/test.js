@@ -13,15 +13,16 @@ axios
       ranking: 2,
     },
   })
-  .then((res) => console.log(res.data));
+  .then((res) => console.log(res.data))
+  .catch((res) => console.log(res.response));
 
-axios
-  .get("https://api.spoonacular.com/recipes/findByIngredients", {
-    params: {
-      apiKey: api_key,
-      ingredients: "apples,flour,sugar",
-      number: 5,
-      ignorePantry: true,
-    },
-  })
-  .then((res) => console.log(res.data));
+// axios
+//   .get("https://api.spoonacular.com/recipes/findByIngredients", {
+//     params: {
+//       apiKey: api_key,
+//       ingredients: "apples,flour,sugar",
+//       number: 5,
+//       ignorePantry: true,
+//     },
+//   })
+//   .then((res) => console.log(res.data));

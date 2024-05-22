@@ -1,7 +1,10 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import { Entypo } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
+import { get_recipe_details } from "../utils/spoonacular";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "../utils/supabase";
 
 // recipe:
 // - id
@@ -17,11 +20,40 @@ import Toast from "react-native-toast-message";
 // - bookmarks: Number
 //
 
-const RecipeCard = ({ recipe }) => {
-  // const [recipeDetails, setRecipeDetails] = useState(null);
+const RecipeCard = ({ id }) => {
+  const [user_id, setUserId] = useState(null);
+  const [recipeDetails, setRecipeDetails] = useState(null);
   const [isSaved, setIsSaved] = React.useState(false);
 
-  // useEffect()
+  useEffect(() => {
+    const get_user_id = async () => {
+      let retrieved_user_id = await AsyncStorage.getItem("user_id");
+      setUserId(() => retrieved_user_id);
+    };
+
+    const fetch_recipe_details = async () => {
+      const detail = await get_recipe_details(id);
+      console.log({ detail });
+      setRecipeDetails(() => detail);
+
+      const { data: saved_data } = await supabase
+        .from("saved_recipes")
+        .select()
+        .eq("user_id", user_id)
+        .eq("recipe_id", detail.id)
+        .throwOnError();
+
+      console.log({ saved_data });
+    };
+
+    if (!user_id) {
+      get_user_id();
+    } else {
+      fetch_recipe_details();
+    }
+  }, [user_id]);
+
+  console.log({ recipeDetails });
   const handleSave = () => {
     setIsSaved(!isSaved);
     if (isSaved) {
@@ -40,76 +72,39 @@ const RecipeCard = ({ recipe }) => {
     }
   };
 
-  const generatedRecipes = {
-    title: "Easy Veggie Pasta",
-    image_prompt:
-      "A bowl of colorful pasta with mixed vegetables, topped with grated cheese, and garnished with a sprig of parsley.",
-    duration: 30,
-    servings: 4,
-    ingredients: [
-      {
-        title: "boxed pasta",
-        quantity: 1,
-        displayed_text: "1 box of pasta",
-        already_have: false,
-      },
-      {
-        title: "canned tomatoes",
-        quantity: 1,
-        displayed_text: "1 can of tomatoes",
-        already_have: false,
-      },
-      {
-        title: "frozen mixed vegetables",
-        quantity: 1,
-        displayed_text: "1 bag of frozen mixed vegetables",
-        already_have: false,
-      },
-      {
-        title: "cheese blocks",
-        quantity: 1,
-        displayed_text: "1 block of cheese (for grating)",
-        already_have: false,
-      },
-    ],
-    instructions: [
-      "Bring a large pot of water to a boil. Add a pinch of salt and the boxed pasta. Cook according to the package instructions until al dente.",
-      "While the pasta is cooking, in a separate pan, heat the canned tomatoes over medium heat until they start to simmer.",
-      "Add the frozen mixed vegetables to the tomato sauce, and cook until the vegetables are heated through, about 5-7 minutes.",
-      "Drain the cooked pasta and return it to the pot. Pour the vegetable-tomato sauce over the pasta and mix well.",
-      "Grate the cheese block and sprinkle it over the pasta before serving.",
-    ],
-  };
-
   return (
     <View style={styles.container}>
-      <View style={styles.recipeContent}>
-        <View style={styles.imageTextContainer}>
-          <Text style={styles.title}>{recipe.title}</Text>
-          <Image style={styles.image} source={{ uri: recipe.image }} />
-        </View>
-        <View style={styles.underHeading}>
-          <View style={{ flexDirection: "row" }}>
-            <Text style={styles.subheading}> Duration: </Text>
-            {/* <Text style={styles.text}>{recipe.duration} minutes</Text> */}
+      {recipeDetails && (
+        <View style={styles.recipeContent}>
+          <View style={styles.imageTextContainer}>
+            <Text style={styles.title}>{recipeDetails.title}</Text>
+            <Image style={styles.image} source={{ uri: recipeDetails.image }} />
           </View>
-          <Text style={styles.subheading}>Ingredients:</Text>
-          {recipe.usedIngredients.map((ingredient, index) => (
-            <Text style={styles.text} key={index}>
-              {ingredient.originalName}
-            </Text>
-          ))}
-          <Text style={styles.subheading}>Instructions:</Text>
-          {/* <Text style={styles.text}>{recipe.instructions[0]}</Text> */}
-          <TouchableOpacity style={styles.save} onPress={handleSave}>
-            <Entypo
-              name="bookmark"
-              size={24}
-              color={isSaved ? "green" : "white"}
-            />
-          </TouchableOpacity>
+          <View style={styles.underHeading}>
+            <View style={{ flexDirection: "row" }}>
+              <Text style={styles.subheading}> Duration: </Text>
+              <Text style={styles.text}>
+                {recipeDetails.readyInMinutes} minutes
+              </Text>
+            </View>
+            <Text style={styles.subheading}>Ingredients:</Text>
+            {/* {recipeDetails.usedIngredients.map((ingredient, index) => (
+              <Text style={styles.text} key={index}>
+                {ingredient.originalName}
+              </Text>
+            ))} */}
+            <Text style={styles.subheading}>Instructions:</Text>
+            {/* <Text style={styles.text}>{recipeDetails.instructions[0]}</Text> */}
+            <TouchableOpacity style={styles.save} onPress={handleSave}>
+              <Entypo
+                name="bookmark"
+                size={24}
+                color={isSaved ? "green" : "white"}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 };
