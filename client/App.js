@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
+// import { AppRegistry } from 'react-native';
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 // import './shim.js' // important to import this shim for crypto
 
@@ -99,6 +100,9 @@ export default function App() {
     </NavigationContainer>
   );
 }
+
+// AppRegistry.registerComponent("main", () => App);
+
 
 const styles = StyleSheet.create({
   container: {

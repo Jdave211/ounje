@@ -1,4 +1,6 @@
 .env
 node_modules/
+.expo
 package-lock.json
 **/package-lock.json
+

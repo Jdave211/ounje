@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Alert, StyleSheet, View, AppState, Text } from "react-native";
+import { Alert, StyleSheet, View, AppState, Text, TouchableWithoutFeedback, Keyboard } from "react-native";
 import { supabase } from "../../utils/supabase";
 import { Button, Input } from "react-native-elements";
 
@@ -16,24 +16,23 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function signInWithEmail() {
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) Alert.alert(error.message);
-    setLoading(false);
-  }
-
   async function signUpWithEmail() {
-    setLoading(true);
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) Alert.alert(error.message);
-    setLoading(false);
+    setLoading(true)
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.signUp({
+      email: email,
+      password: password,
+    })
+
+    if (error) Alert.alert(error.message)
+    else if (!session) Alert.alert('Please check your inbox for email verification!')
+    setLoading(false)
   }
 
   return (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerText}>Oúnje</Text>
@@ -64,15 +63,7 @@ export default function Auth() {
             placeholderTextColor="gray" // Add this line
           />
         </View>
-        <View style={[styles.verticallySpaced, styles.mt20]}>
-          <Button
-            title="Sign in"
-            disabled={loading}
-            onPress={() => signInWithEmail()}
-            buttonStyle={{ backgroundColor: "green" }} // Add this line
-          />
-        </View>
-        <View style={styles.verticallySpaced}>
+        <View style={[styles.verticallySpaced, styles.signupButton]}>
           <Button
             title="Sign up"
             disabled={loading}
@@ -82,6 +73,7 @@ export default function Auth() {
           </View>
           </View>
         </View>
+      </TouchableWithoutFeedback>
       )
     }
     
@@ -113,6 +105,6 @@ export default function Auth() {
         marginTop: 20,
       },
       signupButton: {
-        marginTop: 20,
+        marginTop: 50,
       },
     })    // ... (the same JSX as in the TypeScript version)   ) } 

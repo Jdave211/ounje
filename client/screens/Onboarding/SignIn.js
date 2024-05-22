@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, StyleSheet, View, Text } from 'react-native';
+import { Alert, StyleSheet, View, Text, TouchableWithoutFeedback, Keyboard } from 'react-native';
 import { supabase } from '../../utils/supabase';
 import { Button, Input } from 'react-native-elements';
 
@@ -15,54 +15,65 @@ export default function SignIn() {
     setLoading(false);
   }
 
+  async function handleForgotPassword() {
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    if (error) {
+      Alert.alert('Error sending password reset email', error.message);
+    } else {
+      Alert.alert('Password reset email sent', 'Please check your email for instructions to reset your password.');
+    }
+  }
+
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerText}>Oúnje</Text>
-      </View>
-      <View style={styles.body}>
-        <View style={[styles.verticallySpaced, styles.mt20]}>
-          <Input
-            label="Email"
-            leftIcon={{ type: 'font-awesome', name: 'envelope' }}
-            onChangeText={(text) => setEmail(text)}
-            value={email}
-            placeholder="email@address.com"
-            autoCapitalize="none"
-            inputStyle={{ color: 'white' }}
-            placeholderTextColor="gray"
-          />
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerText}>Oúnje</Text>
         </View>
-        <View style={styles.verticallySpaced}>
-          <Input
-            label="Password"
-            leftIcon={{ type: 'font-awesome', name: 'lock' }}
-            onChangeText={(text) => setPassword(text)}
-            value={password}
-            secureTextEntry={true}
-            placeholder="Password"
-            autoCapitalize="none"
-            inputStyle={{ color: 'white' }}
-            placeholderTextColor="gray"
-          />
-        </View>
-        <View style={[styles.verticallySpaced, {flexDirection:'column'}]}>
-          <Button
-            title="Sign in"
-            disabled={loading}
-            onPress={signInWithEmail}
-            buttonStyle={{ backgroundColor: 'green', height: 50}}
-          />
-          <Button
-            title="Forgot password?"
-            type="clear"
-            buttonStyle={{ backgroundColor: 'transparent', marginTop: 10}}
-            titleStyle={{ fontSize: 13, color: 'white'}}
-            onPress={() => Alert.alert('Forgot password')}
+        <View style={styles.body}>
+          <View style={[styles.verticallySpaced, styles.mt20]}>
+            <Input
+              label="Email"
+              leftIcon={{ type: 'font-awesome', name: 'envelope' }}
+              onChangeText={(text) => setEmail(text)}
+              value={email}
+              placeholder="email@address.com"
+              autoCapitalize="none"
+              inputStyle={{ color: 'white' }}
+              placeholderTextColor="gray"
             />
+          </View>
+          <View style={styles.verticallySpaced}>
+            <Input
+              label="Password"
+              leftIcon={{ type: 'font-awesome', name: 'lock' }}
+              onChangeText={(text) => setPassword(text)}
+              value={password}
+              secureTextEntry={true}
+              placeholder="Password"
+              autoCapitalize="none"
+              inputStyle={{ color: 'white' }}
+              placeholderTextColor="gray"
+            />
+          </View>
+          <View style={[styles.verticallySpaced, {flexDirection:'column'}]}>
+            <Button
+              title="Sign in"
+              disabled={loading}
+              onPress={signInWithEmail}
+              buttonStyle={{ backgroundColor: 'green', height: 50}}
+            />
+            <Button
+              title="Forgot password?"
+              type="clear"
+              buttonStyle={{ backgroundColor: 'transparent', marginTop: 10}}
+              titleStyle={{ fontSize: 13, color: 'white'}}
+              onPress={handleForgotPassword}
+              />
+          </View>
         </View>
       </View>
-    </View>
+    </TouchableWithoutFeedback>
   );
 }
 

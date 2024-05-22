@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
       color: 'white',
     },
     modalView: {
-        flex: 0.50,
+        flex: 0.68,
         backgroundColor: "black",
         justifyContent: "flex-end",
         marginTop:'auto',
