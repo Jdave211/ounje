@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Alert, StyleSheet, View, Text, TouchableWithoutFeedback, Keyboard } from 'react-native';
 import { supabase } from '../../utils/supabase';
 import { Button, Input } from 'react-native-elements';
-import { Entypo } from '@expo/vector-icons';
+import FirstLogin from './FirstLogin'; // Import your FirstLogin component
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
@@ -15,19 +15,32 @@ export default function SignIn() {
     setLoading(true);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
+
     if (error) {
       Alert.alert(error.message);
     } else if (data.user) {
-      const { data, error } = await supabase
-        .from('users')
-        .select(`user_metadata`)
-        .eq('id', user.id)
+      const userId = data.user.id;
+
+      // Check the profiles table for user information
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles') // Ensure this is the correct table name
+        .select('name')
+        .eq('id', userId) // Ensure this is the correct column name
         .single();
 
-      if (error) {
-        Alert.alert(error.message);
-      } else if (data && Object.keys(data.user_metadata).length === 0) {
-        setFirstLogin(true); // Set firstLogin to true if user_metadata is empty
+      if (profileError) {
+        Alert.alert(profileError.message);
+      } else {
+        console.log('Profile data:', profileData); // Debug statement to log profile data
+
+        // Check if full_name is null or empty
+        if (!profileData || !profileData.name) {
+          console.log('First login detected'); // Debug statement for first login detection
+          setFirstLogin(true);
+        } else {
+          console.log('Existing user detected'); // Debug statement for existing user
+          setFirstLogin(false);
+        }
       }
     }
   }
@@ -45,9 +58,13 @@ export default function SignIn() {
     setPasswordVisible(!passwordVisible);
   };
 
+  const handleSignIn = () => {
+    signInWithEmail();
+  };
+
   if (firstLogin) {
     return <FirstLogin email={email} password={password} />;
-  };
+  }
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -69,28 +86,28 @@ export default function SignIn() {
             />
           </View>
           <View style={styles.verticallySpaced}>
-          <Input
-            label="Password"
-            leftIcon={{ type: 'font-awesome', name: 'lock' }}
-            rightIcon={{ 
-              type: 'font-awesome', 
-              name: passwordVisible ? 'eye-slash' : 'eye',
-              onPress: togglePasswordVisibility
-            }}
-            onChangeText={(text) => setPassword(text)}
-            value={password}
-            secureTextEntry={!passwordVisible}
-            placeholder="Password"
-            autoCapitalize="none"
-            inputStyle={{ color: 'white' }}
-            placeholderTextColor="gray"
-          />
+            <Input
+              label="Password"
+              leftIcon={{ type: 'font-awesome', name: 'lock' }}
+              rightIcon={{ 
+                type: 'font-awesome', 
+                name: passwordVisible ? 'eye-slash' : 'eye',
+                onPress: togglePasswordVisibility
+              }}
+              onChangeText={(text) => setPassword(text)}
+              value={password}
+              secureTextEntry={!passwordVisible}
+              placeholder="Password"
+              autoCapitalize="none"
+              inputStyle={{ color: 'white' }}
+              placeholderTextColor="gray"
+            />
           </View>
           <View style={[styles.verticallySpaced, {flexDirection:'column'}]}>
             <Button
               title="Sign in"
               disabled={loading}
-              onPress={signInWithEmail}
+              onPress={handleSignIn}
               buttonStyle={{ backgroundColor: 'green', height: 50}}
             />
             <Button
@@ -99,7 +116,7 @@ export default function SignIn() {
               buttonStyle={{ backgroundColor: 'transparent', marginTop: 10}}
               titleStyle={{ fontSize: 13, color: 'white'}}
               onPress={handleForgotPassword}
-              />
+            />
           </View>
         </View>
       </View>

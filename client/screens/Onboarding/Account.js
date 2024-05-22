@@ -5,7 +5,7 @@ import { Button, Input } from "react-native-elements";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 export default function Account({ session }) {
   const [loading, setLoading] = useState(true);
-  const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
 
   useEffect(() => {
@@ -19,7 +19,7 @@ export default function Account({ session }) {
 
       const { data, error, status } = await supabase
         .from("profiles")
-        .select(`username, avatar_url`)
+        .select(`name`)
         .eq("id", session?.user.id)
         .single();
       if (error && status !== 406) {
@@ -28,8 +28,7 @@ export default function Account({ session }) {
 
       if (data) {
         await AsyncStorage.setItem("user_id", session?.user.id);
-        setUsername(data.username);
-        setAvatarUrl(data.avatar_url);
+        setName(data.name);
       }
     } catch (error) {
       if (error instanceof Error) {
@@ -40,15 +39,14 @@ export default function Account({ session }) {
     }
   }
 
-  async function updateProfile({ username, avatar_url }) {
+  async function updateProfile({ name, avatar_url }) {
     try {
       setLoading(true);
       if (!session?.user) throw new Error("No user on the session!");
 
       const updates = {
         id: session?.user.id,
-        username,
-        avatar_url,
+        name,
         updated_at: new Date(),
       };
 
@@ -82,9 +80,9 @@ export default function Account({ session }) {
         </View>
         <View style={styles.verticallySpaced}>
           <Input
-            label="Username"
-            value={username || ""}
-            onChangeText={(text) => setUsername(text)}
+            label="Name"
+            value={name || ""}
+            onChangeText={(text) => setName(text)}
             inputStyle={{ color: "white" }} // Add this line
             placeholderTextColor="white" // Add this line
           />
@@ -93,7 +91,7 @@ export default function Account({ session }) {
         <View style={[styles.verticallySpaced, styles.mt20]}>
           <Button
             title={loading ? "Loading ..." : "Update"}
-            onPress={() => updateProfile({ username, avatar_url: avatarUrl })}
+            onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
             disabled={loading}
             buttonStyle={{ backgroundColor: "green" }}
           />
