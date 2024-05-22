@@ -15,6 +15,7 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
 
   async function signUpWithEmail() {
     setLoading(true)
@@ -30,6 +31,10 @@ export default function Auth() {
     else if (!session) Alert.alert('Please check your inbox for email verification!')
     setLoading(false)
   }
+
+  const togglePasswordVisibility = () => {
+    setPasswordVisible(!passwordVisible);
+  };
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -54,9 +59,14 @@ export default function Auth() {
           <Input
             label="Password"
             leftIcon={{ type: "font-awesome", name: "lock" }}
+            rightIcon={{ 
+              type: 'font-awesome', 
+              name: passwordVisible ? 'eye-slash' : 'eye',
+              onPress: togglePasswordVisibility
+            }}
             onChangeText={(text) => setPassword(text)}
             value={password}
-            secureTextEntry={true}
+            secureTextEntry={!passwordVisible}
             placeholder="Password"
             autoCapitalize={"none"}
             inputStyle={{ color: "white" }} // Add this line

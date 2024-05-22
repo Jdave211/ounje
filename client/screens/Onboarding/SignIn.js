@@ -2,17 +2,34 @@ import React, { useState } from 'react';
 import { Alert, StyleSheet, View, Text, TouchableWithoutFeedback, Keyboard } from 'react-native';
 import { supabase } from '../../utils/supabase';
 import { Button, Input } from 'react-native-elements';
+import { Entypo } from '@expo/vector-icons';
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [firstLogin, setFirstLogin] = useState(false);
 
   async function signInWithEmail() {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) Alert.alert(error.message);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
+    if (error) {
+      Alert.alert(error.message);
+    } else if (data.user) {
+      const { data, error } = await supabase
+        .from('users')
+        .select(`user_metadata`)
+        .eq('id', user.id)
+        .single();
+
+      if (error) {
+        Alert.alert(error.message);
+      } else if (data && Object.keys(data.user_metadata).length === 0) {
+        setFirstLogin(true); // Set firstLogin to true if user_metadata is empty
+      }
+    }
   }
 
   async function handleForgotPassword() {
@@ -23,6 +40,14 @@ export default function SignIn() {
       Alert.alert('Password reset email sent', 'Please check your email for instructions to reset your password.');
     }
   }
+
+  const togglePasswordVisibility = () => {
+    setPasswordVisible(!passwordVisible);
+  };
+
+  if (firstLogin) {
+    return <FirstLogin email={email} password={password} />;
+  };
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -44,17 +69,22 @@ export default function SignIn() {
             />
           </View>
           <View style={styles.verticallySpaced}>
-            <Input
-              label="Password"
-              leftIcon={{ type: 'font-awesome', name: 'lock' }}
-              onChangeText={(text) => setPassword(text)}
-              value={password}
-              secureTextEntry={true}
-              placeholder="Password"
-              autoCapitalize="none"
-              inputStyle={{ color: 'white' }}
-              placeholderTextColor="gray"
-            />
+          <Input
+            label="Password"
+            leftIcon={{ type: 'font-awesome', name: 'lock' }}
+            rightIcon={{ 
+              type: 'font-awesome', 
+              name: passwordVisible ? 'eye-slash' : 'eye',
+              onPress: togglePasswordVisibility
+            }}
+            onChangeText={(text) => setPassword(text)}
+            value={password}
+            secureTextEntry={!passwordVisible}
+            placeholder="Password"
+            autoCapitalize="none"
+            inputStyle={{ color: 'white' }}
+            placeholderTextColor="gray"
+          />
           </View>
           <View style={[styles.verticallySpaced, {flexDirection:'column'}]}>
             <Button

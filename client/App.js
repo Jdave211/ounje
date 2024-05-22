@@ -83,11 +83,6 @@ export default function App() {
                 component={CheckIngredients}
                 options={{ headerShown: false }}
               />
-              <Tab.Screen
-                name="Auth"
-                component={Auth}
-                options={{ headerShown: false }}
-              />
             </Tab.Navigator>
           </Layout>
         ) : (
@@ -101,9 +96,7 @@ export default function App() {
   );
 }
 
-// AppRegistry.registerComponent("main", () => App);
-
-
+// AppRegistry.registerrComponent("main", () => App);
 const styles = StyleSheet.create({
   container: {
     flex: 1,

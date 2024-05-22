@@ -1,12 +1,12 @@
 import React from "react";
 import { View, Text } from "react-native";
 import CommunityCard from "../components/CommunityCard";
-import Welcome from "../screens/Onboarding/Welcome";
+import FirstLogin from "../screens/Onboarding/FirstLogin";
 
 const Community = () => {
   return (
     <View style={styles.container}>
-      <Welcome />
+      <FirstLogin />
     </View>
   );
 };
