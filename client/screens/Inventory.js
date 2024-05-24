@@ -7,6 +7,8 @@ import {
   Image,
   TouchableOpacity,
   Modal,
+  ImageBackground,
+  TextInput,
 } from "react-native";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { AntDesign } from "@expo/vector-icons";
@@ -29,6 +31,7 @@ const Inventory = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [food_items, setFoodItems] = useState(FOOD_ITEMS);
+  const [newItem, setNewItem] = useState("");
   const [food_items_array, setFoodItemsArray] = useState([]);
   const [inventoryImages, setInventoryImages] = useState([]);
   const [user_id, setUserId] = useState(null);
@@ -63,9 +66,10 @@ const Inventory = () => {
         .select("images")
         .eq("user_id", user_id);
 
-      let image_paths = inventory.images.map((image) =>
-        image.replace("inventory_images/", ""),
-      );
+        if (inventory) {
+          let image_paths = inventory.images.map((image) =>
+            image.replace("inventory_images/", ""),
+          );
 
       let { data: url_responses } = await supabase.storage
         .from("inventory_images")
@@ -74,7 +78,9 @@ const Inventory = () => {
       let image_urls = url_responses.map((response) => response.signedUrl);
 
       setInventoryImages(() => image_urls);
-    };
+    } else {
+      console.log('No inventory found for user_id:', user_id);
+    }}
 
     if (!user_id) {
       get_user_id();
@@ -154,16 +160,12 @@ const Inventory = () => {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      // contentContainerStyle={{
-      //   justifyContent: "space-between",
-      //   alignItems: "space-evenly",
-      // }}
+    <ImageBackground
+    source={inventoryImages.length > 0 ? { uri: inventoryImages[0] } : null}
+    style={styles.container}
     >
-      <Text style={{ color: "white" }}> Inventory</Text>
-      {/* Inventory Images */}
-      <View style={styles.imageContainer}>
+<View style={{flex:0.2}}>
+<View style={styles.imageContainer}>
         {inventoryImages.map((image_url, index) => (
           <TouchableOpacity
             key={index}
@@ -176,7 +178,6 @@ const Inventory = () => {
           </TouchableOpacity>
         ))}
       </View>
-
       <Modal
         animationType="slide"
         transparent={false}
@@ -194,6 +195,12 @@ const Inventory = () => {
           <Image source={{ uri: selectedImage }} style={styles.modalImage} />
         </View>
       </Modal>
+      </View>
+
+<View style={{flex:0.8}}>
+    <ScrollView
+      style={styles.overlay}
+    >
 
       {/* Food Items */}
       {Object.entries(food_items).map(([section, categories]) => {
@@ -206,6 +213,7 @@ const Inventory = () => {
 
         return (
           <MultipleSelectList
+          selectAll={true}
             key={section}
             setSelected={setSelected}
             selectedTextStyle={styles.selectedTextStyle}
@@ -214,52 +222,85 @@ const Inventory = () => {
             data={data}
             save="value"
             maxHeight={900}
-            placeholder={"placeholder"}
+            placeholder={"Select items to add to inventory"}
             placeholderStyles={{ color: "white" }}
             arrowicon={
               <FontAwesome5 name="chevron-down" size={12} color={"white"} />
             }
-            searchicon={
-              <FontAwesome5 name="search" size={12} color={"white"} />
-            }
-            searchPlaceholder="Search..."
             search={false}
             boxStyles={{
               marginTop: 10,
               marginBottom: 10,
               borderColor: "white",
             }}
-            label={entitle(section)}
-            labelStyles={{ color: "green", fontSize: 20, fontWeight: "bold" }}
+            label='Inventory'
+            labelStyles={{ color: "white", fontSize: 20, fontWeight: "bold" }}
             badgeStyles={{ backgroundColor: "green" }}
           />
         );
       })}
 
-      {/* Generate Recipe Button */}
-      <View style={styles.centerItems}>
-        <TouchableOpacity
-          style={styles.button.container}
-          onPress={generate_recipes}
-          disabled={selected.length === 0}
-        >
-          <Text style={styles.button.text}>Generate</Text>
-        </TouchableOpacity>
-      </View>
+
+<View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="enter new item here"
+            placeholderTextColor="black"
+            // value={newItem}
+          />
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={() => {
+            }}
+          >
+            <Text style={styles.buttonText}>Add</Text>
+          </TouchableOpacity>
+        </View>
     </ScrollView>
+    </View>
+    </ImageBackground>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    resizeMode: "cover",
     backgroundColor: "black",
+  },
+  overlay: {
+    height: "60%",
+    backgroundColor: "rgba(0,0,0,0.8)",
+    borderRadius: 10,
+    padding: 10,
   },
   eachsection: {
     margin: 10,
   },
   text: {
     color: "white",
+  },
+  inputContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    margin: 10,
+  },
+  input: {
+    width: "70%",
+    height: 40,
+    backgroundColor: "gray",
+    borderRadius: 10,
+    padding: 10,
+    marginRight: 10,
+  },
+  addButton: {
+    padding: 10,
+    borderRadius: 10,
+  },
+  buttonText: {
+    color: "white",
+    fontWeight: "bold",
   },
   close: {
     position: "absolute",

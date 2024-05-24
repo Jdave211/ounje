@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, View, ActivityIndicator } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { supabase } from "./utils/supabase";
 import Welcome from "./screens/Onboarding/Welcome";
-import FirstLogin from "./screens/Onboarding/FirstLogin";
+import FirstLogin from "./screens/Onboarding/FirstLogin"; 
 import Layout from "./_layout";
 import SavedRecipes from "./screens/SavedRecipes";
 import Inventory from "./screens/Inventory";
@@ -19,76 +19,63 @@ const Tab = createBottomTabNavigator();
 
 export default function App() {
   const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [firstLogin, setFirstLogin] = useState(false);
 
-  const fetchSession = async () => {
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error) {
-      console.error("Error fetching session:", error);
-      return;
-    }
-    setSession(session);
-    checkFirstLogin(session);
-  };
+  useEffect(() => {
+    const getSession = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error("Error fetching session:", error);
+        setLoading(false);
+        return;
+      }
+      setSession(session);
+      setLoading(false);
 
-  const checkFirstLogin = async (session) => {
-    if (session?.user) {
-      const userId = session.user.id;
+      if (session?.user) {
+        const userId = session.user.id;
 
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('name')
-        .eq('id', userId)
-        .single();
+        const { data: userData, error: userError } = await supabase
+          .from('profiles') // Correct table name
+          .select('name')
+          .eq('id', userId)
+          .single();
 
-      if (profileError) {
-        console.error("Error fetching profile:", profileError);
-      } else {
-        console.log('Profile data:', profileData);
-
-        if (!profileData || !profileData.name) {
-          console.log('First login detected');
+        if (userError) {
+          console.error("Error fetching user metadata:", userError);
+        } else if (!userData || !userData.name) {
           setFirstLogin(true);
         } else {
-          console.log('Existing user detected');
           setFirstLogin(false);
         }
       }
-    }
-  };
-
-  useEffect(() => {
-    fetchSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      checkFirstLogin(session);
-    });
-
-    return () => {
-      if (subscription) subscription.unsubscribe();
     };
+
+    getSession();
+
+    const subscription = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    if (subscription.unsubscribe) {
+      return () => subscription.unsubscribe();
+    }
   }, []);
 
-  useEffect(() => {
-    if (session) {
-      checkFirstLogin(session);
-    }
-  }, [session]);
-
-  useEffect(() => {
-    if (!firstLogin) {
-      console.log("First login completed, refreshing session...");
-      fetchSession();
-    }
-  }, [firstLogin]);
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#00ff00" />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer>
       <View style={styles.container}>
         {session ? (
           firstLogin ? (
-            <FirstLogin onProfileComplete={() => setFirstLogin(false)} />
+            <FirstLogin onProfileComplete={() => setFirstLogin(false)} session={session} /> 
           ) : (
             <Layout>
               <Tab.Navigator screenOptions={{ tabBarStyle: styles.navigator }}>
@@ -96,6 +83,7 @@ export default function App() {
                   name="Generate"
                   component={Generate}
                   options={{ headerShown: false }}
+                  initialParams={{ session }} 
                 />
                 <Tab.Screen
                   name="SavedRecipes"
@@ -116,6 +104,7 @@ export default function App() {
                   name="Profile"
                   component={Profile}
                   options={{ headerShown: false }}
+                  initialParams={{ session }} 
                 />
                 <Tab.Screen
                   name="CheckIngredients"
@@ -128,6 +117,7 @@ export default function App() {
         ) : (
           <Welcome />
         )}
+
         <StatusBar style="light" />
       </View>
       <Toast />
@@ -141,6 +131,11 @@ const styles = StyleSheet.create({
     backgroundColor: "black",
     color: "white",
   },
+  text: {
+    fontSize: 20,
+    color: "white",
+    textAlign: "center",
+  },
   navigator: {
     display: "flex",
     alignItems: "center",
@@ -150,5 +145,11 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     borderWidth: 2,
     borderColor: "pink",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "black",
   },
 });

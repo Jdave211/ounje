@@ -20,6 +20,7 @@ import {
 export const MultipleSelectList =
   // : React.FC<MultipleSelectListProps>
   ({
+    selectAll = false,
     fontFamily,
     setSelected,
     defaultOptions,
@@ -96,6 +97,14 @@ export const MultipleSelectList =
         else slideup();
       }
     }, [dropdownShown]);
+
+    React.useEffect(() => {
+      setFilteredData(data);
+      if (selectAll && selectedval.length === 0) {
+        setSelectedVal(data.map(item => item.value ?? item));
+        setSelected(data.map(item => save === "value" ? item.value ?? item : item.key ?? item.value ?? item));
+      }
+    }, [data]);
 
     return (
       <View>

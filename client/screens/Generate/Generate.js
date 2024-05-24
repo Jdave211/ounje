@@ -1,69 +1,115 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ImageBackground, Alert } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-
-// can import directories in the root directory now by using the @ symbol
-// instead of using long relative paths like ../../components/FoodRow :)
-// check out the babel.config.js file to see how this is configured
-import FoodRow from "@components/FoodRow";
-import ImageUploadForm from "@components/ImageUploadForm";
+import { SelectList } from 'react-native-dropdown-select-list';
+import { FontAwesome5 } from "@expo/vector-icons";
+import GenerateRecipes from "@components/GenerateRecipes";
 import Loading from "@components/Loading";
+import generate_bg from "@assets/generate_bg.jpg";
+import { supabase } from "@utils/supabase";
 
-const Generate = () => {
+export default function Generate({ route }) {
+  const { session } = route.params;
   const [isLoading, setIsLoading] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [name, setName] = useState('');
   const navigation = useNavigation();
+
+  const flavors = ['sweet', 'sour', 'spicy', 'umami'];
 
   const handleLoading = (loading) => {
     setIsLoading(loading);
   };
 
   useEffect(() => {
-    if (!isLoading) {
-      navigation.navigate("CheckIngredients");
-    }
-  }, [isLoading]);
+    const fetchProfile = async () => {
+      const userId = session?.user?.id;
+      if (userId) {
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('name')
+          .eq('id', userId)
+          .single();
+
+        if (profileError) {
+          Alert.alert('Error fetching profile', profileError.message);
+        } else {
+          const firstName = profileData.name.split(' ')[0]; // get the first name
+        setName(firstName);
+        }
+      }
+    };
+
+    fetchProfile();
+  }, [session]);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.text}>"[Insert intro]"</Text>
-      {__DEV__ && (
-        <View>
-          <Text style={styles.text}>This is a development environment</Text>
-          <Text style={styles.text}>Developement navigation</Text>
-
-          <TouchableOpacity
-            onPress={() => navigation.navigate("CheckIngredients")}
-          >
-            <Text style={styles.text}>- Check Ingredients</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => navigation.navigate("RecipeOptions")}
-          >
-            <Text style={styles.text}>- Recipe Options</Text>
-          </TouchableOpacity>
+    <ImageBackground source={generate_bg} style={styles.backgroundImage}>
+      <View style={styles.overlay}>
+        <View style={styles.header}>
+          <Text style={styles.text}>Hi {name}, </Text>
+          <Text style={styles.text}>Select your preferences<Text style={{color:'black'}}>, and get to</Text> cooking...</Text>
         </View>
-      )}
-      <View style={styles.foodRowContainer}>
-        <FoodRow />
+        <View style={styles.content}>
+          <SelectList
+            setSelected={setSelected}
+            data={flavors}
+            placeholder="Select a flavor"
+            placeholderStyles={{ color: "white", fontSize: 20, fontWeight: "bold" }}
+            inputStyles={{ color: "white", fontWeight: "bold" }}
+            selectedTextStyle={styles.selectedTextStyle}
+            dropdownTextStyles={{ color: "white", fontWeight: "bold" }}
+            save="value"
+            maxHeight={900}
+            arrowicon={
+              <FontAwesome5 name="chevron-down" size={12} color={"white"} />
+            }
+            search={false}
+            boxStyles={{
+              marginTop: 10,
+              marginBottom: 10,
+              borderColor: "white",
+            }}
+            defaultOption={{ key:'1', value:'What flavor are you feeling?' }}
+          />
+          {isLoading ? <Loading /> : <GenerateRecipes onLoading={handleLoading} />}
+        </View>
       </View>
-      {isLoading ? <Loading /> : <ImageUploadForm onLoading={handleLoading} />}
-    </View>
+    </ImageBackground>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  backgroundImage: {
     flex: 1,
-    backgroundColor: "black",
+    resizeMode: "cover",
+  },
+  overlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  header: {
+    height: '40%',
+    alignItems: "left",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
   },
   text: {
     color: "white",
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+  content: {
+    height: '60%',
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    borderRadius: 13,
   },
   foodRowContainer: {
     width: "100%",
     marginTop: 70,
   },
 });
-
-export default Generate;

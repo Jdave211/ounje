@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Alert, Image, StyleSheet, TouchableOpacity, ImageBackground } from 'react-native';
+import { View, Text, TextInput, Alert, Image, StyleSheet, TouchableOpacity, ImageBackground, ActivityIndicator, ActionSheetIOS } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from "../../utils/supabase";
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -9,13 +9,23 @@ import fridge_bg from '../../assets/fridge_bg.jpg';
 import camera_icon from '../../assets/camera_icon.png';
 import { MultipleSelectList } from "../../components/MultipleSelectList";
 import { FontAwesome5 } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
+import { customAlphabet } from 'nanoid/non-secure';
+import { Buffer } from 'buffer';
+import { openai, extract_json, flatten_nested_objects } from "../../utils/openai";
+import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
 
-const FirstLogin = ({ onProfileComplete }) => {
+const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
+
+const FirstLogin = ({ onProfileComplete, session }) => {
   const [name, setName] = useState('');
   const [dietaryRestrictions, setDietaryRestrictions] = useState([]);
   const [fridgeImage, setFridgeImage] = useState(null);
+  const [fridgeImageUri, setFridgeImageUri] = useState(null);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [selected, setSelected] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   const bg = [name_bg, diet_bg, fridge_bg];
 
@@ -26,39 +36,237 @@ const FirstLogin = ({ onProfileComplete }) => {
     'Diabetic',
   ];
 
-  const pickImage = async () => {
-    let result = await ImagePicker.launchCameraAsync();
+  const convertImageToBase64 = async (uri) => {
+    try {
+      console.log("Converting image to base64:", uri);
+      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      return base64;
+    } catch (error) {
+      console.error("Error converting image to base64:", error);
+      throw error;
+    }
+  };
 
-    if (!result.cancelled) {
-      setFridgeImage(result.uri);
+  const pickImage = async () => {
+    if (fridgeImage) {
+      return;
+    }
+
+    const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (cameraRollPerm !== "granted") {
+      alert("Sorry, we need camera roll permissions to make this work!");
+      return;
+    }
+
+    const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
+
+    if (cameraPerm !== "granted") {
+      alert("Sorry, we need camera permissions to make this work!");
+      return;
+    }
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ["Cancel", "Take Photo", "Choose from Library"],
+        cancelButtonIndex: 0,
+      },
+      async (buttonIndex) => {
+        if (buttonIndex === 1) {
+          let result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            console.log("Camera result:", result);
+            setFridgeImageUri(result.assets[0].uri);
+            const base64Image = await convertImageToBase64(result.assets[0].uri);
+            setFridgeImage(base64Image);
+          }
+        } else if (buttonIndex === 2) {
+          let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            console.log("Library result:", result);
+            setFridgeImageUri(result.assets[0].uri);
+            const base64Image = await convertImageToBase64(result.assets[0].uri);
+            setFridgeImage(base64Image);
+          }
+        }
+      }
+    );
+  };
+
+  const storeImages = async (userId, base64Images) => {
+    const inventoryImageBucket = "inventory_images";
+    const inventoryImageBucketPath = userId;
+
+    const uploadImage = async (base64Image) => {
+      console.log("base64_image length: ", base64Image.length);
+      let binaryImage = Buffer.from(base64Image, "base64");
+      console.log("binary_image length: ", binaryImage?.length);
+      let nanoId = nanoid();
+      let imagePath = `${inventoryImageBucketPath}/${nanoId}.jpeg`;
+
+      console.log({ nanoId });
+      console.log({ imagePath });
+
+      let { data, error } = await supabase.storage
+        .from(inventoryImageBucket)
+        .upload(imagePath, binaryImage);
+
+      if (error) {
+        console.error("Error uploading image to storage:", error);
+        throw error;
+      }
+
+      return data.path;
+    };
+
+    return await Promise.all(base64Images.map(uploadImage));
+  };
+
+  const sendImages = async () => {
+    setLoading(true);  // Show loading indicator
+
+    try {
+      const user_id = await AsyncStorage.getItem("user_id");
+      console.log("user_id: ", user_id);
+
+      const base64Images = await Promise.all([fridgeImage]);
+      const async_image_paths = await storeImages(user_id, base64Images);
+
+      let system_prompt = { role: "system", content: FOOD_ITEMS_PROMPT };
+      let user_prompt = {
+        role: "user",
+        content: base64Images.map((image) => ({ image })),
+      };
+      let async_food_items_response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [system_prompt, user_prompt],
+      });
+
+      console.log("calling chatgpt and storing inventory images");
+      const [{ value: image_paths }, { value: food_items_response }] =
+        await Promise.allSettled([async_image_paths, async_food_items_response]);
+
+      console.log("chatgpt response: ", food_items_response);
+
+      const { object: food_items, text: food_items_text } =
+        extract_json(food_items_response);
+
+      console.log({ food_items });
+
+      await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
+
+      await supabase
+        .from("inventory")
+        .upsert({ user_id, images: image_paths }, { onConflict: ["user_id"] })
+        .throwOnError();
+
+      const food_items_array = flatten_nested_objects(food_items, [
+        "inventory",
+        "category",
+      ]);
+
+      await AsyncStorage.setItem(
+        "food_items_array",
+        JSON.stringify(food_items_array),
+      );
+
+    } catch (error) {
+      console.error("Error in sendImages:", error);
+    } finally {
+      setLoading(false);  // Hide loading indicator
     }
   };
 
   const saveProfile = async () => {
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    setLoading(true);
 
-    if (userError) {
-      Alert.alert('Error fetching user', userError.message);
-      return;
-    }
+    try {
+      console.log("Fetching user...");
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-    const updates = {
-      id: user.id,
-      name: name,
-      dietary_restriction: selected,
-    };
+      if (userError) {
+        console.error("Error fetching user:", userError);
+        throw userError;
+      }
 
-    let { error } = await supabase
-      .from('profiles')
-      .upsert(updates, {
-        returning: 'minimal',
-      });
+      let fridgeImagePath = null;
+      if (fridgeImage) {
+        console.log("Uploading fridge image...");
+        const imagePaths = await storeImages(user.id, [fridgeImage]);
+        fridgeImagePath = imagePaths[0];
+        console.log("Fridge image uploaded:", fridgeImagePath);
+      }
 
-    if (error) {
-      Alert.alert('Error saving profile', error.message);
-    } else {
+      console.log("Updating profile...");
+      const updates = {
+        id: user.id,
+        name: name,
+        dietary_restriction: selected,
+      };
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert(updates, {
+          returning: 'minimal',
+        });
+
+      if (profileError) {
+        console.error("Error updating profile:", profileError);
+        throw profileError;
+      }
+
+      if (fridgeImagePath) {
+        console.log("Saving fridge image URL...");
+
+        // Fetch existing inventory record
+        const { data: inventoryData, error: inventoryError } = await supabase
+          .from('inventory')
+          .select('images')
+          .eq('user_id', user.id)
+          .single();
+
+        if (inventoryError) {
+          console.error("Error fetching inventory:", inventoryError);
+          throw inventoryError;
+        }
+
+        // Append new image to existing images
+        const updatedImages = [...inventoryData.images, fridgeImagePath];
+
+        const fridgeUpdate = {
+          images: updatedImages,
+        };
+
+        const { error: fridgeError } = await supabase
+          .from('inventory') // Update inventory table
+          .update(fridgeUpdate)
+          .eq('user_id', user.id);
+
+        if (fridgeError) {
+          console.error("Error updating fridge image URL:", fridgeError);
+          throw fridgeError;
+        }
+      }
+
       Alert.alert('Profile saved successfully');
       onProfileComplete();
+    } catch (error) {
+      console.error("Error in saveProfile:", error);
+      Alert.alert('Error saving profile', error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -99,19 +307,28 @@ const FirstLogin = ({ onProfileComplete }) => {
     </View>,
     <View style={styles.fridge}>
       <Text style={styles.fridge_text}>And finally, please click here to take a picture of your fridge</Text>
-      <TouchableOpacity style={styles.camera} onPress={pickImage}>
-        <Image source={camera_icon} style={{ width: 50, height: 50 }} />
-      </TouchableOpacity>
-      {fridgeImage && <Image source={{ uri: fridgeImage }} style={{ width: 200, height: 200 }} />}
+      <View style={{ justifyContent: 'center', alignItems: 'center', marginTop:20 }}>
+        {fridgeImageUri ? (
+          <Image source={{ uri: fridgeImageUri }} style={{ width: 100, height: 100 }} />
+        ) : (
+          <TouchableOpacity style={styles.camera} onPress={pickImage}>
+            <Image source={camera_icon} style={{ width: 50, height: 50 }} />
+          </TouchableOpacity>
+        )}
+      </View>   
     </View>
   ];
 
   return (
     <ImageBackground source={bg[currentQuestion]} style={styles.container}>
       <View style={styles.container}>
-        {questions[currentQuestion]}
+        {loading ? (
+          <ActivityIndicator size="large" color="#00ff00" />
+        ) : (
+          questions[currentQuestion]
+        )}
       </View>
-      {currentQuestion < 2 ? (
+      {!loading && currentQuestion < 2 && (
         <TouchableOpacity style={styles.next_button} onPress={() => {
           if (name.trim() === '' && currentQuestion === 0) {
             Alert.alert('Error', 'Name is required');
@@ -121,7 +338,8 @@ const FirstLogin = ({ onProfileComplete }) => {
         }}>
           <MaterialCommunityIcons name="page-next" size={24} color="white" />
         </TouchableOpacity>
-      ) : (
+      )}
+      {!loading && currentQuestion === 2 && (
         <TouchableOpacity style={styles.next_button} onPress={saveProfile}>
           <MaterialCommunityIcons name="check-circle" size={24} color="white" />
         </TouchableOpacity>
