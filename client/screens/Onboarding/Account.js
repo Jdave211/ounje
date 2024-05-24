@@ -3,6 +3,8 @@ import { supabase } from "../../utils/supabase";
 import { StyleSheet, View, Alert } from "react-native";
 import { Button, Input } from "react-native-elements";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
+
 export default function Account({ session }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");

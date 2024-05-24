@@ -5,15 +5,22 @@ export const openai = new OpenAi({
 });
 
 export const extract_json = (data) => {
-  console.log("messages: ", data.choices.length);
+  console.log("OpenAI API response data: ", data);
 
   const content = data.choices.map((choice) => choice.message.content).join("");
   const regex = /^```json([\s\S]*?)^```/gm;
   const matches = regex.exec(content);
 
   let json_text = matches?.[0].replace(/^```json\n|\n```$/g, "") || content; // Remove the code block markers
-  console.log({ json_text });
-  let object = JSON.parse(json_text);
+  console.log("Extracted JSON text: ", json_text);
+  
+  let object;
+  try {
+    object = JSON.parse(json_text);
+  } catch (error) {
+    console.error("Error parsing JSON: ", error, json_text);
+    throw new Error("Failed to parse JSON from OpenAI response");
+  }
 
   return {
     object,

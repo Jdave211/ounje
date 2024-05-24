@@ -68,6 +68,7 @@
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "~0.19.10",
     "readable-stream": "^1.0.33",
+    "spoonacular_api": "^1.0.0",
     "stream-browserify": "^1.0.0",
     "string_decoder": "^0.10.31",
     "timers-browserify": "^1.4.2",

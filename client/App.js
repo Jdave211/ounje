@@ -24,6 +24,7 @@ export default function App() {
 
   useEffect(() => {
     const getSession = async () => {
+      setLoading(true);
       const { data: { session }, error } = await supabase.auth.getSession();
       if (error) {
         console.error("Error fetching session:", error);
@@ -35,9 +36,10 @@ export default function App() {
 
       if (session?.user) {
         const userId = session.user.id;
+        console.log('User signed in, fetching profile...'); // Debug log
 
         const { data: userData, error: userError } = await supabase
-          .from('profiles') // Correct table name
+          .from('profiles')
           .select('name')
           .eq('id', userId)
           .single();
@@ -45,6 +47,7 @@ export default function App() {
         if (userError) {
           console.error("Error fetching user metadata:", userError);
         } else if (!userData || !userData.name) {
+          console.log('First login detected'); // Debug log
           setFirstLogin(true);
         } else {
           setFirstLogin(false);
@@ -54,12 +57,34 @@ export default function App() {
 
     getSession();
 
-    const subscription = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session?.user) {
+        const userId = session.user.id;
+
+        supabase
+          .from('profiles')
+          .select('name')
+          .eq('id', userId)
+          .single()
+          .then(({ data: userData, error: userError }) => {
+            if (userError) {
+              console.error("Error fetching user metadata:", userError);
+            } else if (!userData || !userData.name) {
+              console.log('First login detected in subscription'); // Debug log
+              setFirstLogin(true);
+            } else {
+              setFirstLogin(false);
+            }
+          });
+      }
     });
-    if (subscription.unsubscribe) {
-      return () => subscription.unsubscribe();
-    }
+
+    return () => {
+      if (authListener?.subscription) {
+        authListener.subscription.unsubscribe();
+      }
+    };
   }, []);
 
   if (loading) {

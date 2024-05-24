@@ -1,3 +1,5 @@
+import { FOOD_ITEMS } from "./constants";
+
 const categories = [
   "juices",
   "dairy",
@@ -25,6 +27,7 @@ export const FOOD_ITEMS_PROMPT = `
   The quantity should only be a number indicating the amount of the named item in the inventory.
   Categorize them into this format:
   { "inventory_name": { "category_name": {name: text, quantity: number} }}.
+  Similiar to this: ${JSON.stringify(FOOD_ITEMS)}.
   Follow the types in the format strictly. numbers should only be numbers and text should only be text.
   The image name should represent the environment where the food items are found.
   The categories should be very similar and have broad definitions of the food items like these ones: ${categories.join(", ")}

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Alert, StyleSheet, View, Text, TouchableWithoutFeedback, Keyboard } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { Alert, StyleSheet, View, Text, TouchableWithoutFeedback, Keyboard, ActivityIndicator } from 'react-native';
 import { supabase } from '../../utils/supabase';
 import { Button, Input } from 'react-native-elements';
 import FirstLogin from './FirstLogin'; // Import your FirstLogin component
@@ -13,13 +13,15 @@ export default function SignIn() {
 
   async function signInWithEmail() {
     setLoading(true);
+    console.log('Attempting sign in...'); // Debug log
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
 
     if (error) {
+      setLoading(false);
       Alert.alert(error.message);
     } else if (data.user) {
       const userId = data.user.id;
+      console.log('User signed in, fetching profile...'); // Debug log
 
       // Check the profiles table for user information
       const { data: profileData, error: profileError } = await supabase
@@ -29,16 +31,19 @@ export default function SignIn() {
         .single();
 
       if (profileError) {
+        setLoading(false);
         Alert.alert(profileError.message);
       } else {
         console.log('Profile data:', profileData); // Debug statement to log profile data
 
-        // Check if full_name is null or empty
+        // Check if name is null or empty
         if (!profileData || !profileData.name) {
           console.log('First login detected'); // Debug statement for first login detection
           setFirstLogin(true);
+          setLoading(false); // Ensure loading is set to false
         } else {
           console.log('Existing user detected'); // Debug statement for existing user
+          setLoading(false);
           setFirstLogin(false);
         }
       }
@@ -62,7 +67,23 @@ export default function SignIn() {
     signInWithEmail();
   };
 
+  useEffect(() => {
+    console.log('firstLogin state changed:', firstLogin); // Debug log
+    if (firstLogin) {
+      setLoading(false); // Ensure loading is set to false when firstLogin is true
+    }
+  }, [firstLogin]);
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#0000ff" />
+      </View>
+    );
+  }
+
   if (firstLogin) {
+    console.log('Rendering FirstLogin component'); // Debug log
     return <FirstLogin email={email} password={password} />;
   }
 

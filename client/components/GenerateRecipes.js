@@ -13,6 +13,8 @@ import Constants from "expo-constants";
 import { ActionSheetIOS } from "react-native";
 import { Linking } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { FOOD_ITEMS } from "../utils/constants";
+import { RECIPES_PROMPT } from "@utils/prompts";
 import { customAlphabet } from "nanoid/non-secure";
 import { Buffer } from "buffer";
 import axios from "axios";

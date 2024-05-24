@@ -13,7 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import { customAlphabet } from 'nanoid/non-secure';
 import { Buffer } from 'buffer';
-import { openai, extract_json, flatten_nested_objects } from "../../utils/openai";
+import { openai, extract_json } from "../../utils/openai";
 import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
@@ -138,55 +138,89 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     setLoading(true);  // Show loading indicator
 
     try {
-      const user_id = await AsyncStorage.getItem("user_id");
+      const user_id = session.user.id; // Using session user id directly
       console.log("user_id: ", user_id);
 
-      const base64Images = await Promise.all([fridgeImage]);
+      const base64Images = [fridgeImage];
+      console.log("base64Images: ", base64Images);
+
       const async_image_paths = await storeImages(user_id, base64Images);
+      console.log("async_image_paths: ", async_image_paths);
 
       let system_prompt = { role: "system", content: FOOD_ITEMS_PROMPT };
       let user_prompt = {
         role: "user",
         content: base64Images.map((image) => ({ image })),
       };
+      console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
+
       let async_food_items_response = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [system_prompt, user_prompt],
       });
 
-      console.log("calling chatgpt and storing inventory images");
+      console.log("OpenAI response: ", async_food_items_response);
+
       const [{ value: image_paths }, { value: food_items_response }] =
         await Promise.allSettled([async_image_paths, async_food_items_response]);
 
-      console.log("chatgpt response: ", food_items_response);
+      console.log("image_paths: ", image_paths);
+      console.log("food_items_response: ", food_items_response);
 
-      const { object: food_items, text: food_items_text } =
-        extract_json(food_items_response);
+      const { object: food_items, text: food_items_text } = extract_json(food_items_response);
+      console.log("Extracted food_items: ", food_items);
 
-      console.log({ food_items });
+      const foodItemNames = extractFoodItemNames(food_items);
+      console.log("Extracted food item names: ", foodItemNames);
 
-      await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
+      await AsyncStorage.setItem("food_items", JSON.stringify(foodItemNames));
 
-      await supabase
+      const { error } = await supabase
         .from("inventory")
-        .upsert({ user_id, images: image_paths }, { onConflict: ["user_id"] })
-        .throwOnError();
+        .upsert({ user_id, images: image_paths, food_items: foodItemNames }, { onConflict: ["user_id"] });
 
-      const food_items_array = flatten_nested_objects(food_items, [
-        "inventory",
-        "category",
-      ]);
+      if (error) {
+        throw error;
+      }
 
-      await AsyncStorage.setItem(
-        "food_items_array",
-        JSON.stringify(food_items_array),
-      );
+      console.log("Food items stored in the database");
+
+      await AsyncStorage.setItem("food_items_array", JSON.stringify(foodItemNames));
 
     } catch (error) {
       console.error("Error in sendImages:", error);
     } finally {
       setLoading(false);  // Hide loading indicator
     }
+  };
+
+  // Helper function to extract food item names
+  const extractFoodItemNames = (foodItems) => {
+    const foodItemNames = [];
+
+    const firstNestedObject = Object.values(foodItems)[0]; // Get the first nested object
+    console.log("First nested object:", firstNestedObject);
+
+    const extractNames = (items) => {
+      if (Array.isArray(items)) {
+        items.forEach(item => {
+          if (item && item.name) {
+            foodItemNames.push(item.name);
+          }
+        });
+      }
+    };
+
+    if (firstNestedObject) {
+      // Iterate through the sections in the first nested object
+      for (const section in firstNestedObject) {
+        extractNames(firstNestedObject[section]);
+      }
+    } else {
+      console.error("First nested object is undefined or null.");
+    }
+
+    return foodItemNames;
   };
 
   const saveProfile = async () => {
@@ -207,6 +241,9 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         const imagePaths = await storeImages(user.id, [fridgeImage]);
         fridgeImagePath = imagePaths[0];
         console.log("Fridge image uploaded:", fridgeImagePath);
+
+        // Call sendImages to process and store the food items
+        await sendImages();
       }
 
       console.log("Updating profile...");
@@ -225,39 +262,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       if (profileError) {
         console.error("Error updating profile:", profileError);
         throw profileError;
-      }
-
-      if (fridgeImagePath) {
-        console.log("Saving fridge image URL...");
-
-        // Fetch existing inventory record
-        const { data: inventoryData, error: inventoryError } = await supabase
-          .from('inventory')
-          .select('images')
-          .eq('user_id', user.id)
-          .single();
-
-        if (inventoryError) {
-          console.error("Error fetching inventory:", inventoryError);
-          throw inventoryError;
-        }
-
-        // Append new image to existing images
-        const updatedImages = [...inventoryData.images, fridgeImagePath];
-
-        const fridgeUpdate = {
-          images: updatedImages,
-        };
-
-        const { error: fridgeError } = await supabase
-          .from('inventory') // Update inventory table
-          .update(fridgeUpdate)
-          .eq('user_id', user.id);
-
-        if (fridgeError) {
-          console.error("Error updating fridge image URL:", fridgeError);
-          throw fridgeError;
-        }
       }
 
       Alert.alert('Profile saved successfully');

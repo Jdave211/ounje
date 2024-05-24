@@ -12,7 +12,7 @@ export default function Generate({ route }) {
   const { session } = route.params;
   const [isLoading, setIsLoading] = useState(false);
   const [selected, setSelected] = useState(null);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(' ');
   const navigation = useNavigation();
 
   const flavors = ['sweet', 'sour', 'spicy', 'umami'];
@@ -31,11 +31,15 @@ export default function Generate({ route }) {
           .eq('id', userId)
           .single();
 
+          if(name){
+
+          
         if (profileError) {
           Alert.alert('Error fetching profile', profileError.message);
         } else {
           const firstName = profileData.name.split(' ')[0]; // get the first name
         setName(firstName);
+        }
         }
       }
     };
