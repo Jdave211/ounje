@@ -13,6 +13,7 @@
   "license": "ISC",
   "dependencies": {
     "expo": "^51.0.8",
-    "react-native-reanimated": "^3.11.0"
+    "react-native-reanimated": "^3.11.0",
+    "ts-case-convert": "^2.0.7"
   }
 }

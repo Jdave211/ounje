@@ -15,6 +15,7 @@ import Profile from "./screens/Profile";
 import Community from "./screens/Community";
 import Generate from "./screens/Generate/Generate";
 import CheckIngredients from "./screens/Generate/CheckIngredients";
+import RecipeOptions from "./screens/Generate/RecipeOptions";
 
 const Tab = createBottomTabNavigator();
 
