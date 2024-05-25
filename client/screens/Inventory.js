@@ -47,8 +47,8 @@ const Inventory = () => {
       } else if (inventory) {
         const foodItems = inventory.food_items ? JSON.parse(inventory.food_items) : [];
         setFoodItems(foodItems);
+        await AsyncStorage.setItem("food_items", JSON.stringify(foodItems)); // Store updated food items in AsyncStorage
         console.log("Food Items:", foodItems);
-        console.log("usestate:", food_items)
         fetch_inventory_images(inventory.images);
       } else {
         console.log("No inventory found for user_id:", userId);

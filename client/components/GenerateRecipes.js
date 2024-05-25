@@ -6,6 +6,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   Text,
+  Alert,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
@@ -26,58 +27,45 @@ import { generate_image } from "../utils/stability";
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 
 export default function GenerateRecipes({ onLoading }) {
-  const [images, setImages] = useState([]);
-  const [imageUris, setImageUris] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [recipes, setRecipes] = useState([]);
 
+  const fetchRecipes = async () => {
+    try {
+      setIsLoading(true);
+      onLoading(true);
+      // Fetch food items from AsyncStorage
+      const storedFoodItems = await AsyncStorage.getItem("food_items");
+      if (storedFoodItems) {
+        const foodItems = JSON.parse(storedFoodItems);
+        const ingredients = foodItems.join(", ");
+        console.log("Ingredients:", ingredients);
 
-  const sendImages = async () => {
-    onLoading(true);
-
-    const user_id = await AsyncStorage.getItem("user_id");
-    console.log("user_id: ", user_id);
-
-    const base64Images = await Promise.all(images.map(convertImageToBase64));
-    const async_image_paths = store_images(user_id, base64Images);
-
-    let system_prompt = { role: "system", content: FOOD_ITEMS_PROMPT };
-    let user_prompt = {
-      role: "user",
-      content: base64Images.map((image) => ({ image })),
-    };
-    let async_food_items_response = openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [system_prompt, user_prompt],
-    });
-
-    console.log("calling chatgpt and storing inventory images");
-    const [{ value: image_paths }, { value: food_items_response }] =
-      await Promise.allSettled([async_image_paths, async_food_items_response]);
-
-    console.log("chatgpt response: ", food_items_response);
-
-    const { object: food_items, text: food_items_text } =
-      extract_json(food_items_response);
-
-    console.log({ food_items });
-
-    await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
-
-    await supabase
-      .from("inventory")
-      .upsert({ user_id, images: image_paths }, { onConflict: ["user_id"] })
-      .throwOnError();
-
-    const food_items_array = flatten_nested_objects(food_items, [
-      "inventory",
-      "category",
-    ]);
-
-    await AsyncStorage.setItem(
-      "food_items_array",
-      JSON.stringify(food_items_array),
-    );
-
-    onLoading(false);
+        // Call Spoonacular API to fetch recipes
+        const response = await axios.get("https://api.spoonacular.com/recipes/findByIngredients", {
+          params: {
+            ingredients: ingredients,
+            instructionsRequired: 'true',
+            addRecipeNutrition: 'true',
+            number: 3,
+            ranking: 1,
+            ignorePantry: 'false',
+            apiKey:'bb9552487f8d42d381557fa5a3754d52',
+            // process.env.SPOONACULAR_API_KEY
+          },
+        });
+        setRecipes(response.data);
+        console.log("Recipes:", response.data);
+      } else {
+        Alert.alert("Error", "No food items found in inventory.");
+      }
+    } catch (error) {
+      console.error("Error fetching recipes:", error);
+      Alert.alert("Error", "Unable to fetch recipes.");
+    } finally {
+      setIsLoading(false);
+      onLoading(false);
+    }
   };
 
   return (
@@ -85,7 +73,9 @@ export default function GenerateRecipes({ onLoading }) {
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           style={styles.buttonContainer}
-          onPress={sendImages}
+          onPress={() => {
+            fetchRecipes();
+          }}
         >
           <Text style={styles.buttonText}>Generate</Text>
         </TouchableOpacity>
