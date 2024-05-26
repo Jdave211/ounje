@@ -1,25 +1,39 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, Alert, Image, StyleSheet, TouchableOpacity, ImageBackground, ActivityIndicator, ActionSheetIOS } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import React, { useState } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  Alert,
+  Image,
+  StyleSheet,
+  TouchableOpacity,
+  ImageBackground,
+  ActivityIndicator,
+  ActionSheetIOS,
+} from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import { supabase } from "../../utils/supabase";
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import name_bg from '../../assets/name_bg.jpg';
-import diet_bg from '../../assets/diet_bg.jpeg';
-import fridge_bg from '../../assets/fridge_bg.jpg';
-import camera_icon from '../../assets/camera_icon.png';
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import name_bg from "../../assets/name_bg.jpg";
+import diet_bg from "../../assets/diet_bg.jpeg";
+import fridge_bg from "../../assets/fridge_bg.jpg";
+import camera_icon from "../../assets/camera_icon.png";
 import { MultipleSelectList } from "../../components/MultipleSelectList";
-import { FontAwesome5 } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
-import { customAlphabet } from 'nanoid/non-secure';
-import { Buffer } from 'buffer';
+import { FontAwesome5 } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system";
+import { customAlphabet } from "nanoid/non-secure";
+import { Buffer } from "buffer";
 import { openai, extract_json } from "../../utils/openai";
 import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
+import { useNavigation } from "@react-navigation/native";
+import { flatten_nested_objects } from "../../utils/openai";
 
-const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
+const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 
 const FirstLogin = ({ onProfileComplete, session }) => {
-  const [name, setName] = useState('');
+  const navigation = useNavigation();
+  const [name, setName] = useState("");
   const [dietaryRestrictions, setDietaryRestrictions] = useState([]);
   const [fridgeImage, setFridgeImage] = useState(null);
   const [fridgeImageUri, setFridgeImageUri] = useState(null);
@@ -30,16 +44,18 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   const bg = [name_bg, diet_bg, fridge_bg];
 
   const dietaryRestrictionsOptions = [
-    'Vegetarian',
-    'Lactose Intolerant',
-    'Nut Free',
-    'Diabetic',
+    "Vegetarian",
+    "Lactose Intolerant",
+    "Nut Free",
+    "Diabetic",
   ];
 
   const convertImageToBase64 = async (uri) => {
     try {
       console.log("Converting image to base64:", uri);
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
       return base64;
     } catch (error) {
       console.error("Error converting image to base64:", error);
@@ -52,14 +68,16 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       return;
     }
 
-    const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (cameraRollPerm !== "granted") {
       alert("Sorry, we need camera roll permissions to make this work!");
       return;
     }
 
-    const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
 
     if (cameraPerm !== "granted") {
       alert("Sorry, we need camera permissions to make this work!");
@@ -83,7 +101,9 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           if (!result.canceled) {
             console.log("Camera result:", result);
             setFridgeImageUri(result.assets[0].uri);
-            const base64Image = await convertImageToBase64(result.assets[0].uri);
+            const base64Image = await convertImageToBase64(
+              result.assets[0].uri
+            );
             setFridgeImage(base64Image);
           }
         } else if (buttonIndex === 2) {
@@ -97,7 +117,9 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           if (!result.canceled) {
             console.log("Library result:", result);
             setFridgeImageUri(result.assets[0].uri);
-            const base64Image = await convertImageToBase64(result.assets[0].uri);
+            const base64Image = await convertImageToBase64(
+              result.assets[0].uri
+            );
             setFridgeImage(base64Image);
           }
         }
@@ -135,10 +157,10 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   };
 
   const sendImages = async () => {
-    setLoading(true);  // Show loading indicator
+    setLoading(true); // Show loading indicator
 
     try {
-      const user_id = session.user.id; // Using session user id directly
+      const user_id = await AsyncStorage.getItem("user_id"); // Using session user id directly
       console.log("user_id: ", user_id);
 
       const base64Images = [fridgeImage];
@@ -162,35 +184,56 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       console.log("OpenAI response: ", async_food_items_response);
 
       const [{ value: image_paths }, { value: food_items_response }] =
-        await Promise.allSettled([async_image_paths, async_food_items_response]);
+        await Promise.allSettled([
+          async_image_paths,
+          async_food_items_response,
+        ]);
 
       console.log("image_paths: ", image_paths);
       console.log("food_items_response: ", food_items_response);
 
-      const { object: food_items, text: food_items_text } = extract_json(food_items_response);
+      const { object: food_items, text: food_items_text } =
+        extract_json(food_items_response);
       console.log("Extracted food_items: ", food_items);
 
-      const foodItemNames = extractFoodItemNames(food_items);
-      console.log("Extracted food item names: ", foodItemNames);
+      // const foodItemNames = extractFoodItemNames(food_items);
+      // console.log("Extracted food item names: ", foodItemNames);
 
-      await AsyncStorage.setItem("food_items", JSON.stringify(foodItemNames));
+      const food_items_array = flatten_nested_objects(food_items, [
+        "inventory",
+        "category",
+      ]);
 
-      const { error } = await supabase
-        .from("inventory")
-        .upsert({ user_id, images: image_paths, food_items: foodItemNames }, { onConflict: ["user_id"] });
+      await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
+      await AsyncStorage.setItem(
+        "food_items_array",
+        JSON.stringify(food_items_array)
+      );
 
-      if (error) {
-        throw error;
-      }
+      // const { error } = await supabase
+      //   .from("inventory")
+      //   .upsert(
+      //     { user_id, images: image_paths, food_items: foodItemNames },
+      //     { onConflict: ["user_id"] }
+      //   );
 
-      console.log("Food items stored in the database");
+      // if (error) {
+      //   throw error;
+      // }
 
-      await AsyncStorage.setItem("food_items_array", JSON.stringify(foodItemNames));
+      // console.log("Food items stored in the database");
 
+      // await AsyncStorage.setItem(
+      //   "food_items_array",
+      //   JSON.stringify(foodItemNames)
+      // );
+
+      setLoading(false);
+      navigation.navigate("CheckIngredients");
     } catch (error) {
       console.error("Error in sendImages:", error);
     } finally {
-      setLoading(false);  // Hide loading indicator
+      setLoading(false); // Hide loading indicator
     }
   };
 
@@ -203,7 +246,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
 
     const extractNames = (items) => {
       if (Array.isArray(items)) {
-        items.forEach(item => {
+        items.forEach((item) => {
           if (item && item.name) {
             foodItemNames.push(item.name);
           }
@@ -228,7 +271,10 @@ const FirstLogin = ({ onProfileComplete, session }) => {
 
     try {
       console.log("Fetching user...");
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
       if (userError) {
         console.error("Error fetching user:", userError);
@@ -254,9 +300,9 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       };
 
       const { error: profileError } = await supabase
-        .from('profiles')
+        .from("profiles")
         .upsert(updates, {
-          returning: 'minimal',
+          returning: "minimal",
         });
 
       if (profileError) {
@@ -264,11 +310,11 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         throw profileError;
       }
 
-      Alert.alert('Profile saved successfully');
-      onProfileComplete();
+      Alert.alert("Profile saved successfully");
+      onProfileComplete?.();
     } catch (error) {
       console.error("Error in saveProfile:", error);
-      Alert.alert('Error saving profile', error.message);
+      Alert.alert("Error saving profile", error.message);
     } finally {
       setLoading(false);
     }
@@ -278,13 +324,22 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     <View style={styles.name}>
       <Text style={styles.name_text}>Hi there, what is your name?</Text>
       <TextInput
-        style={{ height: 40, borderColor: 'gray', borderWidth: 2, color: 'white', fontWeight: 'bold', marginTop: 20 }}
-        onChangeText={text => setName(text)}
+        style={{
+          height: 40,
+          borderColor: "gray",
+          borderWidth: 2,
+          color: "white",
+          fontWeight: "bold",
+          marginTop: 20,
+        }}
+        onChangeText={(text) => setName(text)}
         value={name}
       />
     </View>,
     <View style={styles.name}>
-      <Text style={styles.name_text}>Do you have any dietary restrictions?</Text>
+      <Text style={styles.name_text}>
+        Do you have any dietary restrictions?
+      </Text>
       <MultipleSelectList
         setSelected={setSelected}
         selectedTextStyle={styles.selectedTextStyle}
@@ -297,9 +352,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         arrowicon={
           <FontAwesome5 name="chevron-down" size={12} color={"white"} />
         }
-        searchicon={
-          <FontAwesome5 name="search" size={12} color={"white"} />
-        }
+        searchicon={<FontAwesome5 name="search" size={12} color={"white"} />}
         search={false}
         boxStyles={{
           marginTop: 10,
@@ -310,17 +363,28 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       />
     </View>,
     <View style={styles.fridge}>
-      <Text style={styles.fridge_text}>And finally, please click here to take a picture of your fridge</Text>
-      <View style={{ justifyContent: 'center', alignItems: 'center', marginTop:20 }}>
+      <Text style={styles.fridge_text}>
+        And finally, please click here to take a picture of your fridge
+      </Text>
+      <View
+        style={{
+          justifyContent: "center",
+          alignItems: "center",
+          marginTop: 20,
+        }}
+      >
         {fridgeImageUri ? (
-          <Image source={{ uri: fridgeImageUri }} style={{ width: 100, height: 100 }} />
+          <Image
+            source={{ uri: fridgeImageUri }}
+            style={{ width: 100, height: 100 }}
+          />
         ) : (
           <TouchableOpacity style={styles.camera} onPress={pickImage}>
             <Image source={camera_icon} style={{ width: 50, height: 50 }} />
           </TouchableOpacity>
         )}
-      </View>   
-    </View>
+      </View>
+    </View>,
   ];
 
   return (
@@ -333,13 +397,16 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         )}
       </View>
       {!loading && currentQuestion < 2 && (
-        <TouchableOpacity style={styles.next_button} onPress={() => {
-          if (name.trim() === '' && currentQuestion === 0) {
-            Alert.alert('Error', 'Name is required');
-          } else {
-            setCurrentQuestion(currentQuestion + 1);
-          }
-        }}>
+        <TouchableOpacity
+          style={styles.next_button}
+          onPress={() => {
+            if (name.trim() === "" && currentQuestion === 0) {
+              Alert.alert("Error", "Name is required");
+            } else {
+              setCurrentQuestion(currentQuestion + 1);
+            }
+          }}
+        >
           <MaterialCommunityIcons name="page-next" size={24} color="white" />
         </TouchableOpacity>
       )}
@@ -355,45 +422,45 @@ const FirstLogin = ({ onProfileComplete, session }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: "center",
     padding: 20,
   },
   name_text: {
-    color: 'gray',
-    fontWeight: 'bold',
+    color: "gray",
+    fontWeight: "bold",
   },
   name: {
-    backgroundColor: 'black',
+    backgroundColor: "black",
     padding: 20,
     borderRadius: 10,
-    borderColor: 'white',
+    borderColor: "white",
     borderWidth: 1,
   },
   fridge: {
-    backgroundColor: 'gray',
+    backgroundColor: "gray",
     padding: 20,
     borderRadius: 10,
-    borderColor: 'black',
+    borderColor: "black",
     borderWidth: 1,
   },
   fridge_text: {
-    color: 'black',
-    fontWeight: 'bold',
-    textAlign: 'center',
+    color: "black",
+    fontWeight: "bold",
+    textAlign: "center",
   },
   camera: {
     padding: 10,
     borderRadius: 10,
-    alignItems: 'center',
+    alignItems: "center",
   },
   next_button: {
-    position: 'absolute',
+    position: "absolute",
     right: 20,
     bottom: 70,
-    backgroundColor: 'black',
+    backgroundColor: "black",
     padding: 10,
     borderRadius: 10,
-    alignItems: 'center',
+    alignItems: "center",
   },
 });
 

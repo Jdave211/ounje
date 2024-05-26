@@ -218,122 +218,119 @@ const Inventory = () => {
       //   alignItems: "space-evenly",
       // }}
     >
-      <ImageBackground
+      {/* <ImageBackground
         source={inventoryImages.length > 0 ? { uri: inventoryImages[0] } : null}
         style={styles.container}
-      >
-        <Text style={{ color: "white" }}> Inventory</Text>
-        {/* Inventory Images */}
-        <View style={{ flex: 0.2 }}>
-          <View style={styles.imageContainer}>
-            {inventoryImages.map((image_url, index) => (
-              <TouchableOpacity
-                key={index}
-                onPress={() => {
-                  setSelectedImage(image_url);
-                  setModalVisible(true);
-                }}
-              >
-                <Image source={{ uri: image_url }} style={styles.image} />
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Modal
-            animationType="slide"
-            transparent={false}
-            visible={modalVisible}
-            style
-            onRequestClose={() => setModalVisible(false)}
-          >
+      > */}
+      <Text style={{ color: "white" }}> Inventory</Text>
+      {/* Inventory Images */}
+      <View style={{ flex: 0.2 }}>
+        <View style={{ ...styles.imageContainer, backgroundColor: "#" }}>
+          {inventoryImages.map((image_url, index) => (
             <TouchableOpacity
-              style={styles.close}
-              onPress={() => setModalVisible(false)}
+              key={index}
+              onPress={() => {
+                setSelectedImage(image_url);
+                setModalVisible(true);
+              }}
             >
-              <AntDesign name="closecircle" size={30} color="white" />
+              <Image source={{ uri: image_url }} style={styles.image} />
             </TouchableOpacity>
-            <View style={[styles.centeredView, styles.modalView]}>
-              <Image
-                source={{ uri: selectedImage }}
-                style={styles.modalImage}
-              />
-            </View>
-          </Modal>
+          ))}
         </View>
 
-        <ScrollView style={styles.overlay}>
-          {/* Food Items */}
-          {Object.entries(food_items).map(([section, categories]) => {
-            let data = Object.entries(categories).flatMap(
-              ([category, items], i) =>
-                items.map((item, i) => ({
-                  key: item.name,
-                  value: item.name,
-                }))
-            );
+        <Modal
+          animationType="slide"
+          transparent={false}
+          visible={modalVisible}
+          style
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.close}
+            onPress={() => setModalVisible(false)}
+          >
+            <AntDesign name="closecircle" size={30} color="white" />
+          </TouchableOpacity>
+          <View style={[styles.centeredView, styles.modalView]}>
+            <Image source={{ uri: selectedImage }} style={styles.modalImage} />
+          </View>
+        </Modal>
+      </View>
 
-            return (
-              <MultipleSelectList
-                key={section}
-                setSelected={setSelected}
-                selectedTextStyle={styles.selectedTextStyle}
-                dropdownTextStyles={{ color: "white" }}
-                // defaultOptions={[data[0].value]}
-                data={data}
-                save="value"
-                maxHeight={900}
-                placeholder={"placeholder"}
-                placeholderStyles={{ color: "white" }}
-                arrowicon={
-                  <FontAwesome5 name="chevron-down" size={12} color={"white"} />
-                }
-                searchicon={
-                  <FontAwesome5 name="search" size={12} color={"white"} />
-                }
-                searchPlaceholder="Search..."
-                search={false}
-                boxStyles={{
-                  marginTop: 10,
-                  marginBottom: 10,
-                  borderColor: "white",
-                }}
-                label={entitle(section)}
-                labelStyles={{
-                  color: "white",
-                  fontSize: 14,
-                  fontWeight: "bold",
-                }}
-                badgeStyles={{ backgroundColor: "green" }}
-              />
-            );
-          })}
+      <ScrollView style={styles.overlay}>
+        {/* Food Items */}
+        {Object.entries(food_items).map(([section, categories]) => {
+          let data = Object.entries(categories).flatMap(
+            ([category, items], i) =>
+              items.map((item, i) => ({
+                key: item.name,
+                value: item.name,
+              }))
+          );
 
-          {/* Add Food Items Button */}
-
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter new item here"
-              placeholderTextColor="black"
-              value={newItem}
-              onChangeText={(text) => setNewItem(text)}
+          return (
+            <MultipleSelectList
+              key={section}
+              setSelected={setSelected}
+              selectedTextStyle={styles.selectedTextStyle}
+              dropdownTextStyles={{ color: "white" }}
+              // defaultOptions={[data[0].value]}
+              data={data}
+              save="value"
+              maxHeight={900}
+              placeholder={"placeholder"}
+              placeholderStyles={{ color: "white" }}
+              arrowicon={
+                <FontAwesome5 name="chevron-down" size={12} color={"white"} />
+              }
+              searchicon={
+                <FontAwesome5 name="search" size={12} color={"white"} />
+              }
+              searchPlaceholder="Search..."
+              search={false}
+              boxStyles={{
+                marginTop: 10,
+                marginBottom: 10,
+                borderColor: "white",
+              }}
+              label={entitle(section)}
+              labelStyles={{
+                color: "white",
+                fontSize: 14,
+                fontWeight: "bold",
+              }}
+              badgeStyles={{ backgroundColor: "green" }}
             />
-            <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
-              <Text style={styles.buttonText}>Add</Text>
-            </TouchableOpacity>
-          </View>
-          {/* Generate Recipe Button */}
-          <View style={styles.centerItems}>
-            <TouchableOpacity
-              style={styles.button.container}
-              onPress={generate_recipes}
-              disabled={selected.length === 0}
-            >
-              <Text style={styles.button.text}>Generate</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </ImageBackground>
+          );
+        })}
+
+        {/* Add Food Items Button */}
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter new item here"
+            placeholderTextColor="black"
+            value={newItem}
+            onChangeText={(text) => setNewItem(text)}
+          />
+          <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
+            <Text style={styles.buttonText}>Add</Text>
+          </TouchableOpacity>
+        </View>
+        {/* Generate Recipe Button */}
+        <View style={styles.centerItems}>
+          <TouchableOpacity
+            style={styles.button.container}
+            onPress={generate_recipes}
+            disabled={selected.length === 0}
+          >
+            <Text style={styles.button.text}>Generate</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+      {/* </ImageBackground> */}
     </ScrollView>
   );
 };
