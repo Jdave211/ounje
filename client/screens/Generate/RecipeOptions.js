@@ -9,9 +9,14 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import RecipeCard from "@components/RecipeCard";
+import RecipeOptionCard from "@components/RecipeOptionCard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "../../utils/supabase";
+import { useNavigation } from "@react-navigation/native";
 
 const SavedRecipes = () => {
+  const navigation = useNavigation();
+
   const [user_id, setUserId] = useState(null);
   const [recipeOptions, setRecipeOptions] = useState([]);
 
@@ -55,18 +60,18 @@ const SavedRecipes = () => {
     await Promise.allSettled(
       selected_recipes.map(async (recipe) => {
         let recipe_image = await generate_image(
-          "a zoomed out image showing the full dish of " + recipe.image_prompt,
+          "a zoomed out image showing the full dish of " + recipe.image_prompt
         );
 
         let storage_path = `${current_run.id}/${recipe.name}.jpeg`;
         let image_storage_response = await store_image(
           recipe_image_bucket,
           storage_path,
-          recipe_image,
+          recipe_image
         );
 
         return image_storage_response;
-      }),
+      })
     );
 
     const recipe_records = selected_recipes.map((recipe) => {
@@ -90,18 +95,65 @@ const SavedRecipes = () => {
       .throwOnError();
   };
 
-  console.log({ recipeOptions });
+  const onBookmark = async (recipe, isBookmarked) => {
+    if (isBookmarked) {
+      // setBookmarked((prev) => {
+      //   prev.add(recipe);
+      //   return prev
+      // });
+
+      const results = await supabase
+        .from("saved_recipes")
+        .insert([{ user_id, recipe_id: recipe.id }])
+        .throwOnError();
+
+      setRecipeOptions((prev) => {
+        return prev.filter((option) => option.id !== recipe.id);
+      });
+    } else {
+      // setBookmarked((prev) => {
+      //   prev.delete(recipe);
+      //   return prev
+      // })
+
+      await supabase
+        .from("saved_recipes")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("recipe_id", recipe.id)
+        .throwOnError();
+    }
+  };
+
+  const navigate_to_saved_recipes = () => {
+    navigation.navigate("SavedRecipes");
+  };
 
   return (
     <View style={styles.container}>
       <Text style={styles.text}>Generated Recipe Options</Text>
       <ScrollView>
+        {/* <View style={{ justifyContent: "center", alignItems: "center", flexDirection: "row", flexWrap: "wrap" }}> */}
         {recipeOptions.map((recipeOption, index) => (
           <View key={index}>
-            <RecipeCard key={index} recipe={recipeOption} />
+            <RecipeOptionCard
+              key={index}
+              recipe={recipeOption}
+              onBookmark={onBookmark}
+            />
           </View>
         ))}
+        {/* </View> */}
       </ScrollView>
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity
+          style={styles.buttonContainer}
+          onPress={navigate_to_saved_recipes}
+          // disabled={images.length === 0}
+        >
+          <Text style={styles.buttonText}>View Saved Recipes</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
@@ -109,13 +161,23 @@ const SavedRecipes = () => {
 const styles = {
   container: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
     backgroundColor: "black",
   },
   text: {
     color: "white",
     fontSize: 20,
+  },
+  buttonContainer: {
+    width: 200,
+    height: 50,
+    backgroundColor: "green",
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  buttonText: {
+    color: "#fff",
+    fontWeight: "bold",
   },
 };
 
