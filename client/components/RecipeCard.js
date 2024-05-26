@@ -5,6 +5,8 @@ import Toast from "react-native-toast-message";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
 import harvestImage from "../assets/harvest.png";
+import { AnimatedCircularProgress } from "react-native-circular-progress";
+import { Bar as ProgressBar } from "react-native-progress";
 
 // recipe:
 // - id
@@ -151,11 +153,18 @@ const RecipeCard = ({ id, showBookmark }) => {
                 <View>
                   <Text style={styles.text}>
                     29% of{" "}
-                    <Image
+                    {/* <Image
                       source={harvestImage}
                       style={{ resizeMode: "cover", width: 24, height: 24 }}
-                    />
+                    /> */}
                   </Text>
+                  <ProgressBar progress={0.3} width={50} />
+                </View>
+                <View>
+                  <Image
+                    source={harvestImage}
+                    style={{ resizeMode: "cover", width: 24, height: 24 }}
+                  />
                 </View>
               </View>
 
