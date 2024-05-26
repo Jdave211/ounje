@@ -70,7 +70,7 @@ const CheckIngredients = () => {
       get_user_id();
     }
     fetch_food_items();
-  }, [user_id]);
+  }, []);
 
   const handleAddIngredient = () => {
     if (inputValue.length === 0 || !inputValue.trim()) {

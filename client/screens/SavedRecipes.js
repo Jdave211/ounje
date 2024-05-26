@@ -46,7 +46,7 @@ const SavedRecipes = () => {
     } else {
       fetch_saved_recipes();
     }
-  }, []);
+  }, [user_id]);
 
   const navigate_to_recipe_page = (recipe_id) => () => {
     navigation.navigate("RecipePage", { id: recipe_id });

@@ -14,7 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
 
-const SavedRecipes = () => {
+const RecipeOptions = () => {
   const navigation = useNavigation();
 
   const [user_id, setUserId] = useState(null);
@@ -38,9 +38,10 @@ const SavedRecipes = () => {
 
     if (!user_id) {
       get_user_id();
+    } else {
+      fetch_recipe_options();
     }
-    fetch_recipe_options();
-  }, [user_id]);
+  }, []);
 
   const store_selected_recipes = async (selected_recipes) => {
     const recipe_image_bucket = "recipe_images";
@@ -96,8 +97,10 @@ const SavedRecipes = () => {
   };
 
   const navigate_to_saved_recipes = () => {
-    navigation.navigate("SavedRecipes");
+    navigation.navigate("RecipeOptions");
   };
+
+  console.log({ recipeOptions });
 
   return (
     <View style={styles.container}>
@@ -152,4 +155,4 @@ const styles = {
   },
 };
 
-export default SavedRecipes;
+export default RecipeOptions;

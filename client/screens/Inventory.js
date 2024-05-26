@@ -88,7 +88,7 @@ const Inventory = () => {
       fetch_inventory_images();
       fetch_food_items();
     }
-  }, [user_id]);
+  }, []);
 
   console.log({ inventoryImages });
 

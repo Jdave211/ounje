@@ -28,6 +28,7 @@ import { openai, extract_json } from "../../utils/openai";
 import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
 import { useNavigation } from "@react-navigation/native";
 import { flatten_nested_objects } from "../../utils/openai";
+import { parse_ingredients } from "../../utils/spoonacular";
 
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 
@@ -199,10 +200,32 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       // const foodItemNames = extractFoodItemNames(food_items);
       // console.log("Extracted food item names: ", foodItemNames);
 
-      const food_items_array = flatten_nested_objects(food_items, [
+      let food_items_array = flatten_nested_objects(food_items, [
         "inventory",
         "category",
       ]);
+
+      const parsed_ingredients = await parse_ingredients(
+        food_items_array.map(({ name }) => name)
+      );
+
+      console.log({ parsed_ingredients });
+
+      food_items_array = food_items_array.map((food_item, i) => {
+        for (let parsed of parsed_ingredients) {
+          if (parsed.original === food_item.name) {
+            food_item.spoonacular_id = parsed.id;
+            food_item.spoonacular_name = parsed.name;
+            food_item.amount = parsed.amount;
+            food_item.image = parsed.image;
+            break;
+          }
+        }
+
+        return food_item;
+      });
+
+      console.log({ food_items_array });
 
       await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
       await AsyncStorage.setItem(

@@ -51,6 +51,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       if (retrieved_food_items_array?.length > 0) {
         setFoodItemsArray(() => retrieved_food_items_array);
       }
+      console.log({ retrieved_food_items_array });
     };
 
     const fetch_inventory_images = async () => {
@@ -74,6 +75,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       setInventoryImages(() => image_urls);
     };
 
+    console.log("running useEffect");
     if (!user_id) {
       get_user_id();
       fetch_food_items();
@@ -81,7 +83,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       fetch_inventory_images();
       fetch_food_items();
     }
-  }, [user_id]);
+  }, []);
 
   const handleRecipesReady = () => {
     setModalVisible(true);
