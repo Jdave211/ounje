@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ImageBackground, Alert } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ImageBackground, Alert, ScrollView } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { SelectList } from 'react-native-dropdown-select-list';
 import { FontAwesome5 } from "@expo/vector-icons";
@@ -13,6 +13,7 @@ export default function Generate({ route }) {
   const [isLoading, setIsLoading] = useState(false);
   const [selected, setSelected] = useState(null);
   const [name, setName] = useState(' ');
+  const [recipes, setRecipes] = useState([]);
   const navigation = useNavigation();
 
   const flavors = ['sweet', 'sour', 'spicy', 'umami'];
@@ -76,7 +77,20 @@ export default function Generate({ route }) {
             }}
             defaultOption={{ key:'1', value:'What flavor are you feeling?' }}
           />
-          {isLoading ? <Loading /> : <GenerateRecipes onLoading={handleLoading} />}
+          <ScrollView style={{flex: 0.5}}>
+  <GenerateRecipes onLoading={handleLoading} onRecipesGenerated={setRecipes} />
+  <View style={{padding: 10}}>
+            {isLoading ? (
+              <Loading />
+            ) : (
+              recipes.map((recipe, index) => (
+                <View key={index}>
+                  <Text style={{color: 'white'}}>{JSON.stringify(recipe)}</Text>
+                </View>
+              ))
+            )}
+          </View>
+</ScrollView>
         </View>
       </View>
     </ImageBackground>

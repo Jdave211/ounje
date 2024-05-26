@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   StyleSheet,
@@ -7,16 +7,24 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
+  Modal
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { openai } from "../utils/openai"; // Adjust this import based on your project structure
 import { RECIPES_PROMPT } from "../utils/prompts"; // Adjust this import based on your project structure
+import RecipeCard from './RecipeCard'; // Adjust this import based on your project structure
 
-export default function GenerateRecipes({ onLoading }) {
+export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   const [isLoading, setIsLoading] = useState(false);
   const [recipes, setRecipes] = useState([]);
   const [gptResults, setGptResults] = useState([]);
+  const [modalVisible, setModalVisible] = useState(false);
+
+
+  const handleRecipesReady = () => {
+    setModalVisible(true);
+  };
 
   const fetchRecipes = async () => {
     try {
@@ -34,9 +42,9 @@ export default function GenerateRecipes({ onLoading }) {
         const response = await axios.get("https://api.spoonacular.com/recipes/findByIngredients", {
           params: {
             ingredients: ingredients,
-            number: 20,
+            number: 2,
             ranking: 1,
-            ignorePantry: 'true',
+            ignorePantry: 'false',
             apiKey: process.env.SPOONACULAR_API_KEY,
           },
         });
@@ -57,6 +65,7 @@ export default function GenerateRecipes({ onLoading }) {
         );
 
         setGptResults(gptResponses);
+        console.log("GPT Results:", gptResponses);
       } else {
         Alert.alert("Error", "No food items found in inventory.");
       }
@@ -66,6 +75,8 @@ export default function GenerateRecipes({ onLoading }) {
     } finally {
       setIsLoading(false);
       onLoading(false);
+      onRecipesGenerated(recipes);
+      setModalVisible(true);
     }
   };
 
@@ -102,12 +113,13 @@ export default function GenerateRecipes({ onLoading }) {
       console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
 
       const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "ft:gpt-3.5-turbo-0125:personal:ounje2:9T4gBMe8",
         messages: [system_prompt, user_prompt],
       });
 
-
       console.log("OpenAI response:", response.choices[0].message.content);
+      return response.choices[0].message.content;
+
     } catch (error) {
       console.error("Error passing recipe through GPT:", error);
       return "Error validating recipe.";
@@ -124,22 +136,14 @@ export default function GenerateRecipes({ onLoading }) {
       >
         <Text style={styles.buttonText}>Generate Recipes</Text>
       </TouchableOpacity>
-      {isLoading && <ActivityIndicator size="large" color="#00ff00" />}
-      <ScrollView style={styles.scrollContainer}>
-        {recipes.map((recipe, index) => (
-          <View key={index} style={styles.recipeContainer}>
-            <Text style={styles.recipeTitle}>{recipe.title}</Text>
-            {recipe.details && (
-              <View style={styles.recipeDetails}>
-                <Text style={styles.recipeText}>Instructions: {recipe.details.instructions}</Text>
-                <Text style={styles.recipeText}>Ingredients: {recipe.details.extendedIngredients.map((ingredient) => ingredient.original).join(", ")}</Text>
-                <Text style={styles.recipeText}>Servings: {recipe.details.servings}</Text>
-                <Text style={styles.recipeText}>Preparation time: {recipe.details.readyInMinutes} minutes</Text>
-              </View>
-            )}
-          </View>
-        ))}
-      </ScrollView>
+      <Modal
+          animationType="slide"
+          transparent={false}
+          visible={modalVisible}
+          onRequestClose={() => {
+            setModalVisible(!modalVisible);
+          }}
+        >
       <ScrollView style={styles.scrollContainer}>
         {gptResults.map((result, index) => (
           <View key={index} style={styles.gptContainer}>
@@ -148,6 +152,7 @@ export default function GenerateRecipes({ onLoading }) {
           </View>
         ))}
       </ScrollView>
+      </Modal>
     </View>
   );
 }
