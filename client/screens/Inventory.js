@@ -11,9 +11,11 @@ import {
   Alert,
   TextInput,
 } from "react-native";
+
 import { FontAwesome5 } from "@expo/vector-icons";
 import { AntDesign } from "@expo/vector-icons";
 import RecipeCard from "../components/RecipeCard";
+
 import { MultipleSelectList } from "../components/MultipleSelectList";
 import axios from "axios";
 import { supabase, store_image } from "../utils/supabase";
@@ -22,6 +24,7 @@ import { FOOD_ITEMS } from "../utils/constants";
 import { RECIPES_PROMPT } from "@utils/prompts";
 import { generate_image } from "../utils/stability";
 import { entitle } from "@utils/helpers";
+
 import { useNavigation } from "@react-navigation/native";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 
@@ -168,6 +171,7 @@ const Inventory = () => {
 
           return (
             <MultipleSelectList
+              showSelectedNumber
               key={section}
               setSelected={setSelected}
               selectedTextStyle={styles.selectedTextStyle}

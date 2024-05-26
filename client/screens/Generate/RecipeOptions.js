@@ -41,7 +41,7 @@ const RecipeOptions = () => {
     } else {
       fetch_recipe_options();
     }
-  }, []);
+  }, [user_id]);
 
   const store_selected_recipes = async (selected_recipes) => {
     const recipe_image_bucket = "recipe_images";
@@ -97,7 +97,7 @@ const RecipeOptions = () => {
   };
 
   const navigate_to_saved_recipes = () => {
-    navigation.navigate("RecipeOptions");
+    navigation.navigate("SavedRecipes");
   };
 
   console.log({ recipeOptions });

@@ -118,6 +118,8 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
           }
         );
 
+        console.log({ response });
+
         const recipesWithDetails = await Promise.all(
           response.data.map(async (recipe) => {
             const recipeDetails = await fetchRecipeDetails(recipe.id);
@@ -218,6 +220,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       },
     ] = await Promise.allSettled([async_run_response]);
 
+    setIsLoading(true);
     if (runs_error) console.log("Error:", runs_error);
     else console.log("Added User Run:", runs);
 
@@ -300,8 +303,9 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
     await AsyncStorage.setItem(
       "recipe_options",
-      JSON.stringify(recipe_options)
+      JSON.stringify(recipe_options_in_snake_case)
     );
+    setIsLoading(false);
 
     // navigate to recipes screen to select options to keep
     // once selected, save the selected options to the database
