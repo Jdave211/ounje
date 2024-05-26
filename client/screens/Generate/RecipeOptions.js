@@ -12,8 +12,11 @@ import RecipeCard from "@components/RecipeCard";
 import RecipeOptionCard from "@components/RecipeOptionCard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../utils/supabase";
+import { useNavigation } from "@react-navigation/native";
 
 const SavedRecipes = () => {
+  const navigation = useNavigation();
+
   const [user_id, setUserId] = useState(null);
   const [recipeOptions, setRecipeOptions] = useState([]);
 
@@ -103,6 +106,10 @@ const SavedRecipes = () => {
         .from("saved_recipes")
         .insert([{ user_id, recipe_id: recipe.id }])
         .throwOnError();
+
+      setRecipeOptions((prev) => {
+        return prev.filter((option) => option.id !== recipe.id);
+      });
     } else {
       // setBookmarked((prev) => {
       //   prev.delete(recipe);
@@ -116,6 +123,10 @@ const SavedRecipes = () => {
         .eq("recipe_id", recipe.id)
         .throwOnError();
     }
+  };
+
+  const navigate_to_saved_recipes = () => {
+    navigation.navigate("SavedRecipes");
   };
 
   return (
@@ -137,7 +148,7 @@ const SavedRecipes = () => {
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           style={styles.buttonContainer}
-          // onPress={sendImages}
+          onPress={navigate_to_saved_recipes}
           // disabled={images.length === 0}
         >
           <Text style={styles.buttonText}>View Saved Recipes</Text>

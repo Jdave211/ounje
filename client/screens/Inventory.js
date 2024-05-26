@@ -17,6 +17,7 @@ import { MultipleSelectList } from "../components/MultipleSelectList";
 import { supabase } from "../utils/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "@react-navigation/native";
+import CaseConvert, { objectToSnake } from "ts-case-convert";
 
 const Inventory = () => {
   const navigation = useNavigation();
@@ -82,6 +83,10 @@ const Inventory = () => {
     }
   }, [user_id]);
 
+  console.log({ inventoryImages });
+
+  console.log({ inventoryImages });
+
   const addNewItem = () => {
     if (newItem.trim() === "") {
       Alert.alert("Error", "Please enter a valid item name.");
@@ -96,6 +101,7 @@ const Inventory = () => {
     // Example:
     // await supabase.from("inventory").update({ food_items: JSON.stringify(updatedFoodItems) }).eq("user_id", user_id);
   };
+
   const generate_recipes = async () => {
     let async_run_response = supabase
       .from("runs")
@@ -134,25 +140,60 @@ const Inventory = () => {
 
     console.log("starting recipes");
 
-    const { data: recipe_response } = await axios.get(
-      "https://api.spoonacular.com/recipes/findByIngredients",
-      {
+    const { data: suggested_recipes } = await axios
+      .get("https://api.spoonacular.com/recipes/findByIngredients", {
         params: {
           apiKey: process.env.SPOONACULAR_API_KEY,
           ingredients: food_items_array.map(({ name }) => name).join(", "),
           number: 7,
           ranking: 1,
         },
+      })
+      .catch((err) => console.log(err, err.response.data, err.request));
+
+    console.log({ suggested_recipes });
+
+    let { data: recipe_options } = await axios
+      .get(`https://api.spoonacular.com/recipes/informationBulk`, {
+        params: {
+          apiKey: process.env.SPOONACULAR_API_KEY,
+          includeNutrition: true,
+          ids: suggested_recipes.map((recipe) => recipe.id).join(", "),
+        },
+      })
+      .catch((err) => console.log(err, error.response.data, err.request));
+    recipe_options = suggested_recipes.map((suggested_recipe, i) => ({
+      ...suggested_recipe,
+      ...recipe_options[i],
+    }));
+
+    console.log("recipe_options: ", recipe_options);
+
+    const recipe_options_in_snake_case = objectToSnake(recipe_options).map(
+      (recipe) => {
+        delete recipe.cheap;
+        delete recipe.gaps;
+        delete recipe.likes;
+        delete recipe.missed_ingredient_count;
+        delete recipe.missed_ingredients;
+        delete recipe.used_ingredients;
+        delete recipe.used_ingredient_count;
+        delete recipe.user_tags;
+        delete recipe.unused_ingredients;
+        delete recipe.unknown_ingredients;
+        delete recipe.open_license;
+        delete recipe.report;
+        delete recipe.suspicious_data_score;
+        delete recipe.tips;
+        return recipe;
       }
     );
 
-    let recipe_options = recipe_response;
-
-    console.log({ recipe_options });
-
-    // let { object: recipe_options } = extract_json(recipe_response);
-
-    console.log("recipe_options: ", recipe_options);
+    console.log({ recipe_options_in_snake_case });
+    await supabase
+      .from("recipe_ids")
+      .upsert(recipe_options_in_snake_case, { onConflict: "id" })
+      .throwOnError();
 
     await AsyncStorage.setItem(
       "recipe_options",

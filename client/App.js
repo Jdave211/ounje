@@ -5,6 +5,8 @@ import { NavigationContainer } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { supabase } from "./utils/supabase";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+
 import Welcome from "./screens/Onboarding/Welcome";
 import FirstLogin from "./screens/Onboarding/FirstLogin";
 import Auth from "./screens/Onboarding/Auth";
@@ -16,8 +18,11 @@ import Community from "./screens/Community";
 import Generate from "./screens/Generate/Generate";
 import CheckIngredients from "./screens/Generate/CheckIngredients";
 import RecipeOptions from "./screens/Generate/RecipeOptions";
+import RecipePage from "./screens/RecipePage";
 
 const Tab = createBottomTabNavigator();
+
+import { NativeModules } from "react-native";
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -103,70 +108,79 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <View style={styles.container}>
-        {session ? (
-          firstLogin ? (
-            <FirstLogin
-              onProfileComplete={() => setFirstLogin(false)}
-              session={session}
-            />
+    <GestureHandlerRootView>
+      <NavigationContainer>
+        <View style={styles.container}>
+          {session ? (
+            firstLogin ? (
+              <FirstLogin
+                onProfileComplete={() => setFirstLogin(false)}
+                session={session}
+              />
+            ) : (
+              <Layout>
+                <Tab.Navigator
+                  screenOptions={{ tabBarStyle: styles.navigator }}
+                >
+                  <Tab.Screen
+                    name="Generate"
+                    component={Generate}
+                    options={{ headerShown: false }}
+                    initialParams={{ session }}
+                  />
+                  <Tab.Screen
+                    name="SavedRecipes"
+                    component={SavedRecipes}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Community"
+                    component={Community}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Inventory"
+                    component={Inventory}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Profile"
+                    component={Profile}
+                    options={{ headerShown: false }}
+                    initialParams={{ session }}
+                  />
+                  <Tab.Screen
+                    name="CheckIngredients"
+                    component={CheckIngredients}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="RecipeOptions"
+                    component={RecipeOptions}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="RecipePage"
+                    component={RecipePage}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Auth"
+                    component={Auth}
+                    options={{ headerShown: false }}
+                  />
+                </Tab.Navigator>
+              </Layout>
+            )
           ) : (
-            <Layout>
-              <Tab.Navigator screenOptions={{ tabBarStyle: styles.navigator }}>
-                <Tab.Screen
-                  name="Generate"
-                  component={Generate}
-                  options={{ headerShown: false }}
-                  initialParams={{ session }}
-                />
-                <Tab.Screen
-                  name="SavedRecipes"
-                  component={SavedRecipes}
-                  options={{ headerShown: false }}
-                />
-                <Tab.Screen
-                  name="Community"
-                  component={Community}
-                  options={{ headerShown: false }}
-                />
-                <Tab.Screen
-                  name="Inventory"
-                  component={Inventory}
-                  options={{ headerShown: false }}
-                />
-                <Tab.Screen
-                  name="Profile"
-                  component={Profile}
-                  options={{ headerShown: false }}
-                  initialParams={{ session }}
-                />
-                <Tab.Screen
-                  name="CheckIngredients"
-                  component={CheckIngredients}
-                  options={{ headerShown: false }}
-                />
-                <Tab.Screen
-                  name="RecipeOptions"
-                  component={RecipeOptions}
-                  options={{ headerShown: false }}
-                />
-                <Tab.Screen
-                  name="Auth"
-                  component={Auth}
-                  options={{ headerShown: false }}
-                />
-              </Tab.Navigator>
-            </Layout>
-          )
-        ) : (
-          <Welcome />
-        )}
+            <Welcome />
+          )}
 
-        <StatusBar style="light" />
-      </View>
-      <Toast />
-    </NavigationContainer>
+          <StatusBar style="light" />
+        </View>
+        <Toast />
+      </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }
 

@@ -11,8 +11,10 @@ import {
 import RecipeCard from "../components/RecipeCard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
+import { useNavigation } from "@react-navigation/native";
 
 const SavedRecipes = () => {
+  const navigation = useNavigation();
   const [user_id, setUserId] = useState(null);
   const [savedRecipes, setSavedRecipes] = useState([]);
 
@@ -30,9 +32,11 @@ const SavedRecipes = () => {
 
       console.log({ saved_recipes: recipes });
 
-      const recipe_ids = recipes.map(({ recipe_id }) => recipe_id);
+      if (recipes) {
+        const recipe_ids = recipes.map(({ recipe_id }) => recipe_id);
 
-      setSavedRecipes(() => recipe_ids);
+        setSavedRecipes(() => recipe_ids);
+      }
     };
 
     fetch_saved_recipes();
@@ -44,13 +48,32 @@ const SavedRecipes = () => {
     }
   }, [user_id]);
 
+  const navigate_to_recipe_page = (recipe_id) => () => {
+    navigation.navigate("RecipePage", { id: recipe_id });
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.text}> Saved Recipes </Text>
       <ScrollView>
+        {/* <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "space-around",
+          }}
+        > */}
         {savedRecipes.map((recipe_id, i) => (
-          <RecipeCard key={i} id={recipe_id} />
+          // <View key={i} style={{ width: 200, margin: 10 }}>
+          <TouchableOpacity
+            key={i}
+            onPress={navigate_to_recipe_page(recipe_id)}
+          >
+            <RecipeCard id={recipe_id} />
+          </TouchableOpacity>
+          // </View>
         ))}
+        {/* </View> */}
       </ScrollView>
     </View>
   );
@@ -58,9 +81,9 @@ const SavedRecipes = () => {
 
 const styles = {
   container: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
+    // flex: 2,
+    // justifyContent: "center",
+    // alignItems: "center",
     backgroundColor: "black",
   },
   text: {

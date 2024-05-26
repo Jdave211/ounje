@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
-import { Entypo } from "@expo/vector-icons";
+import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
-import { get_recipe_details } from "../utils/spoonacular";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
 
@@ -20,7 +19,7 @@ import { supabase } from "../utils/supabase";
 // - bookmarks: Number
 //
 
-const RecipeCard = ({ id }) => {
+const RecipeCard = ({ id, showBookmark }) => {
   const [user_id, setUserId] = useState(null);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [isSaved, setIsSaved] = React.useState(false);
@@ -32,15 +31,23 @@ const RecipeCard = ({ id }) => {
     };
 
     const fetch_recipe_details = async () => {
-      const detail = await get_recipe_details(id);
-      console.log({ detail });
-      setRecipeDetails(() => detail);
+      const {
+        data: [recipe],
+      } = await supabase
+        .from("recipe_ids")
+        .select("*")
+        .eq("id", id)
+        .throwOnError();
 
+      setRecipeDetails(() => recipe);
+    };
+
+    const fetch_is_saved = async () => {
       const { data: saved_data } = await supabase
         .from("saved_recipes")
         .select()
         .eq("user_id", user_id)
-        .eq("recipe_id", detail.id)
+        .eq("recipe_id", id)
         .throwOnError();
 
       console.log({ saved_data });
@@ -50,6 +57,7 @@ const RecipeCard = ({ id }) => {
       get_user_id();
     } else {
       fetch_recipe_details();
+      fetch_is_saved();
     }
   }, [user_id]);
 
@@ -75,33 +83,95 @@ const RecipeCard = ({ id }) => {
   return (
     <View style={styles.container}>
       {recipeDetails && (
-        <View style={styles.recipeContent}>
-          <View style={styles.imageTextContainer}>
-            <Text style={styles.title}>{recipeDetails.title}</Text>
-            <Image style={styles.image} source={{ uri: recipeDetails.image }} />
+        <View
+          style={{
+            // borderColor: "white",
+            borderRadius: 10,
+            borderWidth: 1,
+            padding: 5,
+            borderShadow: "5px 10px #ffffff",
+            flex: 2,
+            margin: 10,
+            backgroundColor: "#2e2d2d",
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              // borderRadius: 10,
+              padding: 0,
+              // borderColor: "white",
+              // borderWidth: 1,
+            }}
+          >
+            <Image
+              style={{
+                width: "100%",
+                height: 150,
+                borderRadius: 10,
+                borderTopLeftRadius: 10,
+                borderTopRightRadius: 10,
+              }}
+              source={{ uri: recipeDetails.image }}
+            />
           </View>
-          <View style={styles.underHeading}>
-            <View style={{ flexDirection: "row" }}>
-              <Text style={styles.subheading}> Duration: </Text>
-              <Text style={styles.text}>
-                {recipeDetails.readyInMinutes} minutes
+          <View style={{ padding: 10 }}>
+            <View style={{ ...styles.imageTextContainer, marginBottom: 5 }}>
+              <Text style={styles.title} numberOfLines={1}>
+                {recipeDetails.title}
               </Text>
             </View>
-            <Text style={styles.subheading}>Ingredients:</Text>
-            {/* {recipeDetails.usedIngredients.map((ingredient, index) => (
-              <Text style={styles.text} key={index}>
-                {ingredient.originalName}
-              </Text>
-            ))} */}
-            <Text style={styles.subheading}>Instructions:</Text>
-            {/* <Text style={styles.text}>{recipeDetails.instructions[0]}</Text> */}
-            <TouchableOpacity style={styles.save} onPress={handleSave}>
-              <Entypo
-                name="bookmark"
-                size={24}
-                color={isSaved ? "green" : "white"}
-              />
-            </TouchableOpacity>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingRight: 20,
+                  }}
+                >
+                  <Feather name="clock" size={20} color="green" />
+                  <Text style={{ ...styles.text, marginLeft: 10 }}>
+                    {recipeDetails.ready_in_minutes} mins
+                  </Text>
+                </View>
+
+                <View>
+                  <Text style={styles.text}>29% of [II]</Text>
+                </View>
+              </View>
+
+              {showBookmark && (
+                <View>
+                  <TouchableOpacity style={styles.save} onPress={handleSave}>
+                    {isSaved ? (
+                      <MaterialIcons
+                        name="bookmark-added"
+                        size={24}
+                        color="green"
+                      />
+                    ) : (
+                      <MaterialIcons
+                        name="bookmark-border"
+                        size={24}
+                        color="white"
+                      />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
           </View>
         </View>
       )}
@@ -114,21 +184,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: "bold",
     marginRight: 20,
-    color: "black",
-    textDecorationLine: "underline",
+    color: "white",
+    // textDecorationLine: "underline",
   },
   recipeContent: {
     backgroundColor: "#c7a27c",
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "black",
-  },
-  underHeading: {
-    marginTop: -28,
+    borderColor: "white",
   },
   imageTextContainer: {
     flexDirection: "row",
@@ -142,7 +209,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 5,
-    color: "black",
+    color: "white",
   },
   text: {
     fontSize: 16,
@@ -150,7 +217,6 @@ const styles = StyleSheet.create({
   },
   save: {
     alignSelf: "flex-end",
-    marginBottom: -20,
   },
 });
 
