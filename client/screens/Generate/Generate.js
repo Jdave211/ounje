@@ -111,6 +111,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 10,
     borderRadius: 13,
+    paddingTop: 10,
   },
   foodRowContainer: {
     width: "100%",
