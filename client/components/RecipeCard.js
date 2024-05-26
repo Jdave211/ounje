@@ -4,6 +4,7 @@ import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
+import harvestImage from "../assets/harvest.png";
 
 // recipe:
 // - id
@@ -148,7 +149,13 @@ const RecipeCard = ({ id, showBookmark }) => {
                 </View>
 
                 <View>
-                  <Text style={styles.text}>29% of [II]</Text>
+                  <Text style={styles.text}>
+                    29% of{" "}
+                    <Image
+                      source={harvestImage}
+                      style={{ resizeMode: "cover", width: 24, height: 24 }}
+                    />
+                  </Text>
                 </View>
               </View>
 
