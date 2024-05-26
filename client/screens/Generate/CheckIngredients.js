@@ -110,7 +110,7 @@ const CheckIngredients = () => {
     let removed_items_set = new Set(removed_items);
 
     const filtered_food_items = food_items_array.filter(
-      (item) => !removed_items_set.has(item.name),
+      (item) => !removed_items_set.has(item.name)
     );
 
     setFoodItemsArray(filtered_food_items);
@@ -143,7 +143,7 @@ const CheckIngredients = () => {
     await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
     await AsyncStorage.setItem(
       "food_items_array",
-      JSON.stringify(food_items_array),
+      JSON.stringify(food_items_array)
     );
 
     // we can also just generate recipes here and
@@ -243,7 +243,7 @@ const CheckIngredients = () => {
                   items.map((item, _i) => ({
                     key: item.name,
                     value: item.name,
-                  })),
+                  }))
               );
 
               return (
@@ -328,7 +328,7 @@ const CheckIngredients = () => {
               disabled={data.length === 0}
               onPress={handleGenerateRecipes}
             >
-              <Text style={styles.generateButtonText}>Generate Recipes</Text>
+              <Text style={styles.generateButtonText}>Save Food Items</Text>
             </TouchableOpacity>
           </View>
         </View>
