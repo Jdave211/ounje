@@ -16,6 +16,8 @@ import { supabase } from "../utils/supabase";
 import Carousel from "react-native-reanimated-carousel";
 import { ScrollView } from "react-native-gesture-handler";
 import { entitle } from "../utils/helpers";
+import harvestImage from "../assets/harvest.png";
+import { Bar as ProgressBar } from "react-native-progress";
 
 import { useNavigation } from "@react-navigation/native";
 
@@ -219,7 +221,13 @@ const RecipePage = ({ route }) => {
               </View>
 
               <View>
-                <Text style={styles.text}>29% of [II]</Text>
+                <Text style={styles.text}>29% of Ingredients</Text>
+                <Image
+                  source={harvestImage}
+                  style={{ resizeMode: "cover", width: 24, height: 24 }}
+                />
+                <ProgressBar progress={0.3} width={50} />
+                <View></View>
               </View>
             </View>
           </View>
@@ -300,84 +308,6 @@ const RecipePage = ({ route }) => {
           </View>
         </View>
       </ScrollView>
-
-      // <View>
-      //   <Image
-      //     style={{
-      //       width: "100%",
-      //       height: 200,
-      //       borderRadius: 10,
-      //       borderTopLeftRadius: 10,
-      //       borderTopRightRadius: 10,
-      //     }}
-      //     source={{ uri: recipeDetails.image }}
-      //   />
-      //   {/* <View
-      //     style={{
-      //       width: "100%",
-      //       // borderRadius: 10,
-      //       padding: 0,
-      //       // borderColor: "white",
-      //       // borderWidth: 1,
-      //     }}
-      //   ></View>
-      //   <View style={{ padding: 10 }}>
-      //     <View style={{ ...styles.imageTextContainer, marginBottom: 5 }}>
-      //       <Text style={styles.title} numberOfLines={1}>
-      //         {recipeDetails.title}
-      //       </Text>
-      //     </View>
-      //     <View
-      //       style={{
-      //         flexDirection: "row",
-      //         justifyContent: "space-between",
-      //         alignItems: "center",
-      //       }}
-      //     >
-      //       <View
-      //         style={{
-      //           flexDirection: "row",
-      //           alignItems: "center",
-      //         }}
-      //       >
-      //         <View
-      //           style={{
-      //             flexDirection: "row",
-      //             alignItems: "center",
-      //             paddingRight: 20,
-      //           }}
-      //         >
-      //           <Feather name="clock" size={20} color="green" />
-      //           <Text style={{ ...styles.text, marginLeft: 10 }}>
-      //             {recipeDetails.ready_in_minutes} mins
-      //           </Text>
-      //         </View>
-
-      //         <View>
-      //           <Text style={styles.text}>29% of [II]</Text>
-      //         </View>
-      //       </View>
-
-      //       <View>
-      //         <TouchableOpacity style={styles.save} onPress={handleSave}>
-      //           {isSaved ? (
-      //             <MaterialIcons
-      //               name="bookmark-added"
-      //               size={24}
-      //               color="green"
-      //             />
-      //           ) : (
-      //             <MaterialIcons
-      //               name="bookmark-border"
-      //               size={24}
-      //               color="white"
-      //             />
-      //           )}
-      //         </TouchableOpacity>
-      //       </View>
-      //     </View>
-      //   </View> */}
-      // </View>
     )
   );
 };
