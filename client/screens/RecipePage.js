@@ -70,7 +70,7 @@ const RecipePage = ({ route }) => {
         .eq("recipe_id", id)
         .throwOnError();
 
-      console.log({ saved_data });
+      setIsSaved(saved_data?.length > 0);
     };
 
     if (!user_id) {
@@ -81,20 +81,35 @@ const RecipePage = ({ route }) => {
     }
   }, [user_id, route.params]);
 
-  const handleSave = () => {
-    setIsSaved(!isSaved);
-    if (isSaved) {
-      Toast.show({
-        type: "success",
-        text1: "Recipe Unsaved",
-        text2: `${recipe.title} has been unsaved from your recipes.`,
-      });
-      return;
-    } else {
+  const handleSave = async () => {
+    let localIsSaved = !isSaved;
+
+    console.log({ localIsSaved });
+    setIsSaved(localIsSaved);
+
+    if (localIsSaved) {
+      await supabase
+        .from("saved_recipes")
+        .insert([{ user_id, recipe_id: recipeDetails.id }])
+        .throwOnError();
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${recipe.title} has been saved to your recipes.`,
+        text2: `${recipeDetails.title} has been saved to your recipes.`,
+      });
+
+      return;
+    } else {
+      await supabase
+        .from("saved_recipes")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("recipe_id", recipeDetails.id)
+        .throwOnError();
+      Toast.show({
+        type: "success",
+        text1: "Recipe Unsaved",
+        text2: `${recipeDetails.title} has been removed from your saved recipes.`,
       });
     }
   };
@@ -103,8 +118,6 @@ const RecipePage = ({ route }) => {
     console.log({ navigation: navigation.getState().history });
     navigation.goBack();
   };
-
-  const on_bookmark_click = () => {};
 
   console.log({ recipePage: recipeDetails });
   return (
@@ -152,9 +165,13 @@ const RecipePage = ({ route }) => {
               marginLeft: "auto",
               marginRight: 10,
             }}
-            onPress={on_bookmark_click}
+            onPress={handleSave}
           >
-            <Feather name="bookmark" size={24} color={"white"} />
+            {isSaved ? (
+              <MaterialIcons name="bookmark-remove" size={24} color={"gray"} />
+            ) : (
+              <MaterialIcons name="bookmark-add" size={24} color={"green"} />
+            )}
           </TouchableOpacity>
         </View>
 
@@ -231,7 +248,7 @@ const RecipePage = ({ route }) => {
               </View>
             </View>
           </View>
-          <View>
+          <View style={{ marginTop: 10 }}>
             <Text style={styles.subheading}>Description</Text>
 
             <Text style={styles.text} numberOfLines={2}>
@@ -239,7 +256,7 @@ const RecipePage = ({ route }) => {
             </Text>
           </View>
 
-          <View>
+          <View style={{ marginTop: 10 }}>
             <Text style={styles.subheading}>Ingredients</Text>
             {recipeDetails.extended_ingredients.map((ingredient, i) => (
               <View

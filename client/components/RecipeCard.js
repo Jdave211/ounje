@@ -71,7 +71,7 @@ const RecipeCard = ({ id, showBookmark }) => {
       Toast.show({
         type: "success",
         text1: "Recipe Unsaved",
-        text2: `${recipe.title} has been unsaved from your recipes.`,
+        text2: `${recipe.title} has been removed from your saved recipes.`,
       });
       return;
     } else {

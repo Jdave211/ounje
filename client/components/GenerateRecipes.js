@@ -7,20 +7,19 @@ import {
   Alert,
   ScrollView,
   ActivityIndicator,
-  Modal
+  Modal,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { openai } from "../utils/openai"; // Adjust this import based on your project structure
 import { RECIPES_PROMPT } from "../utils/prompts"; // Adjust this import based on your project structure
-import RecipeCard from './RecipeCard'; // Adjust this import based on your project structure
+import RecipeCard from "./RecipeCard"; // Adjust this import based on your project structure
 
 export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   const [isLoading, setIsLoading] = useState(false);
   const [recipes, setRecipes] = useState([]);
   const [gptResults, setGptResults] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
-
 
   const handleRecipesReady = () => {
     setModalVisible(true);
@@ -32,22 +31,28 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       onLoading(true);
 
       // Fetch food items from AsyncStorage
-      const storedFoodItems = await AsyncStorage.getItem("food_items");
+      const storedFoodItems = await AsyncStorage.getItem("food_items_array");
+
       if (storedFoodItems) {
-        const foodItems = JSON.parse(storedFoodItems);
+        const foodItems = JSON.parse(storedFoodItems).map(
+          (item) => item.name || item
+        );
         const ingredients = foodItems.join(", ");
         console.log("Ingredients:", ingredients);
 
         // Call Spoonacular API to fetch recipes
-        const response = await axios.get("https://api.spoonacular.com/recipes/findByIngredients", {
-          params: {
-            ingredients: ingredients,
-            number: 2,
-            ranking: 1,
-            ignorePantry: 'false',
-            apiKey: process.env.SPOONACULAR_API_KEY,
-          },
-        });
+        const response = await axios.get(
+          "https://api.spoonacular.com/recipes/findByIngredients",
+          {
+            params: {
+              ingredients: ingredients,
+              number: 2,
+              ranking: 1,
+              ignorePantry: "false",
+              apiKey: process.env.SPOONACULAR_API_KEY,
+            },
+          }
+        );
 
         const recipesWithDetails = await Promise.all(
           response.data.map(async (recipe) => {
@@ -61,7 +66,9 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
         // Pass each recipe to OpenAI for validation
         const gptResponses = await Promise.all(
-          recipesWithDetails.map(async (recipe) => await passRecipeThroughGPT(recipe, foodItems))
+          recipesWithDetails.map(
+            async (recipe) => await passRecipeThroughGPT(recipe, foodItems)
+          )
         );
 
         setGptResults(gptResponses);
@@ -82,12 +89,15 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
   const fetchRecipeDetails = async (recipeId) => {
     try {
-      const response = await axios.get(`https://api.spoonacular.com/recipes/${recipeId}/information`, {
-        params: {
-          includeNutrition: true,
-          apiKey: process.env.SPOONACULAR_API_KEY,
-        },
-      });
+      const response = await axios.get(
+        `https://api.spoonacular.com/recipes/${recipeId}/information`,
+        {
+          params: {
+            includeNutrition: true,
+            apiKey: process.env.SPOONACULAR_API_KEY,
+          },
+        }
+      );
       return response.data;
     } catch (error) {
       console.error(`Error fetching details for recipe ID ${recipeId}:`, error);
@@ -102,13 +112,18 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         Cook Time: ${recipe.details.readyInMinutes} minutes
         Servings: ${recipe.details.servings}
         Calories: ${recipe.details.nutrition.nutrients[0].amount} kcal
-        Ingredients: ${recipe.details.extendedIngredients.map((ingredient) => ingredient.original).join(", ")}
+        Ingredients: ${recipe.details.extendedIngredients
+          .map((ingredient) => ingredient.original)
+          .join(", ")}
         Instructions: ${recipe.details.instructions}
         Summary: ${recipe.details.summary}
       `;
 
       const system_prompt = { role: "system", content: RECIPES_PROMPT };
-      const user_prompt = { role: "user", content: `Food Items: ${foodItems.join(", ")}\nRecipe:\n${recipeText}` };
+      const user_prompt = {
+        role: "user",
+        content: `Food Items: ${foodItems.join(", ")}\nRecipe:\n${recipeText}`,
+      };
 
       console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
 
@@ -119,7 +134,6 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
       console.log("OpenAI response:", response.choices[0].message.content);
       return response.choices[0].message.content;
-
     } catch (error) {
       console.error("Error passing recipe through GPT:", error);
       return "Error validating recipe.";
@@ -137,21 +151,23 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         <Text style={styles.buttonText}>Generate Recipes</Text>
       </TouchableOpacity>
       <Modal
-          animationType="slide"
-          transparent={false}
-          visible={modalVisible}
-          onRequestClose={() => {
-            setModalVisible(!modalVisible);
-          }}
-        >
-      <ScrollView style={styles.scrollContainer}>
-        {gptResults.map((result, index) => (
-          <View key={index} style={styles.gptContainer}>
-            <Text style={styles.gptTitle}>GPT Validation for Recipe {index + 1}:</Text>
-            <Text style={styles.gptText}>{result}</Text>
-          </View>
-        ))}
-      </ScrollView>
+        animationType="slide"
+        transparent={false}
+        visible={modalVisible}
+        onRequestClose={() => {
+          setModalVisible(!modalVisible);
+        }}
+      >
+        <ScrollView style={styles.scrollContainer}>
+          {gptResults.map((result, index) => (
+            <View key={index} style={styles.gptContainer}>
+              <Text style={styles.gptTitle}>
+                GPT Validation for Recipe {index + 1}:
+              </Text>
+              <Text style={styles.gptText}>{result}</Text>
+            </View>
+          ))}
+        </ScrollView>
       </Modal>
     </View>
   );
