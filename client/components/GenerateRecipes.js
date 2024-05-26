@@ -14,12 +14,74 @@ import axios from "axios";
 import { openai } from "../utils/openai"; // Adjust this import based on your project structure
 import { RECIPES_PROMPT } from "../utils/prompts"; // Adjust this import based on your project structure
 import RecipeCard from "./RecipeCard"; // Adjust this import based on your project structure
+import { FOOD_ITEMS } from "../utils/constants";
+import { useNavigation } from "@react-navigation/native";
+import { supabase, store_image } from "../utils/supabase";
+import CaseConvert, { objectToSnake } from "ts-case-convert";
 
 export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
+  const navigation = useNavigation();
+
   const [isLoading, setIsLoading] = useState(false);
   const [recipes, setRecipes] = useState([]);
   const [gptResults, setGptResults] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [user_id, setUserId] = useState(null);
+  const [food_items, setFoodItems] = useState(FOOD_ITEMS);
+  const [food_items_array, setFoodItemsArray] = useState([]);
+  const [inventoryImages, setInventoryImages] = useState([]);
+
+  useEffect(() => {
+    const get_user_id = async () => {
+      let retrieved_user_id = await AsyncStorage.getItem("user_id");
+      setUserId(() => retrieved_user_id);
+    };
+
+    const fetch_food_items = async () => {
+      let retrieved_text = await AsyncStorage.getItem("food_items");
+      let retrieved_food_items = JSON.parse(retrieved_text);
+
+      retrieved_text = await AsyncStorage.getItem("food_items_array");
+      let retrieved_food_items_array = JSON.parse(retrieved_text);
+
+      if (retrieved_food_items) {
+        setFoodItems(() => retrieved_food_items);
+      }
+
+      if (retrieved_food_items_array?.length > 0) {
+        setFoodItemsArray(() => retrieved_food_items_array);
+      }
+    };
+
+    const fetch_inventory_images = async () => {
+      let {
+        data: [inventory],
+      } = await supabase
+        .from("inventory")
+        .select("images")
+        .eq("user_id", user_id);
+
+      let image_paths = inventory.images.map((image) =>
+        image.replace("inventory_images/", "")
+      );
+
+      let { data: url_responses } = await supabase.storage
+        .from("inventory_images")
+        .createSignedUrls(image_paths, 60 * 10);
+
+      let image_urls = url_responses.map((response) => response.signedUrl);
+
+      setInventoryImages(() => image_urls);
+    };
+
+    if (!user_id) {
+      get_user_id();
+      fetch_food_items();
+    } else {
+      fetch_inventory_images();
+      fetch_food_items();
+    }
+  }, [user_id]);
 
   const handleRecipesReady = () => {
     setModalVisible(true);
@@ -141,11 +203,114 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
     setIsLoading(false);
   };
 
+  const generate_recipes = async () => {
+    let async_run_response = supabase
+      .from("runs")
+      .insert([{ user_id, images: inventoryImages }])
+      .select()
+      .throwOnError();
+
+    const [
+      {
+        value: { data: runs, error: runs_error },
+      },
+    ] = await Promise.allSettled([async_run_response]);
+
+    if (runs_error) console.log("Error:", runs_error);
+    else console.log("Added User Run:", runs);
+
+    console.log("runs: ", runs);
+    current_run = runs[runs.length - 1];
+
+    console.log("current_run: ", current_run);
+
+    // let selected_set = new Set(selected);
+    const selected_food_items = food_items_array.filter(
+      (item) =>
+        // selected_set.has(item.name),
+        true
+    );
+    const food_item_records = selected_food_items.map((record) => ({
+      run_id: current_run.id,
+      ...record,
+    }));
+
+    console.log("food_item_records: ", food_item_records);
+
+    await supabase.from("food_items").upsert(food_item_records).throwOnError();
+
+    console.log("starting recipes");
+
+    const { data: suggested_recipes } = await axios
+      .get("https://api.spoonacular.com/recipes/findByIngredients", {
+        params: {
+          apiKey: process.env.SPOONACULAR_API_KEY,
+          ingredients: food_items_array.map(({ name }) => name).join(", "),
+          number: 7,
+          ranking: 1,
+        },
+      })
+      .catch((err) => console.log(err, err.response.data, err.request));
+
+    console.log({ suggested_recipes });
+
+    let { data: recipe_options } = await axios
+      .get(`https://api.spoonacular.com/recipes/informationBulk`, {
+        params: {
+          apiKey: process.env.SPOONACULAR_API_KEY,
+          includeNutrition: true,
+          ids: suggested_recipes.map((recipe) => recipe.id).join(", "),
+        },
+      })
+      .catch((err) => console.log(err, error.response.data, err.request));
+    recipe_options = suggested_recipes.map((suggested_recipe, i) => ({
+      ...suggested_recipe,
+      ...recipe_options[i],
+    }));
+
+    console.log("recipe_options: ", recipe_options);
+
+    const recipe_options_in_snake_case = objectToSnake(recipe_options).map(
+      (recipe) => {
+        delete recipe.cheap;
+        delete recipe.gaps;
+        delete recipe.likes;
+        delete recipe.missed_ingredient_count;
+        delete recipe.missed_ingredients;
+        delete recipe.used_ingredients;
+        delete recipe.used_ingredient_count;
+        delete recipe.user_tags;
+        delete recipe.unused_ingredients;
+        delete recipe.unknown_ingredients;
+        delete recipe.open_license;
+        delete recipe.report;
+        delete recipe.suspicious_data_score;
+        delete recipe.tips;
+        return recipe;
+      }
+    );
+
+    console.log({ recipe_options_in_snake_case });
+    await supabase
+      .from("recipe_ids")
+      .upsert(recipe_options_in_snake_case, { onConflict: "id" })
+      .throwOnError();
+
+    await AsyncStorage.setItem(
+      "recipe_options",
+      JSON.stringify(recipe_options)
+    );
+
+    // navigate to recipes screen to select options to keep
+    // once selected, save the selected options to the database
+    navigation.navigate("RecipeOptions");
+  };
+
   return (
     <View style={styles.container}>
       <TouchableOpacity
         style={styles.buttonContainer}
-        onPress={fetchRecipes}
+        onPress={generate_recipes}
         disabled={isLoading}
       >
         <Text style={styles.buttonText}>Generate Recipes</Text>

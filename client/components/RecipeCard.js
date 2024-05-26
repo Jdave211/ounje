@@ -65,20 +65,37 @@ const RecipeCard = ({ id, showBookmark }) => {
   }, [user_id]);
 
   console.log({ recipeDetails });
-  const handleSave = () => {
-    setIsSaved(!isSaved);
-    if (isSaved) {
-      Toast.show({
-        type: "success",
-        text1: "Recipe Unsaved",
-        text2: `${recipe.title} has been removed from your saved recipes.`,
-      });
-      return;
-    } else {
+
+  const handleSave = async () => {
+    let localIsSaved = !isSaved;
+
+    console.log({ localIsSaved });
+    setIsSaved(localIsSaved);
+
+    if (localIsSaved) {
+      await supabase
+        .from("saved_recipes")
+        .insert([{ user_id, recipe_id: recipeDetails.id }])
+        .throwOnError();
+
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${recipe.title} has been saved to your recipes.`,
+        text2: `${recipeDetails.title} has been saved to your recipes.`,
+      });
+
+      return;
+    } else {
+      await supabase
+        .from("saved_recipes")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("recipe_id", recipeDetails.id)
+        .throwOnError();
+      Toast.show({
+        type: "success",
+        text1: "Recipe Unsaved",
+        text2: `${recipeDetails.title} has been removed from your saved recipes.`,
       });
     }
   };

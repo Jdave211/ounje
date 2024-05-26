@@ -46,7 +46,7 @@ const SavedRecipes = () => {
     } else {
       fetch_saved_recipes();
     }
-  }, [user_id]);
+  }, []);
 
   const navigate_to_recipe_page = (recipe_id) => () => {
     navigation.navigate("RecipePage", { id: recipe_id });
@@ -55,26 +55,28 @@ const SavedRecipes = () => {
   return (
     <View style={styles.container}>
       <Text style={styles.text}> Saved Recipes </Text>
-      <ScrollView>
-        {/* <View
+      {savedRecipes && (
+        <ScrollView>
+          {/* <View
           style={{
             flexDirection: "row",
             flexWrap: "wrap",
             justifyContent: "space-around",
           }}
         > */}
-        {savedRecipes.map((recipe_id, i) => (
-          // <View key={i} style={{ width: 200, margin: 10 }}>
-          <TouchableOpacity
-            key={i}
-            onPress={navigate_to_recipe_page(recipe_id)}
-          >
-            <RecipeCard id={recipe_id} />
-          </TouchableOpacity>
-          // </View>
-        ))}
-        {/* </View> */}
-      </ScrollView>
+          {savedRecipes.map((recipe_id, i) => (
+            // <View key={i} style={{ width: 200, margin: 10 }}>
+            <TouchableOpacity
+              key={i}
+              onPress={navigate_to_recipe_page(recipe_id)}
+            >
+              <RecipeCard id={recipe_id} />
+            </TouchableOpacity>
+            // </View>
+          ))}
+          {/* </View> */}
+        </ScrollView>
+      )}
     </View>
   );
 };

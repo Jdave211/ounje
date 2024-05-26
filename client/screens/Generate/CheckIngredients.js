@@ -129,7 +129,7 @@ const CheckIngredients = () => {
     });
   };
 
-  const handleGenerateRecipes = async () => {
+  const handleSaveFoodItems = async () => {
     if (food_items_array.length === 0) {
       Toast.show({
         type: "error",
@@ -326,7 +326,7 @@ const CheckIngredients = () => {
             <TouchableOpacity
               style={styles.generateButton}
               disabled={data.length === 0}
-              onPress={handleGenerateRecipes}
+              onPress={handleSaveFoodItems}
             >
               <Text style={styles.generateButtonText}>Save Food Items</Text>
             </TouchableOpacity>

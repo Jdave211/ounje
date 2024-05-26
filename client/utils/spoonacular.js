@@ -29,3 +29,26 @@ export const get_bulk_recipe_details = async (ids) => {
 
   return recipe;
 };
+
+export const parse_ingredients = async (ingredients) => {
+  const params = new URLSearchParams();
+  params.append("ingredientList", ingredients);
+
+  params.append("servings", 1);
+
+  const { data } = axios.post(
+    "https://api.spoonacular.com/recipes/parseIngredients",
+    params,
+
+    {
+      params: {
+        apiKey: api_key,
+      },
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  return data;
+};

@@ -45,11 +45,11 @@ const SavedRecipes = () => {
   const store_selected_recipes = async (selected_recipes) => {
     const recipe_image_bucket = "recipe_images";
 
-    const recipe_image_gen_data = selected_recipes.map((recipe) => ({
-      prompt:
-        "a zoomed out image showing the full dish of " + recipe.image_prompt,
-      storage_path: `${current_run.id}/${recipe.name}.jpeg`,
-    }));
+    // const recipe_image_gen_data = selected_recipes.map((recipe) => ({
+    //   prompt:
+    //     "a zoomed out image showing the full dish of " + recipe.image_prompt,
+    //   storage_path: `${current_run.id}/${recipe.name}.jpeg`,
+    // }));
 
     // generate and store images for each recipe
     // shoot and forget approach
@@ -95,36 +95,6 @@ const SavedRecipes = () => {
       .throwOnError();
   };
 
-  const onBookmark = async (recipe, isBookmarked) => {
-    if (isBookmarked) {
-      // setBookmarked((prev) => {
-      //   prev.add(recipe);
-      //   return prev
-      // });
-
-      const results = await supabase
-        .from("saved_recipes")
-        .insert([{ user_id, recipe_id: recipe.id }])
-        .throwOnError();
-
-      setRecipeOptions((prev) => {
-        return prev.filter((option) => option.id !== recipe.id);
-      });
-    } else {
-      // setBookmarked((prev) => {
-      //   prev.delete(recipe);
-      //   return prev
-      // })
-
-      await supabase
-        .from("saved_recipes")
-        .delete()
-        .eq("user_id", user_id)
-        .eq("recipe_id", recipe.id)
-        .throwOnError();
-    }
-  };
-
   const navigate_to_saved_recipes = () => {
     navigation.navigate("SavedRecipes");
   };
@@ -136,10 +106,11 @@ const SavedRecipes = () => {
         {/* <View style={{ justifyContent: "center", alignItems: "center", flexDirection: "row", flexWrap: "wrap" }}> */}
         {recipeOptions.map((recipeOption, index) => (
           <View key={index}>
-            <RecipeOptionCard
+            <RecipeCard
               key={index}
-              recipe={recipeOption}
-              onBookmark={onBookmark}
+              id={recipeOption.id}
+              // recipe={recipeOption}
+              showBookmark={true}
             />
           </View>
         ))}

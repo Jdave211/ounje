@@ -92,6 +92,7 @@ const RecipePage = ({ route }) => {
         .from("saved_recipes")
         .insert([{ user_id, recipe_id: recipeDetails.id }])
         .throwOnError();
+
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
