@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, View, ActivityIndicator } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-// import './shim.js' // important to import this shim for crypto
-
 import { supabase } from "./utils/supabase";
-import SignIn from "./components/Onboarding/Auth";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+
+import Welcome from "./screens/Onboarding/Welcome";
+import FirstLogin from "./screens/Onboarding/FirstLogin";
+import Auth from "./screens/Onboarding/Auth";
 import Layout from "./_layout";
 import SavedRecipes from "./screens/SavedRecipes";
 import Inventory from "./screens/Inventory";
@@ -16,86 +18,169 @@ import Community from "./screens/Community";
 import Generate from "./screens/Generate/Generate";
 import CheckIngredients from "./screens/Generate/CheckIngredients";
 import RecipeOptions from "./screens/Generate/RecipeOptions";
+import RecipePage from "./screens/RecipePage";
 
 const Tab = createBottomTabNavigator();
 
+import { NativeModules } from "react-native";
+
 export default function App() {
   const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [firstLogin, setFirstLogin] = useState(false);
 
   useEffect(() => {
     const getSession = async () => {
+      setLoading(true);
       const {
         data: { session },
         error,
       } = await supabase.auth.getSession();
       if (error) {
         console.error("Error fetching session:", error);
-        return; // Exit the function if there's an error
+        setLoading(false);
+        return;
       }
       setSession(session);
+      setLoading(false);
+
+      if (session?.user) {
+        const userId = session.user.id;
+        console.log("User signed in, fetching profile..."); // Debug log
+
+        const { data: userData, error: userError } = await supabase
+          .from("profiles")
+          .select("name")
+          .eq("id", userId)
+          .single();
+
+        if (userError) {
+          console.error("Error fetching user metadata:", userError);
+        } else if (!userData || !userData.name) {
+          console.log("First login detected"); // Debug log
+          setFirstLogin(true);
+        } else {
+          setFirstLogin(false);
+        }
+      }
     };
 
     getSession();
 
-    const subscription = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-    if (subscription.unsubscribe) {
-      return () => subscription.unsubscribe();
-    }
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setSession(session);
+        if (session?.user) {
+          const userId = session.user.id;
+
+          supabase
+            .from("profiles")
+            .select("name")
+            .eq("id", userId)
+            .single()
+            .then(({ data: userData, error: userError }) => {
+              if (userError) {
+                console.error("Error fetching user metadata:", userError);
+              } else if (!userData || !userData.name) {
+                console.log("First login detected in subscription"); // Debug log
+                setFirstLogin(true);
+              } else {
+                setFirstLogin(false);
+              }
+            });
+        }
+      }
+    );
+
+    return () => {
+      if (authListener?.subscription) {
+        authListener.subscription.unsubscribe();
+      }
+    };
   }, []);
 
-  return (
-    <NavigationContainer>
-      <View style={styles.container}>
-        {session ? (
-          <Layout>
-            <Tab.Navigator screenOptions={{ tabBarStyle: styles.navigator }}>
-              <Tab.Screen
-                name="Generate"
-                component={Generate}
-                options={{ headerShown: false }}
-              />
-              <Tab.Screen
-                name="SavedRecipes"
-                component={SavedRecipes}
-                options={{ headerShown: false }}
-              />
-              <Tab.Screen
-                name="Community"
-                component={Community}
-                options={{ headerShown: false }}
-              />
-              <Tab.Screen
-                name="Inventory"
-                component={Inventory}
-                options={{ headerShown: false }}
-              />
-              <Tab.Screen
-                name="Profile"
-                component={Profile}
-                options={{ headerShown: false }}
-              />
-              <Tab.Screen
-                name="CheckIngredients"
-                component={CheckIngredients}
-                options={{ headerShown: false }}
-              />
-              <Tab.Screen
-                name="RecipeOptions"
-                component={RecipeOptions}
-                options={{ headerShown: false }}
-              />
-            </Tab.Navigator>
-          </Layout>
-        ) : (
-          <SignIn />
-        )}
-
-        <StatusBar style="light" />
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#00ff00" />
       </View>
-      <Toast />
-    </NavigationContainer>
+    );
+  }
+
+  return (
+    <GestureHandlerRootView>
+      <NavigationContainer>
+        <View style={styles.container}>
+          {session ? (
+            firstLogin ? (
+              <FirstLogin
+                onProfileComplete={() => setFirstLogin(false)}
+                session={session}
+              />
+            ) : (
+              <Layout>
+                <Tab.Navigator
+                  screenOptions={{ tabBarStyle: styles.navigator }}
+                >
+                  <Tab.Screen
+                    name="Generate"
+                    component={Generate}
+                    options={{ headerShown: false }}
+                    initialParams={{ session }}
+                  />
+                  <Tab.Screen
+                    name="SavedRecipes"
+                    component={SavedRecipes}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Community"
+                    component={Community}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Inventory"
+                    component={Inventory}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Profile"
+                    component={Profile}
+                    options={{ headerShown: false }}
+                    initialParams={{ session }}
+                  />
+                  <Tab.Screen
+                    name="CheckIngredients"
+                    component={CheckIngredients}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="RecipeOptions"
+                    component={RecipeOptions}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="RecipePage"
+                    component={RecipePage}
+                    options={{ headerShown: false }}
+                  />
+                  <Tab.Screen
+                    name="Auth"
+                    component={Auth}
+                    options={{ headerShown: false }}
+                  />
+                </Tab.Navigator>
+              </Layout>
+            )
+          ) : (
+            <Welcome />
+          )}
+
+          <StatusBar style="light" />
+        </View>
+        <Toast />
+      </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }
 
@@ -110,16 +195,20 @@ const styles = StyleSheet.create({
     color: "white",
     textAlign: "center",
   },
-
-  // why doesn't any of these work?
   navigator: {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    height: 60, // Adjust as needed
+    height: 60,
     backgroundColor: "red",
     opacity: 0.8,
     borderWidth: 2,
-    borderColor: "pink", // hun?
+    borderColor: "pink",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "black",
   },
 });

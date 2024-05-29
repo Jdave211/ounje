@@ -22,6 +22,7 @@ module.exports = function (api) {
             "@services": "./services",
             "@assets": "./assets",
             "@constants": "./constants",
+            "@icons": "./icons",
           },
         },
       ],

@@ -1,3 +1,6 @@
+import { FOOD_ITEMS } from "./constants";
+import { RECIPE } from "./constants";
+
 const categories = [
   "juices",
   "dairy",
@@ -25,6 +28,7 @@ export const FOOD_ITEMS_PROMPT = `
   The quantity should only be a number indicating the amount of the named item in the inventory.
   Categorize them into this format:
   { "inventory_name": { "category_name": {name: text, quantity: number} }}.
+  Similiar to this: ${JSON.stringify(FOOD_ITEMS)}.
   Follow the types in the format strictly. numbers should only be numbers and text should only be text.
   The image name should represent the environment where the food items are found.
   The categories should be very similar and have broad definitions of the food items like these ones: ${categories.join(", ")}
@@ -33,13 +37,11 @@ export const FOOD_ITEMS_PROMPT = `
   `;
 
 // todo: add description, nutritional information (array),
-export const RECIPES_PROMPT = `Create multiple recipes for meals inspired by the food items that the user provides using this format in a single array of json object.
-	Assume the user has no knowledge of cooking and is a beginner, so fill the instructions with as much detail as possible.
+
+export const RECIPES_PROMPT = `Take in this recipe from my database and the ingredients I already have in my inventory and come up with an identical recipe I can make mainly with the ingredients I have.
+  The recipe should be as close to the original as possible and should be a recipe that I can make with the ingredients I have.
+  You are allowed to include 1 or 2 extra ingredients that I might not have in my inventory but should be common enough that I can find them in a local store.
+  Assume I have no knowledge of cooking and I am beginner, so fill the instructions with as much detail as possible.
 	Make sure that the instructions for the recipe are clear and detailed enough to be followed by someone who is not a professional chef.
-	if there might be specific instructions for items included in their packaging, give them the instructions for doing that activity along with pointing them to the package in case the instructions differ.
-	Include an image prompt to use to generate a good image of the finished recipe in image_prompt.
-	Generate a unique id for each recipe, if the recipe has been generated before, reuse the same id.
-	Do not hold back because you are conserned about the content not fitting into a single response, you can spread the data accross multiple responses, just make sure that there is no seperation between the data that is that the data is continuous between the responses.
-	format is as follows:
-	{ "name": text, unique_id: text(uuid 34 chars), description: text, total_calories: number, image_prompt: text, duration: number, servings: number, "ingredients": {name: text, quantity: number, displayed_text: text, already_have: bool, calories: number}, "instructions": [text] }
-	Put the appropriate commas, between each object in the array and between each key value pair in the object.`;
+	if there might be specific instructions for items included in their packaging, give them the instructions for doing that activity along with pointing them to the package in case the instructions differ
+  Return the recipe in the same format as the original recipe. Similar to this: ${JSON.stringify(RECIPE)}.`;

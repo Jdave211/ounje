@@ -1,98 +1,248 @@
-import React from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
-import pasta from "../assets/pasta.png";
-import { Entypo } from "@expo/vector-icons";
+import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "../utils/supabase";
+import harvestImage from "../assets/harvest.png";
+import { AnimatedCircularProgress } from "react-native-circular-progress";
+import { Bar as ProgressBar } from "react-native-progress";
+import { FOOD_ITEMS } from "../utils/constants";
 
-const RecipeCard = ({ recipe }) => {
+// recipe:
+// - id
+// usedIngredients: [],
+// missedIngredients: [],
+// title: Text,
+// image: Text,
+// usedIngredientCount: Number,
+// missedIngredientCount: Number,
+//
+// retrieve from database if recipes are stored
+// - likes: Number
+// - bookmarks: Number
+//
+
+const RecipeCard = ({ id, showBookmark }) => {
+  const [user_id, setUserId] = useState(null);
+  const [recipeDetails, setRecipeDetails] = useState(null);
   const [isSaved, setIsSaved] = React.useState(false);
-  const handleSave = () => {
-    setIsSaved(!isSaved);
-    if (isSaved) {
-      Toast.show({
-        type: "success",
-        text1: "Recipe Unsaved",
-        text2: `${generatedRecipes.name} has been unsaved from your recipes.`,
-      });
-      return;
+  const [food_items, setFoodItems] = useState([]);
+
+  useEffect(() => {
+    const get_user_id = async () => {
+      let retrieved_user_id = await AsyncStorage.getItem("user_id");
+      setUserId(() => retrieved_user_id);
+    };
+
+    const fetch_food_items = async () => {
+      retrieved_text = await AsyncStorage.getItem("food_items_array");
+      let retrieved_food_items_array = JSON.parse(retrieved_text);
+
+      if (retrieved_food_items_array?.length > 0) {
+        setFoodItems(retrieved_food_items_array);
+      }
+    };
+
+    const fetch_recipe_details = async () => {
+      const {
+        data: [recipe],
+      } = await supabase
+        .from("recipe_ids")
+        .select("*")
+        .eq("id", id)
+        .throwOnError();
+
+      setRecipeDetails(() => recipe);
+    };
+
+    const fetch_is_saved = async () => {
+      const { data: saved_data } = await supabase
+        .from("saved_recipes")
+        .select()
+        .eq("user_id", user_id)
+        .eq("recipe_id", id)
+        .throwOnError();
+
+      console.log({ saved_data });
+    };
+
+    if (!user_id) {
+      get_user_id();
     } else {
+      fetch_recipe_details();
+      fetch_is_saved();
+      fetch_food_items();
+    }
+  }, [user_id]);
+
+  console.log({ recipeDetails });
+
+  const handleSave = async () => {
+    let localIsSaved = !isSaved;
+
+    console.log({ localIsSaved });
+    setIsSaved(localIsSaved);
+
+    if (localIsSaved) {
+      await supabase
+        .from("saved_recipes")
+        .insert([{ user_id, recipe_id: recipeDetails.id }])
+        .throwOnError();
+
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${generatedRecipes.name} has been saved to your recipes.`,
+        text2: `${recipeDetails.title} has been saved to your recipes.`,
+      });
+
+      return;
+    } else {
+      await supabase
+        .from("saved_recipes")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("recipe_id", recipeDetails.id)
+        .throwOnError();
+      Toast.show({
+        type: "success",
+        text1: "Recipe Unsaved",
+        text2: `${recipeDetails.title} has been removed from your saved recipes.`,
       });
     }
   };
-  const generatedRecipes = {
-    name: "Easy Veggie Pasta",
-    image_prompt:
-      "A bowl of colorful pasta with mixed vegetables, topped with grated cheese, and garnished with a sprig of parsley.",
-    duration: 30,
-    servings: 4,
-    ingredients: [
-      {
-        name: "boxed pasta",
-        quantity: 1,
-        displayed_text: "1 box of pasta",
-        already_have: false,
-      },
-      {
-        name: "canned tomatoes",
-        quantity: 1,
-        displayed_text: "1 can of tomatoes",
-        already_have: false,
-      },
-      {
-        name: "frozen mixed vegetables",
-        quantity: 1,
-        displayed_text: "1 bag of frozen mixed vegetables",
-        already_have: false,
-      },
-      {
-        name: "cheese blocks",
-        quantity: 1,
-        displayed_text: "1 block of cheese (for grating)",
-        already_have: false,
-      },
-    ],
-    instructions: [
-      "Bring a large pot of water to a boil. Add a pinch of salt and the boxed pasta. Cook according to the package instructions until al dente.",
-      "While the pasta is cooking, in a separate pan, heat the canned tomatoes over medium heat until they start to simmer.",
-      "Add the frozen mixed vegetables to the tomato sauce, and cook until the vegetables are heated through, about 5-7 minutes.",
-      "Drain the cooked pasta and return it to the pot. Pour the vegetable-tomato sauce over the pasta and mix well.",
-      "Grate the cheese block and sprinkle it over the pasta before serving.",
-    ],
+
+  const calc_percentage = (recipeDetails) => {
+    if (!recipeDetails || !food_items) return 0;
+
+    let food_items_set = new Set(
+      food_items.map(({ spoonacular_id }) => spoonacular_id)
+    );
+
+    const owned_items = recipeDetails.extended_ingredients.filter(
+      (ingredient) => food_items_set.has(ingredient.id)
+    );
+
+    if (!owned_items || owned_items.length === 0) return 0;
+
+    const percentage =
+      (owned_items.length / recipeDetails.extended_ingredients.length) * 100;
+
+    return percentage;
   };
+
+  const percentage_of_owned_ingredients = useMemo(
+    () => calc_percentage(recipeDetails),
+    [food_items, recipeDetails]
+  );
 
   return (
     <View style={styles.container}>
-      <View style={styles.recipeContent}>
-        <View style={styles.imageTextContainer}>
-          <Text style={styles.name}>{generatedRecipes.name}</Text>
-          <Image style={styles.image} source={pasta} />
-        </View>
-        <View style={styles.underHeading}>
-          <View style={{ flexDirection: "row" }}>
-            <Text style={styles.subheading}> Duration: </Text>
-            <Text style={styles.text}>{generatedRecipes.duration} minutes</Text>
-          </View>
-          <Text style={styles.subheading}>Ingredients:</Text>
-          {generatedRecipes.ingredients.map((ingredient, index) => (
-            <Text style={styles.text} key={index}>
-              {ingredient.displayed_text}
-            </Text>
-          ))}
-          <Text style={styles.subheading}>Instructions:</Text>
-          <Text style={styles.text}>{generatedRecipes.instructions[0]}</Text>
-          <TouchableOpacity style={styles.save} onPress={handleSave}>
-            <Entypo
-              name="bookmark"
-              size={24}
-              color={isSaved ? "green" : "white"}
+      {recipeDetails && (
+        <View
+          style={{
+            // borderColor: "white",
+            borderRadius: 10,
+            borderWidth: 1,
+            padding: 5,
+            borderShadow: "5px 10px #ffffff",
+            flex: 2,
+            margin: 10,
+            backgroundColor: "#2e2d2d",
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              // borderRadius: 10,
+              padding: 0,
+              // borderColor: "white",
+              // borderWidth: 1,
+            }}
+          >
+            <Image
+              style={{
+                width: "100%",
+                height: 150,
+                borderRadius: 10,
+                borderTopLeftRadius: 10,
+                borderTopRightRadius: 10,
+              }}
+              source={{ uri: recipeDetails.image }}
             />
-          </TouchableOpacity>
+          </View>
+          <View style={{ padding: 10 }}>
+            <View style={{ ...styles.imageTextContainer, marginBottom: 5 }}>
+              <Text style={styles.title} numberOfLines={1}>
+                {recipeDetails.title}
+              </Text>
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingRight: 20,
+                  }}
+                >
+                  <Feather name="clock" size={20} color="green" />
+                  <Text style={{ ...styles.text, marginLeft: 10 }}>
+                    {recipeDetails.ready_in_minutes} mins
+                  </Text>
+                </View>
+
+                <View>
+                  <Text style={styles.text}>
+                    {new Number(percentage_of_owned_ingredients).toFixed(2)}% of{" "}
+                  </Text>
+                  <ProgressBar
+                    progress={percentage_of_owned_ingredients / 100}
+                    width={60}
+                  />
+                </View>
+                <View>
+                  <Image
+                    source={harvestImage}
+                    style={{ resizeMode: "cover", width: 24, height: 24 }}
+                  />
+                </View>
+              </View>
+
+              {showBookmark && (
+                <View>
+                  <TouchableOpacity style={styles.save} onPress={handleSave}>
+                    {isSaved ? (
+                      <MaterialIcons
+                        name="bookmark-added"
+                        size={24}
+                        color="green"
+                      />
+                    ) : (
+                      <MaterialIcons
+                        name="bookmark-border"
+                        size={24}
+                        color="white"
+                      />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 };
@@ -101,22 +251,19 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  name: {
-    fontSize: 24,
+  title: {
+    fontSize: 20,
     fontWeight: "bold",
     marginRight: 20,
-    color: "black",
-    textDecorationLine: "underline",
+    color: "white",
+    // textDecorationLine: "underline",
   },
   recipeContent: {
     backgroundColor: "#c7a27c",
     padding: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "black",
-  },
-  underHeading: {
-    marginTop: -28,
+    borderColor: "white",
   },
   imageTextContainer: {
     flexDirection: "row",
@@ -130,7 +277,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 5,
-    color: "black",
+    color: "white",
   },
   text: {
     fontSize: 16,
@@ -138,7 +285,6 @@ const styles = StyleSheet.create({
   },
   save: {
     alignSelf: "flex-end",
-    marginBottom: -20,
   },
 });
 

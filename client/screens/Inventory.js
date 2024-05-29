@@ -7,6 +7,9 @@ import {
   Image,
   TouchableOpacity,
   Modal,
+  ImageBackground,
+  Alert,
+  TextInput,
 } from "react-native";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { AntDesign } from "@expo/vector-icons";
@@ -19,8 +22,12 @@ import { FOOD_ITEMS } from "../utils/constants";
 import { RECIPES_PROMPT } from "@utils/prompts";
 import { generate_image } from "../utils/stability";
 import { entitle } from "@utils/helpers";
+import { useNavigation } from "@react-navigation/native";
+import CaseConvert, { objectToSnake } from "ts-case-convert";
 
 const Inventory = () => {
+  const navigation = useNavigation();
+
   const [selected, setSelected] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -29,6 +36,7 @@ const Inventory = () => {
   const [food_items_array, setFoodItemsArray] = useState([]);
   const [inventoryImages, setInventoryImages] = useState([]);
   const [user_id, setUserId] = useState(null);
+  const [newItem, setNewItem] = useState("");
 
   useEffect(() => {
     const get_user_id = async () => {
@@ -61,7 +69,7 @@ const Inventory = () => {
         .eq("user_id", user_id);
 
       let image_paths = inventory.images.map((image) =>
-        image.replace("inventory_images/", ""),
+        image.replace("inventory_images/", "")
       );
 
       let { data: url_responses } = await supabase.storage
@@ -80,69 +88,23 @@ const Inventory = () => {
       fetch_inventory_images();
       fetch_food_items();
     }
-  }, [user_id]);
+  }, []);
 
-  const generate_recipes = async () => {
-    let async_run_response = supabase
-      .from("runs")
-      .insert([{ user_id, images: image_paths }])
-      .select()
-      .throwOnError();
+  console.log({ inventoryImages });
 
-    const [
-      {
-        value: { data: runs, error: runs_error },
-      },
-    ] = await Promise.allSettled([async_run_response]);
+  const addNewItem = () => {
+    if (newItem.trim() === "") {
+      Alert.alert("Error", "Please enter a valid item name.");
+      return;
+    }
 
-    if (runs_error) console.log("Error:", runs_error);
-    else console.log("Added User Run:", runs);
+    const updatedFoodItems = [...food_items, { name: newItem }];
+    setFoodItems(updatedFoodItems);
+    setNewItem("");
 
-    console.log("runs: ", runs);
-    current_run = runs[runs.length - 1];
-
-    console.log("current_run: ", current_run);
-
-    let selected_set = new Set(selected);
-    const selected_food_items = food_items_array.filter(
-      (item) =>
-        // selected_set.has(item.name),
-        true,
-    );
-    const food_item_records = selected_food_items.map((record) => ({
-      run_id: current_run.id,
-      ...record,
-    }));
-
-    console.log("food_item_records: ", food_item_records);
-
-    await supabase.from("food_items").upsert(food_item_records).throwOnError();
-
-    console.log("starting recipes");
-
-    let recipe_system_prompt = { role: "system", content: RECIPES_PROMPT };
-    let recipe_user_prompt = {
-      role: "user",
-      content: selected_food_items.join(", "),
-    };
-    let recipe_response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [recipe_system_prompt, recipe_user_prompt],
-    });
-
-    console.log({ recipe_response });
-
-    let { object: recipe_options } = extract_json(recipe_response);
-
-    console.log("recipe_options: ", recipe_options);
-
-    await AsyncStorage.setItem(
-      "recipe_options",
-      JSON.stringify(recipe_options),
-    );
-
-    // navigate to recipes screen to select options to keep
-    // once selected, save the selected options to the database
+    // Optionally, you can also update the food_items in the database here
+    // Example:
+    // await supabase.from("inventory").update({ food_items: JSON.stringify(updatedFoodItems) }).eq("user_id", user_id);
   };
 
   return (
@@ -153,91 +115,119 @@ const Inventory = () => {
       //   alignItems: "space-evenly",
       // }}
     >
+      {/* <ImageBackground
+        source={inventoryImages.length > 0 ? { uri: inventoryImages[0] } : null}
+        style={styles.container}
+      > */}
       <Text style={{ color: "white" }}> Inventory</Text>
       {/* Inventory Images */}
-      <View style={styles.imageContainer}>
-        {inventoryImages.map((image_url, index) => (
-          <TouchableOpacity
-            key={index}
-            onPress={() => {
-              setSelectedImage(image_url);
-              setModalVisible(true);
-            }}
-          >
-            <Image source={{ uri: image_url }} style={styles.image} />
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <Modal
-        animationType="slide"
-        transparent={false}
-        visible={modalVisible}
-        style
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <TouchableOpacity
-          style={styles.close}
-          onPress={() => setModalVisible(false)}
-        >
-          <AntDesign name="closecircle" size={30} color="white" />
-        </TouchableOpacity>
-        <View style={[styles.centeredView, styles.modalView]}>
-          <Image source={{ uri: selectedImage }} style={styles.modalImage} />
+      <View style={{ flex: 0.2 }}>
+        <View style={{ ...styles.imageContainer, backgroundColor: "#" }}>
+          {inventoryImages.map((image_url, index) => (
+            <TouchableOpacity
+              key={index}
+              onPress={() => {
+                setSelectedImage(image_url);
+                setModalVisible(true);
+              }}
+            >
+              <Image source={{ uri: image_url }} style={styles.image} />
+            </TouchableOpacity>
+          ))}
         </View>
-      </Modal>
 
-      {/* Food Items */}
-      {Object.entries(food_items).map(([section, categories]) => {
-        let data = Object.entries(categories).flatMap(([category, items], i) =>
-          items.map((item, i) => ({
-            key: item.name,
-            value: item.name,
-          })),
-        );
-
-        return (
-          <MultipleSelectList
-            key={section}
-            setSelected={setSelected}
-            selectedTextStyle={styles.selectedTextStyle}
-            dropdownTextStyles={{ color: "white" }}
-            // defaultOptions={[data[0].value]}
-            data={data}
-            save="value"
-            maxHeight={900}
-            placeholder={"placeholder"}
-            placeholderStyles={{ color: "white" }}
-            arrowicon={
-              <FontAwesome5 name="chevron-down" size={12} color={"white"} />
-            }
-            searchicon={
-              <FontAwesome5 name="search" size={12} color={"white"} />
-            }
-            searchPlaceholder="Search..."
-            search={false}
-            boxStyles={{
-              marginTop: 10,
-              marginBottom: 10,
-              borderColor: "white",
-            }}
-            label={entitle(section)}
-            labelStyles={{ color: "green", fontSize: 20, fontWeight: "bold" }}
-            badgeStyles={{ backgroundColor: "green" }}
-          />
-        );
-      })}
-
-      {/* Generate Recipe Button */}
-      <View style={styles.centerItems}>
-        <TouchableOpacity
-          style={styles.button.container}
-          onPress={generate_recipes}
-          disabled={selected.length === 0}
+        <Modal
+          animationType="slide"
+          transparent={false}
+          visible={modalVisible}
+          style
+          onRequestClose={() => setModalVisible(false)}
         >
-          <Text style={styles.button.text}>Generate</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.close}
+            onPress={() => setModalVisible(false)}
+          >
+            <AntDesign name="closecircle" size={30} color="white" />
+          </TouchableOpacity>
+          <View style={[styles.centeredView, styles.modalView]}>
+            <Image source={{ uri: selectedImage }} style={styles.modalImage} />
+          </View>
+        </Modal>
       </View>
+
+      <ScrollView style={styles.overlay}>
+        {/* Food Items */}
+        {Object.entries(food_items).map(([section, categories]) => {
+          let data = Object.entries(categories).flatMap(
+            ([category, items], i) =>
+              items.map((item, i) => ({
+                key: item.name,
+                value: item.name,
+              }))
+          );
+
+          return (
+            <MultipleSelectList
+              key={section}
+              setSelected={setSelected}
+              selectedTextStyle={styles.selectedTextStyle}
+              dropdownTextStyles={{ color: "white" }}
+              // defaultOptions={[data[0].value]}
+              data={data}
+              save="value"
+              maxHeight={900}
+              placeholder={"placeholder"}
+              placeholderStyles={{ color: "white" }}
+              arrowicon={
+                <FontAwesome5 name="chevron-down" size={12} color={"white"} />
+              }
+              searchicon={
+                <FontAwesome5 name="search" size={12} color={"white"} />
+              }
+              searchPlaceholder="Search..."
+              search={false}
+              boxStyles={{
+                marginTop: 10,
+                marginBottom: 10,
+                borderColor: "white",
+              }}
+              label={entitle(section)}
+              labelStyles={{
+                color: "white",
+                fontSize: 14,
+                fontWeight: "bold",
+              }}
+              badgeStyles={{ backgroundColor: "green" }}
+            />
+          );
+        })}
+
+        {/* Add Food Items Button */}
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter new item here"
+            placeholderTextColor="black"
+            value={newItem}
+            onChangeText={(text) => setNewItem(text)}
+          />
+          <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
+            <Text style={styles.buttonText}>Add</Text>
+          </TouchableOpacity>
+        </View>
+        {/* Generate Recipe Button */}
+        <View style={styles.centerItems}>
+          <TouchableOpacity
+            style={styles.button.container}
+            // onPress={}
+            disabled={selected.length === 0}
+          >
+            <Text style={styles.button.text}>Update Inventory</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+      {/* </ImageBackground> */}
     </ScrollView>
   );
 };
@@ -246,6 +236,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "black",
+  },
+  overlay: {
+    height: "60%",
+    backgroundColor: "rgba(0,0,0,0.8)",
+    borderRadius: 10,
+    padding: 10,
   },
   eachsection: {
     margin: 10,

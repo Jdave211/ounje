@@ -70,7 +70,7 @@ const CheckIngredients = () => {
       get_user_id();
     }
     fetch_food_items();
-  }, [user_id]);
+  }, []);
 
   const handleAddIngredient = () => {
     if (inputValue.length === 0 || !inputValue.trim()) {
@@ -110,7 +110,7 @@ const CheckIngredients = () => {
     let removed_items_set = new Set(removed_items);
 
     const filtered_food_items = food_items_array.filter(
-      (item) => !removed_items_set.has(item.name),
+      (item) => !removed_items_set.has(item.name)
     );
 
     setFoodItemsArray(filtered_food_items);
@@ -129,7 +129,7 @@ const CheckIngredients = () => {
     });
   };
 
-  const handleGenerateRecipes = async () => {
+  const handleSaveFoodItems = async () => {
     if (food_items_array.length === 0) {
       Toast.show({
         type: "error",
@@ -143,7 +143,7 @@ const CheckIngredients = () => {
     await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
     await AsyncStorage.setItem(
       "food_items_array",
-      JSON.stringify(food_items_array),
+      JSON.stringify(food_items_array)
     );
 
     // we can also just generate recipes here and
@@ -243,7 +243,7 @@ const CheckIngredients = () => {
                   items.map((item, _i) => ({
                     key: item.name,
                     value: item.name,
-                  })),
+                  }))
               );
 
               return (
@@ -326,9 +326,9 @@ const CheckIngredients = () => {
             <TouchableOpacity
               style={styles.generateButton}
               disabled={data.length === 0}
-              onPress={handleGenerateRecipes}
+              onPress={handleSaveFoodItems}
             >
-              <Text style={styles.generateButtonText}>Generate Recipes</Text>
+              <Text style={styles.generateButtonText}>Save Food Items</Text>
             </TouchableOpacity>
           </View>
         </View>

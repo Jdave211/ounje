@@ -19,11 +19,11 @@ const Layout = ({ children }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: 'black',
+        backgroundColor: 'black'
     },
     header: {
-        paddingTop: 58,
-        height: 100,
+        paddingTop: 40,
+        height: 80,
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 100,

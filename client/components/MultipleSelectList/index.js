@@ -20,6 +20,7 @@ import {
 export const MultipleSelectList =
   // : React.FC<MultipleSelectListProps>
   ({
+    selectAll = false,
     fontFamily,
     setSelected,
     defaultOptions,
@@ -97,6 +98,20 @@ export const MultipleSelectList =
       }
     }, [dropdownShown]);
 
+    React.useEffect(() => {
+      setFilteredData(data);
+      if (selectAll && selectedval.length === 0) {
+        setSelectedVal(data.map((item) => item.value ?? item));
+        setSelected(
+          data.map((item) =>
+            save === "value"
+              ? item.value ?? item
+              : item.key ?? item.value ?? item
+          )
+        );
+      }
+    }, [data]);
+
     return (
       <View>
         {dropdown && search ? (
@@ -119,13 +134,13 @@ export const MultipleSelectList =
                 onChangeText={(val) => {
                   let result = data.filter(
                     (
-                      item,
+                      item
                       // : L1Keys
                     ) => {
                       val.toLowerCase();
                       let row = item.value.toLowerCase();
                       return row.search(val.toLowerCase()) > -1;
-                    },
+                    }
                   );
                   setFilteredData(result);
                 }}
@@ -175,33 +190,56 @@ export const MultipleSelectList =
                   flexWrap: "wrap",
                 }}
               >
-                {selectedval?.map((item, index) => {
-                  return (
-                    <View
-                      key={index}
-                      style={[
-                        {
-                          backgroundColor: "gray",
-                          paddingHorizontal: 20,
-                          paddingVertical: 5,
-                          borderRadius: 50,
-                          marginRight: 10,
-                          marginTop: 10,
-                        },
-                        badgeStyles,
-                      ]}
-                    >
-                      <Text
+                <View
+                  // key={index}
+                  style={[
+                    {
+                      backgroundColor: "gray",
+                      paddingHorizontal: 20,
+                      paddingVertical: 5,
+                      borderRadius: 50,
+                      marginRight: 10,
+                      marginTop: 10,
+                    },
+                    badgeStyles,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      { color: "white", fontSize: 12, fontFamily },
+                      badgeTextStyles,
+                    ]}
+                  >
+                    {selectedval.length} Items Selected
+                  </Text>
+                  {/* {selectedval?.map((item, index) => {
+                    return (
+                      <View
+                        key={index}
                         style={[
-                          { color: "white", fontSize: 12, fontFamily },
-                          badgeTextStyles,
+                          {
+                            backgroundColor: "gray",
+                            paddingHorizontal: 20,
+                            paddingVertical: 5,
+                            borderRadius: 50,
+                            marginRight: 10,
+                            marginTop: 10,
+                          },
+                          badgeStyles,
                         ]}
                       >
-                        {item}
-                      </Text>
-                    </View>
-                  );
-                })}
+                        <Text
+                          style={[
+                            { color: "white", fontSize: 12, fontFamily },
+                            badgeTextStyles,
+                          ]}
+                        >
+                          {item}
+                        </Text>
+                      </View>
+                    );
+                  })} */}
+                </View>
               </View>
             </View>
           </TouchableOpacity>
@@ -250,7 +288,7 @@ export const MultipleSelectList =
                     (
                       item,
                       // : L1Keys
-                      index,
+                      index
                       // : number
                     ) => {
                       let key = item.key ?? item.value ?? item;
@@ -314,13 +352,13 @@ export const MultipleSelectList =
 
                                 setSelected(
                                   (
-                                    val,
+                                    val
                                     // : any
                                   ) => {
                                     let temp = [...val];
                                     temp.splice(existing, 1);
                                     return temp;
-                                  },
+                                  }
                                 );
 
                                 // onSelect()
@@ -328,33 +366,33 @@ export const MultipleSelectList =
                                 if (save === "value") {
                                   setSelected(
                                     (
-                                      val,
+                                      val
                                       // : any
                                     ) => {
                                       let temp = [...new Set([...val, value])];
                                       return temp;
-                                    },
+                                    }
                                   );
                                 } else {
                                   setSelected(
                                     (
-                                      val,
+                                      val
                                       // : any
                                     ) => {
                                       let temp = [...new Set([...val, key])];
                                       return temp;
-                                    },
+                                    }
                                   );
                                 }
 
                                 setSelectedVal(
                                   (
-                                    val,
+                                    val
                                     // : any
                                   ) => {
                                     let temp = [...new Set([...val, value])];
                                     return temp;
-                                  },
+                                  }
                                 );
 
                                 // onSelect()
@@ -395,7 +433,7 @@ export const MultipleSelectList =
                           </TouchableOpacity>
                         );
                       }
-                    },
+                    }
                   )
                 ) : (
                   <TouchableOpacity
