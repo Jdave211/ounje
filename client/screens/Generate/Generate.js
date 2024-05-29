@@ -24,7 +24,7 @@ export default function Generate({ route }) {
   const [recipes, setRecipes] = useState([]);
   const navigation = useNavigation();
 
-  const flavors = ["sweet", "sour", "spicy", "umami"];
+  const flavors = ["Breakfast", "Lunch", "Dinner", "Snack"];
 
   const handleLoading = (loading) => {
     setIsLoading(loading);
@@ -88,7 +88,10 @@ export default function Generate({ route }) {
               marginBottom: 10,
               borderColor: "white",
             }}
-            defaultOption={{ key: "1", value: "What flavor are you feeling?" }}
+            defaultOption={{
+              key: "1",
+              value: "What type of meal are you feeling?",
+            }}
           />
           <ScrollView style={{ flex: 0.5 }}>
             <GenerateRecipes
