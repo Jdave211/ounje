@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
 import harvestImage from "../assets/harvest.png";
+import { AnimatedCircularProgress } from "react-native-circular-progress";
+import { Bar as ProgressBar } from "react-native-progress";
+import { FOOD_ITEMS } from "../utils/constants";
 
 // recipe:
 // - id
@@ -24,11 +27,21 @@ const RecipeCard = ({ id, showBookmark }) => {
   const [user_id, setUserId] = useState(null);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [isSaved, setIsSaved] = React.useState(false);
+  const [food_items, setFoodItems] = useState([]);
 
   useEffect(() => {
     const get_user_id = async () => {
       let retrieved_user_id = await AsyncStorage.getItem("user_id");
       setUserId(() => retrieved_user_id);
+    };
+
+    const fetch_food_items = async () => {
+      retrieved_text = await AsyncStorage.getItem("food_items_array");
+      let retrieved_food_items_array = JSON.parse(retrieved_text);
+
+      if (retrieved_food_items_array?.length > 0) {
+        setFoodItems(retrieved_food_items_array);
+      }
     };
 
     const fetch_recipe_details = async () => {
@@ -59,27 +72,69 @@ const RecipeCard = ({ id, showBookmark }) => {
     } else {
       fetch_recipe_details();
       fetch_is_saved();
+      fetch_food_items();
     }
   }, [user_id]);
 
   console.log({ recipeDetails });
-  const handleSave = () => {
-    setIsSaved(!isSaved);
-    if (isSaved) {
-      Toast.show({
-        type: "success",
-        text1: "Recipe Unsaved",
-        text2: `${recipe.title} has been unsaved from your recipes.`,
-      });
-      return;
-    } else {
+
+  const handleSave = async () => {
+    let localIsSaved = !isSaved;
+
+    console.log({ localIsSaved });
+    setIsSaved(localIsSaved);
+
+    if (localIsSaved) {
+      await supabase
+        .from("saved_recipes")
+        .insert([{ user_id, recipe_id: recipeDetails.id }])
+        .throwOnError();
+
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${recipe.title} has been saved to your recipes.`,
+        text2: `${recipeDetails.title} has been saved to your recipes.`,
+      });
+
+      return;
+    } else {
+      await supabase
+        .from("saved_recipes")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("recipe_id", recipeDetails.id)
+        .throwOnError();
+      Toast.show({
+        type: "success",
+        text1: "Recipe Unsaved",
+        text2: `${recipeDetails.title} has been removed from your saved recipes.`,
       });
     }
   };
+
+  const calc_percentage = (recipeDetails) => {
+    if (!recipeDetails || !food_items) return 0;
+
+    let food_items_set = new Set(
+      food_items.map(({ spoonacular_id }) => spoonacular_id)
+    );
+
+    const owned_items = recipeDetails.extended_ingredients.filter(
+      (ingredient) => food_items_set.has(ingredient.id)
+    );
+
+    if (!owned_items || owned_items.length === 0) return 0;
+
+    const percentage =
+      (owned_items.length / recipeDetails.extended_ingredients.length) * 100;
+
+    return percentage;
+  };
+
+  const percentage_of_owned_ingredients = useMemo(
+    () => calc_percentage(recipeDetails),
+    [food_items, recipeDetails]
+  );
 
   return (
     <View style={styles.container}>
@@ -150,12 +205,18 @@ const RecipeCard = ({ id, showBookmark }) => {
 
                 <View>
                   <Text style={styles.text}>
-                    29% of{" "}
-                    <Image
-                      source={harvestImage}
-                      style={{ resizeMode: "cover", width: 24, height: 24 }}
-                    />
+                    {new Number(percentage_of_owned_ingredients).toFixed(2)}% of{" "}
                   </Text>
+                  <ProgressBar
+                    progress={percentage_of_owned_ingredients / 100}
+                    width={60}
+                  />
+                </View>
+                <View>
+                  <Image
+                    source={harvestImage}
+                    style={{ resizeMode: "cover", width: 24, height: 24 }}
+                  />
                 </View>
               </View>
 

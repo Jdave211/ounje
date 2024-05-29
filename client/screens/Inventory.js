@@ -88,112 +88,9 @@ const Inventory = () => {
       fetch_inventory_images();
       fetch_food_items();
     }
-  }, [user_id]);
+  }, []);
 
   console.log({ inventoryImages });
-
-  const generate_recipes = async () => {
-    let async_run_response = supabase
-      .from("runs")
-      .insert([{ user_id, images: inventoryImages }])
-      .select()
-      .throwOnError();
-
-    const [
-      {
-        value: { data: runs, error: runs_error },
-      },
-    ] = await Promise.allSettled([async_run_response]);
-
-    if (runs_error) console.log("Error:", runs_error);
-    else console.log("Added User Run:", runs);
-
-    console.log("runs: ", runs);
-    current_run = runs[runs.length - 1];
-
-    console.log("current_run: ", current_run);
-
-    let selected_set = new Set(selected);
-    const selected_food_items = food_items_array.filter(
-      (item) =>
-        // selected_set.has(item.name),
-        true
-    );
-    const food_item_records = selected_food_items.map((record) => ({
-      run_id: current_run.id,
-      ...record,
-    }));
-
-    console.log("food_item_records: ", food_item_records);
-
-    await supabase.from("food_items").upsert(food_item_records).throwOnError();
-
-    console.log("starting recipes");
-
-    const { data: suggested_recipes } = await axios
-      .get("https://api.spoonacular.com/recipes/findByIngredients", {
-        params: {
-          apiKey: process.env.SPOONACULAR_API_KEY,
-          ingredients: food_items_array.map(({ name }) => name).join(", "),
-          number: 7,
-          ranking: 1,
-        },
-      })
-      .catch((err) => console.log(err, err.response.data, err.request));
-
-    console.log({ suggested_recipes });
-
-    let { data: recipe_options } = await axios
-      .get(`https://api.spoonacular.com/recipes/informationBulk`, {
-        params: {
-          apiKey: process.env.SPOONACULAR_API_KEY,
-          includeNutrition: true,
-          ids: suggested_recipes.map((recipe) => recipe.id).join(", "),
-        },
-      })
-      .catch((err) => console.log(err, error.response.data, err.request));
-    recipe_options = suggested_recipes.map((suggested_recipe, i) => ({
-      ...suggested_recipe,
-      ...recipe_options[i],
-    }));
-
-    console.log("recipe_options: ", recipe_options);
-
-    const recipe_options_in_snake_case = objectToSnake(recipe_options).map(
-      (recipe) => {
-        delete recipe.cheap;
-        delete recipe.gaps;
-        delete recipe.likes;
-        delete recipe.missed_ingredient_count;
-        delete recipe.missed_ingredients;
-        delete recipe.used_ingredients;
-        delete recipe.used_ingredient_count;
-        delete recipe.user_tags;
-        delete recipe.unused_ingredients;
-        delete recipe.unknown_ingredients;
-        delete recipe.open_license;
-        delete recipe.report;
-        delete recipe.suspicious_data_score;
-        delete recipe.tips;
-        return recipe;
-      }
-    );
-
-    console.log({ recipe_options_in_snake_case });
-    await supabase
-      .from("recipe_ids")
-      .upsert(recipe_options_in_snake_case, { onConflict: "id" })
-      .throwOnError();
-
-    await AsyncStorage.setItem(
-      "recipe_options",
-      JSON.stringify(recipe_options)
-    );
-
-    // navigate to recipes screen to select options to keep
-    // once selected, save the selected options to the database
-    navigation.navigate("RecipeOptions");
-  };
 
   const addNewItem = () => {
     if (newItem.trim() === "") {
@@ -218,122 +115,119 @@ const Inventory = () => {
       //   alignItems: "space-evenly",
       // }}
     >
-      <ImageBackground
+      {/* <ImageBackground
         source={inventoryImages.length > 0 ? { uri: inventoryImages[0] } : null}
         style={styles.container}
-      >
-        <Text style={{ color: "white" }}> Inventory</Text>
-        {/* Inventory Images */}
-        <View style={{ flex: 0.2 }}>
-          <View style={styles.imageContainer}>
-            {inventoryImages.map((image_url, index) => (
-              <TouchableOpacity
-                key={index}
-                onPress={() => {
-                  setSelectedImage(image_url);
-                  setModalVisible(true);
-                }}
-              >
-                <Image source={{ uri: image_url }} style={styles.image} />
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <Modal
-            animationType="slide"
-            transparent={false}
-            visible={modalVisible}
-            style
-            onRequestClose={() => setModalVisible(false)}
-          >
+      > */}
+      <Text style={{ color: "white" }}> Inventory</Text>
+      {/* Inventory Images */}
+      <View style={{ flex: 0.2 }}>
+        <View style={{ ...styles.imageContainer, backgroundColor: "#" }}>
+          {inventoryImages.map((image_url, index) => (
             <TouchableOpacity
-              style={styles.close}
-              onPress={() => setModalVisible(false)}
+              key={index}
+              onPress={() => {
+                setSelectedImage(image_url);
+                setModalVisible(true);
+              }}
             >
-              <AntDesign name="closecircle" size={30} color="white" />
+              <Image source={{ uri: image_url }} style={styles.image} />
             </TouchableOpacity>
-            <View style={[styles.centeredView, styles.modalView]}>
-              <Image
-                source={{ uri: selectedImage }}
-                style={styles.modalImage}
-              />
-            </View>
-          </Modal>
+          ))}
         </View>
 
-        <ScrollView style={styles.overlay}>
-          {/* Food Items */}
-          {Object.entries(food_items).map(([section, categories]) => {
-            let data = Object.entries(categories).flatMap(
-              ([category, items], i) =>
-                items.map((item, i) => ({
-                  key: item.name,
-                  value: item.name,
-                }))
-            );
+        <Modal
+          animationType="slide"
+          transparent={false}
+          visible={modalVisible}
+          style
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.close}
+            onPress={() => setModalVisible(false)}
+          >
+            <AntDesign name="closecircle" size={30} color="white" />
+          </TouchableOpacity>
+          <View style={[styles.centeredView, styles.modalView]}>
+            <Image source={{ uri: selectedImage }} style={styles.modalImage} />
+          </View>
+        </Modal>
+      </View>
 
-            return (
-              <MultipleSelectList
-                key={section}
-                setSelected={setSelected}
-                selectedTextStyle={styles.selectedTextStyle}
-                dropdownTextStyles={{ color: "white" }}
-                // defaultOptions={[data[0].value]}
-                data={data}
-                save="value"
-                maxHeight={900}
-                placeholder={"placeholder"}
-                placeholderStyles={{ color: "white" }}
-                arrowicon={
-                  <FontAwesome5 name="chevron-down" size={12} color={"white"} />
-                }
-                searchicon={
-                  <FontAwesome5 name="search" size={12} color={"white"} />
-                }
-                searchPlaceholder="Search..."
-                search={false}
-                boxStyles={{
-                  marginTop: 10,
-                  marginBottom: 10,
-                  borderColor: "white",
-                }}
-                label={entitle(section)}
-                labelStyles={{
-                  color: "white",
-                  fontSize: 14,
-                  fontWeight: "bold",
-                }}
-                badgeStyles={{ backgroundColor: "green" }}
-              />
-            );
-          })}
+      <ScrollView style={styles.overlay}>
+        {/* Food Items */}
+        {Object.entries(food_items).map(([section, categories]) => {
+          let data = Object.entries(categories).flatMap(
+            ([category, items], i) =>
+              items.map((item, i) => ({
+                key: item.name,
+                value: item.name,
+              }))
+          );
 
-          {/* Add Food Items Button */}
-
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter new item here"
-              placeholderTextColor="black"
-              value={newItem}
-              onChangeText={(text) => setNewItem(text)}
+          return (
+            <MultipleSelectList
+              key={section}
+              setSelected={setSelected}
+              selectedTextStyle={styles.selectedTextStyle}
+              dropdownTextStyles={{ color: "white" }}
+              // defaultOptions={[data[0].value]}
+              data={data}
+              save="value"
+              maxHeight={900}
+              placeholder={"placeholder"}
+              placeholderStyles={{ color: "white" }}
+              arrowicon={
+                <FontAwesome5 name="chevron-down" size={12} color={"white"} />
+              }
+              searchicon={
+                <FontAwesome5 name="search" size={12} color={"white"} />
+              }
+              searchPlaceholder="Search..."
+              search={false}
+              boxStyles={{
+                marginTop: 10,
+                marginBottom: 10,
+                borderColor: "white",
+              }}
+              label={entitle(section)}
+              labelStyles={{
+                color: "white",
+                fontSize: 14,
+                fontWeight: "bold",
+              }}
+              badgeStyles={{ backgroundColor: "green" }}
             />
-            <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
-              <Text style={styles.buttonText}>Add</Text>
-            </TouchableOpacity>
-          </View>
-          {/* Generate Recipe Button */}
-          <View style={styles.centerItems}>
-            <TouchableOpacity
-              style={styles.button.container}
-              onPress={generate_recipes}
-              disabled={selected.length === 0}
-            >
-              <Text style={styles.button.text}>Generate</Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      </ImageBackground>
+          );
+        })}
+
+        {/* Add Food Items Button */}
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Enter new item here"
+            placeholderTextColor="black"
+            value={newItem}
+            onChangeText={(text) => setNewItem(text)}
+          />
+          <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
+            <Text style={styles.buttonText}>Add</Text>
+          </TouchableOpacity>
+        </View>
+        {/* Generate Recipe Button */}
+        <View style={styles.centerItems}>
+          <TouchableOpacity
+            style={styles.button.container}
+            // onPress={}
+            disabled={selected.length === 0}
+          >
+            <Text style={styles.button.text}>Update Inventory</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+      {/* </ImageBackground> */}
     </ScrollView>
   );
 };

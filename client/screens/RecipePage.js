@@ -16,6 +16,8 @@ import { supabase } from "../utils/supabase";
 import Carousel from "react-native-reanimated-carousel";
 import { ScrollView } from "react-native-gesture-handler";
 import { entitle } from "../utils/helpers";
+import harvestImage from "../assets/harvest.png";
+import { Bar as ProgressBar } from "react-native-progress";
 
 import { useNavigation } from "@react-navigation/native";
 
@@ -68,7 +70,7 @@ const RecipePage = ({ route }) => {
         .eq("recipe_id", id)
         .throwOnError();
 
-      console.log({ saved_data });
+      setIsSaved(saved_data?.length > 0);
     };
 
     if (!user_id) {
@@ -79,20 +81,36 @@ const RecipePage = ({ route }) => {
     }
   }, [user_id, route.params]);
 
-  const handleSave = () => {
-    setIsSaved(!isSaved);
-    if (isSaved) {
-      Toast.show({
-        type: "success",
-        text1: "Recipe Unsaved",
-        text2: `${recipe.title} has been unsaved from your recipes.`,
-      });
-      return;
-    } else {
+  const handleSave = async () => {
+    let localIsSaved = !isSaved;
+
+    console.log({ localIsSaved });
+    setIsSaved(localIsSaved);
+
+    if (localIsSaved) {
+      await supabase
+        .from("saved_recipes")
+        .insert([{ user_id, recipe_id: recipeDetails.id }])
+        .throwOnError();
+
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${recipe.title} has been saved to your recipes.`,
+        text2: `${recipeDetails.title} has been saved to your recipes.`,
+      });
+
+      return;
+    } else {
+      await supabase
+        .from("saved_recipes")
+        .delete()
+        .eq("user_id", user_id)
+        .eq("recipe_id", recipeDetails.id)
+        .throwOnError();
+      Toast.show({
+        type: "success",
+        text1: "Recipe Unsaved",
+        text2: `${recipeDetails.title} has been removed from your saved recipes.`,
       });
     }
   };
@@ -101,8 +119,6 @@ const RecipePage = ({ route }) => {
     console.log({ navigation: navigation.getState().history });
     navigation.goBack();
   };
-
-  const on_bookmark_click = () => {};
 
   console.log({ recipePage: recipeDetails });
   return (
@@ -150,9 +166,13 @@ const RecipePage = ({ route }) => {
               marginLeft: "auto",
               marginRight: 10,
             }}
-            onPress={on_bookmark_click}
+            onPress={handleSave}
           >
-            <Feather name="bookmark" size={24} color={"white"} />
+            {isSaved ? (
+              <MaterialIcons name="bookmark-remove" size={24} color={"gray"} />
+            ) : (
+              <MaterialIcons name="bookmark-add" size={24} color={"green"} />
+            )}
           </TouchableOpacity>
         </View>
 
@@ -219,11 +239,17 @@ const RecipePage = ({ route }) => {
               </View>
 
               <View>
-                <Text style={styles.text}>29% of [II]</Text>
+                <Text style={styles.text}>29% of Ingredients</Text>
+                <Image
+                  source={harvestImage}
+                  style={{ resizeMode: "cover", width: 24, height: 24 }}
+                />
+                <ProgressBar progress={0.3} width={50} />
+                <View></View>
               </View>
             </View>
           </View>
-          <View>
+          <View style={{ marginTop: 10 }}>
             <Text style={styles.subheading}>Description</Text>
 
             <Text style={styles.text} numberOfLines={2}>
@@ -231,7 +257,7 @@ const RecipePage = ({ route }) => {
             </Text>
           </View>
 
-          <View>
+          <View style={{ marginTop: 10 }}>
             <Text style={styles.subheading}>Ingredients</Text>
             {recipeDetails.extended_ingredients.map((ingredient, i) => (
               <View
@@ -300,84 +326,6 @@ const RecipePage = ({ route }) => {
           </View>
         </View>
       </ScrollView>
-
-      // <View>
-      //   <Image
-      //     style={{
-      //       width: "100%",
-      //       height: 200,
-      //       borderRadius: 10,
-      //       borderTopLeftRadius: 10,
-      //       borderTopRightRadius: 10,
-      //     }}
-      //     source={{ uri: recipeDetails.image }}
-      //   />
-      //   {/* <View
-      //     style={{
-      //       width: "100%",
-      //       // borderRadius: 10,
-      //       padding: 0,
-      //       // borderColor: "white",
-      //       // borderWidth: 1,
-      //     }}
-      //   ></View>
-      //   <View style={{ padding: 10 }}>
-      //     <View style={{ ...styles.imageTextContainer, marginBottom: 5 }}>
-      //       <Text style={styles.title} numberOfLines={1}>
-      //         {recipeDetails.title}
-      //       </Text>
-      //     </View>
-      //     <View
-      //       style={{
-      //         flexDirection: "row",
-      //         justifyContent: "space-between",
-      //         alignItems: "center",
-      //       }}
-      //     >
-      //       <View
-      //         style={{
-      //           flexDirection: "row",
-      //           alignItems: "center",
-      //         }}
-      //       >
-      //         <View
-      //           style={{
-      //             flexDirection: "row",
-      //             alignItems: "center",
-      //             paddingRight: 20,
-      //           }}
-      //         >
-      //           <Feather name="clock" size={20} color="green" />
-      //           <Text style={{ ...styles.text, marginLeft: 10 }}>
-      //             {recipeDetails.ready_in_minutes} mins
-      //           </Text>
-      //         </View>
-
-      //         <View>
-      //           <Text style={styles.text}>29% of [II]</Text>
-      //         </View>
-      //       </View>
-
-      //       <View>
-      //         <TouchableOpacity style={styles.save} onPress={handleSave}>
-      //           {isSaved ? (
-      //             <MaterialIcons
-      //               name="bookmark-added"
-      //               size={24}
-      //               color="green"
-      //             />
-      //           ) : (
-      //             <MaterialIcons
-      //               name="bookmark-border"
-      //               size={24}
-      //               color="white"
-      //             />
-      //           )}
-      //         </TouchableOpacity>
-      //       </View>
-      //     </View>
-      //   </View> */}
-      // </View>
     )
   );
 };

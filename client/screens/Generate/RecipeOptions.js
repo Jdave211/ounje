@@ -14,7 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
 
-const SavedRecipes = () => {
+const RecipeOptions = () => {
   const navigation = useNavigation();
 
   const [user_id, setUserId] = useState(null);
@@ -38,18 +38,19 @@ const SavedRecipes = () => {
 
     if (!user_id) {
       get_user_id();
+    } else {
+      fetch_recipe_options();
     }
-    fetch_recipe_options();
-  }, [user_id]);
+  }, []);
 
   const store_selected_recipes = async (selected_recipes) => {
     const recipe_image_bucket = "recipe_images";
 
-    const recipe_image_gen_data = selected_recipes.map((recipe) => ({
-      prompt:
-        "a zoomed out image showing the full dish of " + recipe.image_prompt,
-      storage_path: `${current_run.id}/${recipe.name}.jpeg`,
-    }));
+    // const recipe_image_gen_data = selected_recipes.map((recipe) => ({
+    //   prompt:
+    //     "a zoomed out image showing the full dish of " + recipe.image_prompt,
+    //   storage_path: `${current_run.id}/${recipe.name}.jpeg`,
+    // }));
 
     // generate and store images for each recipe
     // shoot and forget approach
@@ -95,39 +96,11 @@ const SavedRecipes = () => {
       .throwOnError();
   };
 
-  const onBookmark = async (recipe, isBookmarked) => {
-    if (isBookmarked) {
-      // setBookmarked((prev) => {
-      //   prev.add(recipe);
-      //   return prev
-      // });
-
-      const results = await supabase
-        .from("saved_recipes")
-        .insert([{ user_id, recipe_id: recipe.id }])
-        .throwOnError();
-
-      setRecipeOptions((prev) => {
-        return prev.filter((option) => option.id !== recipe.id);
-      });
-    } else {
-      // setBookmarked((prev) => {
-      //   prev.delete(recipe);
-      //   return prev
-      // })
-
-      await supabase
-        .from("saved_recipes")
-        .delete()
-        .eq("user_id", user_id)
-        .eq("recipe_id", recipe.id)
-        .throwOnError();
-    }
-  };
-
   const navigate_to_saved_recipes = () => {
-    navigation.navigate("SavedRecipes");
+    navigation.navigate("RecipeOptions");
   };
+
+  console.log({ recipeOptions });
 
   return (
     <View style={styles.container}>
@@ -136,10 +109,11 @@ const SavedRecipes = () => {
         {/* <View style={{ justifyContent: "center", alignItems: "center", flexDirection: "row", flexWrap: "wrap" }}> */}
         {recipeOptions.map((recipeOption, index) => (
           <View key={index}>
-            <RecipeOptionCard
+            <RecipeCard
               key={index}
-              recipe={recipeOption}
-              onBookmark={onBookmark}
+              id={recipeOption.id}
+              // recipe={recipeOption}
+              showBookmark={true}
             />
           </View>
         ))}
@@ -181,4 +155,4 @@ const styles = {
   },
 };
 
-export default SavedRecipes;
+export default RecipeOptions;

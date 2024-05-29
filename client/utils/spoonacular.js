@@ -27,5 +27,30 @@ export const get_bulk_recipe_details = async (ids) => {
     }
   );
 
-  return recipe;
+  return recipe_options;
+};
+
+export const parse_ingredients = async (ingredients) => {
+  const params = new URLSearchParams();
+  params.append("ingredientList", ingredients.join("\n"));
+
+  params.append("servings", 1);
+  console.log({ ingredients });
+
+  const { data } = await axios.post(
+    "https://api.spoonacular.com/recipes/parseIngredients",
+    params,
+
+    {
+      params: {
+        apiKey: process.env.SPOONACULAR_API_KEY,
+      },
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+  console.log({ parsed_result: data });
+
+  return data;
 };

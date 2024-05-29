@@ -1,42 +1,27 @@
-<<<<<<< Updated upstream
 import React, { useState } from 'react';
-import { View, Text, TextInput, Alert, Image, StyleSheet, TouchableOpacity, ImageBackground, ActivityIndicator, ActionSheetIOS } from 'react-native';
+import { View, Text, TextInput, Alert, Image, StyleSheet, TouchableOpacity, ImageBackground, ActivityIndicator, ActionSheetIOS, ScrollView } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-=======
-import React, { useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  Alert,
-  Image,
-  StyleSheet,
-  TouchableOpacity,
-  ImageBackground,
-  ActivityIndicator,
-  ActionSheetIOS,
-  ScrollView,
-} from "react-native";
-import * as ImagePicker from "expo-image-picker";
->>>>>>> Stashed changes
-import { supabase } from "../../utils/supabase";
+import { supabase } from '../../utils/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import name_bg from '../../assets/name_bg.jpg';
 import diet_bg from '../../assets/diet_bg.jpeg';
 import fridge_bg from '../../assets/fridge_bg.jpg';
 import camera_icon from '../../assets/camera_icon.png';
-import { MultipleSelectList } from "../../components/MultipleSelectList";
+import { MultipleSelectList } from '../../components/MultipleSelectList';
 import { FontAwesome5 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import { customAlphabet } from 'nanoid/non-secure';
 import { Buffer } from 'buffer';
-import { openai, extract_json } from "../../utils/openai";
-import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
+import { openai, extract_json } from '../../utils/openai';
+import { FOOD_ITEMS_PROMPT } from '../../utils/prompts';
+import { useNavigation } from '@react-navigation/native';
+import { flatten_nested_objects, parse_ingredients } from '../../utils/spoonacular';
 
 const nanoid = customAlphabet('abcdefghijklmnopqrstuvwxyz0123456789', 10);
 
 const FirstLogin = ({ onProfileComplete, session }) => {
+  const navigation = useNavigation();
   const [name, setName] = useState('');
   const [dietaryRestrictions, setDietaryRestrictions] = useState([]);
   const [fridgeImages, setFridgeImages] = useState([]);
@@ -56,42 +41,35 @@ const FirstLogin = ({ onProfileComplete, session }) => {
 
   const convertImageToBase64 = async (uri) => {
     try {
-      console.log("Converting image to base64:", uri);
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      console.log('Converting image to base64:', uri);
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
       return base64;
     } catch (error) {
-      console.error("Error converting image to base64:", error);
+      console.error('Error converting image to base64:', error);
       throw error;
     }
   };
 
   const pickImage = async () => {
-<<<<<<< Updated upstream
-    if (fridgeImage) {
-      return;
-    }
-
     const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-=======
-    const { status: cameraRollPerm } =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
->>>>>>> Stashed changes
 
-    if (cameraRollPerm !== "granted") {
-      alert("Sorry, we need camera roll permissions to make this work!");
+    if (cameraRollPerm !== 'granted') {
+      alert('Sorry, we need camera roll permissions to make this work!');
       return;
     }
 
     const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
 
-    if (cameraPerm !== "granted") {
-      alert("Sorry, we need camera permissions to make this work!");
+    if (cameraPerm !== 'granted') {
+      alert('Sorry, we need camera permissions to make this work!');
       return;
     }
 
     ActionSheetIOS.showActionSheetWithOptions(
       {
-        options: ["Cancel", "Take Photo", "Choose from Library"],
+        options: ['Cancel', 'Take Photo', 'Choose from Library'],
         cancelButtonIndex: 0,
       },
       async (buttonIndex) => {
@@ -104,17 +82,11 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           });
 
           if (!result.canceled) {
-            console.log("Camera result:", result);
-<<<<<<< Updated upstream
-            setFridgeImageUri(result.assets[0].uri);
-            const base64Image = await convertImageToBase64(result.assets[0].uri);
-            setFridgeImage(base64Image);
-=======
+            console.log('Camera result:', result);
             const uri = result.assets[0].uri;
             setFridgeImageUris((prevUris) => [...prevUris, uri]);
             const base64Image = await convertImageToBase64(uri);
             setFridgeImages((prevImages) => [...prevImages, base64Image]);
->>>>>>> Stashed changes
           }
         } else if (buttonIndex === 2) {
           let result = await ImagePicker.launchImageLibraryAsync({
@@ -125,17 +97,11 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           });
 
           if (!result.canceled) {
-            console.log("Library result:", result);
-<<<<<<< Updated upstream
-            setFridgeImageUri(result.assets[0].uri);
-            const base64Image = await convertImageToBase64(result.assets[0].uri);
-            setFridgeImage(base64Image);
-=======
+            console.log('Library result:', result);
             const uri = result.assets[0].uri;
             setFridgeImageUris((prevUris) => [...prevUris, uri]);
             const base64Image = await convertImageToBase64(uri);
             setFridgeImages((prevImages) => [...prevImages, base64Image]);
->>>>>>> Stashed changes
           }
         }
       }
@@ -143,25 +109,23 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   };
 
   const storeImages = async (userId, base64Images) => {
-    const inventoryImageBucket = "inventory_images";
+    const inventoryImageBucket = 'inventory_images';
     const inventoryImageBucketPath = userId;
 
     const uploadImage = async (base64Image) => {
-      console.log("base64_image length: ", base64Image.length);
-      let binaryImage = Buffer.from(base64Image, "base64");
-      console.log("binary_image length: ", binaryImage?.length);
+      console.log('base64_image length: ', base64Image.length);
+      let binaryImage = Buffer.from(base64Image, 'base64');
+      console.log('binary_image length: ', binaryImage?.length);
       let nanoId = nanoid();
       let imagePath = `${inventoryImageBucketPath}/${nanoId}.jpeg`;
 
       console.log({ nanoId });
       console.log({ imagePath });
 
-      let { data, error } = await supabase.storage
-        .from(inventoryImageBucket)
-        .upload(imagePath, binaryImage);
+      let { data, error } = await supabase.storage.from(inventoryImageBucket).upload(imagePath, binaryImage);
 
       if (error) {
-        console.error("Error uploading image to storage:", error);
+        console.error('Error uploading image to storage:', error);
         throw error;
       }
 
@@ -172,149 +136,115 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   };
 
   const sendImages = async () => {
-    setLoading(true);  // Show loading indicator
+    setLoading(true); // Show loading indicator
 
     try {
-      const user_id = session.user.id; // Using session user id directly
-      console.log("user_id: ", user_id);
+      const user_id = await AsyncStorage.getItem('user_id'); // Using session user id directly
+      console.log('user_id: ', user_id);
 
       const async_image_paths = await storeImages(user_id, fridgeImages);
-      console.log("async_image_paths: ", async_image_paths);
+      console.log('async_image_paths: ', async_image_paths);
 
-      let system_prompt = { role: "system", content: FOOD_ITEMS_PROMPT };
+      let system_prompt = { role: 'system', content: FOOD_ITEMS_PROMPT };
       let user_prompt = {
-        role: "user",
+        role: 'user',
         content: fridgeImages.map((image) => ({ image })),
       };
-      console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
+      console.log('Sending prompts to OpenAI:', system_prompt, user_prompt);
 
       let async_food_items_response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: 'gpt-4',
         messages: [system_prompt, user_prompt],
       });
 
-      console.log("OpenAI response: ", async_food_items_response);
+      console.log('OpenAI response: ', async_food_items_response);
 
-      const [{ value: image_paths }, { value: food_items_response }] =
-        await Promise.allSettled([async_image_paths, async_food_items_response]);
+      const [{ value: image_paths }, { value: food_items_response }] = await Promise.allSettled([async_image_paths, async_food_items_response]);
 
-      console.log("image_paths: ", image_paths);
-      console.log("food_items_response: ", food_items_response);
+      console.log('image_paths: ', image_paths);
+      console.log('food_items_response: ', food_items_response);
 
       const { object: food_items, text: food_items_text } = extract_json(food_items_response);
-      console.log("Extracted food_items: ", food_items);
+      console.log('Extracted food_items: ', food_items);
 
-<<<<<<< Updated upstream
-      const foodItemNames = extractFoodItemNames(food_items);
-      console.log("Extracted food item names: ", foodItemNames);
+      let food_items_array = flatten_nested_objects(food_items, ['inventory', 'category']);
+      console.log({ food_items_array });
 
-      await AsyncStorage.setItem("food_items", JSON.stringify(foodItemNames));
-=======
-      const food_items_array = flatten_nested_objects(food_items, [
-        "inventory",
-        "category",
-      ]);
->>>>>>> Stashed changes
+      const parsed_ingredients = await parse_ingredients(food_items_array.map(({ name }) => name));
+      console.log({ parsed_ingredients });
 
-      const { error } = await supabase
-        .from("inventory")
-        .upsert({ user_id, images: image_paths, food_items: foodItemNames }, { onConflict: ["user_id"] });
-
-<<<<<<< Updated upstream
-      if (error) {
-        throw error;
-      }
-
-      console.log("Food items stored in the database");
-
-      await AsyncStorage.setItem("food_items_array", JSON.stringify(foodItemNames));
-
-=======
-      setLoading(false);
-      navigation.navigate("CheckIngredients");
->>>>>>> Stashed changes
-    } catch (error) {
-      console.error("Error in sendImages:", error);
-    } finally {
-      setLoading(false);  // Hide loading indicator
-    }
-  };
-
-<<<<<<< Updated upstream
-  // Helper function to extract food item names
-  const extractFoodItemNames = (foodItems) => {
-    const foodItemNames = [];
-
-    const firstNestedObject = Object.values(foodItems)[0]; // Get the first nested object
-    console.log("First nested object:", firstNestedObject);
-
-    const extractNames = (items) => {
-      if (Array.isArray(items)) {
-        items.forEach(item => {
-          if (item && item.name) {
-            foodItemNames.push(item.name);
+      food_items_array = food_items_array.map((food_item, i) => {
+        for (let parsed of parsed_ingredients) {
+          if (parsed.original === food_item.name) {
+            food_item.spoonacular_id = parsed.id;
+            food_item.spoonacular_name = parsed.name;
+            food_item.amount = parsed.amount;
+            food_item.image = parsed.image;
+            break;
           }
-        });
-      }
-    };
+        }
 
-    if (firstNestedObject) {
-      // Iterate through the sections in the first nested object
-      for (const section in firstNestedObject) {
-        extractNames(firstNestedObject[section]);
-      }
-    } else {
-      console.error("First nested object is undefined or null.");
+        return food_item;
+      });
+
+      console.log({ food_items_array });
+
+      await AsyncStorage.setItem('food_items', JSON.stringify(food_items));
+      await AsyncStorage.setItem('food_items_array', JSON.stringify(food_items_array));
+
+      setLoading(false);
+      navigation.navigate('CheckIngredients');
+    } catch (error) {
+      console.error('Error in sendImages:', error);
+    } finally {
+      setLoading(false); // Hide loading indicator
     }
-
-    return foodItemNames;
   };
 
-=======
->>>>>>> Stashed changes
   const saveProfile = async () => {
     setLoading(true);
 
     try {
-      console.log("Fetching user...");
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      console.log('Fetching user...');
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
       if (userError) {
-        console.error("Error fetching user:", userError);
+        console.error('Error fetching user:', userError);
         throw userError;
       }
 
       if (fridgeImages.length > 0) {
-        console.log("Uploading fridge images...");
+        console.log('Uploading fridge images...');
         await storeImages(user.id, fridgeImages);
-        console.log("Fridge images uploaded");
+        console.log('Fridge images uploaded');
 
         // Call sendImages to process and store the food items
         await sendImages();
       }
 
-      console.log("Updating profile...");
+      console.log('Updating profile...');
       const updates = {
         id: user.id,
         name: name,
         dietary_restriction: selected,
       };
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .upsert(updates, {
-          returning: 'minimal',
-        });
+      const { error: profileError } = await supabase.from('profiles').upsert(updates, {
+        returning: 'minimal',
+      });
 
       if (profileError) {
-        console.error("Error updating profile:", profileError);
+        console.error('Error updating profile:', profileError);
         throw profileError;
       }
 
       Alert.alert('Profile saved successfully');
-      onProfileComplete();
+      onProfileComplete?.();
     } catch (error) {
-      console.error("Error in saveProfile:", error);
+      console.error('Error in saveProfile:', error);
       Alert.alert('Error saving profile', error.message);
     } finally {
       setLoading(false);
@@ -325,8 +255,15 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     <View style={styles.name}>
       <Text style={styles.name_text}>Hi there, what is your name?</Text>
       <TextInput
-        style={{ height: 40, borderColor: 'gray', borderWidth: 2, color: 'white', fontWeight: 'bold', marginTop: 20 }}
-        onChangeText={text => setName(text)}
+        style={{
+          height: 40,
+          borderColor: 'gray',
+          borderWidth: 2,
+          color: 'white',
+          fontWeight: 'bold',
+          marginTop: 20,
+        }}
+        onChangeText={(text) => setName(text)}
         value={name}
       />
     </View>,
@@ -335,85 +272,54 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       <MultipleSelectList
         setSelected={setSelected}
         selectedTextStyle={styles.selectedTextStyle}
-        dropdownTextStyles={{ color: "white" }}
+        dropdownTextStyles={{ color: 'white' }}
         data={dietaryRestrictionsOptions}
         save="value"
         maxHeight={900}
-        placeholder={"Select dietary restrictions"}
-        placeholderStyles={{ color: "white" }}
-        arrowicon={
-          <FontAwesome5 name="chevron-down" size={12} color={"white"} />
-        }
-        searchicon={
-          <FontAwesome5 name="search" size={12} color={"white"} />
-        }
+        placeholder={'Select dietary restrictions'}
+        placeholderStyles={{ color: 'white' }}
+        arrowicon={<FontAwesome5 name="chevron-down" size={12} color={'white'} />}
+        searchicon={<FontAwesome5 name="search" size={12} color={'white'} />}
         search={false}
         boxStyles={{
           marginTop: 10,
           marginBottom: 10,
-          borderColor: "white",
+          borderColor: 'white',
         }}
-        badgeStyles={{ backgroundColor: "green" }}
+        badgeStyles={{ backgroundColor: 'green' }}
       />
     </View>,
     <View style={styles.fridge}>
-<<<<<<< Updated upstream
       <Text style={styles.fridge_text}>And finally, please click here to take a picture of your fridge</Text>
-      <View style={{ justifyContent: 'center', alignItems: 'center', marginTop:20 }}>
-        {fridgeImageUri ? (
-          <Image source={{ uri: fridgeImageUri }} style={{ width: 100, height: 100 }} />
-        ) : (
-          <TouchableOpacity style={styles.camera} onPress={pickImage}>
-            <Image source={camera_icon} style={{ width: 50, height: 50 }} />
-          </TouchableOpacity>
-        )}
-      </View>   
-    </View>
-=======
-      <Text style={styles.fridge_text}>
-        And finally, please click here to take a picture of your fridge
-      </Text>
-      <View
-        style={{
-          justifyContent: "center",
-          alignItems: "center",
-          marginTop: 20,
-        }}
-      >
+      <View style={{ justifyContent: 'center', alignItems: 'center', marginTop: 20 }}>
         <TouchableOpacity style={styles.camera} onPress={pickImage}>
           <Image source={camera_icon} style={{ width: 50, height: 50 }} />
         </TouchableOpacity>
         <ScrollView horizontal>
           {fridgeImageUris.map((uri, index) => (
-            <Image
-              key={index}
-              source={{ uri }}
-              style={{ width: 100, height: 100, margin: 5 }}
-            />
+            <Image key={index} source={{ uri }} style={{ width: 100, height: 100, margin: 5 }} />
           ))}
         </ScrollView>
       </View>
     </View>,
->>>>>>> Stashed changes
   ];
 
   return (
     <ImageBackground source={bg[currentQuestion]} style={styles.container}>
       <View style={styles.container}>
-        {loading ? (
-          <ActivityIndicator size="large" color="#00ff00" />
-        ) : (
-          questions[currentQuestion]
-        )}
+        {loading ? <ActivityIndicator size="large" color="#00ff00" /> : questions[currentQuestion]}
       </View>
       {!loading && currentQuestion < 2 && (
-        <TouchableOpacity style={styles.next_button} onPress={() => {
-          if (name.trim() === '' && currentQuestion === 0) {
-            Alert.alert('Error', 'Name is required');
-          } else {
-            setCurrentQuestion(currentQuestion + 1);
-          }
-        }}>
+        <TouchableOpacity
+          style={styles.next_button}
+          onPress={() => {
+            if (name.trim() === '' && currentQuestion === 0) {
+              Alert.alert('Error', 'Name is required');
+            } else {
+              setCurrentQuestion(currentQuestion + 1);
+            }
+          }}
+        >
           <MaterialCommunityIcons name="page-next" size={24} color="white" />
         </TouchableOpacity>
       )}
