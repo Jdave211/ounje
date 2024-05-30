@@ -1,9 +1,8 @@
 import * as React from "react";
-import { View, TouchableOpacity, StyleSheet } from "react-native";
+import { View, TouchableOpacity, StyleSheet, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { FontAwesome5 } from "@expo/vector-icons";
+import { FontAwesome5, FontAwesome, MaterialIcons } from "@expo/vector-icons";
 import { Entypo } from "@expo/vector-icons";
-import { MaterialIcons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 
 const BottomTabBar = () => {
@@ -11,19 +10,36 @@ const BottomTabBar = () => {
   const navigation = useNavigation();
 
   const tabs = [
-    { screenName: "Generate", iconName: "dna", iconComponent: FontAwesome5 },
     {
-      screenName: "SavedRecipes",
-      iconName: "scroll",
+      name: "Home",
+      screenName: "Generate",
+      iconName: "home",
       iconComponent: FontAwesome5,
     },
-    { screenName: "Community", iconName: "cloud", iconComponent: Entypo },
     {
+      name: "Collection",
+      screenName: "SavedRecipes",
+      iconName: "bookmark",
+      iconComponent: FontAwesome,
+    },
+    // {
+    //   name: "Community",
+    //   screenName: "Community",
+    //   iconName: "cloud",
+    //   iconComponent: Entypo,
+    // },
+    {
+      name: "Inventory",
       screenName: "Inventory",
       iconName: "inventory",
       iconComponent: MaterialIcons,
     },
-    { screenName: "Profile", iconName: "person", iconComponent: MaterialIcons },
+    {
+      name: "Profile",
+      screenName: "Profile",
+      iconName: "person",
+      iconComponent: MaterialIcons,
+    },
   ];
 
   const renderIcon = (tab, size = 24) => (
@@ -44,7 +60,17 @@ const BottomTabBar = () => {
   );
 
   return (
-    <View style={styles.tabBar}>{tabs.map((tab) => renderIcon(tab, 25))}</View>
+    <View style={styles.tabBar}>
+      {tabs.map((tab) => (
+        <View
+          key={tab.name}
+          style={{ justifyContent: "center", alignItems: "center" }}
+        >
+          {renderIcon(tab)}
+          <Text style={{ color: "white" }}>{tab.name}</Text>
+        </View>
+      ))}
+    </View>
   );
 };
 

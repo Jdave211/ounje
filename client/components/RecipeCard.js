@@ -125,14 +125,14 @@ const RecipeCard = ({ id, showBookmark }) => {
 
     if (!owned_items || owned_items.length === 0) return 0;
 
-    const percentage =
+    const _percentage =
       (owned_items.length / recipeDetails.extended_ingredients.length) * 100;
 
-    return percentage;
+    return _percentage;
   };
 
-  const percentage_of_owned_ingredients = useMemo(
-    () => calc_percentage(recipeDetails),
+  const percentage = useMemo(
+    () => calc_percentage(recipeDetails) * 2,
     [food_items, recipeDetails]
   );
 
@@ -205,12 +205,9 @@ const RecipeCard = ({ id, showBookmark }) => {
 
                 <View>
                   <Text style={styles.text}>
-                    {new Number(percentage_of_owned_ingredients).toFixed(2)}% of{" "}
+                    {new Number(percentage).toFixed(2)}% of{" "}
                   </Text>
-                  <ProgressBar
-                    progress={percentage_of_owned_ingredients / 100}
-                    width={60}
-                  />
+                  <ProgressBar progress={percentage / 100} width={60} />
                 </View>
                 <View>
                   <Image

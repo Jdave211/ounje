@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,8 @@ import { ScrollView } from "react-native-gesture-handler";
 import { entitle } from "../utils/helpers";
 import harvestImage from "../assets/harvest.png";
 import { Bar as ProgressBar } from "react-native-progress";
+import RenderHtml from "react-native-render-html";
+import { useWindowDimensions } from "react-native";
 
 import { useNavigation } from "@react-navigation/native";
 
@@ -36,11 +38,13 @@ import { useNavigation } from "@react-navigation/native";
 //
 
 const RecipePage = ({ route }) => {
+  const { width: WIDTH } = useWindowDimensions();
   const { id } = route.params;
   const navigation = useNavigation();
   const PAGE_WIDTH = Dimensions.get("window").width;
   const [user_id, setUserId] = useState(null);
   const [recipeDetails, setRecipeDetails] = useState(null);
+  const [food_items, setFoodItems] = useState([]);
   const [isSaved, setIsSaved] = React.useState(false);
 
   console.log("RecipePage", { id });
@@ -62,6 +66,15 @@ const RecipePage = ({ route }) => {
       setRecipeDetails(() => recipe);
     };
 
+    const fetch_food_items = async () => {
+      retrieved_text = await AsyncStorage.getItem("food_items_array");
+      let retrieved_food_items_array = JSON.parse(retrieved_text);
+
+      if (retrieved_food_items_array?.length > 0) {
+        setFoodItems(retrieved_food_items_array);
+      }
+    };
+
     const fetch_is_saved = async () => {
       const { data: saved_data } = await supabase
         .from("saved_recipes")
@@ -78,6 +91,7 @@ const RecipePage = ({ route }) => {
     } else {
       fetch_recipe_details();
       fetch_is_saved();
+      fetch_food_items();
     }
   }, [user_id, route.params]);
 
@@ -121,6 +135,31 @@ const RecipePage = ({ route }) => {
   };
 
   console.log({ recipePage: recipeDetails });
+
+  const calc_percentage = (recipeDetails) => {
+    if (!recipeDetails || !food_items) return 0;
+
+    let food_items_set = new Set(
+      food_items.map(({ spoonacular_id }) => spoonacular_id)
+    );
+
+    const owned_items = recipeDetails.extended_ingredients.filter(
+      (ingredient) => food_items_set.has(ingredient.id)
+    );
+
+    if (!owned_items || owned_items.length === 0) return 0;
+
+    const _percentage =
+      (owned_items.length / recipeDetails.extended_ingredients.length) * 100;
+
+    return _percentage;
+  };
+
+  const percentage = useMemo(
+    () => calc_percentage(recipeDetails) * 2,
+    [food_items, recipeDetails]
+  );
+
   return (
     recipeDetails && (
       <ScrollView
@@ -217,6 +256,7 @@ const RecipePage = ({ route }) => {
               flexDirection: "row",
               justifyContent: "space-between",
               alignItems: "center",
+              marginTop: 10,
             }}
           >
             <View
@@ -239,25 +279,32 @@ const RecipePage = ({ route }) => {
               </View>
 
               <View>
-                <Text style={styles.text}>29% of Ingredients</Text>
+                <Text style={{ ...styles.text, marginRight: 10 }}>
+                  {new Number(percentage).toFixed(2)}% of Ingredients
+                </Text>
+                <ProgressBar progress={percentage / 100} width={160} />
+              </View>
+              <View>
                 <Image
                   source={harvestImage}
                   style={{ resizeMode: "cover", width: 24, height: 24 }}
                 />
-                <ProgressBar progress={0.3} width={50} />
-                <View></View>
               </View>
             </View>
           </View>
-          <View style={{ marginTop: 10 }}>
+          <View style={{ marginTop: 20 }}>
             <Text style={styles.subheading}>Description</Text>
 
             <Text style={styles.text} numberOfLines={2}>
+              <RenderHtml
+                contentWidth={WIDTH}
+                source={{ html: recipeDetails.summary }}
+              />
               {recipeDetails.summary}
             </Text>
           </View>
 
-          <View style={{ marginTop: 10 }}>
+          <View style={{ marginTop: 20 }}>
             <Text style={styles.subheading}>Ingredients</Text>
             {recipeDetails.extended_ingredients.map((ingredient, i) => (
               <View
@@ -302,7 +349,7 @@ const RecipePage = ({ route }) => {
             ))}
           </View>
 
-          <View>
+          <View style={{ marginTop: 20 }}>
             <Text style={styles.subheading}>Instructions</Text>
             {recipeDetails.analyzed_instructions[0].steps.map(
               ({ step, number }) => (

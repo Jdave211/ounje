@@ -40,7 +40,7 @@ export default function Generate({ route }) {
           .eq("id", userId)
           .single();
 
-        if (name) {
+        if (profileData.name) {
           if (profileError) {
             Alert.alert("Error fetching profile", profileError.message);
           } else {
