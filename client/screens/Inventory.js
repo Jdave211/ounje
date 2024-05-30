@@ -41,6 +41,8 @@ const Inventory = () => {
   const [user_id, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
 
+  console.log({ inventoryImages });
+
   useEffect(() => {
     const get_user_id = async () => {
       let retrieved_user_id = await AsyncStorage.getItem("user_id");
@@ -75,6 +77,7 @@ const Inventory = () => {
         image.replace("inventory_images/", "")
       );
 
+      console.log({ image_paths });
       let { data: url_responses } = await supabase.storage
         .from("inventory_images")
         .createSignedUrls(image_paths, 60 * 10);

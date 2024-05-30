@@ -18,6 +18,8 @@ import { ScrollView } from "react-native-gesture-handler";
 import { entitle } from "../utils/helpers";
 import harvestImage from "../assets/harvest.png";
 import { Bar as ProgressBar } from "react-native-progress";
+import RenderHtml from "react-native-render-html";
+import { useWindowDimensions } from "react-native";
 
 import { useNavigation } from "@react-navigation/native";
 
@@ -36,6 +38,7 @@ import { useNavigation } from "@react-navigation/native";
 //
 
 const RecipePage = ({ route }) => {
+  const { width: WIDTH } = useWindowDimensions();
   const { id } = route.params;
   const navigation = useNavigation();
   const PAGE_WIDTH = Dimensions.get("window").width;
@@ -293,6 +296,10 @@ const RecipePage = ({ route }) => {
             <Text style={styles.subheading}>Description</Text>
 
             <Text style={styles.text} numberOfLines={2}>
+              <RenderHtml
+                contentWidth={WIDTH}
+                source={{ html: recipeDetails.summary }}
+              />
               {recipeDetails.summary}
             </Text>
           </View>

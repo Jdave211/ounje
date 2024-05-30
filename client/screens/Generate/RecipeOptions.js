@@ -102,20 +102,27 @@ const RecipeOptions = () => {
 
   console.log({ recipeOptions });
 
+  const navigate_to_recipe_page = (recipe_id) => () => {
+    navigation.navigate("RecipePage", { id: recipe_id });
+  };
+
   return (
     <View style={styles.container}>
       <Text style={styles.text}>Generated Recipe Options</Text>
       <ScrollView>
         {/* <View style={{ justifyContent: "center", alignItems: "center", flexDirection: "row", flexWrap: "wrap" }}> */}
         {recipeOptions.map((recipeOption, index) => (
-          <View key={index}>
+          <TouchableOpacity
+            key={index}
+            onPress={navigate_to_recipe_page(recipeOption.id)}
+          >
             <RecipeCard
               key={index}
               id={recipeOption.id}
               // recipe={recipeOption}
               showBookmark={true}
             />
-          </View>
+          </TouchableOpacity>
         ))}
         {/* </View> */}
       </ScrollView>
