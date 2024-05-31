@@ -140,11 +140,11 @@ const RecipePage = ({ route }) => {
     if (!recipeDetails || !food_items) return 0;
 
     let food_items_set = new Set(
-      food_items.map(({ spoonacular_id }) => spoonacular_id)
+      food_items.map(({ spoonacular_id }) => spoonacular_id),
     );
 
     const owned_items = recipeDetails.extended_ingredients.filter(
-      (ingredient) => food_items_set.has(ingredient.id)
+      (ingredient) => food_items_set.has(ingredient.id),
     );
 
     if (!owned_items || owned_items.length === 0) return 0;
@@ -157,7 +157,7 @@ const RecipePage = ({ route }) => {
 
   const percentage = useMemo(
     () => calc_percentage(recipeDetails) * 2,
-    [food_items, recipeDetails]
+    [food_items, recipeDetails],
   );
 
   return (
@@ -282,7 +282,7 @@ const RecipePage = ({ route }) => {
                 <Text style={{ ...styles.text, marginRight: 10 }}>
                   {new Number(percentage).toFixed(2)}% of Ingredients
                 </Text>
-                <ProgressBar progress={percentage / 100} width={160} />
+                <ProgressBar progress={percentage / 100} width={100} />
               </View>
               <View>
                 <Image
@@ -294,14 +294,13 @@ const RecipePage = ({ route }) => {
           </View>
           <View style={{ marginTop: 20 }}>
             <Text style={styles.subheading}>Description</Text>
-
-            <Text style={styles.text} numberOfLines={2}>
+            <View>
               <RenderHtml
+                baseStyle={styles.text}
                 contentWidth={WIDTH}
                 source={{ html: recipeDetails.summary }}
               />
-              {recipeDetails.summary}
-            </Text>
+            </View>
           </View>
 
           <View style={{ marginTop: 20 }}>
@@ -349,7 +348,7 @@ const RecipePage = ({ route }) => {
             ))}
           </View>
 
-          <View style={{ marginTop: 20 }}>
+          <View style={{ marginTop: 20, marginBottom: 20 }}>
             <Text style={styles.subheading}>Instructions</Text>
             {recipeDetails.analyzed_instructions[0].steps.map(
               ({ step, number }) => (
@@ -361,6 +360,7 @@ const RecipePage = ({ route }) => {
                     alignItems: "flex-start",
                     width: "100%",
                     paddingTop: 8,
+                    marginBottom: 10,
                   }}
                 >
                   <Text style={{ ...styles.text, marginRight: 8 }}>
@@ -368,7 +368,7 @@ const RecipePage = ({ route }) => {
                   </Text>
                   <Text style={styles.text}>{step}</Text>
                 </View>
-              )
+              ),
             )}
           </View>
         </View>

@@ -12,7 +12,7 @@ import { useNavigation } from "@react-navigation/native";
 import { SelectList } from "react-native-dropdown-select-list";
 import { FontAwesome5 } from "@expo/vector-icons";
 import GenerateRecipes from "@components/GenerateRecipes";
-import Loading from "@components/Loading";
+import Loading from "@components/Loading"; // Ensure the correct import path
 import generate_bg from "@assets/generate_bg.jpg";
 import { supabase } from "@utils/supabase";
 
@@ -32,6 +32,7 @@ export default function Generate({ route }) {
 
   useEffect(() => {
     const fetchProfile = async () => {
+      setIsLoading(true); // Start loading
       const userId = session?.user?.id;
       if (userId) {
         const { data: profileData, error: profileError } = await supabase
@@ -40,15 +41,14 @@ export default function Generate({ route }) {
           .eq("id", userId)
           .single();
 
-        if (profileData.name) {
-          if (profileError) {
-            Alert.alert("Error fetching profile", profileError.message);
-          } else {
-            const firstName = profileData.name.split(" ")[0]; // get the first name
-            setName(firstName);
-          }
+        if (profileError) {
+          Alert.alert("Error fetching profile", profileError.message);
+        } else if (profileData) {
+          const firstName = profileData.name.split(" ")[0]; // get the first name
+          setName(firstName);
         }
       }
+      setIsLoading(false); // End loading
     };
 
     fetchProfile();
@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
   },
   header: {
     height: "40%",
-    alignItems: "left",
+    alignItems: "flex-start",
     justifyContent: "center",
     paddingHorizontal: 10,
     borderBottomLeftRadius: 10,
@@ -148,8 +148,8 @@ const styles = StyleSheet.create({
     borderRadius: 13,
     paddingTop: 10,
   },
-  foodRowContainer: {
-    width: "100%",
-    marginTop: 70,
+  selectedTextStyle: {
+    color: "white",
+    fontWeight: "bold",
   },
 });
