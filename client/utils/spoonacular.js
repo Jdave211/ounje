@@ -24,7 +24,7 @@ export const get_bulk_recipe_details = async (ids) => {
         includeNutrition: true,
         ids: ids.join(", "),
       },
-    }
+    },
   );
 
   return recipe_options;
@@ -48,9 +48,29 @@ export const parse_ingredients = async (ingredients) => {
       headers: {
         "Content-Type": "application/json",
       },
-    }
+    },
   );
   console.log({ parsed_result: data });
 
   return data;
+};
+
+export const flatten_nested_objects = (obj, path = []) => {
+  const result = [];
+
+  const traverse = (obj, path) => {
+    for (let key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        const newPath = path.concat(key);
+        if (typeof obj[key] === "object" && obj[key] !== null) {
+          traverse(obj[key], newPath);
+        } else {
+          result.push({ path: newPath.join("."), value: obj[key] });
+        }
+      }
+    }
+  };
+
+  traverse(obj, path);
+  return result;
 };

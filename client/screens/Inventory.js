@@ -69,7 +69,7 @@ const Inventory = () => {
         .eq("user_id", user_id);
 
       let image_paths = inventory.images.map((image) =>
-        image.replace("inventory_images/", "")
+        image.replace("inventory_images/", ""),
       );
 
       let { data: url_responses } = await supabase.storage
@@ -119,7 +119,6 @@ const Inventory = () => {
         source={inventoryImages.length > 0 ? { uri: inventoryImages[0] } : null}
         style={styles.container}
       > */}
-      <Text style={{ color: "white" }}> Inventory</Text>
       {/* Inventory Images */}
       <View style={{ flex: 0.2 }}>
         <View style={{ ...styles.imageContainer, backgroundColor: "#" }}>
@@ -163,7 +162,7 @@ const Inventory = () => {
               items.map((item, i) => ({
                 key: item.name,
                 value: item.name,
-              }))
+              })),
           );
 
           return (

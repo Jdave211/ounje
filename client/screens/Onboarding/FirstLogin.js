@@ -290,8 +290,21 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       />
     </View>,
     <View style={styles.fridge}>
+<<<<<<< Updated upstream
       <Text style={styles.fridge_text}>And finally, please click here to take a picture of your fridge</Text>
       <View style={{ justifyContent: 'center', alignItems: 'center', marginTop: 20 }}>
+=======
+      <Text style={styles.fridge_text}>
+        And finally, please click on the camera to take a picture of your fridge
+      </Text>
+      <View
+        style={{
+          justifyContent: "center",
+          alignItems: "center",
+          marginTop: 20,
+        }}
+      >
+>>>>>>> Stashed changes
         <TouchableOpacity style={styles.camera} onPress={pickImage}>
           <Image source={camera_icon} style={{ width: 50, height: 50 }} />
         </TouchableOpacity>
@@ -339,18 +352,30 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   name_text: {
+<<<<<<< Updated upstream
     color: 'gray',
     fontWeight: 'bold',
   },
   name: {
     backgroundColor: 'black',
+=======
+    color: "white",
+    fontWeight: "bold",
+  },
+  name: {
+    backgroundColor: "#0f0f0f",
+>>>>>>> Stashed changes
     padding: 20,
     borderRadius: 10,
     borderColor: 'white',
     borderWidth: 1,
   },
   fridge: {
+<<<<<<< Updated upstream
     backgroundColor: 'gray',
+=======
+    backgroundColor: "#6D6D6D",
+>>>>>>> Stashed changes
     padding: 20,
     borderRadius: 10,
     borderColor: 'black',
