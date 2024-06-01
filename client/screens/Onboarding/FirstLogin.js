@@ -329,8 +329,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     </View>,
     <View style={styles.fridge}>
       <Text style={styles.fridge_text}>
-        And finally, please click here to take a picture of your fridge
-      </Text>
+        And finally, please click on the camera to take a picture of your fridge
       <View
         style={{
           justifyContent: "center",
@@ -393,18 +392,18 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   name_text: {
-    color: "gray",
+    color: "white",
     fontWeight: "bold",
   },
   name: {
-    backgroundColor: "black",
+    backgroundColor: "#0f0f0f",
     padding: 20,
     borderRadius: 10,
     borderColor: "white",
     borderWidth: 1,
   },
   fridge: {
-    backgroundColor: "gray",
+    backgroundColor: "#6D6D6D",
     padding: 20,
     borderRadius: 10,
     borderColor: "black",
