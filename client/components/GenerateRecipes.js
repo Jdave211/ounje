@@ -63,7 +63,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         .eq("user_id", user_id);
 
       let image_paths = inventory.images.map((image) =>
-        image.replace("inventory_images/", "")
+        image.replace("inventory_images/", ""),
       );
 
       let { data: url_responses } = await supabase.storage
@@ -99,7 +99,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
       if (storedFoodItems) {
         const foodItems = JSON.parse(storedFoodItems).map(
-          (item) => item.name || item
+          (item) => item.name || item,
         );
         const ingredients = foodItems.join(", ");
         console.log("Ingredients:", ingredients);
@@ -115,14 +115,16 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
               ignorePantry: "false",
               apiKey: process.env.SPOONACULAR_API_KEY,
             },
-          }
+          },
         );
+
+        console.log({ response });
 
         const recipesWithDetails = await Promise.all(
           response.data.map(async (recipe) => {
             const recipeDetails = await fetchRecipeDetails(recipe.id);
             return { ...recipe, details: recipeDetails };
-          })
+          }),
         );
 
         setRecipes(recipesWithDetails);
@@ -131,8 +133,8 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         // Pass each recipe to OpenAI for validation
         const gptResponses = await Promise.all(
           recipesWithDetails.map(
-            async (recipe) => await passRecipeThroughGPT(recipe, foodItems)
-          )
+            async (recipe) => await passRecipeThroughGPT(recipe, foodItems),
+          ),
         );
 
         setGptResults(gptResponses);
@@ -160,7 +162,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
             includeNutrition: true,
             apiKey: process.env.SPOONACULAR_API_KEY,
           },
-        }
+        },
       );
       return response.data;
     } catch (error) {
@@ -218,6 +220,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       },
     ] = await Promise.allSettled([async_run_response]);
 
+    setIsLoading(true);
     if (runs_error) console.log("Error:", runs_error);
     else console.log("Added User Run:", runs);
 
@@ -230,7 +233,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
     const selected_food_items = food_items_array.filter(
       (item) =>
         // selected_set.has(item.name),
-        true
+        true,
     );
     const food_item_records = selected_food_items.map((record) => ({
       run_id: current_run.id,
@@ -289,7 +292,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         delete recipe.suspicious_data_score;
         delete recipe.tips;
         return recipe;
-      }
+      },
     );
 
     console.log({ recipe_options_in_snake_case });
@@ -300,8 +303,9 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
     await AsyncStorage.setItem(
       "recipe_options",
-      JSON.stringify(recipe_options)
+      JSON.stringify(recipe_options_in_snake_case)
     );
+    setIsLoading(false);
 
     // navigate to recipes screen to select options to keep
     // once selected, save the selected options to the database

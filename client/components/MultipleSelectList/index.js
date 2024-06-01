@@ -20,6 +20,7 @@ import {
 export const MultipleSelectList =
   // : React.FC<MultipleSelectListProps>
   ({
+    showSelectedNumber,
     selectAll = false,
     fontFamily,
     setSelected,
@@ -183,64 +184,67 @@ export const MultipleSelectList =
               <Text style={[{ fontWeight: "600", fontFamily }, labelStyles]}>
                 {label}
               </Text>
-              <View
-                style={{
-                  flexDirection: "row",
-                  marginBottom: 8,
-                  flexWrap: "wrap",
-                }}
-              >
+              {showSelectedNumber ? (
                 <View
-                  // key={index}
-                  style={[
-                    {
-                      backgroundColor: "gray",
-                      paddingHorizontal: 20,
-                      paddingVertical: 5,
-                      borderRadius: 50,
-                      marginRight: 10,
-                      marginTop: 10,
-                    },
-                    badgeStyles,
-                  ]}
+                  style={{
+                    flexDirection: "row",
+                    marginBottom: 8,
+                    flexWrap: "wrap",
+                  }}
                 >
-                  <Text
+                  <View
+                    // key={index}
                     style={[
-                      { color: "white", fontSize: 12, fontFamily },
-                      badgeTextStyles,
+                      {
+                        backgroundColor: "gray",
+                        paddingHorizontal: 20,
+                        paddingVertical: 5,
+                        borderRadius: 50,
+                        marginRight: 10,
+                        marginTop: 10,
+                      },
+                      badgeStyles,
                     ]}
                   >
-                    {selectedval.length} Items Selected
-                  </Text>
-                  {/* {selectedval?.map((item, index) => {
-                    return (
-                      <View
-                        key={index}
+                    <Text
+                      style={[
+                        { color: "white", fontSize: 12, fontFamily },
+                        badgeTextStyles,
+                      ]}
+                    >
+                      {selectedval.length} Items Selected
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                selectedval?.map((item, index) => {
+                  return (
+                    <View
+                      key={index}
+                      style={[
+                        {
+                          backgroundColor: "gray",
+                          paddingHorizontal: 20,
+                          paddingVertical: 5,
+                          borderRadius: 50,
+                          marginRight: 10,
+                          marginTop: 10,
+                        },
+                        badgeStyles,
+                      ]}
+                    >
+                      <Text
                         style={[
-                          {
-                            backgroundColor: "gray",
-                            paddingHorizontal: 20,
-                            paddingVertical: 5,
-                            borderRadius: 50,
-                            marginRight: 10,
-                            marginTop: 10,
-                          },
-                          badgeStyles,
+                          { color: "white", fontSize: 12, fontFamily },
+                          badgeTextStyles,
                         ]}
                       >
-                        <Text
-                          style={[
-                            { color: "white", fontSize: 12, fontFamily },
-                            badgeTextStyles,
-                          ]}
-                        >
-                          {item}
-                        </Text>
-                      </View>
-                    );
-                  })} */}
-                </View>
-              </View>
+                        {item}
+                      </Text>
+                    </View>
+                  );
+                })
+              )}
             </View>
           </TouchableOpacity>
         ) : (

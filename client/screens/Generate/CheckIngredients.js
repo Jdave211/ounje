@@ -12,7 +12,7 @@ import { FontAwesome5 } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SelectList } from "react-native-dropdown-select-list";
-import MultipleSelectList from "@components/MultipleSelectList";
+import { MultipleSelectList } from "@components/MultipleSelectList";
 import { FOOD_ITEMS } from "@utils/constants";
 import { entitle, group_nested_objects } from "@utils/helpers";
 import { useNavigation } from "@react-navigation/native";
@@ -25,7 +25,7 @@ const CheckIngredients = () => {
     { key: "2", value: "Eggs" },
     { key: "3", value: "Ostrich head" },
   ]);
-  const [removed_items, set_removed_items] = useState([]);
+  const [removed_items, setRemovedItems] = useState([]);
   const [inputValue, setInputValue] = useState("");
 
   const [user_id, setUserId] = useState(null);
@@ -36,12 +36,12 @@ const CheckIngredients = () => {
   const [selectedItemCategory, setSelectedItemCategory] = useState(null);
 
   useEffect(() => {
-    const get_user_id = async () => {
+    const getUserID = async () => {
       let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(() => retrieved_user_id);
+      setUserId(retrieved_user_id);
     };
 
-    const fetch_food_items = async () => {
+    const fetchFoodItems = async () => {
       let retrieved_text = await AsyncStorage.getItem("food_items");
       let retrieved_food_items = JSON.parse(retrieved_text);
 
@@ -49,19 +49,19 @@ const CheckIngredients = () => {
       let retrieved_food_items_array = JSON.parse(retrieved_text);
 
       if (retrieved_food_items) {
-        setFoodItems(() => retrieved_food_items);
+        setFoodItems(retrieved_food_items);
       }
 
       if (retrieved_food_items_array?.length > 0) {
-        setFoodItemsArray(() => retrieved_food_items_array);
+        setFoodItemsArray(retrieved_food_items_array);
       }
     };
 
     if (!user_id) {
-      get_user_id();
+      getUserID();
     }
-    fetch_food_items();
-  }, []);
+    fetchFoodItems();
+  }, [user_id]);
 
   const handleAddIngredient = () => {
     if (inputValue.length === 0 || !inputValue.trim()) {
@@ -101,7 +101,7 @@ const CheckIngredients = () => {
     let removed_items_set = new Set(removed_items);
 
     const filtered_food_items = food_items_array.filter(
-      (item) => !removed_items_set.has(item.name)
+      (item) => !removed_items_set.has(item.name),
     );
 
     setFoodItemsArray(filtered_food_items);
@@ -134,11 +134,9 @@ const CheckIngredients = () => {
     await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
     await AsyncStorage.setItem(
       "food_items_array",
-      JSON.stringify(food_items_array)
+      JSON.stringify(food_items_array),
     );
 
-    // we can also just generate recipes here and
-    // navigate to the recipe options page
     navigation.navigate("Inventory");
   };
 
@@ -176,7 +174,7 @@ const CheckIngredients = () => {
       (section, i) => ({
         key: i.toString(),
         value: section,
-      })
+      }),
     );
 
     return (
@@ -205,22 +203,10 @@ const CheckIngredients = () => {
         <Text style={styles.title}>Check Ingredients</Text>
         <Text style={styles.warningText}>
           The model we are currently using is prone to{" "}
-          <Text style={styles.hallucinationText}>hallucination.</Text>{" "}
-          Please double-check your food items.
+          <Text style={styles.hallucinationText}>hallucination.</Text> Please
+          double-check your food items.
         </Text>
 
-<<<<<<< Updated upstream
-          <View style={styles.dropdownContainer}>
-            <Text style={{ color: "white" }}> Select Items to Remove </Text>
-            {Object.entries(food_items).map(([section, categories]) => {
-              let data = Object.entries(categories).flatMap(
-                ([_category, items], _i) =>
-                  items.map((item, _i) => ({
-                    key: item.name,
-                    value: item.name,
-                  }))
-              );
-=======
         <View style={styles.dropdownContainer}>
           <Text style={styles.sectionTitle}>Select Items to Remove</Text>
           {Object.entries(food_items).map(([section, categories]) => {
@@ -229,14 +215,13 @@ const CheckIngredients = () => {
                 items.map((item, _i) => ({
                   key: item.name,
                   value: item.name,
-                }))
+                })),
             );
->>>>>>> Stashed changes
 
             return (
               <MultipleSelectList
                 key={section}
-                setSelected={set_removed_items}
+                setSelected={setRemovedItems}
                 selectedTextStyle={styles.selectedTextStyle}
                 data={data}
                 save="value"
@@ -267,17 +252,6 @@ const CheckIngredients = () => {
             />
           </View>
         </View>
-<<<<<<< Updated upstream
-        <View style={styles.generateButtonWrapper}>
-          <View style={styles.generateButtonContainer}>
-            <TouchableOpacity
-              style={styles.generateButton}
-              disabled={data.length === 0}
-              onPress={handleSaveFoodItems}
-            >
-              <Text style={styles.generateButtonText}>Save Food Items</Text>
-            </TouchableOpacity>
-=======
 
         <View style={styles.dropdownContainer2}>
           <Text style={styles.sectionTitle}>Add Item to Inventory</Text>
@@ -285,7 +259,6 @@ const CheckIngredients = () => {
           <View style={styles.row}>
             <Text style={styles.labelText}>Inventory: </Text>
             <AddItemInventorySelection />
->>>>>>> Stashed changes
           </View>
 
           <View style={styles.row}>
@@ -306,7 +279,11 @@ const CheckIngredients = () => {
           </View>
 
           <View style={styles.addButtonContainer}>
-            <Button title="Add Item" color="green" onPress={handleAddIngredient} />
+            <Button
+              title="Add Item"
+              color="green"
+              onPress={handleAddIngredient}
+            />
           </View>
         </View>
 
@@ -314,7 +291,7 @@ const CheckIngredients = () => {
           <TouchableOpacity
             style={styles.generateButton}
             disabled={data.length === 0}
-            onPress={handleGenerateRecipes}
+            onPress={handleSaveFoodItems}
           >
             <Text style={styles.generateButtonText}>Save Food Items</Text>
           </TouchableOpacity>
@@ -397,15 +374,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  generateButtonContainer: {
+  generateButton: {
     width: 200,
     height: 50,
     backgroundColor: "green",
     borderRadius: 10,
-  },
-  generateButton: {
-    width: "100%",
-    height: "100%",
     justifyContent: "center",
     alignItems: "center",
   },

@@ -11,9 +11,11 @@ import {
   Alert,
   TextInput,
 } from "react-native";
+
 import { FontAwesome5 } from "@expo/vector-icons";
 import { AntDesign } from "@expo/vector-icons";
 import RecipeCard from "../components/RecipeCard";
+
 import { MultipleSelectList } from "../components/MultipleSelectList";
 import axios from "axios";
 import { supabase, store_image } from "../utils/supabase";
@@ -22,6 +24,7 @@ import { FOOD_ITEMS } from "../utils/constants";
 import { RECIPES_PROMPT } from "@utils/prompts";
 import { generate_image } from "../utils/stability";
 import { entitle } from "@utils/helpers";
+
 import { useNavigation } from "@react-navigation/native";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 
@@ -37,6 +40,8 @@ const Inventory = () => {
   const [inventoryImages, setInventoryImages] = useState([]);
   const [user_id, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
+
+  console.log({ inventoryImages });
 
   useEffect(() => {
     const get_user_id = async () => {
@@ -72,6 +77,7 @@ const Inventory = () => {
         image.replace("inventory_images/", ""),
       );
 
+      console.log({ image_paths });
       let { data: url_responses } = await supabase.storage
         .from("inventory_images")
         .createSignedUrls(image_paths, 60 * 10);
@@ -167,6 +173,7 @@ const Inventory = () => {
 
           return (
             <MultipleSelectList
+              showSelectedNumber
               key={section}
               setSelected={setSelected}
               selectedTextStyle={styles.selectedTextStyle}
