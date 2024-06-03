@@ -89,7 +89,7 @@ export default function App() {
               }
             });
         }
-      }
+      },
     );
 
     return () => {
@@ -120,16 +120,17 @@ export default function App() {
             ) : (
               <Layout>
                 <Tab.Navigator
+                  initialRouteName="Inventory"
                   screenOptions={{ tabBarStyle: styles.navigator }}
                 >
                   <Tab.Screen
-                    name="Generate"
+                    name="Home"
                     component={Generate}
                     options={{ headerShown: false }}
                     initialParams={{ session }}
                   />
                   <Tab.Screen
-                    name="SavedRecipes"
+                    name="Collection"
                     component={SavedRecipes}
                     options={{ headerShown: false }}
                   />

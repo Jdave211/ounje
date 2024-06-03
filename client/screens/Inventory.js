@@ -37,18 +37,23 @@ const Inventory = () => {
   const [selectedImage, setSelectedImage] = useState(null);
   const [food_items, setFoodItems] = useState(FOOD_ITEMS);
   const [food_items_array, setFoodItemsArray] = useState([]);
-  const [inventoryImages, setInventoryImages] = useState([]);
+  const [inventoryImages, setInventoryImages] = useState(["url"]);
   const [user_id, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
 
   console.log({ inventoryImages });
 
   useEffect(() => {
+    console.log("update user_id");
     const get_user_id = async () => {
       let retrieved_user_id = await AsyncStorage.getItem("user_id");
       setUserId(() => retrieved_user_id);
     };
 
+    get_user_id();
+  }, []);
+
+  useEffect(() => {
     const fetch_food_items = async () => {
       let retrieved_text = await AsyncStorage.getItem("food_items");
       let retrieved_food_items = JSON.parse(retrieved_text);
@@ -86,15 +91,13 @@ const Inventory = () => {
 
       setInventoryImages(() => image_urls);
     };
+    console.log("getch inventory images");
 
-    if (!user_id) {
-      get_user_id();
+    if (user_id) {
       fetch_food_items();
-    } else {
       fetch_inventory_images();
-      fetch_food_items();
     }
-  }, []);
+  }, [user_id]);
 
   console.log({ inventoryImages });
 
