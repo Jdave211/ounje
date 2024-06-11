@@ -7,237 +7,211 @@ import {
   Image,
   TouchableOpacity,
   Modal,
-  ImageBackground,
   Alert,
   TextInput,
 } from "react-native";
-
-import { FontAwesome5 } from "@expo/vector-icons";
-import { AntDesign } from "@expo/vector-icons";
-import RecipeCard from "../components/RecipeCard";
-
+import { FontAwesome5, AntDesign } from "@expo/vector-icons";
 import { MultipleSelectList } from "../components/MultipleSelectList";
-import axios from "axios";
-import { supabase, store_image } from "../utils/supabase";
+import { supabase } from "../utils/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { FOOD_ITEMS } from "../utils/constants";
-import { RECIPES_PROMPT } from "@utils/prompts";
-import { generate_image } from "../utils/stability";
-import { entitle } from "@utils/helpers";
-
 import { useNavigation } from "@react-navigation/native";
-import CaseConvert, { objectToSnake } from "ts-case-convert";
 
 const Inventory = () => {
   const navigation = useNavigation();
-
   const [selected, setSelected] = useState([]);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
-  const [food_items, setFoodItems] = useState(FOOD_ITEMS);
-  const [food_items_array, setFoodItemsArray] = useState([]);
-  const [inventoryImages, setInventoryImages] = useState(["url"]);
-  const [user_id, setUserId] = useState(null);
+  const [foodItemsArray, setFoodItemsArray] = useState([]);
+  const [inventoryImages, setInventoryImages] = useState([]);
+  const [userId, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
 
-  console.log({ inventoryImages });
-
   useEffect(() => {
-    console.log("update user_id");
-    const get_user_id = async () => {
-      let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(() => retrieved_user_id);
+    const fetchInitialData = async () => {
+      const retrievedUserId = await AsyncStorage.getItem("user_id");
+      setUserId(retrievedUserId);
+
+      const retrievedArrayText = await AsyncStorage.getItem("food_items_array");
+      const retrievedFoodItemsArray = JSON.parse(retrievedArrayText || "[]");
+      setFoodItemsArray(retrievedFoodItemsArray);
+
+      if (retrievedUserId) {
+        const { data: inventory } = await supabase
+          .from("inventory")
+          .select("images")
+          .eq("user_id", retrievedUserId)
+          .single();
+
+        if (inventory) {
+          const imagePaths = inventory.images.map((image) =>
+            image.replace("inventory_images/", ""),
+          );
+
+          const { data: urlResponses } = await supabase.storage
+            .from("inventory_images")
+            .createSignedUrls(imagePaths, 60 * 10);
+
+          const imageUrls = urlResponses.map((response) => response.signedUrl);
+          setInventoryImages(imageUrls);
+        }
+      }
     };
 
-    get_user_id();
+    fetchInitialData();
   }, []);
 
-  useEffect(() => {
-    const fetch_food_items = async () => {
-      let retrieved_text = await AsyncStorage.getItem("food_items");
-      let retrieved_food_items = JSON.parse(retrieved_text);
-
-      retrieved_text = await AsyncStorage.getItem("food_items_array");
-      let retrieved_food_items_array = JSON.parse(retrieved_text);
-
-      if (retrieved_food_items) {
-        setFoodItems(() => retrieved_food_items);
-      }
-
-      if (retrieved_food_items_array?.length > 0) {
-        setFoodItemsArray(() => retrieved_food_items_array);
-      }
-    };
-
-    const fetch_inventory_images = async () => {
-      let {
-        data: [inventory],
-      } = await supabase
-        .from("inventory")
-        .select("images")
-        .eq("user_id", user_id);
-
-      let image_paths = inventory.images.map((image) =>
-        image.replace("inventory_images/", ""),
-      );
-
-      console.log({ image_paths });
-      let { data: url_responses } = await supabase.storage
-        .from("inventory_images")
-        .createSignedUrls(image_paths, 60 * 10);
-
-      let image_urls = url_responses.map((response) => response.signedUrl);
-
-      setInventoryImages(() => image_urls);
-    };
-    console.log("getch inventory images");
-
-    if (user_id) {
-      fetch_food_items();
-      fetch_inventory_images();
-    }
-  }, [user_id]);
-
-  console.log({ inventoryImages });
-
-  const addNewItem = () => {
+  const addNewItem = async () => {
     if (newItem.trim() === "") {
       Alert.alert("Error", "Please enter a valid item name.");
       return;
     }
 
-    const updatedFoodItems = [...food_items, { name: newItem }];
-    setFoodItems(updatedFoodItems);
+    const updatedFoodItemsArray = [
+      ...foodItemsArray,
+      { key: newItem, value: newItem },
+    ];
+    setFoodItemsArray(updatedFoodItemsArray);
     setNewItem("");
 
-    // Optionally, you can also update the food_items in the database here
-    // Example:
-    // await supabase.from("inventory").update({ food_items: JSON.stringify(updatedFoodItems) }).eq("user_id", user_id);
+    await AsyncStorage.setItem(
+      "food_items_array",
+      JSON.stringify(updatedFoodItemsArray),
+    );
+  };
+
+  const removeItem = async (item) => {
+    const updatedFoodItemsArray = foodItemsArray.filter(
+      (foodItem) => foodItem.key !== item,
+    );
+    setFoodItemsArray(updatedFoodItemsArray);
+
+    await AsyncStorage.setItem(
+      "food_items_array",
+      JSON.stringify(updatedFoodItemsArray),
+    );
+  };
+
+  const saveInventory = async () => {
+    if (userId) {
+      const { data, error } = await supabase
+        .from("inventory")
+        .update({ items: foodItemsArray })
+        .eq("user_id", userId);
+
+      if (error) {
+        Alert.alert("Error", "Failed to save inventory.");
+      } else {
+        Alert.alert("Success", "Inventory saved successfully.");
+      }
+    }
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      // contentContainerStyle={{
-      //   justifyContent: "space-between",
-      //   alignItems: "space-evenly",
-      // }}
-    >
-      {/* <ImageBackground
-        source={inventoryImages.length > 0 ? { uri: inventoryImages[0] } : null}
-        style={styles.container}
-      > */}
-      {/* Inventory Images */}
-      <View style={{ flex: 0.2 }}>
-        <View style={{ ...styles.imageContainer, backgroundColor: "#" }}>
-          {inventoryImages.map((image_url, index) => (
-            <TouchableOpacity
-              key={index}
-              onPress={() => {
-                setSelectedImage(image_url);
-                setModalVisible(true);
-              }}
+    <View style={styles.container}>
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1, justifyContent: "space-between" }}
+      >
+        <View>
+          <View style={{ flex: 0.2 }}>
+            <View style={styles.imageContainer}>
+              {inventoryImages.map((imageUrl, index) => (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => {
+                    setSelectedImage(imageUrl);
+                    setModalVisible(true);
+                  }}
+                >
+                  <Image source={{ uri: imageUrl }} style={styles.image} />
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Modal
+              animationType="slide"
+              transparent={false}
+              visible={modalVisible}
+              onRequestClose={() => setModalVisible(false)}
             >
-              <Image source={{ uri: image_url }} style={styles.image} />
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <Modal
-          animationType="slide"
-          transparent={false}
-          visible={modalVisible}
-          style
-          onRequestClose={() => setModalVisible(false)}
-        >
-          <TouchableOpacity
-            style={styles.close}
-            onPress={() => setModalVisible(false)}
-          >
-            <AntDesign name="closecircle" size={30} color="white" />
-          </TouchableOpacity>
-          <View style={[styles.centeredView, styles.modalView]}>
-            <Image source={{ uri: selectedImage }} style={styles.modalImage} />
+              <TouchableOpacity
+                style={styles.close}
+                onPress={() => setModalVisible(false)}
+              >
+                <AntDesign name="closecircle" size={30} color="white" />
+              </TouchableOpacity>
+              <View style={[styles.centeredView, styles.modalView]}>
+                <Image
+                  source={{ uri: selectedImage }}
+                  style={styles.modalImage}
+                />
+              </View>
+            </Modal>
           </View>
-        </Modal>
-      </View>
 
-      <ScrollView style={styles.overlay}>
-        {/* Food Items */}
-        {Object.entries(food_items).map(([section, categories]) => {
-          let data = Object.entries(categories).flatMap(
-            ([category, items], i) =>
-              items.map((item, i) => ({
-                key: item.name,
-                value: item.name,
-              })),
-          );
-
-          return (
-            <MultipleSelectList
-              showSelectedNumber
-              key={section}
-              setSelected={setSelected}
-              selectedTextStyle={styles.selectedTextStyle}
-              dropdownTextStyles={{ color: "white" }}
-              // defaultOptions={[data[0].value]}
-              data={data}
-              save="value"
-              maxHeight={900}
-              placeholder={"placeholder"}
-              placeholderStyles={{ color: "white" }}
-              arrowicon={
-                <FontAwesome5 name="chevron-down" size={12} color={"white"} />
-              }
-              searchicon={
-                <FontAwesome5 name="search" size={12} color={"white"} />
-              }
-              searchPlaceholder="Search..."
-              search={false}
-              boxStyles={{
-                marginTop: 10,
-                marginBottom: 10,
-                borderColor: "white",
-              }}
-              label={entitle(section)}
-              labelStyles={{
-                color: "white",
-                fontSize: 14,
-                fontWeight: "bold",
-              }}
-              badgeStyles={{ backgroundColor: "green" }}
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="Add new items here"
+              placeholderTextColor="gray"
+              value={newItem}
+              onChangeText={setNewItem}
             />
-          );
-        })}
+            <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
+              <Text style={styles.buttonText}> Add </Text>
+            </TouchableOpacity>
+          </View>
 
-        {/* Add Food Items Button */}
-
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter new item here"
-            placeholderTextColor="black"
-            value={newItem}
-            onChangeText={(text) => setNewItem(text)}
-          />
-          <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
-            <Text style={styles.buttonText}>Add</Text>
+          <View style={styles.inputContainer}>
+            <View style={{ flex: 1 }}>
+              <MultipleSelectList
+                showSelectedNumber
+                setSelected={setSelected}
+                selectedTextStyle={styles.selectedTextStyle}
+                dropdownTextStyles={{ color: "white" }}
+                data={foodItemsArray}
+                save="value"
+                maxHeight={900}
+                placeholder="Select items"
+                placeholderStyles={{ color: "white" }}
+                arrowicon={
+                  <FontAwesome5 name="chevron-down" size={12} color="white" />
+                }
+                searchicon={
+                  <FontAwesome5 name="search" size={12} color="white" />
+                }
+                search={false}
+                boxStyles={{
+                  marginTop: 10,
+                  marginBottom: 10,
+                  borderColor: "red",
+                  borderWidth: 2,
+                  width: "100%",
+                }}
+                label="Select Food Items to Remove"
+                labelStyles={{
+                  color: "gray",
+                  fontSize: 14,
+                  fontWeight: "bold",
+                }}
+                badgeStyles={{ backgroundColor: "red" }}
+              />
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => selected.forEach(removeItem)}
+          >
+            <Text style={styles.buttonText}>Remove</Text>
           </TouchableOpacity>
         </View>
-        {/* Generate Recipe Button */}
-        <View style={styles.centerItems}>
-          <TouchableOpacity
-            style={styles.button.container}
-            // onPress={}
-            disabled={selected.length === 0}
-          >
-            <Text style={styles.button.text}>Update Inventory</Text>
+
+        <View style={styles.centeredView}>
+          <TouchableOpacity style={styles.saveButton} onPress={saveInventory}>
+            <Text style={styles.saveButtonText}>Save Inventory</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
-      {/* </ImageBackground> */}
-    </ScrollView>
+    </View>
   );
 };
 
@@ -247,23 +221,14 @@ const styles = StyleSheet.create({
     backgroundColor: "black",
   },
   overlay: {
-    height: "60%",
-    backgroundColor: "rgba(0,0,0,0.8)",
     borderRadius: 10,
     padding: 10,
-  },
-  eachsection: {
-    margin: 10,
-  },
-  text: {
-    color: "white",
   },
   close: {
     position: "absolute",
     top: 40,
     right: 20,
     zIndex: 1,
-    marginTop: 30,
   },
   centeredView: {
     flex: 1,
@@ -273,7 +238,6 @@ const styles = StyleSheet.create({
   },
   modalView: {
     backgroundColor: "black",
-    marginTop: 0,
   },
   modalImage: {
     width: "100%",
@@ -284,21 +248,48 @@ const styles = StyleSheet.create({
     color: "blue",
     fontSize: 16,
   },
-  inputSearchStyle: {
-    color: "white",
-    backgroundColor: "black",
+  inputContainer: {
+    display: "flex",
+    marginTop: 30,
+    paddingRight: 11,
+    paddingLeft: 11,
+    flexDirection: "row",
+    alignItems: "center",
   },
-  title: {
-    fontSize: 25,
-    color: "green",
+  addButton: {
+    marginLeft: 10,
+    backgroundColor: "green",
+    borderRadius: 5,
+    padding: 10,
+  },
+  removeButton: {
+    alignSelf: "flex-start", // Ensure the remove button stays static
+    marginLeft: 10,
+    backgroundColor: "#AE0618",
+    borderRadius: 5,
+    padding: 10,
+    marginTop: 10,
+  },
+  buttonText: {
+    color: "white",
+    fontWeight: "bold",
+  },
+  saveButton: {
+    width: 200,
+    height: 50,
+    backgroundColor: "#6b9080",
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 20,
     marginBottom: 20,
   },
-  item: {
-    flexDirection: "row",
-    // alignItems: "center",
+  saveButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
   },
   imageContainer: {
-    width: "100%", // Adjust as needed
+    width: "100%",
     justifyContent: "space-evenly",
     alignItems: "center",
     flexDirection: "row",
@@ -308,29 +299,22 @@ const styles = StyleSheet.create({
     margin: 10,
     borderRadius: 10,
     width: 100,
-    height: 100, // Adjust as needed
+    height: 100,
   },
-
   centerItems: {
     display: "flex",
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
   },
-  button: {
-    container: {
-      width: 200,
-      height: 50,
-      backgroundColor: "green",
-      borderRadius: 10,
-      justifyContent: "center",
-      alignItems: "center",
-      marginTop: 20,
-    },
-    text: {
-      color: "#fff",
-      fontWeight: "bold",
-    },
+  input: {
+    borderWidth: 2,
+    borderColor: "#32cd32",
+    padding: 10,
+    flex: 1,
+    color: "white",
+    borderRadius: 10,
+    height: 55,
   },
 });
 
