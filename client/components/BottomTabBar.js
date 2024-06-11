@@ -12,22 +12,22 @@ const BottomTabBar = () => {
   const tabs = [
     {
       name: "Home",
-      screenName: "Generate",
+      screenName: "Home",
       iconName: "home",
       iconComponent: FontAwesome5,
     },
     {
       name: "Collection",
-      screenName: "SavedRecipes",
+      screenName: "Collection",
       iconName: "bookmark",
       iconComponent: FontAwesome,
     },
-    // {
-    //   name: "Community",
-    //   screenName: "Community",
-    //   iconName: "cloud",
-    //   iconComponent: Entypo,
-    // },
+    {
+      name: "Community",
+      screenName: "Community",
+      iconName: "cloud",
+      iconComponent: Entypo,
+    },
     {
       name: "Inventory",
       screenName: "Inventory",
@@ -80,7 +80,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     backgroundColor: "#333",
     padding: 20,
-    paddingBottom: 30,
+    paddingBottom: 20,
     borderTopColor: "black",
     borderTopWidth: 1,
     position: "absolute",

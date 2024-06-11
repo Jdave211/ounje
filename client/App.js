@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View, ActivityIndicator } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
@@ -29,42 +29,42 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [firstLogin, setFirstLogin] = useState(false);
 
-  useEffect(() => {
-    const getSession = async () => {
-      setLoading(true);
-      const {
-        data: { session },
-        error,
-      } = await supabase.auth.getSession();
-      if (error) {
-        console.error("Error fetching session:", error);
-        setLoading(false);
-        return;
-      }
-      setSession(session);
+  const getSession = useCallback(async () => {
+    setLoading(true);
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+    if (error) {
+      console.error("Error fetching session:", error);
       setLoading(false);
+      return;
+    }
+    setSession(session);
+    setLoading(false);
 
-      if (session?.user) {
-        const userId = session.user.id;
-        console.log("User signed in, fetching profile..."); // Debug log
+    if (session?.user) {
+      const userId = session.user.id;
+      console.log("User signed in, fetching profile...");
 
-        const { data: userData, error: userError } = await supabase
-          .from("profiles")
-          .select("name")
-          .eq("id", userId)
-          .single();
+      const { data: userData, error: userError } = await supabase
+        .from("profiles")
+        .select("name")
+        .eq("id", userId)
+        .single();
 
-        if (userError) {
-          console.error("Error fetching user metadata:", userError);
-        } else if (!userData || !userData.name) {
-          console.log("First login detected"); // Debug log
-          setFirstLogin(true);
-        } else {
-          setFirstLogin(false);
-        }
+      if (userError) {
+        console.error("Error fetching user metadata:", userError);
+      } else if (!userData || !userData.name) {
+        console.log("First login detected");
+        setFirstLogin(true);
+      } else {
+        setFirstLogin(false);
       }
-    };
+    }
+  }, []);
 
+  useEffect(() => {
     getSession();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
@@ -82,14 +82,14 @@ export default function App() {
               if (userError) {
                 console.error("Error fetching user metadata:", userError);
               } else if (!userData || !userData.name) {
-                console.log("First login detected in subscription"); // Debug log
+                console.log("First login detected in subscription");
                 setFirstLogin(true);
               } else {
                 setFirstLogin(false);
               }
             });
         }
-      }
+      },
     );
 
     return () => {
@@ -97,7 +97,7 @@ export default function App() {
         authListener.subscription.unsubscribe();
       }
     };
-  }, []);
+  }, [getSession]);
 
   if (loading) {
     return (
@@ -120,16 +120,17 @@ export default function App() {
             ) : (
               <Layout>
                 <Tab.Navigator
+                  initialRouteName="Inventory"
                   screenOptions={{ tabBarStyle: styles.navigator }}
                 >
                   <Tab.Screen
-                    name="Generate"
+                    name="Home"
                     component={Generate}
                     options={{ headerShown: false }}
                     initialParams={{ session }}
                   />
                   <Tab.Screen
-                    name="SavedRecipes"
+                    name="Collection"
                     component={SavedRecipes}
                     options={{ headerShown: false }}
                   />

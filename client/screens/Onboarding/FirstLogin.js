@@ -27,7 +27,6 @@ import { customAlphabet } from "nanoid/non-secure";
 import { Buffer } from "buffer";
 import { openai, extract_json } from "../../utils/openai";
 import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
-import { useNavigation } from "@react-navigation/native";
 import {
   flatten_nested_objects,
   parse_ingredients,
@@ -36,7 +35,6 @@ import {
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 
 const FirstLogin = ({ onProfileComplete, session }) => {
-  const navigation = useNavigation();
   const [name, setName] = useState("");
   const [dietaryRestrictions, setDietaryRestrictions] = useState([]);
   const [fridgeImages, setFridgeImages] = useState([]);
@@ -44,13 +42,15 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
+  const images = [];
 
   const bg = [name_bg, diet_bg, fridge_bg];
 
   const dietaryRestrictionsOptions = [
     "Vegetarian",
     "Lactose Intolerant",
-    "Nut Free",
+    "Gluten Intolerance",
+    "Nut Allergy",
     "Diabetic",
   ];
 
@@ -65,6 +65,24 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       console.error("Error converting image to base64:", error);
       throw error;
     }
+  };
+
+  const confirmSaveProfileWithoutImages = () => {
+    Alert.alert(
+      "No Fridge Images",
+      "You have not provided any fridge images. Do you want to continue without adding fridge images?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Continue",
+          onPress: () => saveProfile(true),
+        },
+      ],
+      { cancelable: true },
+    );
   };
 
   const pickImage = async () => {
@@ -130,28 +148,65 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     const inventoryImageBucketPath = userId;
 
     const uploadImage = async (base64Image) => {
-      console.log("base64_image length: ", base64Image.length);
-      let binaryImage = Buffer.from(base64Image, "base64");
-      console.log("binary_image length: ", binaryImage?.length);
-      let nanoId = nanoid();
-      let imagePath = `${inventoryImageBucketPath}/${nanoId}.jpeg`;
+      try {
+        // Convert base64 to ArrayBuffer
+        const byteCharacters = atob(base64Image);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const arrayBuffer = byteArray.buffer;
 
-      console.log({ nanoId });
-      console.log({ imagePath });
+        let nanoId = nanoid();
+        let imagePath = `${inventoryImageBucketPath}/${nanoId}.jpeg`;
+        images.push(imagePath);
 
-      let { data, error } = await supabase.storage
-        .from(inventoryImageBucket)
-        .upload(imagePath, binaryImage);
+        console.log({ nanoId });
+        console.log({ imagePath });
+        console.log("ArrayBuffer size: ", arrayBuffer.byteLength);
 
-      if (error) {
-        console.error("Error uploading image to storage:", error);
+        let { data, error } = await supabase.storage
+          .from(inventoryImageBucket)
+          .upload(imagePath, arrayBuffer, {
+            contentType: "image/jpeg",
+            cacheControl: "3600",
+            upsert: false,
+          });
+
+        if (error) {
+          console.error("Error uploading image to storage:", error);
+          throw error;
+        }
+
+        console.log("Image uploaded successfully: ", data.path);
+
+        // Add image path to inventory_images table
+        const { data: insertData, error: insertError } = await supabase
+          .from("inventory")
+          .upsert([{ user_id: userId, images: images }]);
+
+        if (insertError) {
+          console.error(
+            "Error inserting image URL into the database:",
+            insertError,
+          );
+          throw insertError;
+        }
+
+        return data.path;
+      } catch (error) {
+        console.error("Error in uploadImage function:", error);
         throw error;
       }
-
-      return data.path;
     };
 
-    return await Promise.all(base64Images.map(uploadImage));
+    try {
+      return await Promise.all(base64Images.map(uploadImage));
+    } catch (error) {
+      console.error("Error in storeImages function:", error);
+      throw error;
+    }
   };
 
   const sendImages = async () => {
@@ -169,7 +224,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         role: "user",
         content: fridgeImages.map((image) => ({ image })),
       };
-      console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
+      // console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
 
       let async_food_items_response = await openai.chat.completions.create({
         model: "gpt-4o",
@@ -195,12 +250,10 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         "inventory",
         "category",
       ]);
-      console.log({ food_items_array });
 
       const parsed_ingredients = await parse_ingredients(
         food_items_array.map(({ name }) => name),
       );
-      console.log({ parsed_ingredients });
 
       food_items_array = food_items_array.map((food_item, i) => {
         for (let parsed of parsed_ingredients) {
@@ -225,7 +278,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       );
 
       setLoading(false);
-      navigation.navigate("CheckIngredients");
     } catch (error) {
       console.error("Error in sendImages:", error);
     } finally {
@@ -233,7 +285,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     }
   };
 
-  const saveProfile = async () => {
+  const saveProfile = async (continueWithoutImages = false) => {
     setLoading(true);
 
     try {
@@ -246,6 +298,13 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       if (userError) {
         console.error("Error fetching user:", userError);
         throw userError;
+      }
+
+      if (fridgeImages.length === 0 && !continueWithoutImages) {
+        console.log("No fridge images selected");
+        setLoading(false);
+        confirmSaveProfileWithoutImages();
+        return;
       }
 
       if (fridgeImages.length > 0) {
@@ -293,7 +352,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           height: 40,
           borderColor: "gray",
           borderWidth: 2,
-          color: "white",
+          color: "#f0fff0",
           fontWeight: "bold",
           marginTop: 20,
         }}
@@ -306,9 +365,10 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         Do you have any dietary restrictions?
       </Text>
       <MultipleSelectList
+        showSelectedNumber
         setSelected={setSelected}
         selectedTextStyle={styles.selectedTextStyle}
-        dropdownTextStyles={{ color: "white" }}
+        dropdownTextStyles={{ color: "#f0fff0" }}
         data={dietaryRestrictionsOptions}
         save="value"
         maxHeight={900}
@@ -330,6 +390,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     <View style={styles.fridge}>
       <Text style={styles.fridge_text}>
         And finally, please click on the camera to take a picture of your fridge
+      </Text>
       <View
         style={{
           justifyContent: "center",
@@ -377,7 +438,16 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         </TouchableOpacity>
       )}
       {!loading && currentQuestion === 2 && (
-        <TouchableOpacity style={styles.next_button} onPress={saveProfile}>
+        <TouchableOpacity
+          style={styles.next_button}
+          onPress={() => {
+            if (fridgeImages.length === 0) {
+              confirmSaveProfileWithoutImages();
+            } else {
+              saveProfile();
+            }
+          }}
+        >
           <MaterialCommunityIcons name="check-circle" size={24} color="white" />
         </TouchableOpacity>
       )}
@@ -392,7 +462,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   name_text: {
-    color: "white",
+    color: "#f0fff0",
     fontWeight: "bold",
   },
   name: {
@@ -406,11 +476,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#6D6D6D",
     padding: 20,
     borderRadius: 10,
-    borderColor: "black",
+    borderColor: "#0f0f0f",
     borderWidth: 1,
   },
   fridge_text: {
-    color: "black",
+    color: "#f0fff0",
     fontWeight: "bold",
     textAlign: "center",
   },
@@ -423,9 +493,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 20,
     bottom: 70,
-    backgroundColor: "black",
+    backgroundColor: "#6b9080",
     padding: 10,
     borderRadius: 10,
+    borderColor: "#555b6e",
+    borderWidth: 1,
     alignItems: "center",
   },
 });

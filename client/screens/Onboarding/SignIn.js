@@ -1,48 +1,59 @@
-import React, { useState, useEffect } from 'react';
-import { Alert, StyleSheet, View, Text, TouchableWithoutFeedback, Keyboard, ActivityIndicator } from 'react-native';
-import { supabase } from '../../utils/supabase';
-import { Button, Input } from 'react-native-elements';
-import FirstLogin from './FirstLogin'; // Import your FirstLogin component
+import React, { useState, useEffect } from "react";
+import {
+  Alert,
+  StyleSheet,
+  View,
+  Text,
+  TouchableWithoutFeedback,
+  Keyboard,
+  ActivityIndicator,
+} from "react-native";
+import { supabase } from "../../utils/supabase";
+import { Button, Input } from "react-native-elements";
+import FirstLogin from "./FirstLogin"; // Import your FirstLogin component
 
 export default function SignIn() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [firstLogin, setFirstLogin] = useState(false);
 
   async function signInWithEmail() {
     setLoading(true);
-    console.log('Attempting sign in...'); // Debug log
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    console.log("Attempting sign in..."); // Debug log
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
     if (error) {
       setLoading(false);
       Alert.alert(error.message);
     } else if (data.user) {
       const userId = data.user.id;
-      console.log('User signed in, fetching profile...'); // Debug log
+      console.log("User signed in, fetching profile..."); // Debug log
 
       // Check the profiles table for user information
       const { data: profileData, error: profileError } = await supabase
-        .from('profiles') // Ensure this is the correct table name
-        .select('name')
-        .eq('id', userId) // Ensure this is the correct column name
+        .from("profiles") // Ensure this is the correct table name
+        .select("name")
+        .eq("id", userId) // Ensure this is the correct column name
         .single();
 
       if (profileError) {
         setLoading(false);
         Alert.alert(profileError.message);
       } else {
-        console.log('Profile data:', profileData); // Debug statement to log profile data
+        console.log("Profile data:", profileData); // Debug statement to log profile data
 
         // Check if name is null or empty
         if (!profileData || !profileData.name) {
-          console.log('First login detected'); // Debug statement for first login detection
+          console.log("First login detected"); // Debug statement for first login detection
           setFirstLogin(true);
           setLoading(false); // Ensure loading is set to false
         } else {
-          console.log('Existing user detected'); // Debug statement for existing user
+          console.log("Existing user detected"); // Debug statement for existing user
           setLoading(false);
           setFirstLogin(false);
         }
@@ -53,9 +64,12 @@ export default function SignIn() {
   async function handleForgotPassword() {
     const { error } = await supabase.auth.resetPasswordForEmail(email);
     if (error) {
-      Alert.alert('Error sending password reset email', error.message);
+      Alert.alert("Error sending password reset email", error.message);
     } else {
-      Alert.alert('Password reset email sent', 'Please check your email for instructions to reset your password.');
+      Alert.alert(
+        "Password reset email sent",
+        "Please check your email for instructions to reset your password.",
+      );
     }
   }
 
@@ -68,7 +82,7 @@ export default function SignIn() {
   };
 
   useEffect(() => {
-    console.log('firstLogin state changed:', firstLogin); // Debug log
+    console.log("firstLogin state changed:", firstLogin); // Debug log
     if (firstLogin) {
       setLoading(false); // Ensure loading is set to false when firstLogin is true
     }
@@ -77,13 +91,13 @@ export default function SignIn() {
   if (loading) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" color="#0000ff" />
+        <ActivityIndicator size="large" color="#00ff00" />
       </View>
     );
   }
 
   if (firstLogin) {
-    console.log('Rendering FirstLogin component'); // Debug log
+    console.log("Rendering FirstLogin component"); // Debug log
     return <FirstLogin email={email} password={password} />;
   }
 
@@ -97,45 +111,45 @@ export default function SignIn() {
           <View style={[styles.verticallySpaced, styles.mt20]}>
             <Input
               label="Email"
-              leftIcon={{ type: 'font-awesome', name: 'envelope' }}
+              leftIcon={{ type: "font-awesome", name: "envelope" }}
               onChangeText={(text) => setEmail(text)}
               value={email}
               placeholder="email@address.com"
               autoCapitalize="none"
-              inputStyle={{ color: 'white' }}
+              inputStyle={{ color: "white" }}
               placeholderTextColor="gray"
             />
           </View>
           <View style={styles.verticallySpaced}>
             <Input
               label="Password"
-              leftIcon={{ type: 'font-awesome', name: 'lock' }}
-              rightIcon={{ 
-                type: 'font-awesome', 
-                name: passwordVisible ? 'eye-slash' : 'eye',
-                onPress: togglePasswordVisibility
+              leftIcon={{ type: "font-awesome", name: "lock" }}
+              rightIcon={{
+                type: "font-awesome",
+                name: passwordVisible ? "eye-slash" : "eye",
+                onPress: togglePasswordVisibility,
               }}
               onChangeText={(text) => setPassword(text)}
               value={password}
               secureTextEntry={!passwordVisible}
               placeholder="Password"
               autoCapitalize="none"
-              inputStyle={{ color: 'white' }}
+              inputStyle={{ color: "white" }}
               placeholderTextColor="gray"
             />
           </View>
-          <View style={[styles.verticallySpaced, {flexDirection:'column'}]}>
+          <View style={[styles.verticallySpaced, { flexDirection: "column" }]}>
             <Button
               title="Sign in"
               disabled={loading}
               onPress={handleSignIn}
-              buttonStyle={{ backgroundColor: 'green', height: 50}}
+              buttonStyle={{ backgroundColor: "green", height: 50 }}
             />
             <Button
               title="Forgot password?"
               type="clear"
-              buttonStyle={{ backgroundColor: 'transparent', marginTop: 10}}
-              titleStyle={{ fontSize: 13, color: 'white'}}
+              buttonStyle={{ backgroundColor: "transparent", marginTop: 10 }}
+              titleStyle={{ fontSize: 13, color: "white" }}
               onPress={handleForgotPassword}
             />
           </View>
@@ -149,7 +163,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 12,
-    justifyContent: 'flex-start',
+    justifyContent: "flex-start",
   },
   header: {
     zIndex: 100,
@@ -158,9 +172,9 @@ const styles = StyleSheet.create({
   },
   headerText: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: 'white',
-    textAlign: 'center',
+    fontWeight: "bold",
+    color: "white",
+    textAlign: "center",
   },
   body: {},
   verticallySpaced: {

@@ -11,7 +11,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { SelectList } from "react-native-dropdown-select-list";
 import { FontAwesome5 } from "@expo/vector-icons";
-import GenerateRecipes from "@components/GenerateRecipes";
+import GenerateRecipes from "@components/GenerateRecipes"; // Ensure the correct import path
 import Loading from "@components/Loading"; // Ensure the correct import path
 import generate_bg from "@assets/generate_bg.jpg";
 import { supabase } from "@utils/supabase";
@@ -65,53 +65,55 @@ export default function Generate({ route }) {
           </Text>
         </View>
         <View style={styles.content}>
-          <SelectList
-            setSelected={setSelected}
-            data={flavors}
-            placeholder="Select a flavor"
-            placeholderStyles={{
-              color: "white",
-              fontSize: 20,
-              fontWeight: "bold",
-            }}
-            inputStyles={{ color: "white", fontWeight: "bold" }}
-            selectedTextStyle={styles.selectedTextStyle}
-            dropdownTextStyles={{ color: "white", fontWeight: "bold" }}
-            save="value"
-            maxHeight={900}
-            arrowicon={
-              <FontAwesome5 name="chevron-down" size={12} color={"white"} />
-            }
-            search={false}
-            boxStyles={{
-              marginTop: 10,
-              marginBottom: 10,
-              borderColor: "white",
-            }}
-            defaultOption={{
-              key: "1",
-              value: "What type of meal are you feeling?",
-            }}
-          />
-          <ScrollView style={{ flex: 0.5 }}>
-            <GenerateRecipes
-              onLoading={handleLoading}
-              onRecipesGenerated={setRecipes}
-            />
-            <View style={{ padding: 10 }}>
-              {isLoading ? (
-                <Loading />
-              ) : (
-                recipes.map((recipe, index) => (
-                  <View key={index}>
-                    <Text style={{ color: "white" }}>
-                      {JSON.stringify(recipe)}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </View>
-          </ScrollView>
+          {isLoading ? (
+            <Loading />
+          ) : (
+            <>
+              <SelectList
+                setSelected={setSelected}
+                data={flavors}
+                placeholder="Select a flavor"
+                placeholderStyles={{
+                  color: "white",
+                  fontSize: 20,
+                  fontWeight: "bold",
+                }}
+                inputStyles={{ color: "white", fontWeight: "bold" }}
+                selectedTextStyle={styles.selectedTextStyle}
+                dropdownTextStyles={{ color: "white", fontWeight: "bold" }}
+                save="value"
+                maxHeight={900}
+                arrowicon={
+                  <FontAwesome5 name="chevron-down" size={12} color={"white"} />
+                }
+                search={false}
+                boxStyles={{
+                  marginTop: 10,
+                  marginBottom: 10,
+                  borderColor: "white",
+                }}
+                defaultOption={{
+                  key: "1",
+                  value: "What type of meal are you feeling?",
+                }}
+              />
+              <ScrollView style={{ flex: 0.5 }}>
+                <GenerateRecipes
+                  onLoading={handleLoading}
+                  onRecipesGenerated={setRecipes}
+                />
+                <View style={{ padding: 10 }}>
+                  {recipes.map((recipe, index) => (
+                    <View key={index}>
+                      <Text style={{ color: "white" }}>
+                        {JSON.stringify(recipe)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            </>
+          )}
         </View>
       </View>
     </ImageBackground>
