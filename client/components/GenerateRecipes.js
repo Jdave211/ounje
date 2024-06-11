@@ -6,7 +6,6 @@ import {
   Text,
   Alert,
   ScrollView,
-  ActivityIndicator,
   Modal,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -16,7 +15,7 @@ import { RECIPES_PROMPT } from "../utils/prompts"; // Adjust this import based o
 import RecipeCard from "./RecipeCard"; // Adjust this import based on your project structure
 import { FOOD_ITEMS } from "../utils/constants";
 import { useNavigation } from "@react-navigation/native";
-import { supabase, store_image } from "../utils/supabase";
+import { supabase } from "../utils/supabase";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 
 export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
@@ -29,7 +28,6 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   const [user_id, setUserId] = useState(null);
   const [food_items, setFoodItems] = useState(FOOD_ITEMS);
   const [food_items_array, setFoodItemsArray] = useState([]);
-  const [inventoryImages, setInventoryImages] = useState([]);
 
   useEffect(() => {
     const get_user_id = async () => {
@@ -54,33 +52,11 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       console.log({ retrieved_food_items_array });
     };
 
-    const fetch_inventory_images = async () => {
-      let {
-        data: [inventory],
-      } = await supabase
-        .from("inventory")
-        .select("images")
-        .eq("user_id", user_id);
-
-      let image_paths = inventory.images.map((image) =>
-        image.replace("inventory_images/", ""),
-      );
-
-      let { data: url_responses } = await supabase.storage
-        .from("inventory_images")
-        .createSignedUrls(image_paths, 60 * 10);
-
-      let image_urls = url_responses.map((response) => response.signedUrl);
-
-      setInventoryImages(() => image_urls);
-    };
-
     console.log("running useEffect");
     if (!user_id) {
       get_user_id();
       fetch_food_items();
     } else {
-      fetch_inventory_images();
       fetch_food_items();
     }
   }, []);
@@ -210,7 +186,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   const generate_recipes = async () => {
     let async_run_response = supabase
       .from("runs")
-      .insert([{ user_id, images: inventoryImages }])
+      .insert([{ user_id }])
       .select()
       .throwOnError();
 
@@ -303,7 +279,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
     await AsyncStorage.setItem(
       "recipe_options",
-      JSON.stringify(recipe_options_in_snake_case)
+      JSON.stringify(recipe_options_in_snake_case),
     );
     setIsLoading(false);
 
