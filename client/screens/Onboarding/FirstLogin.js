@@ -254,6 +254,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       const parsed_ingredients = await parse_ingredients(
         food_items_array.map(({ name }) => name),
       );
+      console.log("Parsed ingredients: ", parsed_ingredients);
 
       food_items_array = food_items_array.map((food_item, i) => {
         for (let parsed of parsed_ingredients) {
@@ -269,7 +270,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         return food_item;
       });
 
-      console.log({ food_items_array });
+      console.log("food_items_array", { food_items_array });
 
       await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
       await AsyncStorage.setItem(

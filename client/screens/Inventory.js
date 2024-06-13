@@ -61,6 +61,7 @@ const Inventory = () => {
   }, []);
 
   const addNewItem = async () => {
+    console.log("fooditems", foodItemsArray);
     if (newItem.trim() === "") {
       Alert.alert("Error", "Please enter a valid item name.");
       return;
