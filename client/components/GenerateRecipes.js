@@ -231,7 +231,6 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         "recipe_options",
         JSON.stringify(recipeOptionsInSnakeCase),
       );
-
       navigation.navigate("RecipeOptions");
     } catch (error) {
       console.error("Error generating recipes:", error);
@@ -251,23 +250,6 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       >
         <Text style={styles.buttonText}>Generate Recipes</Text>
       </TouchableOpacity>
-      <Modal
-        animationType="slide"
-        transparent={false}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <ScrollView style={styles.scrollContainer}>
-          {gptResults.map((result, index) => (
-            <View key={index} style={styles.gptContainer}>
-              <Text style={styles.gptTitle}>
-                GPT Validation for Recipe {index + 1}:
-              </Text>
-              <Text style={styles.gptText}>{result}</Text>
-            </View>
-          ))}
-        </ScrollView>
-      </Modal>
     </View>
   );
 }
