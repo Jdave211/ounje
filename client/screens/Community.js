@@ -4,11 +4,7 @@ import CommunityCard from "../components/CommunityCard";
 import FirstLogin from "../screens/Onboarding/FirstLogin";
 
 const Community = () => {
-  return (
-    <View style={styles.container}>
-      <FirstLogin />
-    </View>
-  );
+  return <View style={styles.container}>{/* <FirstLogin /> */}</View>;
 };
 
 const styles = {

@@ -60,8 +60,8 @@ export default function Generate({ route }) {
         <View style={styles.header}>
           <Text style={styles.text}>Hi {name}, </Text>
           <Text style={styles.text}>
-            Select your preferences
-            <Text style={{ color: "black" }}>, and get to</Text> cooking...
+            Select your preferences,
+            <Text style={{ color: "black" }}> and get to</Text> cooking...
           </Text>
         </View>
         <View style={styles.content}>
@@ -97,7 +97,7 @@ export default function Generate({ route }) {
                   value: "What type of meal are you feeling?",
                 }}
               />
-              <ScrollView style={{ flex: 0.5 }}>
+              <View style={{ flex: 0.3 }}>
                 <GenerateRecipes
                   onLoading={handleLoading}
                   onRecipesGenerated={setRecipes}
@@ -111,7 +111,7 @@ export default function Generate({ route }) {
                     </View>
                   ))}
                 </View>
-              </ScrollView>
+              </View>
             </>
           )}
         </View>
@@ -127,6 +127,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
+    paddingTop: 0,
     justifyContent: "flex-end",
   },
   header: {

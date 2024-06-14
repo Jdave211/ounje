@@ -14,7 +14,7 @@ const Layout = ({ children }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "transparent",
+    backgroundColor: "#121212",
   },
   header: {
     paddingTop: 40,

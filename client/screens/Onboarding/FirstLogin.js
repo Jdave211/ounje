@@ -37,12 +37,11 @@ const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 const FirstLogin = ({ onProfileComplete, session }) => {
   const [name, setName] = useState("");
   const [dietaryRestrictions, setDietaryRestrictions] = useState([]);
+  const [selected, setSelected] = useState([]);
   const [fridgeImages, setFridgeImages] = useState([]);
   const [fridgeImageUris, setFridgeImageUris] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
-  const images = [];
 
   const bg = [name_bg, diet_bg, fridge_bg];
 
@@ -56,7 +55,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
 
   const convertImageToBase64 = async (uri) => {
     try {
-      console.log("Converting image to base64:", uri);
       const base64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
@@ -117,7 +115,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           });
 
           if (!result.canceled) {
-            console.log("Camera result:", result);
             const uri = result.assets[0].uri;
             setFridgeImageUris((prevUris) => [...prevUris, uri]);
             const base64Image = await convertImageToBase64(uri);
@@ -132,7 +129,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           });
 
           if (!result.canceled) {
-            console.log("Library result:", result);
             const uri = result.assets[0].uri;
             setFridgeImageUris((prevUris) => [...prevUris, uri]);
             const base64Image = await convertImageToBase64(uri);
@@ -146,11 +142,14 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   const storeImages = async (userId, base64Images) => {
     const inventoryImageBucket = "inventory_images";
     const inventoryImageBucketPath = userId;
+    const images = [];
 
     const uploadImage = async (base64Image) => {
       try {
         // Convert base64 to ArrayBuffer
-        const byteCharacters = atob(base64Image);
+        const byteCharacters = Buffer.from(base64Image, "base64").toString(
+          "binary",
+        );
         const byteNumbers = new Array(byteCharacters.length);
         for (let i = 0; i < byteCharacters.length; i++) {
           byteNumbers[i] = byteCharacters.charCodeAt(i);
@@ -161,10 +160,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         let nanoId = nanoid();
         let imagePath = `${inventoryImageBucketPath}/${nanoId}.jpeg`;
         images.push(imagePath);
-
-        console.log({ nanoId });
-        console.log({ imagePath });
-        console.log("ArrayBuffer size: ", arrayBuffer.byteLength);
 
         let { data, error } = await supabase.storage
           .from(inventoryImageBucket)
@@ -178,8 +173,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           console.error("Error uploading image to storage:", error);
           throw error;
         }
-
-        console.log("Image uploaded successfully: ", data.path);
 
         // Add image path to inventory_images table
         const { data: insertData, error: insertError } = await supabase
@@ -210,79 +203,71 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   };
 
   const sendImages = async () => {
-    setLoading(true); // Show loading indicator
+    setLoading(true);
 
     try {
-      const user_id = await AsyncStorage.getItem("user_id"); // Using session user id directly
-      console.log("user_id: ", user_id);
+      const userId = await AsyncStorage.getItem("user_id");
 
-      const async_image_paths = await storeImages(user_id, fridgeImages);
-      console.log("async_image_paths: ", async_image_paths);
+      await storeImages(userId, fridgeImages);
 
-      let system_prompt = { role: "system", content: FOOD_ITEMS_PROMPT };
-      let user_prompt = {
+      const systemPrompt = { role: "system", content: FOOD_ITEMS_PROMPT };
+      const userPrompt = {
         role: "user",
         content: fridgeImages.map((image) => ({ image })),
       };
-      // console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
 
-      let async_food_items_response = await openai.chat.completions.create({
+      const asyncFoodItemsResponse = await openai.chat.completions.create({
         model: "gpt-4o",
-        messages: [system_prompt, user_prompt],
+        messages: [systemPrompt, userPrompt],
       });
 
-      console.log("OpenAI response: ", async_food_items_response);
-
-      const [{ value: image_paths }, { value: food_items_response }] =
-        await Promise.allSettled([
-          async_image_paths,
-          async_food_items_response,
-        ]);
-
-      console.log("image_paths: ", image_paths);
-      console.log("food_items_response: ", food_items_response);
-
-      const { object: food_items, text: food_items_text } =
-        extract_json(food_items_response);
-      console.log("Extracted food_items: ", food_items);
-
-      let food_items_array = flatten_nested_objects(food_items, [
-        "inventory",
-        "category",
+      const [{ value: foodItemsResponse }] = await Promise.allSettled([
+        asyncFoodItemsResponse,
       ]);
 
-      const parsed_ingredients = await parse_ingredients(
-        food_items_array.map(({ name }) => name),
-      );
-      console.log("Parsed ingredients: ", parsed_ingredients);
+      const { object: foodItems, text: foodItemsText } =
+        extract_json(foodItemsResponse);
 
-      food_items_array = food_items_array.map((food_item, i) => {
-        for (let parsed of parsed_ingredients) {
-          if (parsed.original === food_item.name) {
-            food_item.spoonacular_id = parsed.id;
-            food_item.spoonacular_name = parsed.name;
-            food_item.amount = parsed.amount;
-            food_item.image = parsed.image;
-            break;
+      const extractNames = (obj) => {
+        const result = [];
+        for (const key in obj) {
+          if (Array.isArray(obj[key])) {
+            obj[key].forEach((item) => {
+              if (item.name) {
+                result.push(item.name);
+              }
+            });
+          } else if (typeof obj[key] === "object") {
+            result.push(...extractNames(obj[key]));
           }
         }
+        return result;
+      };
 
-        return food_item;
-      });
+      const foodItemNames = extractNames(foodItems);
 
-      console.log("food_items_array", { food_items_array });
+      const parsedIngredients = await parse_ingredients(foodItemNames);
 
-      await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
+      const simplifiedFoodItemsArray = parsedIngredients.map((parsed) => ({
+        name: parsed.original,
+        spoonacular_id: parsed.id,
+      }));
+
+      const detailedFoodItemsMap = foodItems;
+
       await AsyncStorage.setItem(
         "food_items_array",
-        JSON.stringify(food_items_array),
+        JSON.stringify(simplifiedFoodItemsArray),
+      );
+      await AsyncStorage.setItem(
+        "detailed_food_items_map",
+        JSON.stringify(detailedFoodItemsMap),
       );
 
       setLoading(false);
     } catch (error) {
       console.error("Error in sendImages:", error);
-    } finally {
-      setLoading(false); // Hide loading indicator
+      setLoading(false);
     }
   };
 
@@ -290,7 +275,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     setLoading(true);
 
     try {
-      console.log("Fetching user...");
       const {
         data: { user },
         error: userError,
@@ -302,22 +286,16 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       }
 
       if (fridgeImages.length === 0 && !continueWithoutImages) {
-        console.log("No fridge images selected");
         setLoading(false);
         confirmSaveProfileWithoutImages();
         return;
       }
 
       if (fridgeImages.length > 0) {
-        console.log("Uploading fridge images...");
         await storeImages(user.id, fridgeImages);
-        console.log("Fridge images uploaded");
-
-        // Call sendImages to process and store the food items
         await sendImages();
       }
 
-      console.log("Updating profile...");
       const updates = {
         id: user.id,
         name: name,
@@ -367,10 +345,13 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       </Text>
       <MultipleSelectList
         showSelectedNumber
-        setSelected={setSelected}
+        setSelected={setDietaryRestrictions}
         selectedTextStyle={styles.selectedTextStyle}
         dropdownTextStyles={{ color: "#f0fff0" }}
-        data={dietaryRestrictionsOptions}
+        data={dietaryRestrictionsOptions.map((option) => ({
+          key: option,
+          value: option,
+        }))}
         save="value"
         maxHeight={900}
         placeholder={"Select dietary restrictions"}

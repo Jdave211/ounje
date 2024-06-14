@@ -123,6 +123,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   signupButton: {
-    marginTop: 50,
+    marginTop: 5,
   },
 }); // ... (the same JSX as in the TypeScript version)   ) }

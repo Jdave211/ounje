@@ -12,7 +12,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { openai } from "../utils/openai"; // Adjust this import based on your project structure
 import { RECIPES_PROMPT } from "../utils/prompts"; // Adjust this import based on your project structure
-import RecipeCard from "./RecipeCard"; // Adjust this import based on your project structure
 import { FOOD_ITEMS } from "../utils/constants";
 import { useNavigation } from "@react-navigation/native";
 import { supabase } from "../utils/supabase";
@@ -25,67 +24,43 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   const [recipes, setRecipes] = useState([]);
   const [gptResults, setGptResults] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
-  const [user_id, setUserId] = useState(null);
-  const [food_items, setFoodItems] = useState(FOOD_ITEMS);
-  const [food_items_array, setFoodItemsArray] = useState([]);
+  const [userId, setUserId] = useState(null);
+  const [foodItems, setFoodItems] = useState(FOOD_ITEMS);
 
   useEffect(() => {
-    const get_user_id = async () => {
-      let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(() => retrieved_user_id);
+    const fetchData = async () => {
+      try {
+        const userId = await AsyncStorage.getItem("user_id");
+        if (userId) setUserId(userId);
+
+        const storedFoodItems = await AsyncStorage.getItem("food_items_array");
+        if (storedFoodItems) setFoodItems(JSON.parse(storedFoodItems));
+      } catch (error) {
+        console.error("Error fetching user data:", error);
+        Alert.alert("Error", "Failed to fetch user data.");
+      }
     };
 
-    const fetch_food_items = async () => {
-      let retrieved_text = await AsyncStorage.getItem("food_items");
-      let retrieved_food_items = JSON.parse(retrieved_text);
-
-      retrieved_text = await AsyncStorage.getItem("food_items_array");
-      let retrieved_food_items_array = JSON.parse(retrieved_text);
-
-      if (retrieved_food_items) {
-        setFoodItems(() => retrieved_food_items);
-      }
-
-      if (retrieved_food_items_array?.length > 0) {
-        setFoodItemsArray(() => retrieved_food_items_array);
-      }
-      console.log({ retrieved_food_items_array });
-    };
-
-    console.log("running useEffect");
-    if (!user_id) {
-      get_user_id();
-      fetch_food_items();
-    } else {
-      fetch_food_items();
-    }
+    fetchData();
   }, []);
-
-  const handleRecipesReady = () => {
-    setModalVisible(true);
-  };
 
   const fetchRecipes = async () => {
     try {
       setIsLoading(true);
       onLoading(true);
 
-      // Fetch food items from AsyncStorage
       const storedFoodItems = await AsyncStorage.getItem("food_items_array");
-
       if (storedFoodItems) {
-        const foodItems = JSON.parse(storedFoodItems).map(
+        const foodItemsArray = JSON.parse(storedFoodItems).map(
           (item) => item.name || item,
         );
-        const ingredients = foodItems.join(", ");
-        console.log("Ingredients:", ingredients);
+        const ingredients = foodItemsArray.join(", ");
 
-        // Call Spoonacular API to fetch recipes
         const response = await axios.get(
           "https://api.spoonacular.com/recipes/findByIngredients",
           {
             params: {
-              ingredients: ingredients,
+              ingredients,
               number: 2,
               ranking: 1,
               ignorePantry: "false",
@@ -93,8 +68,6 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
             },
           },
         );
-
-        console.log({ response });
 
         const recipesWithDetails = await Promise.all(
           response.data.map(async (recipe) => {
@@ -104,17 +77,15 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         );
 
         setRecipes(recipesWithDetails);
-        console.log("Recipes with details:", recipesWithDetails);
 
-        // Pass each recipe to OpenAI for validation
         const gptResponses = await Promise.all(
           recipesWithDetails.map(
-            async (recipe) => await passRecipeThroughGPT(recipe, foodItems),
+            async (recipe) =>
+              await passRecipeThroughGPT(recipe, foodItemsArray),
           ),
         );
 
         setGptResults(gptResponses);
-        console.log("GPT Results:", gptResponses);
       } else {
         Alert.alert("Error", "No food items found in inventory.");
       }
@@ -161,138 +132,121 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         Summary: ${recipe.details.summary}
       `;
 
-      const system_prompt = { role: "system", content: RECIPES_PROMPT };
-      const user_prompt = {
+      const systemPrompt = { role: "system", content: RECIPES_PROMPT };
+      const userPrompt = {
         role: "user",
         content: `Food Items: ${foodItems.join(", ")}\nRecipe:\n${recipeText}`,
       };
 
-      console.log("Sending prompts to OpenAI:", system_prompt, user_prompt);
-
       const response = await openai.chat.completions.create({
-        model: "ft:gpt-3.5-turbo-0125:personal:ounje2:9T4gBMe8",
-        messages: [system_prompt, user_prompt],
+        model: "gpt-3.5-turbo-0125:personal:ounje2:9T4gBMe8",
+        messages: [systemPrompt, userPrompt],
       });
 
-      console.log("OpenAI response:", response.choices[0].message.content);
       return response.choices[0].message.content;
     } catch (error) {
       console.error("Error passing recipe through GPT:", error);
       return "Error validating recipe.";
     }
-    setIsLoading(false);
   };
 
-  const generate_recipes = async () => {
-    let async_run_response = supabase
-      .from("runs")
-      .insert([{ user_id }])
-      .select()
-      .throwOnError();
+  const generateRecipes = async () => {
+    try {
+      setIsLoading(true);
+      onLoading(true);
 
-    const [
-      {
-        value: { data: runs, error: runs_error },
-      },
-    ] = await Promise.allSettled([async_run_response]);
+      const { data: runs, error: runsError } = await supabase
+        .from("runs")
+        .insert([{ user_id: userId, images: [] }]) // Ensure images is set to an empty array or appropriate default value
+        .select();
 
-    setIsLoading(true);
-    if (runs_error) console.log("Error:", runs_error);
-    else console.log("Added User Run:", runs);
+      if (runsError) {
+        console.error("Error adding user run:", runsError);
+        Alert.alert("Error", "Failed to add user run.");
+        return;
+      }
 
-    console.log("runs: ", runs);
-    current_run = runs[runs.length - 1];
+      const currentRun = runs[0];
 
-    console.log("current_run: ", current_run);
+      const selectedFoodItems = foodItems.map((item) => ({
+        run_id: currentRun.id,
+        ...item,
+      }));
 
-    // let selected_set = new Set(selected);
-    const selected_food_items = food_items_array.filter(
-      (item) =>
-        // selected_set.has(item.name),
-        true,
-    );
-    const food_item_records = selected_food_items.map((record) => ({
-      run_id: current_run.id,
-      ...record,
-    }));
+      await supabase.from("food_items").upsert(selectedFoodItems);
 
-    console.log("food_item_records: ", food_item_records);
-
-    await supabase.from("food_items").upsert(food_item_records).throwOnError();
-
-    console.log("starting recipes");
-
-    const { data: suggested_recipes } = await axios
-      .get("https://api.spoonacular.com/recipes/findByIngredients", {
-        params: {
-          apiKey: process.env.SPOONACULAR_API_KEY,
-          ingredients: food_items_array.map(({ name }) => name).join(", "),
-          number: 7,
-          ranking: 1,
+      const { data: suggestedRecipes } = await axios.get(
+        "https://api.spoonacular.com/recipes/findByIngredients",
+        {
+          params: {
+            apiKey: process.env.SPOONACULAR_API_KEY,
+            ingredients: foodItems.map(({ name }) => name).join(", "),
+            number: 7,
+            ranking: 1,
+          },
         },
-      })
-      .catch((err) => console.log(err, err.response.data, err.request));
+      );
 
-    console.log({ suggested_recipes });
-
-    let { data: recipe_options } = await axios
-      .get(`https://api.spoonacular.com/recipes/informationBulk`, {
-        params: {
-          apiKey: process.env.SPOONACULAR_API_KEY,
-          includeNutrition: true,
-          ids: suggested_recipes.map((recipe) => recipe.id).join(", "),
+      const { data: recipeDetails } = await axios.get(
+        `https://api.spoonacular.com/recipes/informationBulk`,
+        {
+          params: {
+            apiKey: process.env.SPOONACULAR_API_KEY,
+            includeNutrition: true,
+            ids: suggestedRecipes.map((recipe) => recipe.id).join(", "),
+          },
         },
-      })
-      .catch((err) => console.log(err, error.response.data, err.request));
-    recipe_options = suggested_recipes.map((suggested_recipe, i) => ({
-      ...suggested_recipe,
-      ...recipe_options[i],
-    }));
+      );
 
-    console.log("recipe_options: ", recipe_options);
+      const recipeOptions = suggestedRecipes.map((suggestedRecipe, i) => ({
+        ...suggestedRecipe,
+        ...recipeDetails[i],
+      }));
 
-    const recipe_options_in_snake_case = objectToSnake(recipe_options).map(
-      (recipe) => {
-        delete recipe.cheap;
-        delete recipe.gaps;
-        delete recipe.likes;
-        delete recipe.missed_ingredient_count;
-        delete recipe.missed_ingredients;
-        delete recipe.used_ingredients;
-        delete recipe.used_ingredient_count;
-        delete recipe.user_tags;
-        delete recipe.unused_ingredients;
-        delete recipe.unknown_ingredients;
-        delete recipe.open_license;
-        delete recipe.report;
-        delete recipe.suspicious_data_score;
-        delete recipe.tips;
-        return recipe;
-      },
-    );
+      const recipeOptionsInSnakeCase = objectToSnake(recipeOptions).map(
+        (recipe) => {
+          delete recipe.cheap;
+          delete recipe.gaps;
+          delete recipe.likes;
+          delete recipe.missed_ingredient_count;
+          delete recipe.missed_ingredients;
+          delete recipe.used_ingredients;
+          delete recipe.used_ingredient_count;
+          delete recipe.user_tags;
+          delete recipe.unused_ingredients;
+          delete recipe.unknown_ingredients;
+          delete recipe.open_license;
+          delete recipe.report;
+          delete recipe.suspicious_data_score;
+          delete recipe.tips;
+          return recipe;
+        },
+      );
 
-    console.log({ recipe_options_in_snake_case });
-    await supabase
-      .from("recipe_ids")
-      .upsert(recipe_options_in_snake_case, { onConflict: "id" })
-      .throwOnError();
+      await supabase
+        .from("recipe_ids")
+        .upsert(recipeOptionsInSnakeCase, { onConflict: "id" });
 
-    await AsyncStorage.setItem(
-      "recipe_options",
-      JSON.stringify(recipe_options_in_snake_case),
-    );
-    setIsLoading(false);
+      await AsyncStorage.setItem(
+        "recipe_options",
+        JSON.stringify(recipeOptionsInSnakeCase),
+      );
 
-    // navigate to recipes screen to select options to keep
-    // once selected, save the selected options to the database
-    navigation.navigate("RecipeOptions");
+      navigation.navigate("RecipeOptions");
+    } catch (error) {
+      console.error("Error generating recipes:", error);
+      Alert.alert("Error", "Failed to generate recipes.");
+    } finally {
+      setIsLoading(false);
+      onLoading(false);
+    }
   };
 
   return (
     <View style={styles.container}>
       <TouchableOpacity
         style={styles.buttonContainer}
-        onPress={generate_recipes}
+        onPress={generateRecipes}
         disabled={isLoading}
       >
         <Text style={styles.buttonText}>Generate Recipes</Text>
@@ -301,9 +255,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         animationType="slide"
         transparent={false}
         visible={modalVisible}
-        onRequestClose={() => {
-          setModalVisible(!modalVisible);
-        }}
+        onRequestClose={() => setModalVisible(false)}
       >
         <ScrollView style={styles.scrollContainer}>
           {gptResults.map((result, index) => (
