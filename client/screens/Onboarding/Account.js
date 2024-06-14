@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../../utils/supabase";
-import { StyleSheet, View, Alert } from "react-native";
+import { StyleSheet, View, Alert, Image } from "react-native";
 import { Button, Input } from "react-native-elements";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
+import { FontAwesome6 } from "@expo/vector-icons";
 
 export default function Account({ session }) {
   const [loading, setLoading] = useState(true);
@@ -71,6 +71,9 @@ export default function Account({ session }) {
       style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
     >
       <View>
+        <FontAwesome6 name="person-falling" size={24} color="white" />
+      </View>
+      <View style={styles.content}>
         <View style={[styles.verticallySpaced, styles.mt20]}>
           <Input
             label="Email"
@@ -90,7 +93,7 @@ export default function Account({ session }) {
           />
         </View>
 
-        <View style={[styles.verticallySpaced, styles.mt20]}>
+        <View style={[styles.verticallySpaced]}>
           <Button
             title={loading ? "Loading ..." : "Update"}
             onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
@@ -116,9 +119,12 @@ export default function Account({ session }) {
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: 40,
     padding: 12,
-    backgroundColor: "black",
+    backgroundColor: "#121212",
+  },
+  content: {
+    flex: 1,
+    justifyContent: "center",
   },
   verticallySpaced: {
     paddingTop: 4,

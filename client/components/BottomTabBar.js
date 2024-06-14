@@ -22,12 +22,12 @@ const BottomTabBar = () => {
       iconName: "bookmark",
       iconComponent: FontAwesome,
     },
-    {
-      name: "Community",
-      screenName: "Community",
-      iconName: "cloud",
-      iconComponent: Entypo,
-    },
+    // {
+    //   name: "Community",
+    //   screenName: "Community",
+    //   iconName: "cloud",
+    //   iconComponent: Entypo,
+    // },
     {
       name: "Inventory",
       screenName: "Inventory",
@@ -61,33 +61,40 @@ const BottomTabBar = () => {
 
   return (
     <View style={styles.tabBar}>
-      {tabs.map((tab) => (
-        <View
-          key={tab.name}
-          style={{ justifyContent: "center", alignItems: "center" }}
-        >
-          {renderIcon(tab)}
-          <Text style={{ color: "white" }}>{tab.name}</Text>
-        </View>
-      ))}
+      <View style={styles.tabs}>
+        {tabs.map((tab) => (
+          <View
+            key={tab.name}
+            style={{ justifyContent: "center", alignItems: "center" }}
+          >
+            {renderIcon(tab)}
+            <Text style={{ color: "white", fontSize: 10, fontWeight: "bold" }}>
+              {tab.name}
+            </Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   tabBar: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    backgroundColor: "#333",
-    padding: 20,
-    paddingBottom: 20,
-    borderTopColor: "black",
+    backgroundColor: "#282C35",
+    paddingTop: 15,
+    paddingBottom: 25,
+    borderTopColor: "#282C35",
     borderTopWidth: 1,
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
     width: "100%",
+  },
+  tabs: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingHorizontal: 10,
   },
 });
 

@@ -15,6 +15,7 @@ import { MultipleSelectList } from "../components/MultipleSelectList";
 import { supabase } from "../utils/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "@react-navigation/native";
+import Toast from "react-native-toast-message";
 
 const Inventory = () => {
   const navigation = useNavigation();
@@ -72,11 +73,11 @@ const Inventory = () => {
     ];
     setFoodItems(updatedFoodItems);
     setNewItem("");
-
-    await AsyncStorage.setItem(
-      "food_items_array",
-      JSON.stringify(updatedFoodItems),
-    );
+    Toast.show({
+      type: "success",
+      text1: "Item added!",
+      text2: `${newItem} has been added to your inventory.`,
+    });
   };
 
   const removeItem = async (itemName) => {
@@ -99,6 +100,7 @@ const Inventory = () => {
   const saveInventory = async () => {
     await AsyncStorage.setItem("food_items_array", JSON.stringify(foodItems));
     Alert.alert("Your inventory has been saved!");
+    navigation.navigate("Home");
   };
 
   return (
@@ -143,7 +145,7 @@ const Inventory = () => {
         </Modal>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Add New Item</Text>
+          <Text style={styles.cardTitle}>Add New Food Item</Text>
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
@@ -159,7 +161,7 @@ const Inventory = () => {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Remove Items</Text>
+          <Text style={styles.cardTitle}>Remove Food Items</Text>
           <MultipleSelectList
             showSelectedNumber
             setSelected={setSelected}
@@ -211,14 +213,15 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   imageSection: {
-    marginTop: 39,
+    marginTop: 20,
   },
   imageContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 15,
+    padding: 15,
   },
   image: {
     margin: 10,
@@ -310,7 +313,7 @@ const styles = StyleSheet.create({
   removeButton: {
     marginTop: 10,
     backgroundColor: "#9b111e",
-    borderRadius: 5,
+    borderRadius: 10,
     padding: 10,
     alignItems: "center",
   },

@@ -9,7 +9,6 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import RecipeCard from "@components/RecipeCard";
-import RecipeOptionCard from "@components/RecipeOptionCard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
@@ -61,18 +60,18 @@ const RecipeOptions = () => {
     await Promise.allSettled(
       selected_recipes.map(async (recipe) => {
         let recipe_image = await generate_image(
-          "a zoomed out image showing the full dish of " + recipe.image_prompt
+          "a zoomed out image showing the full dish of " + recipe.image_prompt,
         );
 
         let storage_path = `${current_run.id}/${recipe.name}.jpeg`;
         let image_storage_response = await store_image(
           recipe_image_bucket,
           storage_path,
-          recipe_image
+          recipe_image,
         );
 
         return image_storage_response;
-      })
+      }),
     );
 
     const recipe_records = selected_recipes.map((recipe) => {
@@ -143,6 +142,8 @@ const styles = {
   container: {
     flex: 1,
     backgroundColor: "black",
+    padding: 15,
+    marginTop: 0,
   },
   text: {
     color: "white",
