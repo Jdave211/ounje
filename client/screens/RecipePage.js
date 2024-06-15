@@ -380,8 +380,9 @@ const RecipePage = ({ route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "black",
+    backgroundColor: "#121212",
     paddingTop: 45,
+    marginBottom: 17,
   },
   title: {
     fontSize: 20,

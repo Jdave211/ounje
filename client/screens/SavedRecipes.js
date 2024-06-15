@@ -54,7 +54,9 @@ const SavedRecipes = () => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.text}> Saved Recipes </Text>
+      <View style={{ marginBottom: 10 }}>
+        <Text style={styles.text}> Saved Recipes </Text>
+      </View>
       {savedRecipes && (
         <ScrollView>
           {/* <View

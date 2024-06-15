@@ -143,6 +143,7 @@ const styles = {
     alignItems: "center",
     paddingTop: 20,
     marginTop: 20,
+    marginBottom: 11,
   },
   text: {
     color: "white",

@@ -13,7 +13,6 @@ import {
   ScrollView,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { supabase } from "../../utils/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import name_bg from "../../assets/name_bg.jpg";
 import diet_bg from "../../assets/diet_bg.jpeg";
@@ -22,26 +21,17 @@ import camera_icon from "../../assets/camera_icon.png";
 import { MultipleSelectList } from "../../components/MultipleSelectList";
 import { FontAwesome5 } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as FileSystem from "expo-file-system";
-import { customAlphabet } from "nanoid/non-secure";
-import { Buffer } from "buffer";
-import { openai, extract_json } from "../../utils/openai";
-import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
-import {
-  flatten_nested_objects,
-  parse_ingredients,
-} from "../../utils/spoonacular";
+import Loading from "@components/Loading";
+import useImageProcessing from "@components/useImageProcessing"; // Import the custom hook
 
-const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
-
-const FirstLogin = ({ onProfileComplete, session }) => {
+const FirstLogin = ({ onProfileComplete }) => {
   const [name, setName] = useState("");
   const [dietaryRestrictions, setDietaryRestrictions] = useState([]);
-  const [selected, setSelected] = useState([]);
-  const [fridgeImages, setFridgeImages] = useState([]);
   const [fridgeImageUris, setFridgeImageUris] = useState([]);
+  const [fridgeImages, setFridgeImages] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [loading, setLoading] = useState(false);
+
+  const { loading, convertImageToBase64, sendImages } = useImageProcessing();
 
   const bg = [name_bg, diet_bg, fridge_bg];
 
@@ -52,36 +42,6 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     "Nut Allergy",
     "Diabetic",
   ];
-
-  const convertImageToBase64 = async (uri) => {
-    try {
-      const base64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      return base64;
-    } catch (error) {
-      console.error("Error converting image to base64:", error);
-      throw error;
-    }
-  };
-
-  const confirmSaveProfileWithoutImages = () => {
-    Alert.alert(
-      "No Fridge Images",
-      "You have not provided any fridge images. Do you want to continue without adding fridge images?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Continue",
-          onPress: () => saveProfile(true),
-        },
-      ],
-      { cancelable: true },
-    );
-  };
 
   const pickImage = async () => {
     const { status: cameraRollPerm } =
@@ -139,165 +99,19 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     );
   };
 
-  const storeImages = async (userId, base64Images) => {
-    const inventoryImageBucket = "inventory_images";
-    const inventoryImageBucketPath = userId;
-    const images = [];
-
-    const uploadImage = async (base64Image) => {
-      try {
-        // Convert base64 to ArrayBuffer
-        const byteCharacters = Buffer.from(base64Image, "base64").toString(
-          "binary",
-        );
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const arrayBuffer = byteArray.buffer;
-
-        let nanoId = nanoid();
-        let imagePath = `${inventoryImageBucketPath}/${nanoId}.jpeg`;
-        images.push(imagePath);
-
-        let { data, error } = await supabase.storage
-          .from(inventoryImageBucket)
-          .upload(imagePath, arrayBuffer, {
-            contentType: "image/jpeg",
-            cacheControl: "3600",
-            upsert: false,
-          });
-
-        if (error) {
-          console.error("Error uploading image to storage:", error);
-          throw error;
-        }
-
-        // Add image path to inventory_images table
-        const { data: insertData, error: insertError } = await supabase
-          .from("inventory")
-          .upsert([{ user_id: userId, images: images }]);
-
-        if (insertError) {
-          console.error(
-            "Error inserting image URL into the database:",
-            insertError,
-          );
-          throw insertError;
-        }
-
-        return data.path;
-      } catch (error) {
-        console.error("Error in uploadImage function:", error);
-        throw error;
-      }
-    };
-
-    try {
-      return await Promise.all(base64Images.map(uploadImage));
-    } catch (error) {
-      console.error("Error in storeImages function:", error);
-      throw error;
-    }
-  };
-
-  const sendImages = async () => {
-    setLoading(true);
-
-    try {
-      const userId = await AsyncStorage.getItem("user_id");
-
-      await storeImages(userId, fridgeImages);
-
-      const systemPrompt = { role: "system", content: FOOD_ITEMS_PROMPT };
-      const userPrompt = {
-        role: "user",
-        content: fridgeImages.map((image) => ({ image })),
-      };
-
-      const asyncFoodItemsResponse = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [systemPrompt, userPrompt],
-      });
-
-      const [{ value: foodItemsResponse }] = await Promise.allSettled([
-        asyncFoodItemsResponse,
-      ]);
-
-      const { object: foodItems, text: foodItemsText } =
-        extract_json(foodItemsResponse);
-
-      const extractNames = (obj) => {
-        const result = [];
-        for (const key in obj) {
-          if (Array.isArray(obj[key])) {
-            obj[key].forEach((item) => {
-              if (item.name) {
-                result.push(item.name);
-              }
-            });
-          } else if (typeof obj[key] === "object") {
-            result.push(...extractNames(obj[key]));
-          }
-        }
-        return result;
-      };
-
-      const foodItemNames = extractNames(foodItems);
-
-      const parsedIngredients = await parse_ingredients(foodItemNames);
-
-      const simplifiedFoodItemsArray = parsedIngredients.map((parsed) => ({
-        name: parsed.original,
-        spoonacular_id: parsed.id,
-      }));
-
-      const detailedFoodItemsMap = foodItems;
-
-      await AsyncStorage.setItem(
-        "food_items_array",
-        JSON.stringify(simplifiedFoodItemsArray),
-      );
-      await AsyncStorage.setItem(
-        "detailed_food_items_map",
-        JSON.stringify(detailedFoodItemsMap),
-      );
-
-      setLoading(false);
-    } catch (error) {
-      console.error("Error in sendImages:", error);
-      setLoading(false);
-    }
-  };
-
   const saveProfile = async (continueWithoutImages = false) => {
-    setLoading(true);
+    if (fridgeImages.length === 0 && !continueWithoutImages) {
+      confirmSaveProfileWithoutImages();
+      return;
+    }
 
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError) {
-        console.error("Error fetching user:", userError);
-        throw userError;
-      }
-
-      if (fridgeImages.length === 0 && !continueWithoutImages) {
-        setLoading(false);
-        confirmSaveProfileWithoutImages();
-        return;
-      }
-
       if (fridgeImages.length > 0) {
-        await storeImages(user.id, fridgeImages);
-        await sendImages();
+        await sendImages(fridgeImages);
       }
 
       const updates = {
-        id: user.id,
+        id: await AsyncStorage.getItem("user_id"),
         name: name,
         dietary_restriction: dietaryRestrictions,
       };
@@ -318,9 +132,25 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     } catch (error) {
       console.error("Error in saveProfile:", error);
       Alert.alert("Error saving profile", error.message);
-    } finally {
-      setLoading(false);
     }
+  };
+
+  const confirmSaveProfileWithoutImages = () => {
+    Alert.alert(
+      "No Fridge Images",
+      "You have not provided any fridge images. Do you want to continue without adding these images?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Continue",
+          onPress: () => saveProfile(true),
+        },
+      ],
+      { cancelable: true },
+    );
   };
 
   const questions = [
@@ -399,11 +229,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   return (
     <ImageBackground source={bg[currentQuestion]} style={styles.container}>
       <View style={styles.container}>
-        {loading ? (
-          <ActivityIndicator size="large" color="#00ff00" />
-        ) : (
-          questions[currentQuestion]
-        )}
+        {loading ? <Loading /> : questions[currentQuestion]}
       </View>
       {!loading && currentQuestion < 2 && (
         <TouchableOpacity
