@@ -299,7 +299,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       const updates = {
         id: user.id,
         name: name,
-        dietary_restriction: selected,
+        dietary_restriction: dietaryRestrictions,
       };
 
       const { error: profileError } = await supabase

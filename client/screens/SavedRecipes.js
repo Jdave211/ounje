@@ -87,7 +87,8 @@ const styles = {
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#121212",
-    paddingTop: 45,
+    paddingTop: 55,
+    paddingBottom: 11,
   },
   text: {
     color: "white",
