@@ -83,14 +83,16 @@ const SavedRecipes = () => {
 
 const styles = {
   container: {
-    // flex: 2,
-    // justifyContent: "center",
-    // alignItems: "center",
-    backgroundColor: "black",
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#121212",
+    paddingTop: 45,
   },
   text: {
     color: "white",
     fontSize: 20,
+    fontWeight: "bold",
   },
 };
 

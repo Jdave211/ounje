@@ -116,11 +116,11 @@ const RecipeCard = ({ id, showBookmark }) => {
     if (!recipeDetails || !food_items) return 0;
 
     let food_items_set = new Set(
-      food_items.map(({ spoonacular_id }) => spoonacular_id)
+      food_items.map(({ spoonacular_id }) => spoonacular_id),
     );
 
     const owned_items = recipeDetails.extended_ingredients.filter(
-      (ingredient) => food_items_set.has(ingredient.id)
+      (ingredient) => food_items_set.has(ingredient.id),
     );
 
     if (!owned_items || owned_items.length === 0) return 0;
@@ -133,7 +133,7 @@ const RecipeCard = ({ id, showBookmark }) => {
 
   const percentage = useMemo(
     () => calc_percentage(recipeDetails) * 2,
-    [food_items, recipeDetails]
+    [food_items, recipeDetails],
   );
 
   return (
@@ -197,7 +197,7 @@ const RecipeCard = ({ id, showBookmark }) => {
                     paddingRight: 20,
                   }}
                 >
-                  <Feather name="clock" size={20} color="green" />
+                  <Feather name="clock" size={20} color="white" />
                   <Text style={{ ...styles.text, marginLeft: 10 }}>
                     {recipeDetails.ready_in_minutes} mins
                   </Text>
