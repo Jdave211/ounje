@@ -13,6 +13,7 @@ import {
   ScrollView,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { supabase } from "../../utils/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import name_bg from "../../assets/name_bg.jpg";
 import diet_bg from "../../assets/diet_bg.jpeg";
@@ -21,14 +22,26 @@ import camera_icon from "../../assets/camera_icon.png";
 import { MultipleSelectList } from "../../components/MultipleSelectList";
 import { FontAwesome5 } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import Loading from "@components/Loading";
-import useImageProcessing from "@components/useImageProcessing"; // Import the custom hook
+import * as FileSystem from "expo-file-system";
+import { customAlphabet } from "nanoid/non-secure";
+import { Buffer } from "buffer";
+import { openai, extract_json } from "../../utils/openai";
+import { FOOD_ITEMS_PROMPT } from "../../utils/prompts";
+import Loading from "../../components/Loading";
+import {
+  flatten_nested_objects,
+  parse_ingredients,
+} from "../../utils/spoonacular";
+import useImageProcessing from "../../components/useImageProcessing"; // Import the custom hook
 
-const FirstLogin = ({ onProfileComplete }) => {
+const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
+
+const FirstLogin = ({ onProfileComplete, session }) => {
   const [name, setName] = useState("");
   const [dietaryRestrictions, setDietaryRestrictions] = useState([]);
-  const [fridgeImageUris, setFridgeImageUris] = useState([]);
+  const [selected, setSelected] = useState([]);
   const [fridgeImages, setFridgeImages] = useState([]);
+  const [fridgeImageUris, setFridgeImageUris] = useState([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
 
   const { loading, convertImageToBase64, sendImages } = useImageProcessing();
@@ -99,19 +112,48 @@ const FirstLogin = ({ onProfileComplete }) => {
     );
   };
 
-  const saveProfile = async (continueWithoutImages = false) => {
-    if (fridgeImages.length === 0 && !continueWithoutImages) {
-      confirmSaveProfileWithoutImages();
-      return;
-    }
+  const confirmSaveProfileWithoutImages = () => {
+    Alert.alert(
+      "No Fridge Images",
+      "You have not provided any fridge images. Do you want to continue without adding these images?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Continue",
+          onPress: () => saveProfile(true),
+        },
+      ],
+      { cancelable: true },
+    );
+  };
 
+  const saveProfile = async (continueWithoutImages = false) => {
     try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError) {
+        console.error("Error fetching user:", userError);
+        throw userError;
+      }
+
+      if (fridgeImages.length === 0 && !continueWithoutImages) {
+        setLoading(false);
+        confirmSaveProfileWithoutImages();
+        return;
+      }
+
       if (fridgeImages.length > 0) {
         await sendImages(fridgeImages);
       }
 
       const updates = {
-        id: await AsyncStorage.getItem("user_id"),
+        id: user.id,
         name: name,
         dietary_restriction: dietaryRestrictions,
       };
@@ -132,25 +174,8 @@ const FirstLogin = ({ onProfileComplete }) => {
     } catch (error) {
       console.error("Error in saveProfile:", error);
       Alert.alert("Error saving profile", error.message);
+    } finally {
     }
-  };
-
-  const confirmSaveProfileWithoutImages = () => {
-    Alert.alert(
-      "No Fridge Images",
-      "You have not provided any fridge images. Do you want to continue without adding these images?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Continue",
-          onPress: () => saveProfile(true),
-        },
-      ],
-      { cancelable: true },
-    );
   };
 
   const questions = [

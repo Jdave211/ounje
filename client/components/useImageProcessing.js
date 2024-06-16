@@ -1,9 +1,9 @@
 import { useState } from "react";
 import * as FileSystem from "expo-file-system";
 import { Buffer } from "buffer";
-import { supabase } from "@utils/supabase";
+import { supabase } from "../utils/supabase";
 import { openai, extract_json } from "../utils/openai";
-import { FOOD_ITEMS_PROMPT } from "@utils/prompts";
+import { FOOD_ITEMS_PROMPT } from "../utils/prompts";
 import { parse_ingredients } from "../utils/spoonacular";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { customAlphabet } from "nanoid/non-secure";
@@ -98,7 +98,7 @@ const useImageProcessing = () => {
 
       const systemPrompt = {
         role: "system",
-        content: "FOOD_ITEMS_PROMPT",
+        content: FOOD_ITEMS_PROMPT,
       };
       const userPrompt = {
         role: "user",

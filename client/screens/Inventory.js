@@ -9,6 +9,8 @@ import {
   Modal,
   Alert,
   TextInput,
+  ActionSheetIOS,
+  ActivityIndicator,
 } from "react-native";
 import { FontAwesome5, AntDesign } from "@expo/vector-icons";
 import { MultipleSelectList } from "../components/MultipleSelectList";
@@ -16,9 +18,10 @@ import { supabase } from "../utils/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
-import * as ImagePicker from "react-native-image-picker";
+import * as ImagePicker from "expo-image-picker"; // Ensure correct import
 import camera from "@assets/camera_icon.png";
-import { parse_ingredients } from "@utils/spoonacular"; // Ensure this path is correct
+import { parse_ingredients } from "@utils/spoonacular";
+import useImageProcessing from "../components/useImageProcessing"; // Import the custom hook
 
 const Inventory = () => {
   const navigation = useNavigation();
@@ -26,9 +29,13 @@ const Inventory = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [foodItems, setFoodItems] = useState([]);
+  const [newlyAddedItems, setNewlyAddedItems] = useState([]); // State to track newly added items
   const [inventoryImages, setInventoryImages] = useState([]);
   const [userId, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
+  const [isLoading, setIsLoading] = useState(false); // State to manage loader
+
+  const { loading, convertImageToBase64, sendImages } = useImageProcessing();
 
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -115,14 +122,17 @@ const Inventory = () => {
       if (spoonacularResponse && spoonacularResponse.length > 0) {
         const spoonacularNewItem = spoonacularResponse[0];
 
-        const updatedFoodItems = [
-          ...foodItems,
-          {
-            name: spoonacularNewItem.name,
-            spoonacular_id: spoonacularNewItem.id,
-          },
-        ];
+        const newFoodItem = {
+          name: spoonacularNewItem.name,
+          spoonacular_id: spoonacularNewItem.id,
+        };
+
+        const updatedFoodItems = [...foodItems, newFoodItem];
+        const updatedNewlyAddedItems = [...newlyAddedItems, newFoodItem.name]; // Update newly added items
+        console.log(updatedNewlyAddedItems);
+
         setFoodItems(updatedFoodItems);
+        setNewlyAddedItems(updatedNewlyAddedItems); // Update state
 
         await AsyncStorage.setItem(
           "food_items_array",
@@ -171,22 +181,144 @@ const Inventory = () => {
   };
 
   const handleAddImage = async () => {
-    const result = await ImagePicker.launchImageLibrary({
-      mediaType: "photo",
-      quality: 1,
-    });
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-    if (result.assets && result.assets.length > 0) {
-      const imageUri = result.assets[0].uri;
-
-      // Here, you would upload the image to your storage and get the URL
-      // For demonstration purposes, we will just add the local URI
-      setInventoryImages([...inventoryImages, imageUri]);
+    if (cameraRollPerm !== "granted") {
+      alert("Sorry, we need camera roll permissions to make this work!");
+      return;
     }
+
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
+
+    if (cameraPerm !== "granted") {
+      alert("Sorry, we need camera permissions to make this work!");
+      return;
+    }
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ["Cancel", "Take Photo", "Choose from Library"],
+        cancelButtonIndex: 0,
+      },
+      async (buttonIndex) => {
+        if (buttonIndex === 1) {
+          let result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            setInventoryImages((prevUris) => [...prevUris, imageUri]);
+          }
+        } else if (buttonIndex === 2) {
+          let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            setInventoryImages((prevUris) => [...prevUris, imageUri]);
+          }
+        }
+      },
+    );
+  };
+
+  const handleReplaceImage = async (index) => {
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (cameraRollPerm !== "granted") {
+      alert("Sorry, we need camera roll permissions to make this work!");
+      return;
+    }
+
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
+
+    if (cameraPerm !== "granted") {
+      alert("Sorry, we need camera permissions to make this work!");
+      return;
+    }
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ["Cancel", "Take Photo", "Choose from Library"],
+        cancelButtonIndex: 0,
+      },
+      async (buttonIndex) => {
+        if (buttonIndex === 1) {
+          let result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            const base64Image = await convertImageToBase64(imageUri);
+
+            // Replace the image in the array
+            const updatedImages = [...inventoryImages];
+            updatedImages[index] = imageUri;
+            setInventoryImages(updatedImages);
+
+            // Optionally, you can send the image for processing
+            setIsLoading(true);
+            await sendImages([base64Image]);
+            setIsLoading(false);
+            Alert.alert("Success", "Image has been replaced.");
+
+            // Close the modal
+            setModalVisible(false);
+          }
+        } else if (buttonIndex === 2) {
+          let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            const base64Image = await convertImageToBase64(imageUri);
+
+            // Replace the image in the array
+            const updatedImages = [...inventoryImages];
+            updatedImages[index] = imageUri;
+            setInventoryImages(updatedImages);
+
+            // Optionally, you can send the image for processing
+            setIsLoading(true);
+            await sendImages([base64Image]);
+            setIsLoading(false);
+            Alert.alert("Success", "Image has been replaced.");
+
+            // Close the modal
+            setModalVisible(false);
+          }
+        }
+      },
+    );
   };
 
   return (
     <View style={styles.container}>
+      {isLoading && (
+        <View style={styles.loader}>
+          <ActivityIndicator size="large" color="#38F096" />
+        </View>
+      )}
       <ScrollView contentContainerStyle={styles.scrollViewContent}>
         <View style={styles.imageSection}>
           <View style={styles.imageContainer}>
@@ -234,6 +366,14 @@ const Inventory = () => {
                 source={{ uri: selectedImage }}
                 style={styles.modalImage}
               />
+              <TouchableOpacity
+                style={styles.replaceButton}
+                onPress={() =>
+                  handleReplaceImage(inventoryImages.indexOf(selectedImage))
+                }
+              >
+                <Text style={styles.buttonText}>Replace Image</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -294,6 +434,16 @@ const Inventory = () => {
             <Text style={styles.saveButtonText}>Save Inventory</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Section to display newly added items */}
+        {/* <View style={styles.card}>
+          <Text style={styles.cardTitle}>Newly Added Food Items</Text>
+          {newlyAddedItems.map((item, index) => (
+            <Text key={index} style={styles.itemText}>
+              {item.name}
+            </Text>
+          ))}
+        </View> */}
       </ScrollView>
     </View>
   );
@@ -351,11 +501,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#222",
     borderRadius: 10,
     padding: 20,
+    alignItems: "center",
   },
   modalImage: {
     width: 300,
     height: 300,
     resizeMode: "contain",
+  },
+  replaceButton: {
+    marginTop: 10,
+    backgroundColor: "#282C35",
+    borderRadius: 10,
+    padding: 10,
+    alignItems: "center",
   },
   card: {
     backgroundColor: "#1f1f1f",
@@ -441,6 +599,22 @@ const styles = StyleSheet.create({
     color: "#38F096",
     fontWeight: "bold",
     fontSize: 18,
+  },
+  itemText: {
+    color: "#fff",
+    fontSize: 16,
+    marginVertical: 2,
+  },
+  loader: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    zIndex: 1,
   },
 });
 
