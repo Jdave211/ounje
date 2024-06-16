@@ -107,32 +107,25 @@ const RecipeOptions = () => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>Generated Recipe Options</Text>
-      <ScrollView>
-        {/* <View style={{ justifyContent: "center", alignItems: "center", flexDirection: "row", flexWrap: "wrap" }}> */}
-        {recipeOptions.map((recipeOption, index) => (
-          <TouchableOpacity
-            key={index}
-            onPress={navigate_to_recipe_page(recipeOption.id)}
-          >
-            <RecipeCard
+      <View style={styles.content}>
+        <Text style={styles.text}>Generated Recipes</Text>
+        <ScrollView style={styles.recipes}>
+          {/* <View style={{ justifyContent: "center", alignItems: "center", flexDirection: "row", flexWrap: "wrap" }}> */}
+          {recipeOptions.map((recipeOption, index) => (
+            <TouchableOpacity
               key={index}
-              id={recipeOption.id}
-              // recipe={recipeOption}
-              showBookmark={true}
-            />
-          </TouchableOpacity>
-        ))}
-        {/* </View> */}
-      </ScrollView>
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity
-          style={styles.buttonContainer}
-          onPress={navigate_to_saved_recipes}
-          // disabled={images.length === 0}
-        >
-          <Text style={styles.buttonText}>View Saved Recipes</Text>
-        </TouchableOpacity>
+              onPress={navigate_to_recipe_page(recipeOption.id)}
+            >
+              <RecipeCard
+                key={index}
+                id={recipeOption.id}
+                // recipe={recipeOption}
+                showBookmark={true}
+              />
+            </TouchableOpacity>
+          ))}
+          {/* </View> */}
+        </ScrollView>
       </View>
     </View>
   );
@@ -141,13 +134,26 @@ const RecipeOptions = () => {
 const styles = {
   container: {
     flex: 1,
-    backgroundColor: "black",
+    backgroundColor: "#121212",
     padding: 15,
-    marginTop: 0,
+  },
+  content: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingTop: 20,
+    marginTop: 20,
+    marginBottom: 11,
   },
   text: {
     color: "white",
     fontSize: 20,
+    fontWeight: "bold",
+  },
+  recipes: {
+    marginTop: 20,
+    width: "100%",
+    height: "100%",
   },
   buttonContainer: {
     width: 200,

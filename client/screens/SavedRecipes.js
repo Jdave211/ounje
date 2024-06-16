@@ -54,7 +54,9 @@ const SavedRecipes = () => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.text}> Saved Recipes </Text>
+      <View style={{ marginBottom: 10 }}>
+        <Text style={styles.text}> Saved Recipes </Text>
+      </View>
       {savedRecipes && (
         <ScrollView>
           {/* <View
@@ -83,14 +85,17 @@ const SavedRecipes = () => {
 
 const styles = {
   container: {
-    // flex: 2,
-    // justifyContent: "center",
-    // alignItems: "center",
-    backgroundColor: "black",
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#121212",
+    paddingTop: 55,
+    paddingBottom: 11,
   },
   text: {
     color: "white",
     fontSize: 20,
+    fontWeight: "bold",
   },
 };
 

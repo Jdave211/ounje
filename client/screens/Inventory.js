@@ -9,13 +9,19 @@ import {
   Modal,
   Alert,
   TextInput,
+  ActionSheetIOS,
+  ActivityIndicator,
 } from "react-native";
 import { FontAwesome5, AntDesign } from "@expo/vector-icons";
 import { MultipleSelectList } from "../components/MultipleSelectList";
 import { supabase } from "../utils/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
+import * as ImagePicker from "expo-image-picker"; // Ensure correct import
+import camera from "@assets/camera_icon.png";
+import { parse_ingredients } from "@utils/spoonacular";
+import useImageProcessing from "../components/useImageProcessing"; // Import the custom hook
 
 const Inventory = () => {
   const navigation = useNavigation();
@@ -23,9 +29,13 @@ const Inventory = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [foodItems, setFoodItems] = useState([]);
+  const [newlyAddedItems, setNewlyAddedItems] = useState([]); // State to track newly added items
   const [inventoryImages, setInventoryImages] = useState([]);
   const [userId, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
+  const [isLoading, setIsLoading] = useState(false); // State to manage loader
+
+  const { loading, convertImageToBase64, sendImages } = useImageProcessing();
 
   useEffect(() => {
     const fetchInitialData = async () => {
@@ -61,23 +71,90 @@ const Inventory = () => {
     fetchInitialData();
   }, []);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      const fetchInitialData = async () => {
+        const retrievedUserId = await AsyncStorage.getItem("user_id");
+        setUserId(retrievedUserId);
+
+        const retrievedArrayText =
+          await AsyncStorage.getItem("food_items_array");
+        const retrievedFoodItemsArray = JSON.parse(retrievedArrayText || "[]");
+        setFoodItems(retrievedFoodItemsArray);
+
+        if (retrievedUserId) {
+          const { data: inventory } = await supabase
+            .from("inventory")
+            .select("images")
+            .eq("user_id", retrievedUserId)
+            .single();
+
+          if (inventory) {
+            const imagePaths = inventory.images.map((image) =>
+              image.replace("inventory_images/", ""),
+            );
+
+            const { data: urlResponses } = await supabase.storage
+              .from("inventory_images")
+              .createSignedUrls(imagePaths, 60 * 10);
+
+            const imageUrls = urlResponses.map(
+              (response) => response.signedUrl,
+            );
+            setInventoryImages(imageUrls);
+          }
+        }
+      };
+
+      fetchInitialData();
+    }, []),
+  );
+
   const addNewItem = async () => {
     if (newItem.trim() === "") {
       Alert.alert("Error", "Please enter a valid item name.");
       return;
     }
 
-    const updatedFoodItems = [
-      ...foodItems,
-      { name: newItem, spoonacular_id: Date.now(), image: "" },
-    ];
-    setFoodItems(updatedFoodItems);
-    setNewItem("");
-    Toast.show({
-      type: "success",
-      text1: "Item added!",
-      text2: `${newItem} has been added to your inventory.`,
-    });
+    try {
+      const spoonacularResponse = await parse_ingredients([newItem]);
+
+      if (spoonacularResponse && spoonacularResponse.length > 0) {
+        const spoonacularNewItem = spoonacularResponse[0];
+
+        const newFoodItem = {
+          name: spoonacularNewItem.name,
+          spoonacular_id: spoonacularNewItem.id,
+        };
+
+        const updatedFoodItems = [...foodItems, newFoodItem];
+        const updatedNewlyAddedItems = [...newlyAddedItems, newFoodItem.name]; // Update newly added items
+        console.log(updatedNewlyAddedItems);
+
+        setFoodItems(updatedFoodItems);
+        setNewlyAddedItems(updatedNewlyAddedItems); // Update state
+
+        await AsyncStorage.setItem(
+          "food_items_array",
+          JSON.stringify(updatedFoodItems),
+        );
+
+        Toast.show({
+          type: "success",
+          text1: "Item added!",
+          text2: `${spoonacularNewItem.name} has been added to your inventory.`,
+        });
+      } else {
+        Alert.alert("Error", "Could not find the item on Spoonacular.");
+      }
+    } catch (error) {
+      Alert.alert(
+        "Error",
+        "There was an error adding the item. Please try again.",
+      );
+    } finally {
+      setNewItem("");
+    }
   };
 
   const removeItem = async (itemName) => {
@@ -103,22 +180,171 @@ const Inventory = () => {
     navigation.navigate("Home");
   };
 
+  const handleAddImage = async () => {
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (cameraRollPerm !== "granted") {
+      alert("Sorry, we need camera roll permissions to make this work!");
+      return;
+    }
+
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
+
+    if (cameraPerm !== "granted") {
+      alert("Sorry, we need camera permissions to make this work!");
+      return;
+    }
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ["Cancel", "Take Photo", "Choose from Library"],
+        cancelButtonIndex: 0,
+      },
+      async (buttonIndex) => {
+        if (buttonIndex === 1) {
+          let result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            setInventoryImages((prevUris) => [...prevUris, imageUri]);
+          }
+        } else if (buttonIndex === 2) {
+          let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            setInventoryImages((prevUris) => [...prevUris, imageUri]);
+          }
+        }
+      },
+    );
+  };
+
+  const handleReplaceImage = async (index) => {
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (cameraRollPerm !== "granted") {
+      alert("Sorry, we need camera roll permissions to make this work!");
+      return;
+    }
+
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
+
+    if (cameraPerm !== "granted") {
+      alert("Sorry, we need camera permissions to make this work!");
+      return;
+    }
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: ["Cancel", "Take Photo", "Choose from Library"],
+        cancelButtonIndex: 0,
+      },
+      async (buttonIndex) => {
+        if (buttonIndex === 1) {
+          let result = await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            const base64Image = await convertImageToBase64(imageUri);
+
+            // Replace the image in the array
+            const updatedImages = [...inventoryImages];
+            updatedImages[index] = imageUri;
+            setInventoryImages(updatedImages);
+
+            // Optionally, you can send the image for processing
+            setIsLoading(true);
+            await sendImages([base64Image]);
+            setIsLoading(false);
+            Alert.alert("Success", "Image has been replaced.");
+
+            // Close the modal
+            setModalVisible(false);
+          }
+        } else if (buttonIndex === 2) {
+          let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsEditing: true,
+            aspect: [4, 3],
+            quality: 1,
+          });
+
+          if (!result.canceled) {
+            const imageUri = result.assets[0].uri;
+            const base64Image = await convertImageToBase64(imageUri);
+
+            // Replace the image in the array
+            const updatedImages = [...inventoryImages];
+            updatedImages[index] = imageUri;
+            setInventoryImages(updatedImages);
+
+            // Optionally, you can send the image for processing
+            setIsLoading(true);
+            await sendImages([base64Image]);
+            setIsLoading(false);
+            Alert.alert("Success", "Image has been replaced.");
+
+            // Close the modal
+            setModalVisible(false);
+          }
+        }
+      },
+    );
+  };
+
   return (
     <View style={styles.container}>
+      {isLoading && (
+        <View style={styles.loader}>
+          <ActivityIndicator size="large" color="#38F096" />
+        </View>
+      )}
       <ScrollView contentContainerStyle={styles.scrollViewContent}>
         <View style={styles.imageSection}>
           <View style={styles.imageContainer}>
-            {inventoryImages.map((imageUrl, index) => (
+            {inventoryImages.length === 0 ? (
               <TouchableOpacity
-                key={index}
-                onPress={() => {
-                  setSelectedImage(imageUrl);
-                  setModalVisible(true);
-                }}
+                style={styles.addImageButton}
+                onPress={handleAddImage}
               >
-                <Image source={{ uri: imageUrl }} style={styles.image} />
+                <Image
+                  source={camera}
+                  style={{ width: 100, height: 100, margin: 1 }}
+                />
               </TouchableOpacity>
-            ))}
+            ) : (
+              inventoryImages.map((imageUrl, index) => (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => {
+                    setSelectedImage(imageUrl);
+                    setModalVisible(true);
+                  }}
+                >
+                  <Image source={{ uri: imageUrl }} style={styles.image} />
+                </TouchableOpacity>
+              ))
+            )}
           </View>
         </View>
 
@@ -140,6 +366,14 @@ const Inventory = () => {
                 source={{ uri: selectedImage }}
                 style={styles.modalImage}
               />
+              <TouchableOpacity
+                style={styles.replaceButton}
+                onPress={() =>
+                  handleReplaceImage(inventoryImages.indexOf(selectedImage))
+                }
+              >
+                <Text style={styles.buttonText}>Replace Image</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
@@ -149,8 +383,10 @@ const Inventory = () => {
           <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
-              placeholder="Enter item name"
+              placeholder="Enter your food item"
               placeholderTextColor="gray"
+              autoCapitalize="none"
+              maxLength={50}
               value={newItem}
               onChangeText={setNewItem}
             />
@@ -198,6 +434,16 @@ const Inventory = () => {
             <Text style={styles.saveButtonText}>Save Inventory</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Section to display newly added items */}
+        {/* <View style={styles.card}>
+          <Text style={styles.cardTitle}>Newly Added Food Items</Text>
+          {newlyAddedItems.map((item, index) => (
+            <Text key={index} style={styles.itemText}>
+              {item.name}
+            </Text>
+          ))}
+        </View> */}
       </ScrollView>
     </View>
   );
@@ -229,6 +475,17 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
   },
+  addImageButton: {
+    borderRadius: 10,
+    padding: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addImageText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.8)",
@@ -244,11 +501,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#222",
     borderRadius: 10,
     padding: 20,
+    alignItems: "center",
   },
   modalImage: {
     width: 300,
     height: 300,
     resizeMode: "contain",
+  },
+  replaceButton: {
+    marginTop: 10,
+    backgroundColor: "#282C35",
+    borderRadius: 10,
+    padding: 10,
+    alignItems: "center",
   },
   card: {
     backgroundColor: "#1f1f1f",
@@ -269,7 +534,8 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    borderColor: "#32cd32",
+    height: 50,
+    borderColor: "white",
     borderWidth: 1,
     padding: 10,
     borderRadius: 10,
@@ -278,7 +544,7 @@ const styles = StyleSheet.create({
   },
   addButton: {
     marginLeft: 10,
-    backgroundColor: "#32cd32",
+    backgroundColor: "#282C35",
     borderRadius: 5,
     padding: 10,
   },
@@ -297,7 +563,7 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   selectListBoxStyles: {
-    borderColor: "#9b111e",
+    borderColor: "white",
     borderWidth: 1,
     borderRadius: 10,
     backgroundColor: "#333",
@@ -312,7 +578,7 @@ const styles = StyleSheet.create({
   },
   removeButton: {
     marginTop: 10,
-    backgroundColor: "#9b111e",
+    backgroundColor: "#282C35",
     borderRadius: 10,
     padding: 10,
     alignItems: "center",
@@ -324,14 +590,31 @@ const styles = StyleSheet.create({
   saveButton: {
     width: 200,
     height: 50,
-    backgroundColor: "#32cd32",
     borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
+    marginBottom: 20,
   },
   saveButtonText: {
-    color: "#fff",
+    color: "#38F096",
     fontWeight: "bold",
+    fontSize: 18,
+  },
+  itemText: {
+    color: "#fff",
+    fontSize: 16,
+    marginVertical: 2,
+  },
+  loader: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    zIndex: 1,
   },
 });
 

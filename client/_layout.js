@@ -16,13 +16,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#121212",
   },
-  header: {
-    paddingTop: 40,
-    height: 80,
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 100,
-  },
   headerText: {
     fontSize: 20,
     fontWeight: "bold",
