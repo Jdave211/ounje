@@ -132,7 +132,7 @@ const RecipeCard = ({ id, showBookmark }) => {
   };
 
   const percentage = useMemo(
-    () => calc_percentage(recipeDetails) * 2,
+    () => calc_percentage(recipeDetails),
     [food_items, recipeDetails],
   );
 
@@ -205,11 +205,15 @@ const RecipeCard = ({ id, showBookmark }) => {
 
                 <View>
                   <Text style={styles.text}>
-                    {new Number(percentage).toFixed(2)}% of{" "}
+                    {new Number(percentage).toFixed(0)}% of{" "}
                   </Text>
-                  <ProgressBar progress={percentage / 100} width={60} />
+                  <ProgressBar
+                    color="green"
+                    progress={percentage / 100}
+                    width={60}
+                  />
                 </View>
-                <View>
+                <View style={{ marginLeft: 7 }}>
                   <Image
                     source={harvestImage}
                     style={{ resizeMode: "cover", width: 24, height: 24 }}

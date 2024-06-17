@@ -5,37 +5,20 @@ import {
   StyleSheet,
   Image,
   TouchableOpacity,
-  ImageBackground,
   Dimensions,
-  FlatList,
+  ScrollView,
 } from "react-native";
 import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
 import Carousel from "react-native-reanimated-carousel";
-import { ScrollView } from "react-native-gesture-handler";
 import { entitle } from "../utils/helpers";
 import harvestImage from "../assets/harvest.png";
 import { Bar as ProgressBar } from "react-native-progress";
 import RenderHtml from "react-native-render-html";
 import { useWindowDimensions } from "react-native";
-
 import { useNavigation } from "@react-navigation/native";
-
-// recipe:
-// - id
-// usedIngredients: [],
-// missedIngredients: [],
-// title: Text,
-// image: Text,
-// usedIngredientCount: Number,
-// missedIngredientCount: Number,
-//
-// retrieve from database if recipes are stored
-// - likes: Number
-// - bookmarks: Number
-//
 
 const RecipePage = ({ route }) => {
   const { width: WIDTH } = useWindowDimensions();
@@ -45,16 +28,15 @@ const RecipePage = ({ route }) => {
   const [user_id, setUserId] = useState(null);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [food_items, setFoodItems] = useState([]);
-  const [isSaved, setIsSaved] = React.useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
-  console.log("RecipePage", { id });
   useEffect(() => {
-    const get_user_id = async () => {
-      let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(() => retrieved_user_id);
+    const getUserId = async () => {
+      const retrieved_user_id = await AsyncStorage.getItem("user_id");
+      setUserId(retrieved_user_id);
     };
 
-    const fetch_recipe_details = async () => {
+    const fetchRecipeDetails = async () => {
       const {
         data: [recipe],
       } = await supabase
@@ -62,43 +44,38 @@ const RecipePage = ({ route }) => {
         .select("*")
         .eq("id", id)
         .throwOnError();
-
-      setRecipeDetails(() => recipe);
+      setRecipeDetails(recipe);
     };
 
-    const fetch_food_items = async () => {
-      retrieved_text = await AsyncStorage.getItem("food_items_array");
-      let retrieved_food_items_array = JSON.parse(retrieved_text);
-
+    const fetchFoodItems = async () => {
+      const retrieved_text = await AsyncStorage.getItem("food_items_array");
+      const retrieved_food_items_array = JSON.parse(retrieved_text);
       if (retrieved_food_items_array?.length > 0) {
         setFoodItems(retrieved_food_items_array);
       }
     };
 
-    const fetch_is_saved = async () => {
+    const fetchIsSaved = async () => {
       const { data: saved_data } = await supabase
         .from("saved_recipes")
         .select()
         .eq("user_id", user_id)
         .eq("recipe_id", id)
         .throwOnError();
-
       setIsSaved(saved_data?.length > 0);
     };
 
     if (!user_id) {
-      get_user_id();
+      getUserId();
     } else {
-      fetch_recipe_details();
-      fetch_is_saved();
-      fetch_food_items();
+      fetchRecipeDetails();
+      fetchIsSaved();
+      fetchFoodItems();
     }
   }, [user_id, route.params]);
 
   const handleSave = async () => {
-    let localIsSaved = !isSaved;
-
-    console.log({ localIsSaved });
+    const localIsSaved = !isSaved;
     setIsSaved(localIsSaved);
 
     if (localIsSaved) {
@@ -106,14 +83,11 @@ const RecipePage = ({ route }) => {
         .from("saved_recipes")
         .insert([{ user_id, recipe_id: recipeDetails.id }])
         .throwOnError();
-
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${recipeDetails.title} has been saved to your recipes.`,
+        text2: `${recipeDetails.title} has been saved to your collection.`,
       });
-
-      return;
     } else {
       await supabase
         .from("saved_recipes")
@@ -124,39 +98,41 @@ const RecipePage = ({ route }) => {
       Toast.show({
         type: "success",
         text1: "Recipe Unsaved",
-        text2: `${recipeDetails.title} has been removed from your saved recipes.`,
+        text2: `${recipeDetails.title} has been removed from your collection.`,
       });
     }
   };
 
-  const on_return_to_previous_page = () => {
-    console.log({ navigation: navigation.getState().history });
-    navigation.goBack();
+  const onReturnToPreviousPage = () => {
+    navigation.navigate("RecipeOptions");
   };
 
-  console.log({ recipePage: recipeDetails });
-
-  const calc_percentage = (recipeDetails) => {
+  const calcPercentage = () => {
     if (!recipeDetails || !food_items) return 0;
-
-    let food_items_set = new Set(
+    const foodItemsSet = new Set(
       food_items.map(({ spoonacular_id }) => spoonacular_id),
     );
-
-    const owned_items = recipeDetails.extended_ingredients.filter(
-      (ingredient) => food_items_set.has(ingredient.id),
+    const ownedItems = recipeDetails.extended_ingredients.filter((ingredient) =>
+      foodItemsSet.has(ingredient.id),
     );
+    if (!ownedItems || ownedItems.length === 0) return 0;
+    const percentage =
+      (ownedItems.length / recipeDetails.extended_ingredients.length) * 100;
+    return percentage;
+  };
 
-    if (!owned_items || owned_items.length === 0) return 0;
-
-    const _percentage =
-      (owned_items.length / recipeDetails.extended_ingredients.length) * 100;
-
-    return _percentage;
+  const truncateDescription = (description = "") => {
+    const index = description.indexOf("spoonacular");
+    if (index !== -1) {
+      return description.substring(0, index) + "...";
+    }
+    return description.length > 200
+      ? description.substring(0, 200) + "..."
+      : description;
   };
 
   const percentage = useMemo(
-    () => calc_percentage(recipeDetails) * 2,
+    () => calcPercentage(),
     [food_items, recipeDetails],
   );
 
@@ -167,46 +143,14 @@ const RecipePage = ({ route }) => {
         stickyHeaderIndices={[0]}
         showsVerticalScrollIndicator={false}
       >
-        <View
-          style={{
-            width: "100%",
-            position: "absolute",
-            // flex: 1,
-            flexDirection: "row",
-            justifyContent: "space-between",
-            // backgroundColor: "red",
-            height: 50,
-          }}
-        >
+        <View style={styles.header}>
           <TouchableOpacity
-            style={{
-              backgroundColor: "#2e2d2d",
-              borderRadius: 100,
-              padding: 8,
-              width: 50,
-              justifyContent: "center",
-              alignItems: "center",
-              marginLeft: 10,
-            }}
-            onPress={on_return_to_previous_page}
+            style={styles.backButton}
+            onPress={onReturnToPreviousPage}
           >
             <AntDesign name="arrowleft" size={24} color={"white"} />
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={{
-              backgroundColor: "#2e2d2d",
-              borderRadius: 100,
-              padding: 8,
-              width: 50,
-              top: -40,
-              justifyContent: "center",
-              alignItems: "center",
-              marginLeft: "auto",
-              marginRight: 10,
-            }}
-            onPress={handleSave}
-          >
+          <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
             {isSaved ? (
               <MaterialIcons name="bookmark-remove" size={24} color={"gray"} />
             ) : (
@@ -220,26 +164,12 @@ const RecipePage = ({ route }) => {
             loop
             width={PAGE_WIDTH}
             height={PAGE_WIDTH / 2}
-            // autoPlay={true}
             data={[0]}
             scrollAnimationDuration={1000}
-            onSnapToItem={(index) => console.log("current index:", index)}
-            renderItem={({ index }) => (
-              <View
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  justifyContent: "center",
-                }}
-              >
+            renderItem={() => (
+              <View style={styles.carouselItem}>
                 <Image
-                  style={{
-                    width: "100%",
-                    height: 200,
-                    borderRadius: 10,
-                    borderTopLeftRadius: 10,
-                    borderTopRightRadius: 10,
-                  }}
+                  style={styles.carouselImage}
                   source={{ uri: recipeDetails.image }}
                 />
               </View>
@@ -247,125 +177,65 @@ const RecipePage = ({ route }) => {
           />
         </View>
 
-        <View style={{ padding: 10 }}>
-          <View style={{ ...styles.imageTextContainer, marginBottom: 5 }}>
-            <Text style={styles.title}>{recipeDetails.title}</Text>
-          </View>
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginTop: 10,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  paddingRight: 20,
-                }}
-              >
-                <Feather name="clock" size={20} color="green" />
-                <Text style={{ ...styles.text, marginLeft: 10 }}>
-                  {recipeDetails.ready_in_minutes} mins
-                </Text>
-              </View>
-
-              <View>
-                <Text style={{ ...styles.text, marginRight: 10 }}>
-                  {new Number(percentage).toFixed(2)}% of Ingredients
-                </Text>
-                <ProgressBar progress={percentage / 100} width={100} />
-              </View>
-              <View>
-                <Image
-                  source={harvestImage}
-                  style={{ resizeMode: "cover", width: 24, height: 24 }}
+        <View style={styles.content}>
+          <Text style={styles.title}>{recipeDetails.title}</Text>
+          <View style={styles.details}>
+            <View style={styles.detailsRow}>
+              <Feather name="clock" size={20} color="green" />
+              <Text style={styles.text}>
+                {recipeDetails.ready_in_minutes} mins
+              </Text>
+            </View>
+            <View style={styles.progressContainer}>
+              <Text style={styles.text}>
+                {percentage.toFixed(0)}% of Ingredients
+              </Text>
+              <View style={styles.progressBar}>
+                <ProgressBar
+                  progress={percentage / 100}
+                  width={100}
+                  color="green"
                 />
+                <Image source={harvestImage} style={styles.harvestImage} />
               </View>
             </View>
           </View>
-          <View style={{ marginTop: 20 }}>
-            <Text style={styles.subheading}>Description</Text>
-            <View>
-              <RenderHtml
-                baseStyle={styles.text}
-                contentWidth={WIDTH}
-                source={{ html: recipeDetails.summary }}
-              />
-            </View>
-          </View>
 
-          <View style={{ marginTop: 20 }}>
+          <Text style={styles.subheading}>Description</Text>
+          <RenderHtml
+            baseStyle={styles.text}
+            contentWidth={WIDTH}
+            source={{
+              html: `<div>${truncateDescription(recipeDetails.summary)}</div>`,
+            }}
+          />
+          <View style={styles.fullIngredients}>
             <Text style={styles.subheading}>Ingredients</Text>
             {recipeDetails.extended_ingredients.map((ingredient, i) => (
-              <View
-                key={i}
-                style={{
-                  flex: 3,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  paddingTop: 10,
-                  paddingBottom: 10,
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
+              <View key={i} style={styles.ingredient}>
+                <Image
+                  style={styles.ingredientImage}
+                  source={{
+                    uri: `https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`,
                   }}
-                >
-                  <Image
-                    style={{
-                      width: 50,
-                      height: 50,
-                      borderRadius: 10,
-                      marginRight: 10,
-                      backgroundColor: "white",
-                    }}
-                    source={{
-                      uri:
-                        "https://img.spoonacular.com/ingredients_100x100/" +
-                        ingredient.image,
-                    }}
-                  />
-                  <Text style={styles.text}>{entitle(ingredient.name)}</Text>
-                </View>
-                <View>
-                  <Text style={styles.text}>
+                />
+                <View style={styles.ingredientTextContainer}>
+                  <Text style={styles.ingredientText}>
+                    {entitle(ingredient.name)}
+                  </Text>
+                  <Text style={styles.ingredientAmount}>
                     {ingredient.amount} {ingredient.unit}
                   </Text>
                 </View>
               </View>
             ))}
           </View>
-
-          <View style={{ marginTop: 20, marginBottom: 20 }}>
+          <View style={styles.fullInstructions}>
             <Text style={styles.subheading}>Instructions</Text>
             {recipeDetails.analyzed_instructions[0].steps.map(
               ({ step, number }) => (
-                <View
-                  key={number}
-                  style={{
-                    flex: 2,
-                    flexDirection: "row",
-                    alignItems: "flex-start",
-                    width: "100%",
-                    paddingTop: 8,
-                    marginBottom: 10,
-                  }}
-                >
-                  <Text style={{ ...styles.text, marginRight: 8 }}>
-                    {number}.
-                  </Text>
+                <View key={number} style={styles.instruction}>
+                  <Text style={styles.text}>{number}.</Text>
                   <Text style={styles.text}>{step}</Text>
                 </View>
               ),
@@ -382,42 +252,126 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#121212",
     paddingTop: 45,
-    marginBottom: 17,
+    paddingHorizontal: 10,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    height: 50,
+  },
+  backButton: {
+    backgroundColor: "#2e2d2d",
+    borderRadius: 100,
+    padding: 8,
+    width: 50,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  saveButton: {
+    backgroundColor: "#2e2d2d",
+    borderRadius: 100,
+    padding: 8,
+    width: 50,
+    justifyContent: "center",
+    alignItems: "center",
+    position: "absolute",
+    right: 10,
+  },
+  carouselItem: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  carouselImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: 10,
+  },
+  content: {
+    padding: 10,
   },
   title: {
     fontSize: 20,
     fontWeight: "bold",
-    marginRight: 20,
     color: "white",
-    // textDecorationLine: "underline",
+    marginBottom: 10,
   },
-  recipeContent: {
-    backgroundColor: "#c7a27c",
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "white",
+  details: {
+    flexDirection: "column",
+    justifyContent: "space-between",
+    alignItems: "left",
+    marginBottom: 10,
   },
-  imageTextContainer: {
+  detailsRow: {
     flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 5,
   },
-  image: {
+  progressContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  progressBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     width: 100,
-    height: 100,
-    marginLeft: 15,
+    marginLeft: 10,
+  },
+  harvestImage: {
+    resizeMode: "cover",
+    width: 24,
+    height: 24,
+    marginLeft: 10,
   },
   subheading: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "bold",
-    marginBottom: 5,
+    marginTop: 20,
+    marginBottom: 10,
     color: "white",
   },
   text: {
     fontSize: 16,
     color: "white",
   },
-  save: {
-    alignSelf: "flex-end",
+  fullIngredients: {
+    marginTop: 10,
+    marginBottom: 5,
+  },
+  ingredient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+  },
+  ingredientImage: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    marginRight: 10,
+  },
+  ingredientTextContainer: {
+    flex: 1,
+    flexDirection: "column",
+    alignItems: "flex-start",
+  },
+  ingredientText: {
+    fontSize: 16,
+    color: "white",
+  },
+  ingredientAmount: {
+    fontSize: 14,
+    color: "gray",
+  },
+  fullInstructions: {
+    marginTop: 5,
+    marginBottom: 45,
+  },
+  instruction: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 8,
+    marginBottom: 7,
   },
 });
 

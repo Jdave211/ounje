@@ -72,7 +72,7 @@ const SavedRecipes = () => {
               key={i}
               onPress={navigate_to_recipe_page(recipe_id)}
             >
-              <RecipeCard id={recipe_id} />
+              <RecipeCard id={recipe_id} showBookmark={true} />
             </TouchableOpacity>
             // </View>
           ))}
