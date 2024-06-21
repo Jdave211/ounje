@@ -144,93 +144,101 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   // };
 
   const generateRecipes = async () => {
-    try {
-      setIsLoading(true);
-      onLoading(true);
+    if (foodItems.length === 0) {
+      Alert.alert(
+        "Error",
+        "Please add some food to inventory or take a new picture.",
+      );
+      navigation.navigate("Inventory");
+    } else {
+      try {
+        setIsLoading(true);
+        onLoading(true);
 
-      const { data: runs, error: runsError } = await supabase
-        .from("runs")
-        .insert([{ user_id: userId, images: [] }]) // Ensure images is set to an empty array or appropriate default value
-        .select();
+        const { data: runs, error: runsError } = await supabase
+          .from("runs")
+          .insert([{ user_id: userId, images: [] }]) // Ensure images is set to an empty array or appropriate default value
+          .select();
 
-      if (runsError) {
-        console.error("Error adding user run:", runsError);
-        Alert.alert("Error", "Failed to add user run.");
-        return;
+        if (runsError) {
+          console.error("Error adding user run:", runsError);
+          Alert.alert("Error", "Failed to add user run.");
+          return;
+        }
+
+        const currentRun = runs[0];
+
+        const selectedFoodItems = foodItems.map((item) => ({
+          run_id: currentRun.id,
+          ...item,
+        }));
+
+        await supabase.from("food_items").upsert(selectedFoodItems);
+
+        const { data: suggestedRecipes } = await axios.get(
+          "https://api.spoonacular.com/recipes/findByIngredients",
+          {
+            params: {
+              apiKey: process.env.SPOONACULAR_API_KEY,
+              ingredients: foodItems.map(({ name }) => name).join(", "),
+              number: 7,
+              ranking: 1,
+            },
+          },
+        );
+
+        const { data: recipeDetails } = await axios.get(
+          `https://api.spoonacular.com/recipes/informationBulk`,
+          {
+            params: {
+              apiKey: process.env.SPOONACULAR_API_KEY,
+              includeNutrition: true,
+              ids: suggestedRecipes.map((recipe) => recipe.id).join(", "),
+            },
+          },
+        );
+
+        const recipeOptions = suggestedRecipes.map((suggestedRecipe, i) => ({
+          ...suggestedRecipe,
+          ...recipeDetails[i],
+        }));
+
+        const recipeOptionsInSnakeCase = objectToSnake(recipeOptions).map(
+          (recipe) => {
+            delete recipe.cheap;
+            delete recipe.gaps;
+            delete recipe.likes;
+            delete recipe.missed_ingredient_count;
+            delete recipe.missed_ingredients;
+            delete recipe.used_ingredients;
+            delete recipe.used_ingredient_count;
+            delete recipe.user_tags;
+            delete recipe.unused_ingredients;
+            delete recipe.unknown_ingredients;
+            delete recipe.open_license;
+            delete recipe.report;
+            delete recipe.suspicious_data_score;
+            delete recipe.tips;
+            return recipe;
+          },
+        );
+
+        await supabase
+          .from("recipe_ids")
+          .upsert(recipeOptionsInSnakeCase, { onConflict: "id" });
+
+        await AsyncStorage.setItem(
+          "recipe_options",
+          JSON.stringify(recipeOptionsInSnakeCase),
+        );
+      } catch (error) {
+        console.error("Error generating recipes:", error);
+        Alert.alert("Error", "Failed to generate recipes.");
+      } finally {
+        setIsLoading(false);
+        onLoading(false);
+        navigation.navigate("RecipeOptions");
       }
-
-      const currentRun = runs[0];
-
-      const selectedFoodItems = foodItems.map((item) => ({
-        run_id: currentRun.id,
-        ...item,
-      }));
-
-      await supabase.from("food_items").upsert(selectedFoodItems);
-
-      const { data: suggestedRecipes } = await axios.get(
-        "https://api.spoonacular.com/recipes/findByIngredients",
-        {
-          params: {
-            apiKey: process.env.SPOONACULAR_API_KEY,
-            ingredients: foodItems.map(({ name }) => name).join(", "),
-            number: 7,
-            ranking: 1,
-          },
-        },
-      );
-
-      const { data: recipeDetails } = await axios.get(
-        `https://api.spoonacular.com/recipes/informationBulk`,
-        {
-          params: {
-            apiKey: process.env.SPOONACULAR_API_KEY,
-            includeNutrition: true,
-            ids: suggestedRecipes.map((recipe) => recipe.id).join(", "),
-          },
-        },
-      );
-
-      const recipeOptions = suggestedRecipes.map((suggestedRecipe, i) => ({
-        ...suggestedRecipe,
-        ...recipeDetails[i],
-      }));
-
-      const recipeOptionsInSnakeCase = objectToSnake(recipeOptions).map(
-        (recipe) => {
-          delete recipe.cheap;
-          delete recipe.gaps;
-          delete recipe.likes;
-          delete recipe.missed_ingredient_count;
-          delete recipe.missed_ingredients;
-          delete recipe.used_ingredients;
-          delete recipe.used_ingredient_count;
-          delete recipe.user_tags;
-          delete recipe.unused_ingredients;
-          delete recipe.unknown_ingredients;
-          delete recipe.open_license;
-          delete recipe.report;
-          delete recipe.suspicious_data_score;
-          delete recipe.tips;
-          return recipe;
-        },
-      );
-
-      await supabase
-        .from("recipe_ids")
-        .upsert(recipeOptionsInSnakeCase, { onConflict: "id" });
-
-      await AsyncStorage.setItem(
-        "recipe_options",
-        JSON.stringify(recipeOptionsInSnakeCase),
-      );
-    } catch (error) {
-      console.error("Error generating recipes:", error);
-      Alert.alert("Error", "Failed to generate recipes.");
-    } finally {
-      setIsLoading(false);
-      onLoading(false);
-      navigation.navigate("RecipeOptions");
     }
   };
 

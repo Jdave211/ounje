@@ -104,7 +104,15 @@ const RecipePage = ({ route }) => {
   };
 
   const onReturnToPreviousPage = () => {
-    navigation.navigate("RecipeOptions");
+    const currentNavigationState = navigation.getState();
+    console.log("Current Navigation State:", currentNavigationState);
+
+    // Navigate back to the previous screen
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      console.warn("STFU");
+    }
   };
 
   const calcPercentage = () => {

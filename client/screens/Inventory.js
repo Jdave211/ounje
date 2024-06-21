@@ -22,9 +22,6 @@ import * as ImagePicker from "expo-image-picker";
 import camera from "@assets/camera_icon.png";
 import { parse_ingredients } from "@utils/spoonacular";
 import useImageProcessing from "../components/useImageProcessing";
-import { ADD_FOOD_PROMPT } from "../utils/prompts";
-import { openai } from "../utils/openai";
-import Loading from "../components/Loading";
 
 const Inventory = () => {
   const navigation = useNavigation();
@@ -141,45 +138,29 @@ const Inventory = () => {
     );
   };
 
-  const handleRemoveSelected = () => {
-    selected.forEach((itemName) => removeItem(itemName));
+  const handleRemoveSelected = async () => {
+    const updatedFoodItems = foodItems.filter(
+      (foodItem) => !selected.includes(foodItem.name),
+    );
+    setFoodItems(updatedFoodItems);
+    Toast.show({
+      type: "success",
+      text1: "Item removed!",
+      text2: `${selected} has been removed from your inventory.`,
+    });
+    await AsyncStorage.setItem(
+      "food_items_array",
+      JSON.stringify(updatedFoodItems),
+    );
     setSelected([]);
   };
 
   const saveInventory = async () => {
-    if (newlyAddedItems.length > 0) {
+    if (newlyAddedItems.length > 0 || selected.length > 0) {
       console.log("Newly added items: ", newlyAddedItems);
       setIsLoading(true); // Start loading
-      const systemPrompt = {
-        role: "system",
-        content: ADD_FOOD_PROMPT,
-      };
-      const userPrompt = {
-        role: "user",
-        content: newlyAddedItems.join("\n"),
-      };
 
-      const asyncFoodItemsResponse = await openai.chat.completions.create({
-        model: "ft:gpt-3.5-turbo-0125:ounje:finalfoodinspector:9aubDZRg",
-        temperature: 0.5,
-        messages: [systemPrompt, userPrompt],
-      });
-
-      const [{ value: bloatedCheckItemsResponse }] = await Promise.allSettled([
-        asyncFoodItemsResponse,
-      ]);
-      console.log(bloatedCheckItemsResponse);
-      console.log(bloatedCheckItemsResponse.choices[0].message.content);
-      const checkItemsResponse =
-        bloatedCheckItemsResponse.choices[0].message.content;
-
-      // Process the OpenAI response to convert the plain text to an array of strings
-      const parsedItems = checkItemsResponse
-        .slice(1, -1) // Remove the surrounding square brackets
-        .split(",") // Split by comma
-        .map((item) => item.trim()); // Trim each item
-
-      const spoonacularResponse = await parse_ingredients(parsedItems);
+      const spoonacularResponse = await parse_ingredients(newlyAddedItems);
 
       const actualFoodItems = spoonacularResponse.map((item) => ({
         name: item.name,
@@ -202,7 +183,10 @@ const Inventory = () => {
       });
       navigation.navigate("Home");
     } else {
-      Alert.alert("No items to save", "Please add items before saving.");
+      Alert.alert(
+        "No items to save",
+        "Please add or remove items before saving.",
+      );
     }
   };
 
@@ -474,6 +458,13 @@ const styles = StyleSheet.create({
   scrollViewContent: {
     flexGrow: 1,
   },
+  warning: {
+    color: "white",
+    marginBottom: 10,
+    fontWeight: "bold",
+    fontSize: 14,
+    textAlign: "center",
+  },
   imageSection: {
     marginTop: 20,
   },
@@ -609,7 +600,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
+    marginTop: 25,
   },
   saveButtonText: {
     color: "#38F096",
