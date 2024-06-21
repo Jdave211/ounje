@@ -11,6 +11,8 @@ import {
 import { supabase } from "../../utils/supabase";
 import { Button, Input } from "react-native-elements";
 import FirstLogin from "./FirstLogin"; // Import your FirstLogin component
+import Toast from "react-native-toast-message";
+import Loading from "../../components/Loading"; // Import your Loading component
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
@@ -18,8 +20,18 @@ export default function SignIn() {
   const [loading, setLoading] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [firstLogin, setFirstLogin] = useState(false);
+  const [postLoginLoading, setPostLoginLoading] = useState(false);
 
   async function signInWithEmail() {
+    if (!email) {
+      Alert.alert("Validation Error", "Email is required.");
+      return;
+    }
+    if (!password) {
+      Alert.alert("Validation Error", "Password is required.");
+      return;
+    }
+
     setLoading(true);
     console.log("Attempting sign in..."); // Debug log
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -56,12 +68,27 @@ export default function SignIn() {
           console.log("Existing user detected"); // Debug statement for existing user
           setLoading(false);
           setFirstLogin(false);
+          Toast.show({
+            type: "success",
+            text1: "Signed in",
+            text2: "You have successfully signed in.",
+          });
+          setPostLoginLoading(true);
+          setTimeout(() => {
+            setPostLoginLoading(false);
+            // Navigate to main page or dashboard here
+          }, 3000); // Show loader for 3 seconds (adjust as needed)
         }
       }
     }
   }
 
   async function handleForgotPassword() {
+    if (!email) {
+      Alert.alert("Validation Error", "Email is required.");
+      return;
+    }
+
     const { error } = await supabase.auth.resetPasswordForEmail(email);
     if (error) {
       Alert.alert("Error sending password reset email", error.message);
@@ -88,10 +115,10 @@ export default function SignIn() {
     }
   }, [firstLogin]);
 
-  if (loading) {
+  if (loading || postLoginLoading) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" color="#00ff00" />
+        <Loading />
       </View>
     );
   }
@@ -143,7 +170,11 @@ export default function SignIn() {
               title="Sign in"
               disabled={loading}
               onPress={handleSignIn}
-              buttonStyle={{ backgroundColor: "green", height: 50 }}
+              buttonStyle={{
+                backgroundColor: "green",
+                height: 50,
+                borderRadius: 20,
+              }}
             />
             <Button
               title="Forgot password?"
@@ -154,6 +185,7 @@ export default function SignIn() {
             />
           </View>
         </View>
+        <Toast />
       </View>
     </TouchableWithoutFeedback>
   );

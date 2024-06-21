@@ -3,15 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   TouchableOpacity,
   ScrollView,
-  TouchableWithoutFeedback,
 } from "react-native";
 import RecipeCard from "@components/RecipeCard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
+import { AntDesign } from "@expo/vector-icons";
 
 const RecipeOptions = () => {
   const navigation = useNavigation();
@@ -45,18 +44,6 @@ const RecipeOptions = () => {
   const store_selected_recipes = async (selected_recipes) => {
     const recipe_image_bucket = "recipe_images";
 
-    // const recipe_image_gen_data = selected_recipes.map((recipe) => ({
-    //   prompt:
-    //     "a zoomed out image showing the full dish of " + recipe.image_prompt,
-    //   storage_path: `${current_run.id}/${recipe.name}.jpeg`,
-    // }));
-
-    // generate and store images for each recipe
-    // shoot and forget approach
-    // no need to wait for the images to be generated or stored
-    // we just let them run while we continue with the rest of the process
-    // the urls to the image can be calculated from the storage path
-    // so we can pass that into the app and it can fetch the images as needed
     await Promise.allSettled(
       selected_recipes.map(async (recipe) => {
         let recipe_image = await generate_image(
@@ -107,10 +94,15 @@ const RecipeOptions = () => {
 
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => navigation.goBack()}
+      >
+        <AntDesign name="arrowleft" size={24} color="white" />
+      </TouchableOpacity>
       <View style={styles.content}>
         <Text style={styles.text}>Generated Recipes</Text>
         <ScrollView style={styles.recipes}>
-          {/* <View style={{ justifyContent: "center", alignItems: "center", flexDirection: "row", flexWrap: "wrap" }}> */}
           {recipeOptions.map((recipeOption, index) => (
             <TouchableOpacity
               key={index}
@@ -119,23 +111,33 @@ const RecipeOptions = () => {
               <RecipeCard
                 key={index}
                 id={recipeOption.id}
-                // recipe={recipeOption}
                 showBookmark={true}
               />
             </TouchableOpacity>
           ))}
-          {/* </View> */}
         </ScrollView>
       </View>
     </View>
   );
 };
 
-const styles = {
+const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#121212",
     padding: 15,
+  },
+  backButton: {
+    position: "absolute",
+    top: 67,
+    left: 15,
+    backgroundColor: "#2e2d2d",
+    borderRadius: 100,
+    padding: 8,
+    width: 50,
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1,
   },
   content: {
     flex: 1,
@@ -149,24 +151,14 @@ const styles = {
     color: "white",
     fontSize: 20,
     fontWeight: "bold",
+    position: "absolute",
+    top: 40,
   },
   recipes: {
-    marginTop: 20,
-    width: "100%",
+    marginTop: 60, // Adjust this value to position the list correctly below the title
+    width: "105%",
     height: "100%",
   },
-  buttonContainer: {
-    width: 200,
-    height: 50,
-    backgroundColor: "green",
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  buttonText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
-};
+});
 
 export default RecipeOptions;

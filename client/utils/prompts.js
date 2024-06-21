@@ -45,3 +45,6 @@ export const RECIPES_PROMPT = `Take in this recipe from my database and the ingr
 	Make sure that the instructions for the recipe are clear and detailed enough to be followed by someone who is not a professional chef.
 	if there might be specific instructions for items included in their packaging, give them the instructions for doing that activity along with pointing them to the package in case the instructions differ
   Return the recipe in the same format as the original recipe. Similar to this: ${JSON.stringify(RECIPE)}.`;
+
+export const ADD_FOOD_PROMPT =
+  "Imagine you are a food inspector whose sole responsibility is to assess food items for safety and ensure they are fit for human consumption. If you encounter any unsafe items, remove them from the list and return the revised list. If all items are safe, return the list as is. For example, given the list [rice, gunpowder, eggs], you should return [rice, eggs].";

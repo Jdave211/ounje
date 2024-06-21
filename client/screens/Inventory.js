@@ -18,10 +18,10 @@ import { supabase } from "../utils/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
-import * as ImagePicker from "expo-image-picker"; // Ensure correct import
+import * as ImagePicker from "expo-image-picker";
 import camera from "@assets/camera_icon.png";
 import { parse_ingredients } from "@utils/spoonacular";
-import useImageProcessing from "../components/useImageProcessing"; // Import the custom hook
+import useImageProcessing from "../components/useImageProcessing";
 
 const Inventory = () => {
   const navigation = useNavigation();
@@ -29,11 +29,11 @@ const Inventory = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [foodItems, setFoodItems] = useState([]);
-  const [newlyAddedItems, setNewlyAddedItems] = useState([]); // State to track newly added items
+  const [newlyAddedItems, setNewlyAddedItems] = useState([]);
   const [inventoryImages, setInventoryImages] = useState([]);
   const [userId, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
-  const [isLoading, setIsLoading] = useState(false); // State to manage loader
+  const [isLoading, setIsLoading] = useState(false);
 
   const { loading, convertImageToBase64, sendImages } = useImageProcessing();
 
@@ -116,45 +116,14 @@ const Inventory = () => {
       return;
     }
 
-    try {
-      const spoonacularResponse = await parse_ingredients([newItem]);
-
-      if (spoonacularResponse && spoonacularResponse.length > 0) {
-        const spoonacularNewItem = spoonacularResponse[0];
-
-        const newFoodItem = {
-          name: spoonacularNewItem.name,
-          spoonacular_id: spoonacularNewItem.id,
-        };
-
-        const updatedFoodItems = [...foodItems, newFoodItem];
-        const updatedNewlyAddedItems = [...newlyAddedItems, newFoodItem.name]; // Update newly added items
-        console.log(updatedNewlyAddedItems);
-
-        setFoodItems(updatedFoodItems);
-        setNewlyAddedItems(updatedNewlyAddedItems); // Update state
-
-        await AsyncStorage.setItem(
-          "food_items_array",
-          JSON.stringify(updatedFoodItems),
-        );
-
-        Toast.show({
-          type: "success",
-          text1: "Item added!",
-          text2: `${spoonacularNewItem.name} has been added to your inventory.`,
-        });
-      } else {
-        Alert.alert("Error", "Could not find the item on Spoonacular.");
-      }
-    } catch (error) {
-      Alert.alert(
-        "Error",
-        "There was an error adding the item. Please try again.",
-      );
-    } finally {
-      setNewItem("");
-    }
+    const updatedNewlyAddedItems = [...newlyAddedItems, newItem];
+    setNewlyAddedItems(updatedNewlyAddedItems);
+    Toast.show({
+      type: "success",
+      text1: "Item added!",
+      text2: `${newItem} has been added to your inventory.`,
+    });
+    setNewItem("");
   };
 
   const removeItem = async (itemName) => {
@@ -169,15 +138,56 @@ const Inventory = () => {
     );
   };
 
-  const handleRemoveSelected = () => {
-    selected.forEach((itemName) => removeItem(itemName));
+  const handleRemoveSelected = async () => {
+    const updatedFoodItems = foodItems.filter(
+      (foodItem) => !selected.includes(foodItem.name),
+    );
+    setFoodItems(updatedFoodItems);
+    Toast.show({
+      type: "success",
+      text1: "Item removed!",
+      text2: `${selected} has been removed from your inventory.`,
+    });
+    await AsyncStorage.setItem(
+      "food_items_array",
+      JSON.stringify(updatedFoodItems),
+    );
     setSelected([]);
   };
 
   const saveInventory = async () => {
-    await AsyncStorage.setItem("food_items_array", JSON.stringify(foodItems));
-    Alert.alert("Your inventory has been saved!");
-    navigation.navigate("Home");
+    if (newlyAddedItems.length > 0 || selected.length > 0) {
+      console.log("Newly added items: ", newlyAddedItems);
+      setIsLoading(true); // Start loading
+
+      const spoonacularResponse = await parse_ingredients(newlyAddedItems);
+
+      const actualFoodItems = spoonacularResponse.map((item) => ({
+        name: item.name,
+        spoonacular_id: item.id,
+      }));
+
+      const updatedFoodItems = [...foodItems, ...actualFoodItems];
+      setFoodItems(updatedFoodItems);
+      await AsyncStorage.setItem(
+        "food_items_array",
+        JSON.stringify(updatedFoodItems),
+      );
+
+      setNewlyAddedItems([]);
+      setIsLoading(false); // Stop loading
+      Toast.show({
+        type: "success",
+        text1: "Inventory saved!",
+        text2: "Your inventory has been successfully updated.",
+      });
+      navigation.navigate("Home");
+    } else {
+      Alert.alert(
+        "No items to save",
+        "Please add or remove items before saving.",
+      );
+    }
   };
 
   const handleAddImage = async () => {
@@ -434,16 +444,6 @@ const Inventory = () => {
             <Text style={styles.saveButtonText}>Save Inventory</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Section to display newly added items */}
-        {/* <View style={styles.card}>
-          <Text style={styles.cardTitle}>Newly Added Food Items</Text>
-          {newlyAddedItems.map((item, index) => (
-            <Text key={index} style={styles.itemText}>
-              {item.name}
-            </Text>
-          ))}
-        </View> */}
       </ScrollView>
     </View>
   );
@@ -457,6 +457,13 @@ const styles = StyleSheet.create({
   },
   scrollViewContent: {
     flexGrow: 1,
+  },
+  warning: {
+    color: "white",
+    marginBottom: 10,
+    fontWeight: "bold",
+    fontSize: 14,
+    textAlign: "center",
   },
   imageSection: {
     marginTop: 20,
@@ -593,7 +600,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
+    marginTop: 25,
   },
   saveButtonText: {
     color: "#38F096",

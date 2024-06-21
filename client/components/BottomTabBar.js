@@ -1,13 +1,20 @@
 import * as React from "react";
 import { View, TouchableOpacity, StyleSheet, Text } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { FontAwesome5, FontAwesome, MaterialIcons } from "@expo/vector-icons";
-import { Entypo } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
+import {
+  FontAwesome5,
+  FontAwesome,
+  MaterialIcons,
+  MaterialCommunityIcons,
+} from "@expo/vector-icons";
+import {
+  useNavigation,
+  useRoute,
+  useNavigationState,
+} from "@react-navigation/native";
 
 const BottomTabBar = () => {
-  const [selectedTab, setSelectedTab] = React.useState("Generate");
   const navigation = useNavigation();
+  const state = useNavigationState((state) => state);
 
   const tabs = [
     {
@@ -22,17 +29,17 @@ const BottomTabBar = () => {
       iconName: "bookmark",
       iconComponent: FontAwesome,
     },
-    // {
-    //   name: "Community",
-    //   screenName: "Community",
-    //   iconName: "cloud",
-    //   iconComponent: Entypo,
-    // },
     {
       name: "Inventory",
       screenName: "Inventory",
       iconName: "inventory",
       iconComponent: MaterialIcons,
+    },
+    {
+      name: "Calories",
+      screenName: "Calories",
+      iconName: "food-apple",
+      iconComponent: MaterialCommunityIcons,
     },
     {
       name: "Profile",
@@ -42,38 +49,37 @@ const BottomTabBar = () => {
     },
   ];
 
-  const renderIcon = (tab, size = 24) => (
-    <TouchableOpacity
-      key={tab.screenName}
-      style={selectedTab === tab.screenName ? styles.selectedIcon : null}
-      onPress={() => {
-        setSelectedTab(tab.screenName);
-        navigation.navigate(tab.screenName);
-      }}
-    >
-      {React.createElement(tab.iconComponent, {
-        name: tab.iconName,
-        size,
-        color: selectedTab === tab.screenName ? "#4cbb17" : "white",
-      })}
-    </TouchableOpacity>
-  );
+  const currentRouteName = state?.routes[state.index]?.name;
+
+  const renderTab = (tab, size = 24) => {
+    const isSelected = currentRouteName === tab.screenName;
+    return (
+      <TouchableOpacity
+        key={tab.screenName}
+        style={styles.tab}
+        onPress={() => navigation.navigate(tab.screenName)}
+      >
+        {React.createElement(tab.iconComponent, {
+          name: tab.iconName,
+          size,
+          color: isSelected ? "#4cbb17" : "white",
+        })}
+        <Text
+          style={{
+            color: isSelected ? "#4cbb17" : "white",
+            fontSize: 10,
+            fontWeight: "bold",
+          }}
+        >
+          {tab.name}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.tabBar}>
-      <View style={styles.tabs}>
-        {tabs.map((tab) => (
-          <View
-            key={tab.name}
-            style={{ justifyContent: "center", alignItems: "center" }}
-          >
-            {renderIcon(tab)}
-            <Text style={{ color: "white", fontSize: 10, fontWeight: "bold" }}>
-              {tab.name}
-            </Text>
-          </View>
-        ))}
-      </View>
+      <View style={styles.tabs}>{tabs.map((tab) => renderTab(tab))}</View>
     </View>
   );
 };
@@ -95,6 +101,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-around",
     paddingHorizontal: 10,
+  },
+  tab: {
+    justifyContent: "center",
+    alignItems: "center",
   },
 });
 

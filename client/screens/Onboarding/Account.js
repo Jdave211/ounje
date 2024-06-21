@@ -1,14 +1,22 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../../utils/supabase";
-import { StyleSheet, View, Alert, Image } from "react-native";
+import {
+  StyleSheet,
+  View,
+  Alert,
+  Image,
+  ActivityIndicator,
+} from "react-native";
 import { Button, Input } from "react-native-elements";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FontAwesome6 } from "@expo/vector-icons";
+import Toast from "react-native-toast-message";
 
 export default function Account({ session }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     if (session) getProfile();
@@ -66,13 +74,31 @@ export default function Account({ session }) {
     }
   }
 
+  async function handleSignOut() {
+    try {
+      setSigningOut(true);
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        throw error;
+      }
+      Toast.show({
+        type: "success",
+        text1: "Signed out",
+        text2: "You have successfully signed out.",
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        Alert.alert(error.message);
+      }
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
   return (
     <View
       style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
     >
-      <View>
-        <FontAwesome6 name="person-falling" size={24} color="white" />
-      </View>
       <View style={styles.content}>
         <View style={[styles.verticallySpaced, styles.mt20]}>
           <Input
@@ -98,7 +124,7 @@ export default function Account({ session }) {
             title={loading ? "Loading ..." : "Update"}
             onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
             disabled={loading}
-            buttonStyle={{ backgroundColor: "green" }}
+            buttonStyle={{ backgroundColor: "#282C35", borderRadius: 15 }}
           />
         </View>
       </View>
@@ -106,13 +132,16 @@ export default function Account({ session }) {
       <View style={styles.verticallySpaced}>
         <View style={{ alignItems: "center" }}>
           <Button
-            title="Sign Out"
+            title={signingOut ? "Signing Out..." : "Sign Out"}
             type="clear"
             titleStyle={{ color: "red" }}
-            onPress={() => supabase.auth.signOut()}
+            onPress={handleSignOut}
+            disabled={signingOut}
           />
+          {signingOut && <ActivityIndicator size="small" color="red" />}
         </View>
       </View>
+      <Toast />
     </View>
   );
 }

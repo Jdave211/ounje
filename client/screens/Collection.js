@@ -50,6 +50,7 @@ const SavedRecipes = () => {
 
   const navigate_to_recipe_page = (recipe_id) => () => {
     navigation.navigate("RecipePage", { id: recipe_id });
+    console.log("Navigating to recipe page with id: ", recipe_id);
   };
 
   return (
@@ -72,7 +73,7 @@ const SavedRecipes = () => {
               key={i}
               onPress={navigate_to_recipe_page(recipe_id)}
             >
-              <RecipeCard id={recipe_id} />
+              <RecipeCard id={recipe_id} showBookmark={true} />
             </TouchableOpacity>
             // </View>
           ))}
@@ -94,7 +95,7 @@ const styles = {
   },
   text: {
     color: "white",
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
   },
 };

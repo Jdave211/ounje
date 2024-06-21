@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { supabase } from "../../utils/supabase";
 import { Button, Input } from "react-native-elements";
+import Loading from "../../components/Loading";
 
 AppState.addEventListener("change", (state) => {
   if (state === "active") {
@@ -37,7 +38,7 @@ export default function Auth() {
 
     if (error) Alert.alert(error.message);
     else if (!session)
-      Alert.alert("Please check your inbox for email verification!");
+      Alert.alert("Please check your inbox for email verification to sign in!");
     setLoading(false);
   }
 
