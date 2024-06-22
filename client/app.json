@@ -2,6 +2,7 @@
   "expo": {
     "name": "ounje",
     "slug": "ounje",
+    "scheme": "com.googleusercontent.apps.664933805905-0uk9jgs2a171a1c9nde505pj01bu9p8i",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,6 +15,20 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
+
+
+      
+      "bundleIdentifier": "com.anonymous.ounje",
+      "config": {
+        "googleSignIn": {
+          "reservedClientId": "664933805905-0uk9jgs2a171a1c9nde505pj01bu9p8i.apps.googleusercontent.com"
+
+        }
+      },
+      
+
+
+
       "infoPlist": {
         "NSCameraUsageDescription": "Let Oúnje access your camera so we can generate recipes.",
         "NSPhotoLibraryUsageDescription": "Let Oúnje access your photos to generate recipes."

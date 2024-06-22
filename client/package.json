@@ -89,7 +89,10 @@
     "url": "^0.10.3",
     "util": "^0.10.4",
     "vm-browserify": "^0.0.4",
-    "zustand": "^4.5.2"
+    "zustand": "^4.5.2",
+    "expo-auth-session": "~5.5.2",
+    "expo-apple-authentication": "~6.4.1",
+    "expo-random": "~14.0.1"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
