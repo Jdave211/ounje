@@ -10,22 +10,25 @@ export const get_recipe_details = async (id) => {
     })
     .catch((error) => {
       console.error("get_recipe_details:", error, error.response.data);
+      return null;
     });
 
   return recipe;
 };
 
 export const get_bulk_recipe_details = async (ids) => {
-  let { data: recipe_options } = await axios.get(
-    `https://api.spoonacular.com/recipes/informationBulk`,
-    {
+  let { data: recipe_options } = await axios
+    .get(`https://api.spoonacular.com/recipes/informationBulk`, {
       params: {
         apiKey: process.env.SPOONACULAR_API_KEY,
         includeNutrition: true,
         ids: ids.join(", "),
       },
-    },
-  );
+    })
+    .catch((error) => {
+      console.error("get_bulk_recipe_details:", error, error.response.data);
+      return null;
+    });
 
   return recipe_options;
 };
@@ -33,26 +36,32 @@ export const get_bulk_recipe_details = async (ids) => {
 export const parse_ingredients = async (ingredients) => {
   const params = new URLSearchParams();
   params.append("ingredientList", ingredients.join("\n"));
-
   params.append("servings", 1);
-  console.log({ ingredients });
 
-  const { data } = await axios.post(
-    "https://api.spoonacular.com/recipes/parseIngredients",
-    params,
-
-    {
-      params: {
-        apiKey: process.env.SPOONACULAR_API_KEY,
+  try {
+    const { data } = await axios.post(
+      "https://api.spoonacular.com/recipes/parseIngredients",
+      params,
+      {
+        params: {
+          apiKey: process.env.SPOONACULAR_API_KEY,
+        },
+        headers: {
+          "Content-Type": "application/json",
+        },
       },
-      headers: {
-        "Content-Type": "application/json",
-      },
-    },
-  );
-  console.log({ parsed_result: data });
+    );
 
-  return data;
+    // Check if the data contains valid results
+    if (!data || data.length === 0 || data.some((item) => !item.name)) {
+      throw new Error("Invalid ingredient data returned from Spoonacular.");
+    }
+    console.log(data);
+    return data;
+  } catch (error) {
+    console.error("parse_ingredients:", error);
+    return null; // Return null if there's an error or invalid data
+  }
 };
 
 export const flatten_nested_objects = (obj, path = []) => {

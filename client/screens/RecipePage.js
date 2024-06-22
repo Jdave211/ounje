@@ -240,13 +240,21 @@ const RecipePage = ({ route }) => {
           </View>
           <View style={styles.fullInstructions}>
             <Text style={styles.subheading}>Instructions</Text>
-            {recipeDetails.analyzed_instructions[0].steps.map(
-              ({ step, number }) => (
-                <View key={number} style={styles.instruction}>
-                  <Text style={styles.text}>{number}.</Text>
-                  <Text style={styles.text}>{step}</Text>
-                </View>
-              ),
+            {recipeDetails.analyzed_instructions &&
+            recipeDetails.analyzed_instructions[0] &&
+            recipeDetails.analyzed_instructions[0].steps ? (
+              recipeDetails.analyzed_instructions[0].steps.map(
+                ({ step, number }) => (
+                  <View key={number} style={styles.instruction}>
+                    <Text style={styles.text}>{number}.</Text>
+                    <Text style={styles.text}>{step}</Text>
+                  </View>
+                ),
+              )
+            ) : (
+              <Text style={styles.text}>
+                No detailed instructions available for this recipe.
+              </Text>
             )}
           </View>
         </View>
