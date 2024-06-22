@@ -412,66 +412,6 @@ export const MultipleSelectList = ({
                 </TouchableOpacity>
               )}
             </ScrollView>
-
-            {selectedval?.length > 0 ? (
-              <Pressable>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    paddingLeft: 20,
-                  }}
-                >
-                  <Text
-                    style={{ marginRight: 20, fontWeight: "600", fontFamily }}
-                  >
-                    Selected
-                  </Text>
-                  <View
-                    style={{ height: 1, flex: 1, backgroundColor: "gray" }}
-                  />
-                </View>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    paddingHorizontal: 20,
-                    marginBottom: 20,
-                    flexWrap: "wrap",
-                    justifyContent: "center", // Center horizontally
-                    alignItems: "center", // Center vertically
-                  }}
-                >
-                  {selectedval?.map((item, index) => {
-                    return (
-                      <View
-                        key={index}
-                        style={[
-                          {
-                            backgroundColor: "gray",
-                            paddingHorizontal: 20,
-                            paddingVertical: 5,
-                            borderRadius: 50,
-                            marginRight: 10,
-                            marginTop: 10,
-                          },
-                          badgeStyles,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            { color: "white", fontSize: 12, fontFamily },
-                            badgeTextStyles,
-                          ]}
-                        >
-                          {item}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              </Pressable>
-            ) : null}
           </View>
         </Animated.View>
       ) : null}

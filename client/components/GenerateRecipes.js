@@ -3,22 +3,19 @@ import { View, StyleSheet, TouchableOpacity, Text, Alert } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { FOOD_ITEMS } from "../utils/constants";
+import { GENERATE_RECIPES_PROMPT } from "../utils/prompts";
 import { supabase } from "../utils/supabase";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 import { useNavigation } from "@react-navigation/native";
+import { openai, extract_json } from "../utils/openai";
 
 export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   const navigation = useNavigation();
   const [isLoading, setIsLoading] = useState(false);
   const [recipes, setRecipes] = useState([]);
   const [gptResults, setGptResults] = useState([]);
-  const [modalVisible, setModalVisible] = useState(true);
   const [userId, setUserId] = useState(null);
   const [foodItems, setFoodItems] = useState(FOOD_ITEMS);
-
-  useEffect(() => {
-    console.log("Modal visibility changed:", modalVisible);
-  }, [modalVisible]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -37,111 +34,31 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
     fetchData();
   }, []);
 
-  // const fetchRecipes = async () => {
-  //   try {
-  //     setIsLoading(true);
-  //     onLoading(true);
+  const generateGPTRecipes = async (foodItems) => {
+    try {
+      console.log("Generating recipes with GPT...");
+      const foodItemNames = foodItems.map((item) => item.name).join(", ");
+      console.log("Food Items:", foodItemNames);
 
-  //     const storedFoodItems = await AsyncStorage.getItem("food_items_array");
-  //     if (storedFoodItems) {
-  //       const foodItemsArray = JSON.parse(storedFoodItems).map(
-  //         (item) => item.name || item,
-  //       );
-  //       const ingredients = foodItemsArray.join(", ");
+      const systemPrompt = { role: "system", content: GENERATE_RECIPES_PROMPT };
+      const userPrompt = {
+        role: "user",
+        content: `Food Items: ${foodItemNames}`,
+      };
 
-  //       const response = await axios.get(
-  //         "https://api.spoonacular.com/recipes/findByIngredients",
-  //         {
-  //           params: {
-  //             ingredients,
-  //             number: 2,
-  //             ranking: 1,
-  //             ignorePantry: "false",
-  //             apiKey: process.env.SPOONACULAR_API_KEY,
-  //           },
-  //         },
-  //       );
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [systemPrompt, userPrompt],
+        response_format: { type: "json_object" },
+      });
 
-  //       const recipesWithDetails = await Promise.all(
-  //         response.data.map(async (recipe) => {
-  //           const recipeDetails = await fetchRecipeDetails(recipe.id);
-  //           return { ...recipe, details: recipeDetails };
-  //         }),
-  //       );
-
-  //       setRecipes(recipesWithDetails);
-
-  //       const gptResponses = await Promise.all(
-  //         recipesWithDetails.map(
-  //           async (recipe) =>
-  //             await passRecipeThroughGPT(recipe, foodItemsArray),
-  //         ),
-  //       );
-
-  //       setGptResults(gptResponses);
-  //     } else {
-  //       Alert.alert("Error", "No food items found in inventory.");
-  //     }
-  //   } catch (error) {
-  //     console.error("Error fetching recipes:", error);
-  //     Alert.alert("Error", "Unable to fetch recipes.");
-  //   } finally {
-  //     setIsLoading(false);
-  //     onLoading(false);
-  //     onRecipesGenerated(recipes);
-  //     setModalVisible(true);
-  //   }
-  // };
-
-  // const fetchRecipeDetails = async (recipeId) => {
-  //   try {
-  //     const response = await axios.get(
-  //       `https://api.spoonacular.com/recipes/${recipeId}/information`,
-  //       {
-  //         params: {
-  //           includeNutrition: true,
-  //           apiKey: process.env.SPOONACULAR_API_KEY,
-  //         },
-  //       },
-  //     );
-  //     return response.data;
-  //   } catch (error) {
-  //     console.error(`Error fetching details for recipe ID ${recipeId}:`, error);
-  //     return null;
-  //   }
-  // };
-
-  // const passRecipeThroughGPT = async (recipe, foodItems) => {
-  //   try {
-  //     const recipeText = `
-  //       Recipe: ${recipe.title}
-  //       Cook Time: ${recipe.details.readyInMinutes} minutes
-  //       Servings: ${recipe.details.servings}
-  //       Calories: ${recipe.details.nutrition.nutrients[0].amount} kcal
-  //       Ingredients: ${recipe.details.extendedIngredients
-  //         .map((ingredient) => ingredient.original)
-  //         .join(", ")}
-  //       Instructions: ${recipe.details.instructions}
-  //       Summary: ${recipe.details.summary}
-  //     `;
-
-  //     const systemPrompt = { role: "system", content: RECIPES_PROMPT };
-  //     const userPrompt = {
-  //       role: "user",
-  //       content: `Food Items: ${foodItems.join(", ")}\nRecipe:\n${recipeText}`,
-  //     };
-
-  //     const response = await openai.chat.completions.create({
-  //       model: "gpt-3.5-turbo-0125:personal:ounje2:9T4gBMe8",
-  //       messages: [systemPrompt, userPrompt],
-  //     });
-
-  //     return response.choices[0].message.content;
-  //   } catch (error) {
-  //     console.error("Error passing recipe through GPT:", error);
-  //     return "Error validating recipe.";
-  //   }
-  // };
+      console.log("GPT Response:", response);
+      return response;
+    } catch (error) {
+      console.error("Error passing recipe through GPT:", error);
+      return "Error validating recipe.";
+    }
+  };
 
   const generateRecipes = async () => {
     if (foodItems.length === 0) {
@@ -172,6 +89,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
           run_id: currentRun.id,
           ...item,
         }));
+        await generateGPTRecipes(selectedFoodItems);
 
         await supabase.from("food_items").upsert(selectedFoodItems);
 

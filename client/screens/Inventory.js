@@ -29,7 +29,6 @@ const Inventory = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [foodItems, setFoodItems] = useState([]);
-  const [newlyAddedItems, setNewlyAddedItems] = useState([]);
   const [inventoryImages, setInventoryImages] = useState([]);
   const [userId, setUserId] = useState(null);
   const [newItem, setNewItem] = useState("");
@@ -116,14 +115,40 @@ const Inventory = () => {
       return;
     }
 
-    const updatedNewlyAddedItems = [...newlyAddedItems, newItem];
-    setNewlyAddedItems(updatedNewlyAddedItems);
+    setIsLoading(true); // Start loading
+    const spoonacularResponse = await parse_ingredients([newItem]);
+
+    if (
+      !spoonacularResponse ||
+      spoonacularResponse.length === 0 ||
+      !spoonacularResponse[0].id
+    ) {
+      Alert.alert("Error", "Please add only food items.");
+      setIsLoading(false); // Stop loading
+      return;
+    }
+
+    const actualFoodItems = spoonacularResponse.map((item) => ({
+      name: item.name,
+      spoonacular_id: item.id,
+      image: item.image,
+    }));
+
+    const updatedFoodItems = [...foodItems, ...actualFoodItems];
+    setFoodItems(updatedFoodItems);
+    await AsyncStorage.setItem(
+      "food_items_array",
+      JSON.stringify(updatedFoodItems),
+    );
+    console.log(updatedFoodItems);
+
     Toast.show({
       type: "success",
       text1: "Item added!",
       text2: `${newItem} has been added to your inventory.`,
     });
     setNewItem("");
+    setIsLoading(false); // Stop loading
   };
 
   const removeItem = async (itemName) => {
@@ -146,48 +171,13 @@ const Inventory = () => {
     Toast.show({
       type: "success",
       text1: "Item removed!",
-      text2: `${selected} has been removed from your inventory.`,
+      text2: `${selected.join(", ")} has been removed from your inventory.`,
     });
     await AsyncStorage.setItem(
       "food_items_array",
       JSON.stringify(updatedFoodItems),
     );
     setSelected([]);
-  };
-
-  const saveInventory = async () => {
-    if (newlyAddedItems.length > 0 || selected.length > 0) {
-      console.log("Newly added items: ", newlyAddedItems);
-      setIsLoading(true); // Start loading
-
-      const spoonacularResponse = await parse_ingredients(newlyAddedItems);
-
-      const actualFoodItems = spoonacularResponse.map((item) => ({
-        name: item.name,
-        spoonacular_id: item.id,
-      }));
-
-      const updatedFoodItems = [...foodItems, ...actualFoodItems];
-      setFoodItems(updatedFoodItems);
-      await AsyncStorage.setItem(
-        "food_items_array",
-        JSON.stringify(updatedFoodItems),
-      );
-
-      setNewlyAddedItems([]);
-      setIsLoading(false); // Stop loading
-      Toast.show({
-        type: "success",
-        text1: "Inventory saved!",
-        text2: "Your inventory has been successfully updated.",
-      });
-      navigation.navigate("Home");
-    } else {
-      Alert.alert(
-        "No items to save",
-        "Please add or remove items before saving.",
-      );
-    }
   };
 
   const handleAddImage = async () => {
@@ -329,7 +319,7 @@ const Inventory = () => {
           <ActivityIndicator size="large" color="#38F096" />
         </View>
       )}
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+      <View style={styles.scrollViewContent}>
         <View style={styles.imageSection}>
           <View style={styles.imageContainer}>
             {inventoryImages.length === 0 ? (
@@ -350,8 +340,12 @@ const Inventory = () => {
                     setSelectedImage(imageUrl);
                     setModalVisible(true);
                   }}
+                  style={styles.imageWrapper}
                 >
                   <Image source={{ uri: imageUrl }} style={styles.image} />
+                  <View style={styles.overlay}>
+                    <Text style={styles.overlayText}>Tap to replace</Text>
+                  </View>
                 </TouchableOpacity>
               ))
             )}
@@ -418,7 +412,7 @@ const Inventory = () => {
               value: item.name,
             }))}
             save="value"
-            maxHeight={900}
+            maxHeight={200}
             placeholder="Select items"
             placeholderStyles={styles.placeholderStyles}
             arrowicon={
@@ -438,13 +432,7 @@ const Inventory = () => {
             <Text style={styles.buttonText}>Remove</Text>
           </TouchableOpacity>
         </View>
-
-        <View style={styles.centeredView}>
-          <TouchableOpacity style={styles.saveButton} onPress={saveInventory}>
-            <Text style={styles.saveButtonText}>Save Inventory</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+      </View>
     </View>
   );
 };
@@ -476,11 +464,29 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     padding: 15,
   },
-  image: {
+  imageWrapper: {
+    position: "relative",
     margin: 10,
+  },
+  image: {
     borderRadius: 10,
     width: 100,
     height: 100,
+  },
+  overlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  overlayText: {
+    color: "#fff",
+    fontSize: 12,
   },
   addImageButton: {
     borderRadius: 10,
@@ -576,7 +582,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#333",
   },
   labelStyles: {
-    color: "#fff",
+    color: "gray",
     fontSize: 14,
     fontWeight: "bold",
   },
@@ -593,24 +599,6 @@ const styles = StyleSheet.create({
   centeredView: {
     alignItems: "center",
     marginTop: 20,
-  },
-  saveButton: {
-    width: 200,
-    height: 50,
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 25,
-  },
-  saveButtonText: {
-    color: "#38F096",
-    fontWeight: "bold",
-    fontSize: 18,
-  },
-  itemText: {
-    color: "#fff",
-    fontSize: 16,
-    marginVertical: 2,
   },
   loader: {
     position: "absolute",
