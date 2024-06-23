@@ -77,6 +77,7 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
   }, [user_id]);
 
   console.log({ recipeDetails });
+  
 
   const handleSave = async () => {
     let localIsSaved = !isSaved;
@@ -95,7 +96,7 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
         text1: "Recipe Saved",
         text2: `${recipeDetails.title} has been saved to your recipes.`,
       });
-
+      
       return;
     } else {
       await supabase

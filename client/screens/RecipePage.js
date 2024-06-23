@@ -160,12 +160,20 @@ const RecipePage = ({ route }) => {
             <AntDesign name="arrowleft" size={24} color={"white"} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            {isSaved ? (
-              <MaterialIcons name="bookmark-add" size={24} color={"green"} />
-            ) : (
-              <MaterialIcons name="bookmark-remove" size={24} color={"gray"} />
-            )}
-          </TouchableOpacity>
+                    {isSaved ? (
+                      <MaterialIcons
+                        name="bookmark-add"
+                        size={24}
+                        color="green"
+                      />
+                    ) : (
+                      <MaterialIcons
+                        name="bookmark-border"
+                        size={24}
+                        color="white"
+                      />
+                    )}
+                  </TouchableOpacity>
         </View>
 
         <View>
