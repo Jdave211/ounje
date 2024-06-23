@@ -25,19 +25,26 @@ const SavedRecipes = () => {
     };
 
     const fetch_saved_recipes = async () => {
-      const { data: recipes } = await supabase
+      const { data: recipes, error } = await supabase
         .from("saved_recipes")
         .select("recipe_id")
         .eq("user_id", user_id);
-
+    
+      if (error) {
+        console.error("Error fetching saved recipes:", error);
+        return;
+      }
+    
       console.log({ saved_recipes: recipes });
-
+    
       if (recipes) {
-        const recipe_ids = recipes.map(({ recipe_id }) => recipe_id);
-
-        setSavedRecipes(() => recipe_ids);
+        // Use a Set to store unique recipe_ids
+        const uniqueRecipeIds = Array.from(new Set(recipes.map(({ recipe_id }) => recipe_id)));
+    
+        setSavedRecipes(uniqueRecipeIds);
       }
     };
+    
 
     fetch_saved_recipes();
 
@@ -73,7 +80,7 @@ const SavedRecipes = () => {
               key={i}
               onPress={navigate_to_recipe_page(recipe_id)}
             >
-              <RecipeCard id={recipe_id} showBookmark={true} />
+              <RecipeCard id={recipe_id} isaved={true} showBookmark={true} />
             </TouchableOpacity>
             // </View>
           ))}
