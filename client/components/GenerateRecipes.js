@@ -46,17 +46,32 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         content: `Food Items: ${foodItemNames}`,
       };
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+      // Initial request
+      let response = await openai.chat.completions.create({
+        model: "gpt-4",
         messages: [systemPrompt, userPrompt],
-        response_format: { type: "json_object" },
       });
 
-      console.log("GPT Response:", response);
-      return response;
+      let recipes = [response.choices[0].message.content];
+
+      // Follow-up requests for different recipes
+      for (let i = 0; i < 3; i++) {
+        response = await openai.chat.completions.create({
+          model: "gpt-4",
+          messages: [
+            systemPrompt,
+            userPrompt,
+            { role: "user", content: "Give me another distinct recipe" },
+          ],
+        });
+        recipes.push(response.choices[0].message.content);
+      }
+
+      console.log("GPT Recipes:", recipes);
+      return recipes;
     } catch (error) {
-      console.error("Error passing recipe through GPT:", error);
-      return "Error validating recipe.";
+      console.error("Error generating recipes with GPT:", error);
+      return "Error generating recipes.";
     }
   };
 
@@ -89,7 +104,8 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
           run_id: currentRun.id,
           ...item,
         }));
-        await generateGPTRecipes(selectedFoodItems);
+
+        const gptRecipes = await generateGPTRecipes(selectedFoodItems);
 
         await supabase.from("food_items").upsert(selectedFoodItems);
 
