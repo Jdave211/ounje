@@ -25,6 +25,11 @@ const SavedRecipes = () => {
     };
 
     const fetch_saved_recipes = async () => {
+      if (!user_id) {
+        console.log("User ID not available yet");
+        return;
+      }
+      
       const { data: recipes, error } = await supabase
         .from("saved_recipes")
         .select("recipe_id")
