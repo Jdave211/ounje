@@ -48,7 +48,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
       // Initial request
       let response = await openai.chat.completions.create({
-        model: "gpt-4",
+        model: "gpt-4o",
         messages: [systemPrompt, userPrompt],
       });
 
