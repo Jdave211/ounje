@@ -29,6 +29,7 @@ const RecipePage = ({ route }) => {
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [food_items, setFoodItems] = useState([]);
   const [isSaved, setIsSaved] = useState(false);
+  //const [isSaved, setIsNotSaved] = useState(true)
 
   useEffect(() => {
     const getUserId = async () => {
@@ -159,12 +160,20 @@ const RecipePage = ({ route }) => {
             <AntDesign name="arrowleft" size={24} color={"white"} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            {isSaved ? (
-              <MaterialIcons name="bookmark-remove" size={24} color={"gray"} />
-            ) : (
-              <MaterialIcons name="bookmark-add" size={24} color={"green"} />
-            )}
-          </TouchableOpacity>
+                    {isSaved ? (
+                      <MaterialIcons
+                        name="bookmark-add"
+                        size={24}
+                        color="green"
+                      />
+                    ) : (
+                      <MaterialIcons
+                        name="bookmark-border"
+                        size={24}
+                        color="white"
+                      />
+                    )}
+                  </TouchableOpacity>
         </View>
 
         <View>
@@ -284,7 +293,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveButton: {
-    backgroundColor: "#2e2d2d",
+    //backgroundColor: "#2e2d2d",
     borderRadius: 100,
     padding: 8,
     width: 50,
@@ -292,6 +301,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     position: "absolute",
     right: 10,
+  },
+  saved: {
+    backgroundColor: '#2e2d2d', // Style for the saved state
+  },
+  notSaved: {
+    backgroundColor: 'green', // Style for the not saved state
   },
   carouselItem: {
     flex: 1,

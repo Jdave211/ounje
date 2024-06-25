@@ -23,10 +23,10 @@ import { FOOD_ITEMS } from "../utils/constants";
 // - bookmarks: Number
 //
 
-const RecipeCard = ({ id, showBookmark }) => {
+const RecipeCard = ({ id, isaved,showBookmark }) => {
   const [user_id, setUserId] = useState(null);
   const [recipeDetails, setRecipeDetails] = useState(null);
-  const [isSaved, setIsSaved] = React.useState(false);
+  const [isSaved, setIsSaved] = useState(isaved);
   const [food_items, setFoodItems] = useState([]);
 
   useEffect(() => {
@@ -77,6 +77,7 @@ const RecipeCard = ({ id, showBookmark }) => {
   }, [user_id]);
 
   console.log({ recipeDetails });
+  
 
   const handleSave = async () => {
     let localIsSaved = !isSaved;
@@ -95,7 +96,7 @@ const RecipeCard = ({ id, showBookmark }) => {
         text1: "Recipe Saved",
         text2: `${recipeDetails.title} has been saved to your recipes.`,
       });
-
+      
       return;
     } else {
       await supabase
@@ -223,10 +224,10 @@ const RecipeCard = ({ id, showBookmark }) => {
 
               {showBookmark && (
                 <View>
-                  <TouchableOpacity style={styles.save} onPress={handleSave}>
+                  <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
                     {isSaved ? (
                       <MaterialIcons
-                        name="bookmark-added"
+                        name="bookmark-add"
                         size={24}
                         color="green"
                       />

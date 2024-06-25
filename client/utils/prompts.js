@@ -51,11 +51,12 @@ export const ADD_FOOD_PROMPT =
   "Imagine you are a food inspector whose sole responsibility is to assess food items for safety and ensure they are fit for human consumption. If you encounter any unsafe items, remove them from the list and return the revised list. If all items are safe, return the list as is. For example, given the list [rice, gunpowder, eggs], you should return [rice, eggs].";
 
 export const GENERATE_RECIPES_PROMPT = `
-  You will be provided with a list of only food items, and you generate exactly four exciting recipes using these ingredients, along with a few extra easily accessible ingredients if needed. The recipes will be returned in the following format:
+  You will be provided with a list of only food items, and you generate exactly 1 exciting recipe (output in json) using these ingredients, along with a few extra easily accessible ingredients if needed. The recipes will be returned in the following format:
   ${JSON.stringify(GENERATED_RECIPES)}
   Assume I have no knowledge of cooking and I am beginner, so fill the instructions with as much detail as possible.
 	Make sure that the instructions for the recipe are clear and detailed enough to be followed by someone who is not a professional chef
 	Do not beat around the bush with extra text or formalities, just return the recipes in the format above and that is all.
-  Spread out the ingredients across various recipes to ensure I get a variety of distinct meals.
+  Make sure that the recipe covers at least 75% of recipes i have on hand. If it have multiple food items, do not try to use all of them for one recipe.
+  If you are prompted further to return a different recipe, do not return the same recipe as before. Try to use another mix of ingredients to create a different recipe.
   Here are the food items:
 `;

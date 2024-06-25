@@ -25,6 +25,69 @@ const useImageProcessing = () => {
     }
   };
 
+  const storecImages = async (userId, base64Images) => {
+    const inventoryImageBucket = "calorie_images2";
+    const inventoryImageBucketPath = userId;
+    const images = [];
+
+    const uploadImage = async (base64Image) => {
+      try {
+        // Convert base64 to ArrayBuffer
+        const byteCharacters = Buffer.from(base64Image, "base64").toString(
+          "binary",
+        );
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const arrayBuffer = byteArray.buffer;
+
+        let nanoId = nanoid();
+        let imagePath = `${inventoryImageBucketPath}/${nanoId}.jpeg`;
+        images.push(imagePath);
+
+        let { data, error } = await supabase.storage
+          .from(inventoryImageBucket)
+          .upload(imagePath, arrayBuffer, {
+            contentType: "image/jpeg",
+            cacheControl: "3600",
+            upsert: false,
+          });
+
+        if (error) {
+          console.error("Error uploading image to storage:", error);
+          throw error;
+        }
+
+        // Add image path to inventory_images table
+        const { data: insertData, error: insertError } = await supabase
+          .from("calorie_imagedata")
+          .upsert([{ user_id: userId, images: images }]);
+
+        if (insertError) {
+          console.error(
+            "Error inserting image URL into the database:",
+            insertError,
+          );
+          throw insertError;
+        }
+
+        return data.path;
+      } catch (error) {
+        console.error("Error in uploadCalorieImage function:", error);
+        throw error;
+      }
+    };
+
+    try {
+      return await Promise.all(base64Images.map(uploadImage));
+    } catch (error) {
+      console.error("Error in storeCalorieImages function:", error);
+      throw error;
+    }
+  };
+
   const storeImages = async (userId, base64Images) => {
     const inventoryImageBucket = "inventory_images";
     const inventoryImageBucketPath = userId;
@@ -160,7 +223,7 @@ const useImageProcessing = () => {
     }
   };
 
-  return { loading, convertImageToBase64, sendImages };
+  return { loading, convertImageToBase64, sendImages, storecImages };
 };
 
 export default useImageProcessing;

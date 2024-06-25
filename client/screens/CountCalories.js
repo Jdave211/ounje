@@ -15,6 +15,8 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { AntDesign, Feather } from "@expo/vector-icons";
 import Loading from "../components/Loading";
 import axios from "axios";
+import useImageProcessing from "../components/useImageProcessing";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const CountCalories = () => {
   const [image, setImage] = useState(null);
@@ -24,6 +26,11 @@ const CountCalories = () => {
   const [foodItems, setFoodItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [calorieImages, setCalorieImages] = useState([]);
+  const [calorieImageUris, setCalorieImageUris] = useState([]);
+  const [userId, setUserId] = useState(null);
+
+  const {convertImageToBase64, storecImages } = useImageProcessing();
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -45,6 +52,10 @@ const CountCalories = () => {
       setMealName(null);
       setCalories(null);
       setMacros(null);
+      const uri = result.assets[0].uri;
+      setCalorieImageUris((prevUris) => [...prevUris, uri]);
+      const base64Image = await convertImageToBase64(uri);
+      setCalorieImages((prevImages) => [...prevImages, base64Image]);
     }
   };
 
@@ -67,6 +78,10 @@ const CountCalories = () => {
       setMealName(null);
       setCalories(null);
       setMacros(null);
+      const uri = result.assets[0].uri;
+      setCalorieImageUris((prevUris) => [...prevUris, uri]);
+      const base64Image = await convertImageToBase64(uri);
+      setCalorieImages((prevImages) => [...prevImages, base64Image]);
     }
   };
 
@@ -193,6 +208,11 @@ const CountCalories = () => {
           sugars: totalMacros.sugars.toFixed(2),
         });
         setModalVisible(true);
+        const retrievedUserId = await AsyncStorage.getItem("user_id");
+        setUserId(retrievedUserId);
+        if (calorieImages.length > 0) {
+          await storecImages(userId, calorieImages);
+        }
       } else {
         console.error("API call failed with status: ", response.status);
         alert("Failed to analyze the image");
