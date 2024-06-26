@@ -39,7 +39,10 @@ const Inventory = () => {
   useEffect(() => {
     const fetchInitialData = async () => {
       const retrievedUserId = await AsyncStorage.getItem("user_id");
+      //console.log(retrievedUserId);
+
       setUserId(retrievedUserId);
+      console.log(userId);
 
       const retrievedArrayText = await AsyncStorage.getItem("food_items_array");
       const retrievedFoodItemsArray = JSON.parse(retrievedArrayText || "[]");
@@ -75,6 +78,7 @@ const Inventory = () => {
       const fetchInitialData = async () => {
         const retrievedUserId = await AsyncStorage.getItem("user_id");
         setUserId(retrievedUserId);
+        console.log(userId);
 
         const retrievedArrayText =
           await AsyncStorage.getItem("food_items_array");
@@ -85,8 +89,9 @@ const Inventory = () => {
           const { data: inventory } = await supabase
             .from("inventory")
             .select("images")
-            .eq("user_id", retrievedUserId)
+            .eq("user_id", userId)
             .single();
+            console.log(inventory);
 
           if (inventory) {
             const imagePaths = inventory.images.map((image) =>
@@ -214,6 +219,11 @@ const Inventory = () => {
           if (!result.canceled) {
             const imageUri = result.assets[0].uri;
             setInventoryImages((prevUris) => [...prevUris, imageUri]);
+            const base64Image = await convertImageToBase64(imageUri);
+            setIsLoading(true);
+            await sendImages([base64Image]);
+            setIsLoading(false);
+            Alert.alert("Success", "Image has been Added.");
           }
         } else if (buttonIndex === 2) {
           let result = await ImagePicker.launchImageLibraryAsync({
@@ -226,6 +236,12 @@ const Inventory = () => {
           if (!result.canceled) {
             const imageUri = result.assets[0].uri;
             setInventoryImages((prevUris) => [...prevUris, imageUri]);
+            const base64Image = await convertImageToBase64(imageUri);
+            setIsLoading(true);
+            await sendImages([base64Image]);
+            setIsLoading(false);
+            Alert.alert("Success", "Image has been Added.");
+
           }
         }
       },
