@@ -17,6 +17,7 @@ export default function Account({ session }) {
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [signingOut, setSigningOut] = useState(false);
+  const [deleteAcc, setDelete] = useState(false)
 
   useEffect(() => {
     if (session) getProfile();
@@ -71,6 +72,35 @@ export default function Account({ session }) {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleDeleteAccount() { //function to actually delete an account
+    try {
+      setDeleteAcc(true);
+      await handleSignOut();
+
+      const user_id = await AsyncStorage.getItem("user_id");
+      const { error } = await supabase
+        .from("profiles")
+        .delete()
+        .eq("id", user_id);
+
+      if (error) {
+        throw error;
+      }
+
+      Toast.show({
+        type: "success",
+        text1: "Account Deleted",
+        text2: "Your account has been successfully deleted.",
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        Alert.alert(error.message);
+      }
+    } finally {
+      setDeleteAcc(false);
     }
   }
 
@@ -139,6 +169,14 @@ export default function Account({ session }) {
             disabled={signingOut}
           />
           {signingOut && <ActivityIndicator size="small" color="red" />}
+          <Button
+            title={deleteAcc ? "Deleting Account..." : "Delete Account"}
+            type="clear"
+            titleStyle={{ color: "red" }}
+            onPress={handleSignOut}
+            disabled={deleteAcc}
+          />
+          {deleteAcc && <ActivityIndicator size="small" color="red" />}
         </View>
       </View>
       <Toast />

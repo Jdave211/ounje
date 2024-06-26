@@ -211,7 +211,7 @@ const CountCalories = () => {
         const retrievedUserId = await AsyncStorage.getItem("user_id");
         setUserId(retrievedUserId);
         if (calorieImages.length > 0) {
-          await storecImages(userId, calorieImages);
+          await storecImages(retrievedUserId, calorieImages);
         }
       } else {
         console.error("API call failed with status: ", response.status);
