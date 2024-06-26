@@ -111,7 +111,7 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
         text2: `${recipeDetails.title} has been removed from your saved recipes.`,
       });
     }
-  };
+  }; 
 
   const calc_percentage = (recipeDetails) => {
     if (!recipeDetails || !food_items) return 0;
