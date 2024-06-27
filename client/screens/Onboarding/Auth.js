@@ -11,6 +11,7 @@ import {
 import { supabase } from "../../utils/supabase";
 import { Button, Input } from "react-native-elements";
 import Loading from "../../components/Loading";
+import { useNavigation } from "@react-navigation/native";
 
 AppState.addEventListener("change", (state) => {
   if (state === "active") {
