@@ -13,10 +13,9 @@ import {
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import { AntDesign, Feather } from "@expo/vector-icons";
-import Loading from "../components/Loading";
 import axios from "axios";
-import useImageProcessing from "../components/useImageProcessing";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import useImageProcessing from "../components/useImageProcessing";
 
 const CountCalories = () => {
   const [image, setImage] = useState(null);
@@ -30,7 +29,7 @@ const CountCalories = () => {
   const [calorieImageUris, setCalorieImageUris] = useState([]);
   const [userId, setUserId] = useState(null);
 
-  const {convertImageToBase64, storecImages } = useImageProcessing();
+  const { convertImageToBase64, storecImages } = useImageProcessing();
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -49,9 +48,7 @@ const CountCalories = () => {
     if (!result.canceled) {
       const manipulatedImage = await manipulateImage(result.assets[0].uri);
       setImage(manipulatedImage.uri);
-      setMealName(null);
-      setCalories(null);
-      setMacros(null);
+      resetAnalysisState();
       const uri = result.assets[0].uri;
       setCalorieImageUris((prevUris) => [...prevUris, uri]);
       const base64Image = await convertImageToBase64(uri);
@@ -75,9 +72,7 @@ const CountCalories = () => {
     if (!result.canceled) {
       const manipulatedImage = await manipulateImage(result.assets[0].uri);
       setImage(manipulatedImage.uri);
-      setMealName(null);
-      setCalories(null);
-      setMacros(null);
+      resetAnalysisState();
       const uri = result.assets[0].uri;
       setCalorieImageUris((prevUris) => [...prevUris, uri]);
       const base64Image = await convertImageToBase64(uri);
@@ -117,6 +112,13 @@ const CountCalories = () => {
     );
   };
 
+  const resetAnalysisState = () => {
+    setMealName(null);
+    setCalories(null);
+    setMacros(null);
+    setFoodItems([]);
+  };
+
   const analyzeImage = async () => {
     if (!image) {
       alert("Please upload an image first!");
@@ -137,7 +139,7 @@ const CountCalories = () => {
         formData,
         {
           headers: {
-            Authorization: "Api-Key Yi5GdFzS.nbWSmoqrASgSW0U83rHU7US5JYasTdNd",
+            Authorization: "Api-Key Ykg5QjJS.mj5OnDHC5QLQoMmkzLBgX0GYRyknzLi1",
             "Content-Type": "multipart/form-data",
           },
         },
@@ -145,7 +147,6 @@ const CountCalories = () => {
 
       if (response.status === 200) {
         const data = response.data;
-        console.log(data);
 
         let allMealNames = data.items.map(
           (item) => item.food[0].food_info.display_name,
@@ -207,12 +208,14 @@ const CountCalories = () => {
           fibers: totalMacros.fibers.toFixed(2),
           sugars: totalMacros.sugars.toFixed(2),
         });
-        setModalVisible(true);
+
         const retrievedUserId = await AsyncStorage.getItem("user_id");
         setUserId(retrievedUserId);
         if (calorieImages.length > 0) {
           await storecImages(retrievedUserId, calorieImages);
         }
+
+        setModalVisible(true);
       } else {
         console.error("API call failed with status: ", response.status);
         alert("Failed to analyze the image");
@@ -227,10 +230,7 @@ const CountCalories = () => {
 
   const clearImage = () => {
     setImage(null);
-    setMealName(null);
-    setCalories(null);
-    setMacros(null);
-    setFoodItems([]);
+    resetAnalysisState();
   };
 
   return (
@@ -263,7 +263,7 @@ const CountCalories = () => {
       </View>
       <View style={styles.analyzeButtonContainer}>
         {loading ? (
-          <Loading />
+          <ActivityIndicator size="large" color="#38F096" />
         ) : (
           <TouchableOpacity style={styles.analyzeButton} onPress={analyzeImage}>
             <Text style={styles.analyzeButtonText}>Analyze Calories</Text>

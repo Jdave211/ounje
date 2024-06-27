@@ -61,6 +61,21 @@ export const GENERATE_RECIPE_NAMES_PROMPT = `
   Here are my food items:
 `;
 
+export const GENERATE_RECIPES_PROMPT = `
+  You will be provided with a list of food items, and your task is to generate exactly 1 exciting recipe in JSON format using these ingredients, along with a few extra easily accessible ingredients if needed.
+  Carefully analyze each ingredient to determine if they go well together based on common culinary practices and nutritional compositions. Exclude any ingredient that doesn't fit well with the others. Only generate recipes with ingredients you are sure go well together. Ensure the recipe is both appetizing and nutritionally balanced, suitable for someone with no knowledge of cooking. The instructions should be easy to follow, step-by-step.
+  At least 50% of the ingredients should come from the list I will provide.
+
+  The format of the recipe should strictly adhere to the following structure:
+  ${JSON.stringify(GPT_RECIPE)}
+
+  Use this structure strictly, ensuring numbers are only used for quantities, times, and servings, while text is used for names and instructions. Avoid adding extra text or formalities.
+
+  If prompted further to return a different recipe, do not repeat any previous recipes. Use another mix of ingredients to create a recipe from a different part of the world.
+
+  Here are the food items:
+  `;
+
 export const GENERATE_RECIPE_DETAILS_PROMPT = `
   You will be provided with the name of a recipe. Your task is to generate the full recipe details in JSON format using the provided ingredients, along with a few extra easily accessible ingredients if needed.
   Carefully analyze the recipe name to determine the best ingredients and steps based on common culinary practices and nutritional compositions. Ensure the recipe is both appetizing and nutritionally balanced, suitable for someone with no knowledge of cooking. The instructions should be easy to follow, step-by-step.

@@ -2,10 +2,8 @@ import React, { useState, useEffect } from "react";
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
-import {
-  GENERATE_RECIPES_PROMPT,
-  GENERATE_RECIPE_NAMES_PROMPT,
-} from "../utils/prompts";
+import { FOOD_ITEMS } from "../utils/constants";
+import { GENERATE_RECIPES_PROMPT } from "../utils/prompts";
 import { supabase } from "../utils/supabase";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 import { useNavigation } from "@react-navigation/native";
@@ -35,16 +33,13 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
     fetchData();
   }, []);
 
-  const generateGPTRecipeNames = async (foodItems) => {
+  const generateGPTRecipes = async (foodItems) => {
     try {
       console.log("Generating recipes with GPT...");
       const foodItemNames = foodItems.map((item) => item.name).join(", ");
       console.log("Food Items:", foodItemNames);
 
-      const systemPrompt = {
-        role: "system",
-        content: GENERATE_RECIPE_NAMES_PROMPT,
-      };
+      const systemPrompt = { role: "system", content: GENERATE_RECIPES_PROMPT };
       const userPrompt = {
         role: "user",
         content: `Food Items: ${foodItemNames}`,
@@ -56,57 +51,41 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         messages: [systemPrompt, userPrompt],
         response_format: { type: "json_object" },
       });
+      console.log(response);
+      let recipes = [JSON.parse(response.choices[0].message.content)];
 
-      let recipeNames = JSON.parse(response.choices[0].message.content);
-      console.log("Generated Recipes:", recipeNames);
-
-      return recipes;
-    } catch (error) {
-      console.error("Error generating recipes with GPT:", error);
-      Alert.alert("Error", "Failed to generate recipes.");
-    }
-  };
-
-  const generateGPTRecipes = async (recipeNames) => {
-    try {
-      console.log("Generating recipes with GPT...");
-
-      // Define the system prompt
-      const systemPrompt = { role: "system", content: GENERATE_RECIPES_PROMPT };
-
-      // Function to generate a single recipe
-      const generateSingleRecipe = async (recipeName) => {
-        const userPrompt = {
-          role: "user",
-          content: `Recipe Name: ${recipeName}`,
-        };
-
-        let response = await openai.chat.completions.create({
+      // Follow-up requests for different recipes
+      for (let i = 0; i < 3; i++) {
+        response = await openai.chat.completions.create({
           model: "gpt-4o",
-          messages: [systemPrompt, userPrompt],
+          messages: [
+            systemPrompt,
+            userPrompt,
+            {
+              role: "user",
+              content:
+                "Give me another distinct recipe in JSON. In no way should it be related to the previous one(fruit salad -> apple fruit salad). instead do something like fruit salad -> apple pie",
+            },
+          ],
           response_format: { type: "json_object" },
         });
+        console.log("Additional recipe", response.choices[0].message.content);
+        recipes.push(JSON.parse(response.choices[0].message.content));
+      }
+      console.log("GPT Recipes", recipes);
 
-        console.log(`Recipe for ${recipeName}:`, response);
-        const recipe = JSON.parse(response.choices[0].message.content);
-
-        return {
-          id: `gpt_${Math.random().toString(36).substr(2, 9)}`, // Unique ID for GPT recipes
-          title: recipe.Recipe,
-          summary: recipe.Summary,
-          instructions: recipe.Instructions,
-          ingredients: recipe.Ingredients,
-          image: "", // Placeholder for image URL
-          ready_in_minutes: recipe.CookTime,
-          servings: recipe.Servings,
-          calories: recipe.Calories,
-        };
-      };
-
-      // Generate recipes in parallel
-      const formattedRecipes = await Promise.all(
-        recipeNames.map((recipeName) => generateSingleRecipe(recipeName)),
-      );
+      // Parse and format the GPT recipes
+      const formattedRecipes = recipes.flat().map((recipe) => ({
+        id: `gpt_${Math.random().toString(36).substr(2, 9)}`, // Unique ID for GPT recipes
+        title: recipe.Recipe,
+        summary: recipe.Summary,
+        instructions: recipe.Instructions,
+        ingredients: recipe.Ingredients,
+        image: "", // Placeholder for image URL
+        ready_in_minutes: recipe.CookTime,
+        servings: recipe.Servings,
+        calories: recipe.Calories,
+      }));
 
       console.log("Formatted GPT Recipes:", formattedRecipes);
 
@@ -221,9 +200,8 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
           .from("recipe_ids")
           .upsert(recipeOptionsInSnakeCase, { onConflict: "id" });
 
-        const recipeNames = generateGPTRecipeNames(selectedFoodItems);
         // Generate GPT recipes
-        const gptRecipes = await generateGPTRecipes(recipeNames);
+        const gptRecipes = await generateGPTRecipes(selectedFoodItems);
 
         // Combine GPT recipes with Spoonacular recipes
         const allRecipes = [...recipeOptionsInSnakeCase, ...gptRecipes];
