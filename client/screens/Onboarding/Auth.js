@@ -24,10 +24,17 @@ AppState.addEventListener("change", (state) => {
 export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
 
   async function signUpWithEmail() {
+    if (password !== confirmPassword) {
+      Alert.alert("Passwords do not match");
+      return;
+    }
+
     setLoading(true);
     const {
       data: { session },
@@ -47,6 +54,10 @@ export default function Auth() {
     setPasswordVisible(!passwordVisible);
   };
 
+  const toggleConfirmPasswordVisibility = () => {
+    setConfirmPasswordVisible(!confirmPasswordVisible);
+  };
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <View style={styles.container}>
@@ -62,8 +73,8 @@ export default function Auth() {
               value={email}
               placeholder="email@address.com"
               autoCapitalize={"none"}
-              inputStyle={{ color: "white" }} // Add this line
-              placeholderTextColor="gray" // Add this line
+              inputStyle={{ color: "white" }}
+              placeholderTextColor="gray"
             />
           </View>
           <View style={styles.verticallySpaced}>
@@ -80,8 +91,26 @@ export default function Auth() {
               secureTextEntry={!passwordVisible}
               placeholder="Password"
               autoCapitalize={"none"}
-              inputStyle={{ color: "white" }} // Add this line
-              placeholderTextColor="gray" // Add this line
+              inputStyle={{ color: "white" }}
+              placeholderTextColor="gray"
+            />
+          </View>
+          <View style={styles.verticallySpaced}>
+            <Input
+              label="Confirm Password"
+              leftIcon={{ type: "font-awesome", name: "lock" }}
+              rightIcon={{
+                type: "font-awesome",
+                name: confirmPasswordVisible ? "eye-slash" : "eye",
+                onPress: toggleConfirmPasswordVisibility,
+              }}
+              onChangeText={(text) => setConfirmPassword(text)}
+              value={confirmPassword}
+              secureTextEntry={!confirmPasswordVisible}
+              placeholder="Confirm Password"
+              autoCapitalize={"none"}
+              inputStyle={{ color: "white" }}
+              placeholderTextColor="gray"
             />
           </View>
           <View style={[styles.verticallySpaced, styles.signupButton]}>
@@ -89,7 +118,7 @@ export default function Auth() {
               title="Sign up"
               disabled={loading}
               onPress={() => signUpWithEmail()}
-              buttonStyle={{ backgroundColor: "green" }} // Add this line
+              buttonStyle={{ backgroundColor: "green" }}
             />
           </View>
         </View>
@@ -127,4 +156,4 @@ const styles = StyleSheet.create({
   signupButton: {
     marginTop: 5,
   },
-}); // ... (the same JSX as in the TypeScript version)   ) }
+});
