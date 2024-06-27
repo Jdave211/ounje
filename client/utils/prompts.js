@@ -1,6 +1,7 @@
 import { FOOD_ITEMS } from "./constants";
 import { RECIPE } from "./constants";
-import { GENERATED_RECIPES } from "./constants";
+import { GPT_RECIPE } from "./constants";
+import { GENERATED_NAMES } from "./constants";
 
 const categories = [
   "juices",
@@ -50,13 +51,23 @@ export const RECIPES_PROMPT = `Take in this recipe from my database and the ingr
 export const ADD_FOOD_PROMPT =
   "Imagine you are a food inspector whose sole responsibility is to assess food items for safety and ensure they are fit for human consumption. If you encounter any unsafe items, remove them from the list and return the revised list. If all items are safe, return the list as is. For example, given the list [rice, gunpowder, eggs], you should return [rice, eggs].";
 
-export const GENERATE_RECIPES_PROMPT = `
-  You will be provided with a list of only food items, and you generate exactly 1 exciting recipe (output in json) using these ingredients, along with a few extra easily accessible ingredients if needed. The recipes will be returned in the following format:
-  ${JSON.stringify(GENERATED_RECIPES)}
-  Assume I have no knowledge of cooking and I am beginner, so fill the instructions with as much detail as possible.
-	Make sure that the instructions for the recipe are clear and detailed enough to be followed by someone who is not a professional chef
-	Do not beat around the bush with extra text or formalities, just return the recipes in the format above and that is all.
-  Make sure that the recipe covers at least 75% of recipes i have on hand. If it have multiple food items, do not try to use all of them for one recipe.
-  If you are prompted further to return a different recipe, do not return the same recipe as before. Try to use another mix of ingredients to create a different recipe.
-  Here are the food items:
+export const GENERATE_RECIPE_NAMES_PROMPT = `
+  You will be provided with a list of food items, and your task is to generate the names of 5 vastly different recipes that can be made using these ingredients, along with a few extra easily accessible ingredients if needed.
+  Carefully select ingredients to ensure they fit well together based on common culinary practices and nutritional compositions, and distribute them across various recipes instead of combining all in one. Exclude any ingredients that do not fit well together. I do not want to see some disguting stuff like beef and apple stir fry or anything of the likes.
+  Ensure each recipe name reflects a dish that is both appetizing and commonly enjoyed by people. The recipe names should represent diverse culinary styles to ensure variety and creativity, with no single recipe combining all provided ingredients excessively.
+  Include one authentic Nigerian recipe that reflects traditional Nigerian cuisine, such as "Amala and Egusi" or "Ofada Rice and Ayamase."
+  Return the results in this JSON format: ${JSON.stringify(GENERATED_NAMES)}.
+
+  Here are my food items:
+`;
+
+export const GENERATE_RECIPE_DETAILS_PROMPT = `
+  You will be provided with the name of a recipe. Your task is to generate the full recipe details in JSON format using the provided ingredients, along with a few extra easily accessible ingredients if needed.
+  Carefully analyze the recipe name to determine the best ingredients and steps based on common culinary practices and nutritional compositions. Ensure the recipe is both appetizing and nutritionally balanced, suitable for someone with no knowledge of cooking. The instructions should be easy to follow, step-by-step.
+  The format of the recipe should strictly adhere to the following structure:
+  ${JSON.stringify(GPT_RECIPE)}
+
+  Use this structure strictly, ensuring numbers are only used for quantities, times, and servings, while text is used for names and instructions. Avoid adding extra text or formalities.
+
+  Here is the recipe name:
 `;

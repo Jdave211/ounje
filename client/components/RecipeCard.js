@@ -8,22 +8,19 @@ import harvestImage from "../assets/harvest.png";
 import { AnimatedCircularProgress } from "react-native-circular-progress";
 import { Bar as ProgressBar } from "react-native-progress";
 import { FOOD_ITEMS } from "../utils/constants";
+import fridge_bg from "@assets/fridge_bg.jpg";
 
-// recipe:
-// - id
-// usedIngredients: [],
-// missedIngredients: [],
-// title: Text,
-// image: Text,
-// usedIngredientCount: Number,
-// missedIngredientCount: Number,
-//
-// retrieve from database if recipes are stored
-// - likes: Number
-// - bookmarks: Number
-//
-
-const RecipeCard = ({ id, isaved,showBookmark }) => {
+const RecipeCard = ({
+  id,
+  isaved,
+  showBookmark,
+  title,
+  summary,
+  imageUrl,
+  readyInMinutes,
+  servings,
+  calories,
+}) => {
   const [user_id, setUserId] = useState(null);
   const [recipeDetails, setRecipeDetails] = useState(null);
   const [isSaved, setIsSaved] = useState(isaved);
@@ -36,7 +33,7 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
     };
 
     const fetch_food_items = async () => {
-      retrieved_text = await AsyncStorage.getItem("food_items_array");
+      let retrieved_text = await AsyncStorage.getItem("food_items_array");
       let retrieved_food_items_array = JSON.parse(retrieved_text);
 
       if (retrieved_food_items_array?.length > 0) {
@@ -77,7 +74,6 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
   }, [user_id]);
 
   console.log({ recipeDetails });
-  
 
   const handleSave = async () => {
     let localIsSaved = !isSaved;
@@ -88,30 +84,30 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
     if (localIsSaved) {
       await supabase
         .from("saved_recipes")
-        .insert([{ user_id, recipe_id: recipeDetails.id }])
+        .insert([{ user_id, recipe_id: recipeDetails ? recipeDetails.id : id }])
         .throwOnError();
 
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${recipeDetails.title} has been saved to your recipes.`,
+        text2: `${title || recipeDetails.title} has been saved to your recipes.`,
       });
-      
+
       return;
     } else {
       await supabase
         .from("saved_recipes")
         .delete()
         .eq("user_id", user_id)
-        .eq("recipe_id", recipeDetails.id)
+        .eq("recipe_id", recipeDetails ? recipeDetails.id : id)
         .throwOnError();
       Toast.show({
         type: "success",
         text1: "Recipe Unsaved",
-        text2: `${recipeDetails.title} has been removed from your saved recipes.`,
+        text2: `${title || recipeDetails.title} has been removed from your saved recipes.`,
       });
     }
-  }; 
+  };
 
   const calc_percentage = (recipeDetails) => {
     if (!recipeDetails || !food_items) return 0;
@@ -139,28 +135,17 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
 
   return (
     <View style={styles.container}>
-      {recipeDetails && (
+      {recipeDetails || title ? (
         <View
           style={{
-            // borderColor: "white",
             borderRadius: 10,
             borderWidth: 1,
             padding: 5,
-            borderShadow: "5px 10px #ffffff",
-            flex: 2,
             margin: 10,
             backgroundColor: "#2e2d2d",
           }}
         >
-          <View
-            style={{
-              width: "100%",
-              // borderRadius: 10,
-              padding: 0,
-              // borderColor: "white",
-              // borderWidth: 1,
-            }}
-          >
+          <View style={{ width: "100%", padding: 0 }}>
             <Image
               style={{
                 width: "100%",
@@ -169,13 +154,13 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
                 borderTopLeftRadius: 10,
                 borderTopRightRadius: 10,
               }}
-              source={{ uri: recipeDetails.image }}
+              source={{ uri: imageUrl || recipeDetails.image }}
             />
           </View>
           <View style={{ padding: 10 }}>
             <View style={{ ...styles.imageTextContainer, marginBottom: 5 }}>
               <Text style={styles.title} numberOfLines={1}>
-                {recipeDetails.title}
+                {title || recipeDetails.title}
               </Text>
             </View>
             <View
@@ -200,10 +185,9 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
                 >
                   <Feather name="clock" size={20} color="white" />
                   <Text style={{ ...styles.text, marginLeft: 10 }}>
-                    {recipeDetails.ready_in_minutes} mins
+                    {readyInMinutes || recipeDetails.ready_in_minutes} mins
                   </Text>
                 </View>
-
                 <View>
                   <Text style={styles.text}>
                     {new Number(percentage).toFixed(0)}% of{" "}
@@ -221,10 +205,12 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
                   />
                 </View>
               </View>
-
               {showBookmark && (
                 <View>
-                  <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+                  <TouchableOpacity
+                    style={styles.saveButton}
+                    onPress={handleSave}
+                  >
                     {isSaved ? (
                       <MaterialIcons
                         name="bookmark-add"
@@ -244,7 +230,7 @@ const RecipeCard = ({ id, isaved,showBookmark }) => {
             </View>
           </View>
         </View>
-      )}
+      ) : null}
     </View>
   );
 };
@@ -258,7 +244,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginRight: 20,
     color: "white",
-    // textDecorationLine: "underline",
   },
   recipeContent: {
     backgroundColor: "#c7a27c",

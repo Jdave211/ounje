@@ -140,3 +140,11 @@ export const GENERATED_RECIPES = [
       "Creamy Chicken and Carrot Stew is a rich and comforting dish that features tender chicken and sweet carrots in a creamy, savory sauce. Perfect for a cozy meal.",
   },
 ];
+
+export const GENERATED_NAMES = [
+  "Chicken and Corn Rice Pilaf",
+  "Ofada Rice and Ayamase Sauce",
+  "Cinnamon Rolls with Cream Cheese Frosting",
+  "Ice Cream Sundae with Caramel Sauce",
+  "Garlic and Herb Roasted Potatoes",
+];

@@ -84,6 +84,7 @@
     "stream-browserify": "^1.0.0",
     "string_decoder": "^0.10.31",
     "timers-browserify": "^1.4.2",
+    "toast": "^0.5.4",
     "ts-case-convert": "^2.0.7",
     "tty-browserify": "^0.0.0",
     "url": "^0.10.3",

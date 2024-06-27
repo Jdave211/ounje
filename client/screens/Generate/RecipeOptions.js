@@ -112,6 +112,14 @@ const RecipeOptions = () => {
                 key={index}
                 id={recipeOption.id}
                 showBookmark={true}
+                title={recipeOption.title || recipeOption.Recipe}
+                summary={recipeOption.summary || recipeOption.Summary}
+                imageUrl={recipeOption.image_url || recipeOption.image}
+                readyInMinutes={
+                  recipeOption.ready_in_minutes || recipeOption.CookTime
+                }
+                servings={recipeOption.servings || recipeOption.Servings}
+                calories={recipeOption.calories || recipeOption.Calories}
               />
             </TouchableOpacity>
           ))}

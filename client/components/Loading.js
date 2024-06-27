@@ -88,7 +88,6 @@ const styles = StyleSheet.create({
     color: "lightgray",
     paddingHorizontal: 20,
     textAlign: "center",
-    fontStyle: "italic",
   },
 });
 
