@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { AntDesign, Feather } from "@expo/vector-icons";
 import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import useImageProcessing from "../components/useImageProcessing";
+import { supabase } from "../utils/supabase";
 
 const CountCalories = () => {
   const [image, setImage] = useState(null);
@@ -28,8 +29,36 @@ const CountCalories = () => {
   const [calorieImages, setCalorieImages] = useState([]);
   const [calorieImageUris, setCalorieImageUris] = useState([]);
   const [userId, setUserId] = useState(null);
+  const [paid, setPaid] = useState(false); // Highlighted paid state
 
   const { convertImageToBase64, storecImages } = useImageProcessing();
+
+  useEffect(() => { // Highlighted useEffect for subscription check
+    checkSubscription();
+    //console.log(userId);
+  }, []);
+
+  const checkSubscription = async () => {
+    try {
+      const user_id = await AsyncStorage.getItem("user_id");
+      console.log(user_id);
+      const { data, error, status } = await supabase
+        .from("profiles")
+        .select("paid")
+        .eq("id", user_id)
+        .single();
+      if (error && status !== 406) {
+        throw error;
+      }
+      if (data) {
+        console.log(data.paid); 
+        setPaid(data.paid === true); // Ensuring the value is boolean true
+      }
+    } catch (error) {
+      console.error("Subscription check error:", error);
+    }
+    
+  };
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -120,6 +149,11 @@ const CountCalories = () => {
   };
 
   const analyzeImage = async () => {
+    if (!paid) {
+      alert("You need to subscribe for access, go to profile");
+      return;
+    }
+
     if (!image) {
       alert("Please upload an image first!");
       return;
@@ -265,7 +299,13 @@ const CountCalories = () => {
         {loading ? (
           <ActivityIndicator size="large" color="#38F096" />
         ) : (
-          <TouchableOpacity style={styles.analyzeButton} onPress={analyzeImage}>
+          <TouchableOpacity
+            style={
+              styles.analyzeButton
+            }
+            onPress={analyzeImage}
+            //disabled={!paid}
+          >
             <Text style={styles.analyzeButtonText}>Analyze Calories</Text>
           </TouchableOpacity>
         )}
