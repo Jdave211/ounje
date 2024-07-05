@@ -21,7 +21,6 @@ import fridge_bg from "../../assets/fridge_bg.jpg";
 import camera_icon from "../../assets/camera_icon.png";
 import { MultipleSelectList } from "../../components/MultipleSelectList";
 import { FontAwesome5 } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system";
 import { customAlphabet } from "nanoid/non-secure";
 import { Buffer } from "buffer";
@@ -32,7 +31,7 @@ import {
   flatten_nested_objects,
   parse_ingredients,
 } from "../../utils/spoonacular";
-import useImageProcessing from "../../components/useImageProcessing"; // Import the custom hook
+import useImageProcessing from "../../hooks/useImageProcessing"; // Import the custom hook
 
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 

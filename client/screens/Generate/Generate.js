@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -14,13 +14,14 @@ import { FontAwesome5 } from "@expo/vector-icons";
 import GenerateRecipes from "@components/GenerateRecipes"; // Ensure the correct import path
 import Loading from "@components/Loading"; // Ensure the correct import path
 import generate_bg from "@assets/generate_bg.jpg";
-import { supabase } from "@utils/supabase";
+import { supabase, fetchUserProfile } from "@utils/supabase";
+import { useQuery } from "react-query";
+import { useAppStore } from "@stores/app-store";
 
 export default function Generate({ route }) {
   const { session } = route.params;
   const [isLoading, setIsLoading] = useState(false);
-  const [selected, setSelected] = useState(null);
-  const [name, setName] = useState(" ");
+  const [selectedFlavour, setSelectedFlavour] = useState(null);
   const [recipes, setRecipes] = useState([]);
   const navigation = useNavigation();
 
@@ -30,29 +31,25 @@ export default function Generate({ route }) {
     setIsLoading(loading);
   };
 
-  useEffect(() => {
-    const fetchProfile = async () => {
-      setIsLoading(true); // Start loading
-      const userId = session?.user?.id;
-      if (userId) {
-        const { data: profileData, error: profileError } = await supabase
-          .from("profiles")
-          .select("name")
-          .eq("id", userId)
-          .single();
+  const userId = useAppStore((state) => state.user_id);
 
-        if (profileError) {
-          Alert.alert("Error fetching profile", profileError.message);
-        } else if (profileData) {
-          const firstName = profileData.name.split(" ")[0]; // get the first name
-          setName(firstName);
-        }
-      }
-      setIsLoading(false); // End loading
-    };
+  const { data: profileData, error: profileError } = useQuery(
+    ["profileData", session],
+    async () => {
+      // setIsLoading(true); // Start loading
+      let profile = await fetchUserProfile(userId);
+      // setIsLoading(false); // End loading
 
-    fetchProfile();
-  }, [session]);
+      return profile;
+    }
+  );
+
+  const name = useMemo(() => profileData?.name?.split(" ")[0], [profileData]);
+
+  console.log({ userId, profileData, name, profileError });
+  if (profileError) {
+    Alert.alert("Error fetching profile", profileError.message);
+  }
 
   return (
     <ImageBackground source={generate_bg} style={styles.backgroundImage}>
@@ -70,7 +67,7 @@ export default function Generate({ route }) {
           ) : (
             <>
               <SelectList
-                setSelected={setSelected}
+                setSelected={setSelectedFlavour}
                 data={flavors}
                 placeholder="Select a flavor"
                 placeholderStyles={{
@@ -101,6 +98,7 @@ export default function Generate({ route }) {
                 <GenerateRecipes
                   onLoading={handleLoading}
                   onRecipesGenerated={setRecipes}
+                  selectedMealType={selectedFlavour}
                 />
                 <View style={{ padding: 10 }}>
                   {recipes.map((recipe, index) => (

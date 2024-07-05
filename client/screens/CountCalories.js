@@ -14,8 +14,8 @@ import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import { AntDesign, Feather } from "@expo/vector-icons";
 import axios from "axios";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import useImageProcessing from "../components/useImageProcessing";
+import useImageProcessing from "../hooks/useImageProcessing";
+import { useAppStore } from "@stores/app-store";
 
 const CountCalories = () => {
   const [image, setImage] = useState(null);
@@ -27,9 +27,9 @@ const CountCalories = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [calorieImages, setCalorieImages] = useState([]);
   const [calorieImageUris, setCalorieImageUris] = useState([]);
-  const [userId, setUserId] = useState(null);
+  const userId = useAppStore((state) => state.user_id);
 
-  const { convertImageToBase64, storecImages } = useImageProcessing();
+  const { convertImageToBase64, storeCaloryImages } = useImageProcessing();
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -91,7 +91,7 @@ const CountCalories = () => {
     const manipulatedImage = await ImageManipulator.manipulateAsync(
       uri,
       actions,
-      saveOptions,
+      saveOptions
     );
     return manipulatedImage;
   };
@@ -108,7 +108,7 @@ const CountCalories = () => {
         } else if (buttonIndex === 2) {
           pickImage();
         }
-      },
+      }
     );
   };
 
@@ -142,14 +142,14 @@ const CountCalories = () => {
             Authorization: "Api-Key Ykg5QjJS.mj5OnDHC5QLQoMmkzLBgX0GYRyknzLi1",
             "Content-Type": "multipart/form-data",
           },
-        },
+        }
       );
 
       if (response.status === 200) {
         const data = response.data;
 
         let allMealNames = data.items.map(
-          (item) => item.food[0].food_info.display_name,
+          (item) => item.food[0].food_info.display_name
         );
         setMealName(allMealNames.join(", ") || "Unknown Meal");
 
@@ -184,7 +184,7 @@ const CountCalories = () => {
 
           if (foodItem.ingredients && foodItem.ingredients.length > 0) {
             foodItem.ingredients.forEach((ingredient) =>
-              calculateNutrients(ingredient, multiplier),
+              calculateNutrients(ingredient, multiplier)
             );
           }
         };
@@ -209,10 +209,8 @@ const CountCalories = () => {
           sugars: totalMacros.sugars.toFixed(2),
         });
 
-        const retrievedUserId = await AsyncStorage.getItem("user_id");
-        setUserId(retrievedUserId);
         if (calorieImages.length > 0) {
-          await storecImages(retrievedUserId, calorieImages);
+          await storeCaloryImages(userId, calorieImages);
         }
 
         setModalVisible(true);

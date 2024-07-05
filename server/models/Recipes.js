@@ -1,0 +1,48 @@
+import { Decimal128 } from "mongodb";
+import mongoose from "mongoose";
+const { Schema } = mongoose;
+
+const GeneratedRecipe = new Schema({
+  id: BigInt,
+  title: String,
+  summary: String,
+  image: String,
+  image_type: String,
+  instructions: [String],
+  // credits_text:  String,
+  // cuisines:  [String] ,
+  dairy_free: Boolean,
+  gluten_free: Boolean,
+  very_healthy: Boolean,
+  vegan: Boolean,
+  vegetarian: Boolean,
+  // very_popular: Boolean ,
+  sustainable: Boolean,
+  low_fodmap: Boolean,
+  // aggregate_likes: Number ,
+  health_score: Number,
+  // price_per_serving: Decimal128 ,
+  ready_in_minutes: Number,
+  servings: Number,
+  cooking_minutes: Number,
+  preparation_minutes: Number,
+  // license:  String ,
+  // source_name:  String ,
+  // source_url:  String ,
+  // spoonacular_score: Decimal128 ,
+  // spoonacular_source_url:  String ,
+  // weight_watcher_smart_points: Number ,
+  // taste jsonb ,
+  // occasions:  [String] ,
+  // original_id BigInt ,
+  // analyzed_instructions jsonb ,
+  // diets jsonb ,
+  // dish_types jsonb ,
+  extended_ingredients: [String],
+  // nutrition jsonb ,
+  // wine_pairing jsonb ,
+  // approved BigInt ,
+  // author:  String ,
+});
+
+export default mongoose.model("GeneratedRecipe", GeneratedRecipe);

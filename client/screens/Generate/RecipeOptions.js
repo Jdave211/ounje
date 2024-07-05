@@ -7,39 +7,17 @@ import {
   ScrollView,
 } from "react-native";
 import RecipeCard from "@components/RecipeCard";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
 import { AntDesign } from "@expo/vector-icons";
+import { useAppStore, useTmpStore } from "@stores/app-store";
+import { useRecipeOptionsStore } from "../../stores/recipe-options-store";
 
 const RecipeOptions = () => {
   const navigation = useNavigation();
 
-  const [user_id, setUserId] = useState(null);
-  const [recipeOptions, setRecipeOptions] = useState([]);
-
-  useEffect(() => {
-    const get_user_id = async () => {
-      let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(() => retrieved_user_id);
-    };
-
-    const fetch_recipe_options = async () => {
-      let retrieved_text = await AsyncStorage.getItem("recipe_options");
-      let retrieved_recipe_options = JSON.parse(retrieved_text);
-
-      console.log({ retrieved_text });
-      if (retrieved_recipe_options?.length > 0) {
-        setRecipeOptions(() => retrieved_recipe_options);
-      }
-    };
-
-    if (!user_id) {
-      get_user_id();
-    } else {
-      fetch_recipe_options();
-    }
-  }, [user_id]);
+  const user_id = useAppStore((state) => state.user_id);
+  const recipeOptions = useRecipeOptionsStore((state) => state.recipe_options);
 
   const store_selected_recipes = async (selected_recipes) => {
     const recipe_image_bucket = "recipe_images";
@@ -47,18 +25,18 @@ const RecipeOptions = () => {
     await Promise.allSettled(
       selected_recipes.map(async (recipe) => {
         let recipe_image = await generate_image(
-          "a zoomed out image showing the full dish of " + recipe.image_prompt,
+          "a zoomed out image showing the full dish of " + recipe.image_prompt
         );
 
         let storage_path = `${current_run.id}/${recipe.name}.jpeg`;
         let image_storage_response = await store_image(
           recipe_image_bucket,
           storage_path,
-          recipe_image,
+          recipe_image
         );
 
         return image_storage_response;
-      }),
+      })
     );
 
     const recipe_records = selected_recipes.map((recipe) => {

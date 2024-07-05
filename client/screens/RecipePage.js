@@ -10,7 +10,6 @@ import {
 } from "react-native";
 import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
 import Carousel from "react-native-reanimated-carousel";
 import { entitle } from "../utils/helpers";
@@ -19,67 +18,39 @@ import { Bar as ProgressBar } from "react-native-progress";
 import RenderHtml from "react-native-render-html";
 import { useWindowDimensions } from "react-native";
 import { useNavigation } from "@react-navigation/native";
+import { useAppStore } from "@stores/app-store";
+import { useQuery } from "react-query";
+import { fetchRecipeDetails } from "@utils/spoonacular";
+import { fetchIsRecipeSavedByUser } from "@utils/supabase";
+import { usePercentageOfIngredientsOwned } from "../hooks/usePercentageOfIngredientsOwned";
 
 const RecipePage = ({ route }) => {
   const { width: WIDTH } = useWindowDimensions();
-  const { id } = route.params;
+  const { id: recipe_id } = route.params;
   const navigation = useNavigation();
   const PAGE_WIDTH = Dimensions.get("window").width;
-  const [user_id, setUserId] = useState(null);
-  const [recipeDetails, setRecipeDetails] = useState(null);
-  const [food_items, setFoodItems] = useState([]);
-  const [isSaved, setIsSaved] = useState(false);
-  //const [isSaved, setIsNotSaved] = useState(true)
+  const [isRecipeSaved, setIsRecipeSaved] = useState(false);
+  const user_id = useAppStore((state) => state.user_id);
 
-  useEffect(() => {
-    const getUserId = async () => {
-      const retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(retrieved_user_id);
-    };
-
-    const fetchRecipeDetails = async () => {
-      const {
-        data: [recipe],
-      } = await supabase
-        .from("recipe_ids")
-        .select("*")
-        .eq("id", id)
-        .throwOnError();
-      setRecipeDetails(recipe);
-    };
-
-    const fetchFoodItems = async () => {
-      const retrieved_text = await AsyncStorage.getItem("food_items_array");
-      const retrieved_food_items_array = JSON.parse(retrieved_text);
-      if (retrieved_food_items_array?.length > 0) {
-        setFoodItems(retrieved_food_items_array);
-      }
-    };
-
-    const fetchIsSaved = async () => {
-      const { data: saved_data } = await supabase
-        .from("saved_recipes")
-        .select()
-        .eq("user_id", user_id)
-        .eq("recipe_id", id)
-        .throwOnError();
-      setIsSaved(saved_data?.length > 0);
-    };
-
-    if (!user_id) {
-      getUserId();
-    } else {
-      fetchRecipeDetails();
-      fetchIsSaved();
-      fetchFoodItems();
+  const { data: recipeDetails } = useQuery(
+    ["recipeDetails", recipe_id],
+    async () => await fetchRecipeDetails(recipe_id)
+  );
+  const { data: isAlreadySaved } = useQuery(
+    ["isRecipeSaved", user_id],
+    async () => await fetchIsRecipeSavedByUser(user_id, recipe_id),
+    {
+      onSuccess: () => setIsRecipeSaved(isAlreadySaved),
     }
-  }, [user_id, route.params]);
+  );
+  const percentage_of_ingredients_owned =
+    usePercentageOfIngredientsOwned(recipeDetails);
 
   const handleSave = async () => {
-    const localIsSaved = !isSaved;
-    setIsSaved(localIsSaved);
+    const localIsRecipeSaved = !isRecipeSaved;
+    setIsRecipeSaved(localIsRecipeSaved);
 
-    if (localIsSaved) {
+    if (localIsRecipeSaved) {
       await supabase
         .from("saved_recipes")
         .insert([{ user_id, recipe_id: recipeDetails.id }])
@@ -112,22 +83,8 @@ const RecipePage = ({ route }) => {
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
-      console.warn("STFU");
+      console.warn("STFU"); // omo this guy was really warning the code
     }
-  };
-
-  const calcPercentage = () => {
-    if (!recipeDetails || !food_items) return 0;
-    const foodItemsSet = new Set(
-      food_items.map(({ spoonacular_id }) => spoonacular_id),
-    );
-    const ownedItems = recipeDetails.extended_ingredients.filter((ingredient) =>
-      foodItemsSet.has(ingredient.id),
-    );
-    if (!ownedItems || ownedItems.length === 0) return 0;
-    const percentage =
-      (ownedItems.length / recipeDetails.extended_ingredients.length) * 100;
-    return percentage;
   };
 
   const truncateDescription = (description = "") => {
@@ -139,11 +96,6 @@ const RecipePage = ({ route }) => {
       ? description.substring(0, 200) + "..."
       : description;
   };
-
-  const percentage = useMemo(
-    () => calcPercentage(),
-    [food_items, recipeDetails],
-  );
 
   return (
     recipeDetails && (
@@ -160,20 +112,12 @@ const RecipePage = ({ route }) => {
             <AntDesign name="arrowleft" size={24} color={"white"} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-                    {isSaved ? (
-                      <MaterialIcons
-                        name="bookmark-add"
-                        size={24}
-                        color="green"
-                      />
-                    ) : (
-                      <MaterialIcons
-                        name="bookmark-border"
-                        size={24}
-                        color="white"
-                      />
-                    )}
-                  </TouchableOpacity>
+            {isRecipeSaved ? (
+              <MaterialIcons name="bookmark-add" size={24} color="green" />
+            ) : (
+              <MaterialIcons name="bookmark-border" size={24} color="white" />
+            )}
+          </TouchableOpacity>
         </View>
 
         <View>
@@ -205,11 +149,11 @@ const RecipePage = ({ route }) => {
             </View>
             <View style={styles.progressContainer}>
               <Text style={styles.text}>
-                {percentage.toFixed(0)}% of Ingredients
+                {percentage_of_ingredients_owned.toFixed(0)}% of Ingredients
               </Text>
               <View style={styles.progressBar}>
                 <ProgressBar
-                  progress={percentage / 100}
+                  progress={percentage_of_ingredients_owned / 100}
                   width={100}
                   color="green"
                 />
@@ -219,11 +163,14 @@ const RecipePage = ({ route }) => {
           </View>
 
           <Text style={styles.subheading}>Description</Text>
+          <Text style={styles.text} numberOfLines={5}>
+            {recipeDetails.summary}
+          </Text>
           <RenderHtml
             baseStyle={styles.text}
             contentWidth={WIDTH}
             source={{
-              html: `<div>${truncateDescription(recipeDetails.summary)}</div>`,
+              html: `<div>${recipeDetails.summary}</div>`,
             }}
           />
           <View style={styles.fullIngredients}>
@@ -258,7 +205,7 @@ const RecipePage = ({ route }) => {
                     <Text style={styles.text}>{number}.</Text>
                     <Text style={styles.text}>{step}</Text>
                   </View>
-                ),
+                )
               )
             ) : (
               <Text style={styles.text}>
@@ -303,10 +250,10 @@ const styles = StyleSheet.create({
     right: 10,
   },
   saved: {
-    backgroundColor: '#2e2d2d', // Style for the saved state
+    backgroundColor: "#2e2d2d", // Style for the saved state
   },
   notSaved: {
-    backgroundColor: 'green', // Style for the not saved state
+    backgroundColor: "green", // Style for the not saved state
   },
   carouselItem: {
     flex: 1,

@@ -10,6 +10,8 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createStackNavigator } from "@react-navigation/stack";
 import { supabase } from "./utils/supabase";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { QueryClient, QueryClientProvider } from "react-query";
+import {useAppStore} from "@stores/app-store";
 
 import Welcome from "./screens/Onboarding/Welcome";
 import FirstLogin from "./screens/Onboarding/FirstLogin";
@@ -76,6 +78,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [firstLogin, setFirstLogin] = useState(false);
 
+  const userId = useAppStore((state) => state.userId);
+  const set_user_id = useAppStore((state) => state.set_user_id);
+
+  const queryClient = new QueryClient();
+
   const getSession = useCallback(async () => {
     setLoading(true);
     const {
@@ -87,11 +94,15 @@ export default function App() {
       setLoading(false);
       return;
     }
+
     setSession(session);
     setLoading(false);
 
     if (session?.user) {
       const userId = session.user.id;
+
+      set_user_id(userId);
+
       console.log("User signed in, fetching profile...");
 
       const { data: userData, error: userError } = await supabase
@@ -119,6 +130,7 @@ export default function App() {
         setSession(session);
         if (session?.user) {
           const userId = session.user.id;
+          set_user_id(userId)
 
           supabase
             .from("profiles")
@@ -136,7 +148,7 @@ export default function App() {
               }
             });
         }
-      },
+      }
     );
 
     return () => {
@@ -154,71 +166,75 @@ export default function App() {
     );
   }
 
+  
+
   return (
     <GestureHandlerRootView>
-      <NavigationContainer ref={navigationRef}>
-        <View style={styles.container}>
-          {session ? (
-            firstLogin ? (
-              <FirstLogin
-                onProfileComplete={() => setFirstLogin(false)}
-                session={session}
-              />
+      <QueryClientProvider client={queryClient}>
+        <NavigationContainer ref={navigationRef}>
+          <View style={styles.container}>
+            {session ? (
+              firstLogin ? (
+                <FirstLogin
+                  onProfileComplete={() => setFirstLogin(false)}
+                  session={session}
+                />
+              ) : (
+                <Layout>
+                  <Tab.Navigator
+                    initialRouteName="Home"
+                    screenOptions={{ tabBarStyle: styles.navigator }}
+                  >
+                    <Tab.Screen
+                      name="Home"
+                      component={GenerateStack}
+                      options={{ headerShown: false }}
+                      initialParams={{ session }}
+                    />
+                    <Tab.Screen
+                      name="Collection"
+                      component={CollectionStack}
+                      options={{ headerShown: false }}
+                      initialParams={{ session }}
+                    />
+                    <Tab.Screen
+                      name="Community"
+                      component={Community}
+                      options={{ headerShown: false }}
+                    />
+                    <Tab.Screen
+                      name="Calories"
+                      component={CountCalories}
+                      options={{ headerShown: false }}
+                    />
+                    <Tab.Screen
+                      name="Inventory"
+                      component={Inventory}
+                      options={{ headerShown: false }}
+                    />
+                    <Tab.Screen
+                      name="Profile"
+                      component={Profile}
+                      options={{ headerShown: false }}
+                      initialParams={{ session }}
+                    />
+                    <Tab.Screen
+                      name="Auth"
+                      component={Auth}
+                      options={{ headerShown: false }}
+                    />
+                  </Tab.Navigator>
+                </Layout>
+              )
             ) : (
-              <Layout>
-                <Tab.Navigator
-                  initialRouteName="Home"
-                  screenOptions={{ tabBarStyle: styles.navigator }}
-                >
-                  <Tab.Screen
-                    name="Home"
-                    component={GenerateStack}
-                    options={{ headerShown: false }}
-                    initialParams={{ session }}
-                  />
-                  <Tab.Screen
-                    name="Collection"
-                    component={CollectionStack}
-                    options={{ headerShown: false }}
-                    initialParams={{ session }}
-                  />
-                  <Tab.Screen
-                    name="Community"
-                    component={Community}
-                    options={{ headerShown: false }}
-                  />
-                  <Tab.Screen
-                    name="Calories"
-                    component={CountCalories}
-                    options={{ headerShown: false }}
-                  />
-                  <Tab.Screen
-                    name="Inventory"
-                    component={Inventory}
-                    options={{ headerShown: false }}
-                  />
-                  <Tab.Screen
-                    name="Profile"
-                    component={Profile}
-                    options={{ headerShown: false }}
-                    initialParams={{ session }}
-                  />
-                  <Tab.Screen
-                    name="Auth"
-                    component={Auth}
-                    options={{ headerShown: false }}
-                  />
-                </Tab.Navigator>
-              </Layout>
-            )
-          ) : (
-            <Welcome />
-          )}
+              <Welcome />
+            )}
 
-          <StatusBar style="light" />
-        </View>
-        <Toast />
-      </NavigationContainer>
+            <StatusBar style="light" />
+          </View>
+          <Toast />
+        </NavigationContainer>
+      </QueryClientProvider>
     </GestureHandlerRootView>
   );
 }

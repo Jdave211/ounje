@@ -2,17 +2,20 @@ import React, { useState, useEffect, useMemo } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
 import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
 import harvestImage from "../assets/harvest.png";
 import { AnimatedCircularProgress } from "react-native-circular-progress";
 import { Bar as ProgressBar } from "react-native-progress";
 import { FOOD_ITEMS } from "../utils/constants";
 import fridge_bg from "@assets/fridge_bg.jpg";
+import { useAppStore } from "@stores/app-store";
+import { useQuery } from "react-query";
+import { fetchRecipeDetails } from "@utils/spoonacular";
+import { fetchIsRecipeSavedByUser } from "@utils/supabase";
+import { usePercentageOfIngredientsOwned } from "../hooks/usePercentageOfIngredientsOwned";
 
 const RecipeCard = ({
-  id,
-  isaved,
+  id: recipe_id,
   showBookmark,
   title,
   summary,
@@ -21,76 +24,52 @@ const RecipeCard = ({
   servings,
   calories,
 }) => {
-  const [user_id, setUserId] = useState(null);
-  const [recipeDetails, setRecipeDetails] = useState(null);
-  const [isSaved, setIsSaved] = useState(isaved);
-  const [food_items, setFoodItems] = useState([]);
+  const [isRecipeSaved, setIsRecipeSaved] = useState(false);
 
-  useEffect(() => {
-    const get_user_id = async () => {
-      let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(() => retrieved_user_id);
-    };
+  const user_id = useAppStore((state) => state.user_id);
 
-    const fetch_food_items = async () => {
-      let retrieved_text = await AsyncStorage.getItem("food_items_array");
-      let retrieved_food_items_array = JSON.parse(retrieved_text);
+  // here in useQuery, "recipeDetails" acts as the key for the cache and the
+  // second parameter is a dynamic parameter used to refetch the data when the recipe_id changes
+  const { data: recipeDetails } = useQuery(
+    ["recipeDetails", recipe_id],
+    async () => await fetchRecipeDetails(recipe_id)
+  );
 
-      if (retrieved_food_items_array?.length > 0) {
-        setFoodItems(retrieved_food_items_array);
-      }
-    };
-
-    const fetch_recipe_details = async () => {
-      const {
-        data: [recipe],
-      } = await supabase
-        .from("recipe_ids")
-        .select("*")
-        .eq("id", id)
-        .throwOnError();
-
-      setRecipeDetails(() => recipe);
-    };
-
-    const fetch_is_saved = async () => {
-      const { data: saved_data } = await supabase
-        .from("saved_recipes")
-        .select()
-        .eq("user_id", user_id)
-        .eq("recipe_id", id)
-        .throwOnError();
-
-      console.log({ saved_data });
-    };
-
-    if (!user_id) {
-      get_user_id();
-    } else {
-      fetch_recipe_details();
-      fetch_is_saved();
-      fetch_food_items();
+  useQuery(
+    ["isRecipeSaved", user_id],
+    async () => await fetchIsRecipeSavedByUser(user_id, recipe_id),
+    {
+      onSuccess: (isAlreadySaved) => {
+        if (isAlreadySaved) setIsRecipeSaved(true);
+      },
     }
-  }, [user_id]);
+  );
 
-  console.log({ recipeDetails });
+  const percentage = usePercentageOfIngredientsOwned(recipeDetails);
 
   const handleSave = async () => {
-    let localIsSaved = !isSaved;
+    let shouldSave = !isRecipeSaved;
 
-    console.log({ localIsSaved });
-    setIsSaved(localIsSaved);
+    setIsRecipeSaved(shouldSave);
 
-    if (localIsSaved) {
+    if (shouldSave) {
+      console.log({ recipeDetails });
       await supabase
         .from("saved_recipes")
-        .insert([{ user_id, recipe_id: recipeDetails ? recipeDetails.id : id }])
+        .insert([
+          {
+            user_id,
+            recipe_id: recipeDetails ? recipeDetails.id : recipe_id,
+          },
+        ])
         .throwOnError();
 
       Toast.show({
         type: "success",
         text1: "Recipe Saved",
-        text2: `${title || recipeDetails.title} has been saved to your recipes.`,
+        text2: `${
+          title || recipeDetails.title
+        } has been saved to your recipes.`,
       });
 
       return;
@@ -99,39 +78,17 @@ const RecipeCard = ({
         .from("saved_recipes")
         .delete()
         .eq("user_id", user_id)
-        .eq("recipe_id", recipeDetails ? recipeDetails.id : id)
+        .eq("recipe_id", recipeDetails ? recipeDetails.id : recipe_id)
         .throwOnError();
       Toast.show({
         type: "success",
         text1: "Recipe Unsaved",
-        text2: `${title || recipeDetails.title} has been removed from your saved recipes.`,
+        text2: `${
+          title || recipeDetails.title
+        } has been removed from your saved recipes.`,
       });
     }
   };
-
-  const calc_percentage = (recipeDetails) => {
-    if (!recipeDetails || !food_items) return 0;
-
-    let food_items_set = new Set(
-      food_items.map(({ spoonacular_id }) => spoonacular_id),
-    );
-
-    const owned_items = recipeDetails.extended_ingredients.filter(
-      (ingredient) => food_items_set.has(ingredient.id),
-    );
-
-    if (!owned_items || owned_items.length === 0) return 0;
-
-    const _percentage =
-      (owned_items.length / recipeDetails.extended_ingredients.length) * 100;
-
-    return _percentage;
-  };
-
-  const percentage = useMemo(
-    () => calc_percentage(recipeDetails),
-    [food_items, recipeDetails],
-  );
 
   return (
     <View style={styles.container}>
@@ -211,7 +168,7 @@ const RecipeCard = ({
                     style={styles.saveButton}
                     onPress={handleSave}
                   >
-                    {isSaved ? (
+                    {isRecipeSaved ? (
                       <MaterialIcons
                         name="bookmark-add"
                         size={24}

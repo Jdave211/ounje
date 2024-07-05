@@ -1,58 +1,104 @@
 import React, { useState, useEffect } from "react";
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
 import { FOOD_ITEMS } from "../utils/constants";
-import { GENERATE_RECIPES_PROMPT } from "../utils/prompts";
+import {
+  GENERATE_RECIPE_LIST_FROM_INGREDIENTS_PROMPT,
+  GENERATE_RECIPES_PROMPT,
+} from "../utils/prompts";
 import { supabase } from "../utils/supabase";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 import { useNavigation } from "@react-navigation/native";
 import { openai, extract_json } from "../utils/openai";
+import { useAppStore, useTmpStore } from "@stores/app-store";
+import { useRecipeOptionsStore } from "../stores/recipe-options-store";
+import { find_recipes_by_ingredients } from "../utils/spoonacular";
 
-export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
+export default function GenerateRecipes({
+  onLoading,
+  onRecipesGenerated,
+  selectedMealType,
+}) {
   const navigation = useNavigation();
   const [isLoading, setIsLoading] = useState(false);
-  const [recipes, setRecipes] = useState([]);
-  const [userId, setUserId] = useState(null);
-  const [foodItems, setFoodItems] = useState([]);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const userId = await AsyncStorage.getItem("user_id");
-        if (userId) setUserId(userId);
+  const userId = useAppStore((state) => state.user_id);
+  const setRecipeOptions = useRecipeOptionsStore(
+    (state) => state.setRecipeOptions
+  );
 
-        const storedFoodItems = await AsyncStorage.getItem("food_items_array");
-        if (storedFoodItems) setFoodItems(JSON.parse(storedFoodItems));
-      } catch (error) {
-        console.error("Error fetching user data:", error);
-        Alert.alert("Error", "Failed to fetch user data.");
-      }
-    };
+  const getInventoryFoodItems = useAppStore(
+    (state) => state.inventory.getFoodItems
+  );
 
-    fetchData();
-  }, []);
+  const foodItems = getInventoryFoodItems();
 
-  const generateGPTRecipes = async (foodItems) => {
+  const generateGPTRecipes = async (foodItems, recipes_to_exclude) => {
     try {
       console.log("Generating recipes with GPT...");
       const foodItemNames = foodItems.map((item) => item.name).join(", ");
       console.log("Food Items:", foodItemNames);
 
-      const systemPrompt = { role: "system", content: GENERATE_RECIPES_PROMPT };
-      const userPrompt = {
-        role: "user",
-        content: `Food Items: ${foodItemNames}`,
-      };
+      const food_item_names = foodItems.map((item) => item.name);
+      const recipes_to_exclude_names = recipes_to_exclude.map(
+        (recipe) => recipe.title
+      );
 
-      // Initial request
-      let response = await openai.chat.completions.create({
+      const generate_recipe_list_prompt = {
+        role: "system",
+        content: GENERATE_RECIPE_LIST_FROM_INGREDIENTS_PROMPT,
+      };
+      const recipe_list_request = {
+        role: "user",
+        content: `
+        Ingredients: ${food_item_names.join(", ")}
+        Exclude: ${recipes_to_exclude_names.join(", ")}
+        meal_type: ${selectedMealType}
+        `,
+      };
+      const {
+        choices: [
+          {
+            message: { content: recipe_list_response_text },
+          },
+        ],
+      } = await openai.chat.completions.create({
         model: "gpt-4o",
-        messages: [systemPrompt, userPrompt],
+        messages: [generate_recipe_list_prompt, recipe_list_request],
         response_format: { type: "json_object" },
       });
-      console.log(response);
-      let recipes = [JSON.parse(response.choices[0].message.content)];
+
+      const recipe_list_response = JSON.parse(recipe_list_response_text);
+      console.log({ recipe_list_response });
+
+      const generate_recipe_details = async (recipe) => {
+        const system_prompt = {
+          role: "system",
+          content: GENERATE_RECIPES_PROMPT,
+        };
+        const recipe_details_request = {
+          role: "user",
+          content: JSON.stringify(recipe),
+        };
+
+        const {
+          choices: [
+            {
+              message: { content: recipe_details_response },
+            },
+          ],
+        } = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [system_prompt, recipe_details_request],
+          response_format: { type: "json_object" },
+        });
+
+        return JSON.parse(recipe_details_response);
+      };
+
+      const recipe_details = await Promise.allSettled(
+        recipe_list_response.map(generate_recipe_details)
+      );
 
       // Follow-up requests for different recipes
       for (let i = 0; i < 3; i++) {
@@ -105,7 +151,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
             recipe.image = ""; // Fallback to empty string if image generation fails
           }
           return recipe;
-        }),
+        })
       );
 
       return recipesWithImages;
@@ -120,7 +166,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
     if (foodItems.length === 0) {
       Alert.alert(
         "Error",
-        "Please add some food to inventory or take a new picture.",
+        "Please add some food to inventory or take a new picture."
       );
       navigation.navigate("Inventory");
     } else {
@@ -128,92 +174,28 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         setIsLoading(true);
         onLoading(true);
 
-        const { data: runs, error: runsError } = await supabase
-          .from("runs")
-          .insert([{ user_id: userId, images: [] }]) // Ensure images is set to an empty array or appropriate default value
-          .select();
+        const selectedFoodItems = foodItems;
 
-        if (runsError) {
-          console.error("Error adding user run:", runsError);
-          Alert.alert("Error", "Failed to add user run.");
-          return;
-        }
-
-        const currentRun = runs[0];
-
-        const selectedFoodItems = foodItems.map((item) => ({
-          run_id: currentRun.id,
-          ...item,
-        }));
-
-        await supabase.from("food_items").upsert(selectedFoodItems);
-
-        const { data: suggestedRecipes } = await axios.get(
-          "https://api.spoonacular.com/recipes/findByIngredients",
-          {
-            params: {
-              apiKey: process.env.SPOONACULAR_API_KEY,
-              ingredients: foodItems.map(({ name }) => name).join(", "),
-              number: 7,
-              ranking: 1,
-            },
-          },
-        );
-
-        const { data: recipeDetails } = await axios.get(
-          `https://api.spoonacular.com/recipes/informationBulk`,
-          {
-            params: {
-              apiKey: process.env.SPOONACULAR_API_KEY,
-              includeNutrition: true,
-              ids: suggestedRecipes.map((recipe) => recipe.id).join(", "),
-            },
-          },
-        );
-
-        const recipeOptions = suggestedRecipes.map((suggestedRecipe, i) => ({
-          ...suggestedRecipe,
-          ...recipeDetails[i],
-        }));
-
-        const recipeOptionsInSnakeCase = objectToSnake(recipeOptions).map(
-          (recipe) => {
-            delete recipe.cheap;
-            delete recipe.gaps;
-            delete recipe.likes;
-            delete recipe.missed_ingredient_count;
-            delete recipe.missed_ingredients;
-            delete recipe.used_ingredients;
-            delete recipe.used_ingredient_count;
-            delete recipe.user_tags;
-            delete recipe.unused_ingredients;
-            delete recipe.unknown_ingredients;
-            delete recipe.open_license;
-            delete recipe.report;
-            delete recipe.suspicious_data_score;
-            delete recipe.tips;
-            return recipe;
-          },
-        );
+        const suggested_recipes = await find_recipes_by_ingredients(foodItems);
 
         await supabase
           .from("recipe_ids")
-          .upsert(recipeOptionsInSnakeCase, { onConflict: "id" });
+          .upsert(suggested_recipes, { onConflict: "id" });
 
         // Generate GPT recipes
-        const gptRecipes = await generateGPTRecipes(selectedFoodItems);
+        const gptRecipes = await generateGPTRecipes(
+          selectedFoodItems,
+          suggested_recipes
+        );
 
         // Combine GPT recipes with Spoonacular recipes
-        const allRecipes = [...recipeOptionsInSnakeCase, ...gptRecipes];
+        const allRecipes = [
+          //...suggested_recipes,
+          ...gptRecipes,
+        ];
 
-        // Store combined recipes to AsyncStorage
-        await AsyncStorage.setItem(
-          "recipe_options",
-          JSON.stringify(allRecipes),
-        );
+        setRecipeOptions(allRecipes); // Update the temporary state with the combined recipes
         console.log("All Recipes:", allRecipes);
-
-        setRecipes(allRecipes); // Update the state with the combined recipes
       } catch (error) {
         console.error("Error generating recipes:", error);
         Alert.alert("Error", "Failed to generate recipes.");

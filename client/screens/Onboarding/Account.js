@@ -8,16 +8,20 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Button, Input } from "react-native-elements";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FontAwesome6 } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
+import { useAppStore } from "@stores/app-store";
 
 export default function Account({ session }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [signingOut, setSigningOut] = useState(false);
-  const [deleteAcc, setDelete] = useState(false)
+  const [deleteAcc, setDelete] = useState(false);
+
+  const set_user_id = useAppStore((state) => state.set_user_id);
+  const user_id = useAppStore((state) => state.user_id);
+  const clearAllAppState = useAppStore((state) => state.clearAllAppState);
 
   useEffect(() => {
     if (session) getProfile();
@@ -38,7 +42,7 @@ export default function Account({ session }) {
       }
 
       if (data) {
-        await AsyncStorage.setItem("user_id", session?.user.id);
+        set_user_id(session?.user.id);
         setName(data.name);
       }
     } catch (error) {
@@ -75,12 +79,12 @@ export default function Account({ session }) {
     }
   }
 
-  async function handleDeleteAccount() { //function to actually delete an account
+  async function handleDeleteAccount() {
+    //function to actually delete an account
     try {
       setDeleteAcc(true);
       await handleSignOut();
 
-      const user_id = await AsyncStorage.getItem("user_id");
       const { error } = await supabase
         .from("profiles")
         .delete()
@@ -111,6 +115,9 @@ export default function Account({ session }) {
       if (error) {
         throw error;
       }
+
+      clearAllAppState();
+
       Toast.show({
         type: "success",
         text1: "Signed out",

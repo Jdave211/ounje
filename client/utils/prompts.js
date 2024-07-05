@@ -28,12 +28,14 @@ export const FOOD_ITEMS_PROMPT = `
   Be as specific as possible for each individual item even if they are in a category and include the quantity of each item such that we have enough
   information to create a recipe for a meal.
   The quantity should only be a number indicating the amount of the named item in the inventory.
-  Categorize them into this format:
+  Categorize them into this json format:
   { "inventory_name": { "category_name": {name: text, quantity: number} }}.
   Similiar to this: ${JSON.stringify(FOOD_ITEMS)}.
   Follow the types in the format strictly. numbers should only be numbers and text should only be text.
   The image name should represent the environment where the food items are found.
-  The categories should be very similar and have broad definitions of the food items like these ones: ${categories.join(", ")}
+  The categories should be very similar and have broad definitions of the food items like these ones: ${categories.join(
+    ", "
+  )}
   The inventories should be very similar to these ones: ${inventory.join(", ")}.
   For duplicate inventories you can increment the name of the inventory by adding a number to the end of the name.
   `;
@@ -46,7 +48,9 @@ export const RECIPES_PROMPT = `Take in this recipe from my database and the ingr
   Assume I have no knowledge of cooking and I am beginner, so fill the instructions with as much detail as possible.
 	Make sure that the instructions for the recipe are clear and detailed enough to be followed by someone who is not a professional chef.
 	if there might be specific instructions for items included in their packaging, give them the instructions for doing that activity along with pointing them to the package in case the instructions differ
-  Return the recipe in the same format as the original recipe. Similar to this: ${JSON.stringify(RECIPE)}.`;
+  Return the recipe in the same format as the original recipe. Similar to this: ${JSON.stringify(
+    RECIPE
+  )}.`;
 
 export const ADD_FOOD_PROMPT =
   "Imagine you are a food inspector whose sole responsibility is to assess food items for safety and ensure they are fit for human consumption. If you encounter any unsafe items, remove them from the list and return the revised list. If all items are safe, return the list as is. For example, given the list [rice, gunpowder, eggs], you should return [rice, eggs].";
@@ -61,6 +65,38 @@ export const GENERATE_RECIPE_NAMES_PROMPT = `
   Here are my food items:
 `;
 
+export const GENERATE_RECIPE_LIST_FROM_INGREDIENTS_PROMPT = `Generate a list of recipes that can be made with either a subset of the ingredients or the subset of the ingredients here and a few extra ingredients.
+The list should be returned as an json array of recipe names and ingredients: [{name: string, ingredients: [string]}].
+The user will provide a list of ingredients and a list of recipes to exclude.
+You can use the cuisine from the excluded for generating the new recipes.
+`;
+
+export const GENERATE_RECIPE_DETAILS_PROMPT_V2 = `
+For the recipe title that will be provided by the user, generate the details for it using these instructions:
+
+A brief description of the dish, including its origin or cultural background if relevant.
+A detailed list of ingredients, specifying quantities for 2-3 servings. Include both essential and optional ingredients.
+A list of necessary kitchen equipment.
+
+Step-by-step instructions, including:
+
+Precise cooking times for each step
+Specific heat levels (e.g., medium-high, low)
+Visual or textural cues to guide the cook
+
+
+Tips for preparation, cooking, and serving.
+At least two variations of the recipe (e.g., vegetarian version, spicy version).
+Nutritional information per serving (approximate values for calories, protein, carbohydrates, fat, and fiber).
+Suggestions for complementary dishes or beverages to serve with the meal.
+Storage and reheating instructions, if applicable.
+Any potential substitutions for hard-to-find or allergenic ingredients.
+
+The response must be in json using this schema:
+{ title: string, description: string, ingredients: [{name: string, quantity: number, display_text: string}], equipments: [string], 
+ instructions: [string], variations: [string], nutritional_information: {calories: number, protein: number, carbohydrates: number, fat: number, fiber: number},
+
+`;
 export const GENERATE_RECIPES_PROMPT = `
   You will be provided with a list of food items, and your task is to generate exactly 1 exciting recipe in JSON format using these ingredients, along with a few extra easily accessible ingredients if needed.
   Carefully analyze each ingredient to determine if they go well together based on common culinary practices and nutritional compositions. Exclude any ingredient that doesn't fit well with the others. Only generate recipes with ingredients you are sure go well together. Ensure the recipe is both appetizing and nutritionally balanced, suitable for someone with no knowledge of cooking. The instructions should be easy to follow, step-by-step.

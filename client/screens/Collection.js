@@ -9,56 +9,20 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import RecipeCard from "../components/RecipeCard";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
+import { useAppStore } from "@stores/app-store";
+import { useQuery } from "react-query";
+import { fetchSavedRecipesByUser } from "@utils/supabase";
 
 const SavedRecipes = () => {
   const navigation = useNavigation();
-  const [user_id, setUserId] = useState(null);
-  const [savedRecipes, setSavedRecipes] = useState([]);
 
-  useEffect(() => {
-    const get_user_id = async () => {
-      let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(() => retrieved_user_id);
-    };
-
-    const fetch_saved_recipes = async () => {
-      if (!user_id) {
-        console.log("User ID not available yet");
-        return;
-      }
-      
-      const { data: recipes, error } = await supabase
-        .from("saved_recipes")
-        .select("recipe_id")
-        .eq("user_id", user_id);
-    
-      if (error) {
-        console.error("Error fetching saved recipes:", error);
-        return;
-      }
-    
-      console.log({ saved_recipes: recipes });
-    
-      if (recipes) {
-        // Use a Set to store unique recipe_ids
-        const uniqueRecipeIds = Array.from(new Set(recipes.map(({ recipe_id }) => recipe_id)));
-    
-        setSavedRecipes(uniqueRecipeIds);
-      }
-    };
-    
-
-    fetch_saved_recipes();
-
-    if (!user_id) {
-      get_user_id();
-    } else {
-      fetch_saved_recipes();
-    }
-  }, [user_id]);
+  const user_id = useAppStore((state) => state.user_id);
+  const { data: savedRecipes } = useQuery(
+    ["savedRecipes", user_id],
+    async () => await fetchSavedRecipesByUser(user_id)
+  );
 
   const navigate_to_recipe_page = (recipe_id) => () => {
     navigation.navigate("RecipePage", { id: recipe_id });
@@ -85,7 +49,7 @@ const SavedRecipes = () => {
               key={i}
               onPress={navigate_to_recipe_page(recipe_id)}
             >
-              <RecipeCard id={recipe_id} isaved={true} showBookmark={true} />
+              <RecipeCard id={recipe_id} showBookmark={true} />
             </TouchableOpacity>
             // </View>
           ))}

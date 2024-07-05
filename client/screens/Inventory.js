@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,106 +12,71 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
 } from "react-native";
-import { FontAwesome5, AntDesign } from "@expo/vector-icons";
+import { FontAwesome5, AntDesign, MaterialIcons } from "@expo/vector-icons";
 import { MultipleSelectList } from "../components/MultipleSelectList";
-import { supabase } from "../utils/supabase";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  supabase,
+  fetchImageSignedUrl,
+  fetchFoodItems,
+  storeNewFoodItems,
+} from "../utils/supabase";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
 import * as ImagePicker from "expo-image-picker";
 import camera from "@assets/camera_icon.png";
 import { parse_ingredients } from "@utils/spoonacular";
-import useImageProcessing from "../components/useImageProcessing";
+import useImageProcessing from "../hooks/useImageProcessing";
+import { useAppStore } from "@stores/app-store";
+import { useQuery } from "react-query";
+import axios from "axios";
+import {
+  addInventoryItem,
+  fetchInventoryData,
+  removeInventoryItems,
+} from "../utils/server-api";
+import { entitle } from "../utils/helpers";
+import Empty from "../components/Empty";
 
 const Inventory = () => {
   const navigation = useNavigation();
   const [selected, setSelected] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
-  const [foodItems, setFoodItems] = useState([]);
-  const [inventoryImages, setInventoryImages] = useState([]);
-  const [userId, setUserId] = useState(null);
+  const [_inventoryImages, setInventoryImages] = useState([]);
   const [newItem, setNewItem] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [_foodItems, setFoodItems] = useState([]);
 
+  const userId = useAppStore((state) => state.user_id);
+  const inventory = useAppStore((state) => state.inventory);
+
+  const inventoryData = useAppStore((state) => state.inventory.data);
+  const getFoodItems = useAppStore((state) => state.inventory.getFoodItems);
+  const getImages = useAppStore((state) => state.inventory.getImages);
+  const setInventoryData = useAppStore(
+    (state) => state.inventory.setInventoryData
+  );
+
+  const addManuallyAddedItems = useAppStore(
+    (state) => state.inventory.addManuallyAddedItems
+  );
+  const replaceImageAndItsItems = useAppStore(
+    (state) => state.inventory.replaceImageAndItsItems
+  );
+  const addImagesAndItems = useAppStore(
+    (state) => state.inventory.addImagesAndItems
+  );
+
+  const foodItems = getFoodItems();
+  const inventoryImages = getImages();
+
+  console.log({ userId, name: "inventory", inventoryData });
   const { loading, convertImageToBase64, sendImages } = useImageProcessing();
 
-  useEffect(() => {
-    const fetchInitialData = async () => {
-      const retrievedUserId = await AsyncStorage.getItem("user_id");
-      //console.log(retrievedUserId);
-
-      setUserId(retrievedUserId);
-      console.log(userId);
-
-      const retrievedArrayText = await AsyncStorage.getItem("food_items_array");
-      const retrievedFoodItemsArray = JSON.parse(retrievedArrayText || "[]");
-      setFoodItems(retrievedFoodItemsArray);
-
-      if (retrievedUserId) {
-        const { data: inventory } = await supabase
-          .from("inventory")
-          .select("images")
-          .eq("user_id", retrievedUserId)
-          .single();
-
-        if (inventory) {
-          const imagePaths = inventory.images.map((image) =>
-            image.replace("inventory_images/", ""),
-          );
-
-          const { data: urlResponses } = await supabase.storage
-            .from("inventory_images")
-            .createSignedUrls(imagePaths, 60 * 10);
-
-          const imageUrls = urlResponses.map((response) => response.signedUrl);
-          setInventoryImages(imageUrls);
-        }
-      }
-    };
-
-    fetchInitialData();
-  }, []);
-
-  useFocusEffect(
-    React.useCallback(() => {
-      const fetchInitialData = async () => {
-        const retrievedUserId = await AsyncStorage.getItem("user_id");
-        setUserId(retrievedUserId);
-        console.log(userId);
-
-        const retrievedArrayText =
-          await AsyncStorage.getItem("food_items_array");
-        const retrievedFoodItemsArray = JSON.parse(retrievedArrayText || "[]");
-        setFoodItems(retrievedFoodItemsArray);
-
-        if (retrievedUserId) {
-          const { data: inventory } = await supabase
-            .from("inventory")
-            .select("images")
-            .eq("user_id", userId)
-            .single();
-            console.log(inventory);
-
-          if (inventory) {
-            const imagePaths = inventory.images.map((image) =>
-              image.replace("inventory_images/", ""),
-            );
-
-            const { data: urlResponses } = await supabase.storage
-              .from("inventory_images")
-              .createSignedUrls(imagePaths, 60 * 10);
-
-            const imageUrls = urlResponses.map(
-              (response) => response.signedUrl,
-            );
-            setInventoryImages(imageUrls);
-          }
-        }
-      };
-
-      fetchInitialData();
-    }, []),
+  const { refetch: refetchInventoryData } = useQuery(
+    ["inventoryImages", userId],
+    async () => fetchInventoryData(userId),
+    { onSuccess: (inventoryData) => setInventoryData(inventoryData) }
   );
 
   const addNewItem = async () => {
@@ -121,68 +86,46 @@ const Inventory = () => {
     }
 
     setIsLoading(true); // Start loading
-    const spoonacularResponse = await parse_ingredients([newItem]);
+    const newlyParsedFoodItems = await parse_ingredients([newItem]);
 
-    if (
-      !spoonacularResponse ||
-      spoonacularResponse.length === 0 ||
-      !spoonacularResponse[0].id
-    ) {
+    if (!newlyParsedFoodItems || newlyParsedFoodItems.length === 0) {
       Alert.alert("Error", "Please add only food items.");
       setIsLoading(false); // Stop loading
       return;
     }
 
-    const actualFoodItems = spoonacularResponse.map((item) => ({
-      name: item.name,
-      spoonacular_id: item.id,
-      image: item.image,
-    }));
+    const newly_stored_items = await storeNewFoodItems(newlyParsedFoodItems);
 
-    const updatedFoodItems = [...foodItems, ...actualFoodItems];
-    setFoodItems(updatedFoodItems);
-    await AsyncStorage.setItem(
-      "food_items_array",
-      JSON.stringify(updatedFoodItems),
+    await addInventoryItem(
+      userId,
+      newly_stored_items.map(({ id }) => id)
     );
-    console.log(updatedFoodItems);
+
+    addManuallyAddedItems(newly_stored_items);
+
+    setNewItem("");
+    setIsLoading(false); // Stop loading
 
     Toast.show({
       type: "success",
       text1: "Item added!",
       text2: `${newItem} has been added to your inventory.`,
     });
-    setNewItem("");
-    setIsLoading(false); // Stop loading
   };
 
-  const removeItem = async (itemName) => {
-    const updatedFoodItems = foodItems.filter(
-      (foodItem) => foodItem.name !== itemName,
-    );
-    setFoodItems(updatedFoodItems);
+  const handleRemoveSelected = async (food_item) => {
+    // const updatedFoodItems = foodItems.filter(
+    //   (foodItem) => !selected.includes(foodItem.name)
+    // );
 
-    await AsyncStorage.setItem(
-      "food_items_array",
-      JSON.stringify(updatedFoodItems),
-    );
-  };
+    await removeInventoryItems(userId, [food_item.id]);
+    refetchInventoryData();
 
-  const handleRemoveSelected = async () => {
-    const updatedFoodItems = foodItems.filter(
-      (foodItem) => !selected.includes(foodItem.name),
-    );
-    setFoodItems(updatedFoodItems);
     Toast.show({
       type: "success",
       text1: "Item removed!",
-      text2: `${selected.join(", ")} has been removed from your inventory.`,
+      text2: `${food_item.name} has been removed from your inventory.`,
     });
-    await AsyncStorage.setItem(
-      "food_items_array",
-      JSON.stringify(updatedFoodItems),
-    );
-    setSelected([]);
   };
 
   const handleAddImage = async () => {
@@ -208,30 +151,23 @@ const Inventory = () => {
         cancelButtonIndex: 0,
       },
       async (buttonIndex) => {
-        if (buttonIndex === 1) {
-          let result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 1,
-          });
-
-          if (!result.canceled) {
-            const imageUri = result.assets[0].uri;
-            setInventoryImages((prevUris) => [...prevUris, imageUri]);
-            const base64Image = await convertImageToBase64(imageUri);
-            setIsLoading(true);
-            await sendImages([base64Image]);
-            setIsLoading(false);
-            Alert.alert("Success", "Image has been Added.");
+        if (buttonIndex === 1 || buttonIndex === 2) {
+          let result;
+          if (buttonIndex === 1) {
+            result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.All,
+              allowsEditing: true,
+              aspect: [4, 3],
+              quality: 1,
+            });
+          } else {
+            result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.All,
+              allowsEditing: true,
+              aspect: [4, 3],
+              quality: 1,
+            });
           }
-        } else if (buttonIndex === 2) {
-          let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 1,
-          });
 
           if (!result.canceled) {
             const imageUri = result.assets[0].uri;
@@ -239,12 +175,12 @@ const Inventory = () => {
             const base64Image = await convertImageToBase64(imageUri);
             setIsLoading(true);
             await sendImages([base64Image]);
+            refetchInventoryData();
             setIsLoading(false);
             Alert.alert("Success", "Image has been Added.");
-
           }
         }
-      },
+      }
     );
   };
 
@@ -271,52 +207,33 @@ const Inventory = () => {
         cancelButtonIndex: 0,
       },
       async (buttonIndex) => {
-        if (buttonIndex === 1) {
-          let result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 1,
-          });
+        if (buttonIndex === 1 || buttonIndex === 2) {
+          let result;
 
-          if (!result.canceled) {
-            const imageUri = result.assets[0].uri;
-            const base64Image = await convertImageToBase64(imageUri);
-
-            // Replace the image in the array
-            const updatedImages = [...inventoryImages];
-            updatedImages[index] = imageUri;
-            setInventoryImages(updatedImages);
-
-            // Optionally, you can send the image for processing
-            setIsLoading(true);
-            await sendImages([base64Image]);
-            setIsLoading(false);
-            Alert.alert("Success", "Image has been replaced.");
-
-            // Close the modal
-            setModalVisible(false);
+          if (buttonIndex === 1) {
+            result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.All,
+              allowsEditing: true,
+              aspect: [4, 3],
+              quality: 1,
+            });
+          } else {
+            result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.All,
+              allowsEditing: true,
+              aspect: [4, 3],
+              quality: 1,
+            });
           }
-        } else if (buttonIndex === 2) {
-          let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 1,
-          });
 
           if (!result.canceled) {
             const imageUri = result.assets[0].uri;
             const base64Image = await convertImageToBase64(imageUri);
 
-            // Replace the image in the array
-            const updatedImages = [...inventoryImages];
-            updatedImages[index] = imageUri;
-            setInventoryImages(updatedImages);
-
             // Optionally, you can send the image for processing
             setIsLoading(true);
             await sendImages([base64Image]);
+            refetchInventoryData();
             setIsLoading(false);
             Alert.alert("Success", "Image has been replaced.");
 
@@ -324,12 +241,12 @@ const Inventory = () => {
             setModalVisible(false);
           }
         }
-      },
+      }
     );
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container}>
       {isLoading && (
         <View style={styles.loader}>
           <ActivityIndicator size="large" color="#38F096" />
@@ -338,7 +255,7 @@ const Inventory = () => {
       <View style={styles.scrollViewContent}>
         <View style={styles.imageSection}>
           <View style={styles.imageContainer}>
-            {inventoryImages.length === 0 ? (
+            {inventoryImages?.length === 0 ? (
               <TouchableOpacity
                 style={styles.addImageButton}
                 onPress={handleAddImage}
@@ -417,39 +334,41 @@ const Inventory = () => {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Remove Food Items</Text>
-          <MultipleSelectList
-            showSelectedNumber
-            setSelected={setSelected}
-            selectedTextStyle={styles.selectedTextStyle}
-            dropdownTextStyles={styles.dropdownTextStyles}
-            data={foodItems.map((item) => ({
-              key: item.name,
-              value: item.name,
-            }))}
-            save="value"
-            maxHeight={200}
-            placeholder="Select items"
-            placeholderStyles={styles.placeholderStyles}
-            arrowicon={
-              <FontAwesome5 name="chevron-down" size={12} color="white" />
-            }
-            searchicon={<FontAwesome5 name="search" size={12} color="white" />}
-            search={false}
-            boxStyles={styles.selectListBoxStyles}
-            label="Select Food Items to Remove"
-            labelStyles={styles.labelStyles}
-            badgeStyles={styles.badgeStyles}
-          />
-          <TouchableOpacity
-            style={styles.removeButton}
-            onPress={handleRemoveSelected}
-          >
-            <Text style={styles.buttonText}>Remove</Text>
-          </TouchableOpacity>
+          <Text style={styles.cardTitle}>Virtual Inventory</Text>
+          {foodItems && foodItems.length === 0 ? (
+            <>
+              <Empty />
+              <Text style={styles.warning}>
+                Your inventory is empty. Add some items to get started.
+              </Text>
+            </>
+          ) : (
+            foodItems.map((item, i) => (
+              <View key={i} style={styles.ingredient}>
+                <Image
+                  style={styles.ingredientImage}
+                  source={{
+                    uri: `https://img.spoonacular.com/ingredients_100x100/${item.image}`,
+                  }}
+                />
+                <View style={styles.ingredientTextContainer}>
+                  <Text style={styles.ingredientText}>
+                    {item.name && entitle(item.name)}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.removeButton}
+                  onPress={() => handleRemoveSelected(item)}
+                >
+                  <MaterialIcons name="delete" size={15} color="white" />
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
         </View>
       </View>
-    </View>
+    </ScrollView>
   );
 };
 
@@ -626,6 +545,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "rgba(0, 0, 0, 0.5)",
     zIndex: 1,
+  },
+  ingredient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+  },
+  ingredientImage: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    marginRight: 10,
+  },
+  ingredientTextContainer: {
+    flex: 1,
+    flexDirection: "column",
+    alignItems: "flex-start",
+  },
+  ingredientText: {
+    fontSize: 16,
+    color: "white",
   },
 });
 

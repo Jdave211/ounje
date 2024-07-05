@@ -16,6 +16,7 @@ import { MultipleSelectList } from "@components/MultipleSelectList";
 import { FOOD_ITEMS } from "@utils/constants";
 import { entitle, group_nested_objects } from "@utils/helpers";
 import { useNavigation } from "@react-navigation/native";
+import { useAppStore } from "@stores/app-store";
 
 const CheckIngredients = () => {
   const navigation = useNavigation();
@@ -28,18 +29,15 @@ const CheckIngredients = () => {
   const [removed_items, setRemovedItems] = useState([]);
   const [inputValue, setInputValue] = useState("");
 
-  const [user_id, setUserId] = useState(null);
   const [food_items, setFoodItems] = useState(FOOD_ITEMS);
   const [food_items_array, setFoodItemsArray] = useState([]);
 
   const [selectedInventoryItem, setSelectedInventoryItem] = useState(null);
   const [selectedItemCategory, setSelectedItemCategory] = useState(null);
 
+  const user_id = useAppStore((state) => state.user_id);
+
   useEffect(() => {
-    const getUserID = async () => {
-      let retrieved_user_id = await AsyncStorage.getItem("user_id");
-      setUserId(retrieved_user_id);
-    };
 
     const fetchFoodItems = async () => {
       let retrieved_text = await AsyncStorage.getItem("food_items");
@@ -57,9 +55,6 @@ const CheckIngredients = () => {
       }
     };
 
-    if (!user_id) {
-      getUserID();
-    }
     fetchFoodItems();
   }, [user_id]);
 
