@@ -10,8 +10,11 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createStackNavigator } from "@react-navigation/stack";
 import { supabase } from "./utils/supabase";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+<<<<<<< Updated upstream
+=======
 import { QueryClient, QueryClientProvider } from "react-query";
-import {useAppStore} from "@stores/app-store";
+import { useAppStore } from "@stores/app-store";
+>>>>>>> Stashed changes
 
 import Welcome from "./screens/Onboarding/Welcome";
 import FirstLogin from "./screens/Onboarding/FirstLogin";
@@ -25,6 +28,8 @@ import Generate from "./screens/Generate/Generate";
 import RecipeOptions from "./screens/Generate/RecipeOptions";
 import RecipePage from "./screens/RecipePage";
 import CountCalories from "./screens/CountCalories";
+import Settings from "./screens/Settings";
+import PremiumSubscription from "./screens/PremiumSubscription";
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -72,16 +77,35 @@ function CollectionStack({ route }) {
   );
 }
 
+function SettingsStack({ route }) {
+  const { session } = route.params;
+
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen
+        name="Profile"
+        component={Profile}
+        initialParams={{ session }}
+      />
+      <Stack.Screen
+        name="Settings"
+        component={Settings}
+        initialParams={{ session }}
+      />
+      <Stack.Screen
+        name="PremiumSubscription"
+        component={PremiumSubscription}
+        initialParams={{ session }}
+      />
+    </Stack.Navigator>
+  );
+}
+
 export default function App() {
   const navigationRef = useNavigationContainerRef(); // Create navigation reference
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [firstLogin, setFirstLogin] = useState(false);
-
-  const userId = useAppStore((state) => state.userId);
-  const set_user_id = useAppStore((state) => state.set_user_id);
-
-  const queryClient = new QueryClient();
 
   const getSession = useCallback(async () => {
     setLoading(true);
@@ -94,15 +118,11 @@ export default function App() {
       setLoading(false);
       return;
     }
-
     setSession(session);
     setLoading(false);
 
     if (session?.user) {
       const userId = session.user.id;
-
-      set_user_id(userId);
-
       console.log("User signed in, fetching profile...");
 
       const { data: userData, error: userError } = await supabase
@@ -130,7 +150,10 @@ export default function App() {
         setSession(session);
         if (session?.user) {
           const userId = session.user.id;
-          set_user_id(userId)
+<<<<<<< Updated upstream
+=======
+          set_user_id(userId);
+>>>>>>> Stashed changes
 
           supabase
             .from("profiles")
@@ -148,7 +171,7 @@ export default function App() {
               }
             });
         }
-      }
+      },
     );
 
     return () => {
@@ -166,10 +189,18 @@ export default function App() {
     );
   }
 
-  
-
   return (
     <GestureHandlerRootView>
+<<<<<<< Updated upstream
+  <NavigationContainer ref={navigationRef}>
+    <View style={styles.container}>
+      {session ? (
+        firstLogin ? (
+          <FirstLogin
+            onProfileComplete={() => setFirstLogin(false)}
+            session={session}
+          />
+=======
       <QueryClientProvider client={queryClient}>
         <NavigationContainer ref={navigationRef}>
           <View style={styles.container}>
@@ -223,19 +254,77 @@ export default function App() {
                       component={Auth}
                       options={{ headerShown: false }}
                     />
+                    <Tab.Screen
+                      name="Settings"
+                      component={SettingsStack}
+                      options={{ headerShown: false }}
+                      initialParams={{ session }}
+                    />
+                    <Tab.Screen
+                      name="PremiumSubscription"
+                      component={PremiumSubscription}
+                      options={{ headerShown: false }}
+                    />
                   </Tab.Navigator>
                 </Layout>
               )
-            ) : (
-              <Welcome />
-            )}
+>>>>>>> Stashed changes
+        ) : (
+          <Layout>
+            <Tab.Navigator
+              initialRouteName="Home"
+              screenOptions={{ tabBarStyle: styles.navigator }}
+            >
+              <Tab.Screen
+                name="Home"
+                component={GenerateStack}
+                options={{ headerShown: false }}
+                initialParams={{ session }}
+              />
+              <Tab.Screen
+                name="Collection"
+                component={CollectionStack}
+                options={{ headerShown: false }}
+                initialParams={{ session }}
+              />
+              <Tab.Screen
+                name="Community"
+                component={Community}
+                options={{ headerShown: false }}
+              />
+              <Tab.Screen
+                name="Calories"
+                component={CountCalories}
+                options={{ headerShown: false }}
+              />
+              <Tab.Screen
+                name="Inventory"
+                component={Inventory}
+                options={{ headerShown: false }}
+              />
+              <Tab.Screen
+                name="Profile"
+                component={Profile}
+                options={{ headerShown: false }}
+                initialParams={{ session }}
+              />
+              <Tab.Screen
+                name="Auth"
+                component={Auth}
+                options={{ headerShown: false }}
+              />
+            </Tab.Navigator>
+          </Layout>
+        )
+      ) : (
+        <Welcome />
+      )}
 
-            <StatusBar style="light" />
-          </View>
-          <Toast />
-        </NavigationContainer>
-      </QueryClientProvider>
-    </GestureHandlerRootView>
+      <StatusBar style="light" />
+    </View>
+    <Toast />
+  </NavigationContainer>
+    </GestureHandlerRootView >
   );
 }
 
