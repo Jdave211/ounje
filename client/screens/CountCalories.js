@@ -15,7 +15,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { AntDesign, Feather } from "@expo/vector-icons";
 import axios from "axios";
 import useImageProcessing from "../hooks/useImageProcessing";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../stores/app-store";
 
 const CountCalories = () => {
   const [image, setImage] = useState(null);

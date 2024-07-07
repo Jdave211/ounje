@@ -1,3 +1,4 @@
+import 'react-native-gesture-handler';
 import React, { useState, useEffect, useCallback } from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View, ActivityIndicator } from "react-native";
@@ -11,7 +12,7 @@ import { createStackNavigator } from "@react-navigation/stack";
 import { supabase } from "./utils/supabase";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { QueryClient, QueryClientProvider } from "react-query";
-import {useAppStore} from "@stores/app-store";
+import {useAppStore} from "./stores/app-store";
 
 import Welcome from "./screens/Onboarding/Welcome";
 import FirstLogin from "./screens/Onboarding/FirstLogin";
@@ -25,6 +26,8 @@ import Generate from "./screens/Generate/Generate";
 import RecipeOptions from "./screens/Generate/RecipeOptions";
 import RecipePage from "./screens/RecipePage";
 import CountCalories from "./screens/CountCalories";
+import Settings from "./screens/Settings/Settings";
+import PremiumSubscription from "./screens/Settings/PremiumSubscription";
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -66,6 +69,30 @@ function CollectionStack({ route }) {
       <Stack.Screen
         name="RecipePage"
         component={RecipePage}
+        initialParams={{ session }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+function ProfileStack({ route }) {
+  const { session } = route.params;
+
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen
+        name="Profile"
+        component={Profile}
+        initialParams={{ session }}
+      />
+      <Stack.Screen
+        name="Settings"
+        component={Settings}
+        initialParams={{ session }}
+      />
+      <Stack.Screen
+        name="PremiumSubscription"
+        component={PremiumSubscription}
         initialParams={{ session }}
       />
     </Stack.Navigator>
@@ -222,6 +249,12 @@ export default function App() {
                       name="Auth"
                       component={Auth}
                       options={{ headerShown: false }}
+                    />
+                    <Tab.Screen
+                      name='ProfilePage'
+                      component={ProfileStack}
+                      options={{ headerShown: false }}
+                      initialParams={{ session }}
                     />
                   </Tab.Navigator>
                 </Layout>

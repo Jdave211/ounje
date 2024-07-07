@@ -11,12 +11,12 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { SelectList } from "react-native-dropdown-select-list";
 import { FontAwesome5 } from "@expo/vector-icons";
-import GenerateRecipes from "@components/GenerateRecipes"; // Ensure the correct import path
-import Loading from "@components/Loading"; // Ensure the correct import path
-import generate_bg from "@assets/generate_bg.jpg";
-import { supabase, fetchUserProfile } from "@utils/supabase";
+import GenerateRecipes from "../../components/GenerateRecipes"; // Ensure the correct import path
+import Loading from "../../components/Loading"; // Ensure the correct import path
+import generate_bg from "../../assets/generate_bg.jpg";
+import { supabase, fetchUserProfile } from "../../utils/supabase";
 import { useQuery } from "react-query";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../../stores/app-store";
 import { useRecipeOptionsStore } from "../../stores/recipe-options-store";
 
 export default function Generate({ route }) {

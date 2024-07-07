@@ -2,19 +2,19 @@
   "name": "ounje",
   "version": "1.0.0",
   "description": "Generate recipes based off pictures of your fridge and or cupboard",
-  "main": "index.js",
+  "main": "client/node_modules/expo/AppEntry.js",
   "type": "module",
   "scripts": {
     "start": "cd client && npm run start",
     "android": "cd client && npm run android",
-    "ios": "cd client && npm run ios",
+    "ios": "cd client && npm run ios -c",
     "web": "cd client && npm run web",
     "server": "nodemon server/server.js"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google/generative-ai": "^0.11.1",
+    "@google/generative-ai": "^0.11.5",
     "axios": "^1.6.4",
     "babel-plugin-wildcard": "^7.0.0",
     "cors": "^2.8.5",
@@ -26,6 +26,9 @@
     "multer": "^1.4.5-lts.1",
     "nanoid": "^5.0.7",
     "openai": "^4.24.1",
+    "react": "^18.3.1",
+    "react-native": "0.74.3",
+    "react-native-gesture-handler": "~2.16.1",
     "react-native-reanimated": "^3.11.0",
     "ts-case-convert": "^2.0.7"
   },

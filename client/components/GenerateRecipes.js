@@ -16,7 +16,7 @@ import {
   format_generated_recipe,
   format_spoonacular_recipe,
 } from "../utils/openai";
-import { useAppStore, useTmpStore } from "@stores/app-store";
+import { useAppStore, useTmpStore } from "../stores/app-store";
 import { useRecipeOptionsStore } from "../stores/recipe-options-store";
 import {
   find_recipes_by_ingredients,

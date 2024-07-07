@@ -11,9 +11,9 @@ import {
 import RecipeCard from "../components/RecipeCard";
 import { supabase } from "../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../stores/app-store";
 import { useQuery } from "react-query";
-import { fetchSavedRecipesByUser } from "@utils/supabase";
+import { fetchSavedRecipesByUser } from "../utils/supabase";
 
 const SavedRecipes = () => {
   const navigation = useNavigation();
@@ -32,35 +32,27 @@ const SavedRecipes = () => {
   return (
     <View style={styles.container}>
       <View style={{ marginBottom: 10 }}>
-        <Text style={styles.text}> Saved Recipes </Text>
+        <Text style={styles.text}>Saved Recipes</Text>
       </View>
-      {savedRecipes && (
+      {savedRecipes && savedRecipes.length > 0 ? (
         <ScrollView>
-          {/* <View
-          style={{
-            flexDirection: "row",
-            flexWrap: "wrap",
-            justifyContent: "space-around",
-          }}
-        > */}
           {savedRecipes.map((recipe_id, i) => (
-            // <View key={i} style={{ width: 200, margin: 10 }}>
             <TouchableOpacity
               key={i}
               onPress={navigate_to_recipe_page(recipe_id)}
             >
               <RecipeCard id={recipe_id} showBookmark={true} />
             </TouchableOpacity>
-            // </View>
           ))}
-          {/* </View> */}
         </ScrollView>
+      ) : (
+        <Text style={styles.noRecipesText}>No recipes have been saved.</Text>
       )}
     </View>
   );
 };
 
-const styles = {
+const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: "center",
@@ -74,6 +66,12 @@ const styles = {
     fontSize: 24,
     fontWeight: "bold",
   },
-};
+  noRecipesText: {
+    color: "white",
+    fontSize: 18,
+    textAlign: "center",
+    marginTop: 20,
+  },
+});
 
 export default SavedRecipes;

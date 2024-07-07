@@ -6,18 +6,20 @@ import {
   Alert,
   Image,
   ActivityIndicator,
+  TouchableOpacity,
 } from "react-native";
-import { Button, Input } from "react-native-elements";
+import { Button, Input, Icon } from "react-native-elements";
 import { FontAwesome6 } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../../stores/app-store";
+import { useNavigation } from "@react-navigation/native";
 
 export default function Account({ session }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [signingOut, setSigningOut] = useState(false);
-  const [deleteAcc, setDelete] = useState(false);
+  const navigation = useNavigation();
 
   const set_user_id = useAppStore((state) => state.set_user_id);
   const user_id = useAppStore((state) => state.user_id);
@@ -70,41 +72,18 @@ export default function Account({ session }) {
       if (error) {
         throw error;
       }
-    } catch (error) {
-      if (error instanceof Error) {
-        Alert.alert(error.message);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleDeleteAccount() {
-    //function to actually delete an account
-    try {
-      setDeleteAcc(true);
-      await handleSignOut();
-
-      const { error } = await supabase
-        .from("profiles")
-        .delete()
-        .eq("id", user_id);
-
-      if (error) {
-        throw error;
-      }
 
       Toast.show({
         type: "success",
-        text1: "Account Deleted",
-        text2: "Your account has been successfully deleted.",
+        text1: "Profile Updated",
+        text2: "Your name has been updated successfully.",
       });
     } catch (error) {
       if (error instanceof Error) {
         Alert.alert(error.message);
       }
     } finally {
-      setDeleteAcc(false);
+      setLoading(false);
     }
   }
 
@@ -136,6 +115,20 @@ export default function Account({ session }) {
     <View
       style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
     >
+      <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+        <TouchableOpacity
+          onPress={() => {
+            navigation.navigate("Settings");
+          }}
+        >
+          <Icon
+            name="settings"
+            type="material"
+            color="#fff"
+            containerStyle={{ marginRight: 15, paddingTop: 45 }}
+          />
+        </TouchableOpacity>
+      </View>
       <View style={styles.content}>
         <View style={[styles.verticallySpaced, styles.mt20]}>
           <Input
@@ -176,14 +169,6 @@ export default function Account({ session }) {
             disabled={signingOut}
           />
           {signingOut && <ActivityIndicator size="small" color="red" />}
-          <Button
-            title={deleteAcc ? "Deleting Account..." : "Delete Account"}
-            type="clear"
-            titleStyle={{ color: "red" }}
-            onPress={handleSignOut}
-            disabled={deleteAcc}
-          />
-          {deleteAcc && <ActivityIndicator size="small" color="red" />}
         </View>
       </View>
       <Toast />

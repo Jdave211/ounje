@@ -18,10 +18,10 @@ import { Bar as ProgressBar } from "react-native-progress";
 import RenderHtml from "react-native-render-html";
 import { useWindowDimensions } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../stores/app-store";
 import { useQuery } from "react-query";
-import { fetchRecipeDetails } from "@utils/spoonacular";
-import { fetchIsRecipeSavedByUser } from "@utils/supabase";
+import { fetchRecipeDetails } from "../utils/spoonacular";
+import { fetchIsRecipeSavedByUser } from "../utils/supabase";
 import {
   useInventoryHooks,
   usePercentageOfIngredientsOwned,
