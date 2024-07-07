@@ -201,7 +201,7 @@ export default function PremiumSubscription({ navigation }) {
       {isPremiumPlan && (
         <TouchableOpacity
           style={styles.subscribeButton}
-          onPress={() => alert("Subscribed!")}
+          onPress={() => alert("Premium Will be Released Soon!")}
         >
           <Text style={styles.subscribeButtonText}>Subscribe Now</Text>
         </TouchableOpacity>
