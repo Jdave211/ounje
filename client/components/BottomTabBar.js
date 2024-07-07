@@ -43,7 +43,7 @@ const BottomTabBar = () => {
     },
     {
       name: "Profile",
-      screenName: "Profile",
+      screenName: "ProfilePage",
       iconName: "person",
       iconComponent: MaterialIcons,
     },
