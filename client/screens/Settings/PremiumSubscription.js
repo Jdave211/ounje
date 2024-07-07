@@ -192,7 +192,7 @@ export default function PremiumSubscription({ navigation }) {
         <View style={styles.featuresList}>
           {selectedPlan.features.map((feature, index) => (
             <View style={styles.featureItem} key={index}>
-              <Icon name="check" type="material" color="#32CD32" />
+              <Icon name="check" type="material" color="#A8BCA1" />
               <Text style={styles.featureText}>{feature}</Text>
             </View>
           ))}
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#fff",
+    color: "#F5F5F5",
     textAlign: "center",
     marginBottom: 20,
   },
@@ -247,14 +247,14 @@ const styles = StyleSheet.create({
     marginHorizontal: 5,
   },
   selectedToggle: {
-    borderColor: "#32CD32",
+    borderColor: "#5FCB73",
   },
   toggleText: {
-    color: "#fff",
+    color: "#F5F5F5",
     fontSize: 16,
   },
   selectedToggleText: {
-    color: "#32CD32",
+    color: "#5FCB73",
   },
   scrollContainer: {
     flexGrow: 1,
@@ -276,19 +276,19 @@ const styles = StyleSheet.create({
     marginHorizontal: 5,
   },
   selectedPlanBox: {
-    borderColor: "#32CD32",
+    borderColor: "#5FCB73",
   },
   planName: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#fff",
+    color: "#F5F5F5",
     marginBottom: 5,
     fontStyle: "italic",
   },
   planPrice: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#32CD32",
+    color: "#5FCB73",
   },
   planDuration: {
     fontSize: 16,
@@ -309,7 +309,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   featureText: {
-    color: "#fff",
+    color: "#F5F5F5",
     marginLeft: 10,
     fontSize: 16,
   },
@@ -324,7 +324,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   subscribeButtonText: {
-    color: "#32CD32",
+    color: "#5FCB73",
     fontSize: 18,
     fontWeight: "bold",
   },

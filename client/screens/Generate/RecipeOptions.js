@@ -6,11 +6,11 @@ import {
   TouchableOpacity,
   ScrollView,
 } from "react-native";
-import RecipeCard from "@components/RecipeCard";
+import RecipeCard from "../../components/RecipeCard";
 import { supabase } from "../../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
 import { AntDesign } from "@expo/vector-icons";
-import { useAppStore, useTmpStore } from "@stores/app-store";
+import { useAppStore, useTmpStore } from "../../stores/app-store";
 import { useRecipeOptionsStore } from "../../stores/recipe-options-store";
 
 const RecipeOptions = () => {

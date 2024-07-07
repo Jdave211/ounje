@@ -23,10 +23,10 @@ import {
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
 import * as ImagePicker from "expo-image-picker";
-import camera from "@assets/camera_icon.png";
-import { parse_ingredients } from "@utils/spoonacular";
+import camera from "../assets/camera_icon.png";
+import { parse_ingredients } from "../utils/spoonacular";
 import useImageProcessing from "../hooks/useImageProcessing";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../stores/app-store";
 import { useQuery } from "react-query";
 import axios from "axios";
 import {

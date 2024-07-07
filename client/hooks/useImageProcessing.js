@@ -6,7 +6,7 @@ import { openai, extract_json } from "../utils/openai";
 import { FOOD_ITEMS_PROMPT } from "../utils/prompts";
 import { parse_ingredients } from "../utils/spoonacular";
 import { customAlphabet } from "nanoid/non-secure";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../stores/app-store";
 import { zip } from "itertools";
 import { fetchInventoryData, storeNewFoodItems } from "../utils/supabase";
 import axios from "axios";

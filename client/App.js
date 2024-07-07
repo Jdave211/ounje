@@ -1,3 +1,4 @@
+import 'react-native-gesture-handler';
 import React, { useState, useEffect, useCallback } from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View, ActivityIndicator } from "react-native";
@@ -11,7 +12,7 @@ import { createStackNavigator } from "@react-navigation/stack";
 import { supabase } from "./utils/supabase";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { QueryClient, QueryClientProvider } from "react-query";
-import {useAppStore} from "@stores/app-store";
+import {useAppStore} from "./stores/app-store";
 
 import Welcome from "./screens/Onboarding/Welcome";
 import FirstLogin from "./screens/Onboarding/FirstLogin";

@@ -10,7 +10,7 @@ import { supabase } from "../utils/supabase";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 import { useNavigation } from "@react-navigation/native";
 import { openai, extract_json } from "../utils/openai";
-import { useAppStore, useTmpStore } from "@stores/app-store";
+import { useAppStore, useTmpStore } from "../stores/app-store";
 import { useRecipeOptionsStore } from "../stores/recipe-options-store";
 import { find_recipes_by_ingredients } from "../utils/spoonacular";
 

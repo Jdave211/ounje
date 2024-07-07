@@ -12,7 +12,7 @@ import {
 import { Icon, Button } from "react-native-elements";
 import { supabase } from "../../utils/supabase";
 import Toast from "react-native-toast-message";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../../stores/app-store";
 import { useNavigation } from "@react-navigation/native";
 
 const settingsData = [

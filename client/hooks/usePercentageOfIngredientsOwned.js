@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../stores/app-store";
 
 // edited by github co-pilot
 export const usePercentageOfIngredientsOwned = (recipe_details) => {

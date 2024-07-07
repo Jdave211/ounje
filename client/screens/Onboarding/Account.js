@@ -11,7 +11,7 @@ import {
 import { Button, Input, Icon } from "react-native-elements";
 import { FontAwesome6 } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../../stores/app-store";
 import { useNavigation } from "@react-navigation/native";
 
 export default function Account({ session }) {
@@ -72,6 +72,12 @@ export default function Account({ session }) {
       if (error) {
         throw error;
       }
+
+      Toast.show({
+        type: "success",
+        text1: "Profile Updated",
+        text2: "Your name has been updated successfully.",
+      });
     } catch (error) {
       if (error instanceof Error) {
         Alert.alert(error.message);
@@ -109,7 +115,7 @@ export default function Account({ session }) {
     <View
       style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
     >
-    <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+      <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
         <TouchableOpacity
           onPress={() => {
             navigation.navigate("Settings");

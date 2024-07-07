@@ -7,11 +7,11 @@ import harvestImage from "../assets/harvest.png";
 import { AnimatedCircularProgress } from "react-native-circular-progress";
 import { Bar as ProgressBar } from "react-native-progress";
 import { FOOD_ITEMS } from "../utils/constants";
-import fridge_bg from "@assets/fridge_bg.jpg";
-import { useAppStore } from "@stores/app-store";
+import fridge_bg from "../assets/fridge_bg.jpg";
+import { useAppStore } from "../stores/app-store";
 import { useQuery } from "react-query";
-import { fetchRecipeDetails } from "@utils/spoonacular";
-import { fetchIsRecipeSavedByUser } from "@utils/supabase";
+import { fetchRecipeDetails } from "../utils/spoonacular";
+import { fetchIsRecipeSavedByUser } from "../utils/supabase";
 import { usePercentageOfIngredientsOwned } from "../hooks/usePercentageOfIngredientsOwned";
 
 const RecipeCard = ({

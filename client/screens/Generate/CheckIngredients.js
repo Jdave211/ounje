@@ -12,11 +12,11 @@ import { FontAwesome5 } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SelectList } from "react-native-dropdown-select-list";
-import { MultipleSelectList } from "@components/MultipleSelectList";
-import { FOOD_ITEMS } from "@utils/constants";
+import { MultipleSelectList } from "../../components/MultipleSelectList";
+import { FOOD_ITEMS } from "../../utils/constants";
 import { entitle, group_nested_objects } from "@utils/helpers";
 import { useNavigation } from "@react-navigation/native";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../../stores/app-store";
 
 const CheckIngredients = () => {
   const navigation = useNavigation();

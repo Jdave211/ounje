@@ -11,9 +11,9 @@ import {
 import RecipeCard from "../components/RecipeCard";
 import { supabase } from "../utils/supabase";
 import { useNavigation } from "@react-navigation/native";
-import { useAppStore } from "@stores/app-store";
+import { useAppStore } from "../stores/app-store";
 import { useQuery } from "react-query";
-import { fetchSavedRecipesByUser } from "@utils/supabase";
+import { fetchSavedRecipesByUser } from "../utils/supabase";
 
 const SavedRecipes = () => {
   const navigation = useNavigation();
