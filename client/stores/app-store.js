@@ -13,7 +13,6 @@ const inventoryStore = (set, get) => {
 
     const manually_added_items = inventoryData.manually_added_items || [];
 
-    console.log({ food_items_data, manually_added_items });
     const food_items = [...food_items_data.flat(), ...manually_added_items];
 
     return food_items;

@@ -1,6 +1,7 @@
 import "react-native-url-polyfill/auto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
+import { generate_image } from "./stability";
 
 const supabaseUrl = "https://kmvqftoebsmmkhxrgdye.supabase.co";
 const supabaseAnonKey =
@@ -111,12 +112,24 @@ export const fetchImageSignedUrl = async (store, image_paths) => {
   const urls = signedUrls.map(({ signedUrl }) => signedUrl);
   return urls;
 };
+export const fetchRecipes = async (id_type, ids) => {
+  // id_type can be "id" or "spoonacular_id"
+  if (["id", "spoonacular_id"].includes(id_type) === false) {
+    throw new Error("Invalid id_type");
+  }
+
+  console.log({ id_type, ids });
+  const { data: recipes, error } = await supabase
+    .from("recipe_ids")
+    .select("*")
+    .in(id_type, ids)
+    .throwOnError();
+
+  return recipes;
+};
+
 export const fetchFoodItems = async (id_type, ids) => {
   // id_type can be "id" or "spoonacular_id"
-  if (typeof ids[0] == "object") {
-    console.trace();
-    throw new Error("ids should be an array of strings");
-  }
   if (
     ["id", "spoonacular_id", "original_name", "name"].includes(id_type) ===
     false
@@ -162,4 +175,13 @@ export const storeNewFoodItems = async (parsed_food_items) => {
   );
 
   return [...existing_food_items, ...new_food_items_with_ids];
+};
+
+export const generate_and_store_image = async (
+  prompt,
+  image_bucket,
+  image_path
+) => {
+  const image_bytes = await generate_image(prompt);
+  return await store_image(image_bucket, image_path, image_bytes);
 };

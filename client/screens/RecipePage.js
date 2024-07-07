@@ -22,7 +22,10 @@ import { useAppStore } from "@stores/app-store";
 import { useQuery } from "react-query";
 import { fetchRecipeDetails } from "@utils/spoonacular";
 import { fetchIsRecipeSavedByUser } from "@utils/supabase";
-import { usePercentageOfIngredientsOwned } from "../hooks/usePercentageOfIngredientsOwned";
+import {
+  useInventoryHooks,
+  usePercentageOfIngredientsOwned,
+} from "../hooks/usePercentageOfIngredientsOwned";
 
 const RecipePage = ({ route }) => {
   const { width: WIDTH } = useWindowDimensions();
@@ -45,6 +48,12 @@ const RecipePage = ({ route }) => {
   );
   const percentage_of_ingredients_owned =
     usePercentageOfIngredientsOwned(recipeDetails);
+
+  const { separateIngredients } = useInventoryHooks();
+  const { owned_items, missing_items } = useMemo(
+    () => separateIngredients(recipeDetails),
+    [recipeDetails]
+  );
 
   const handleSave = async () => {
     const localIsRecipeSaved = !isRecipeSaved;
@@ -144,12 +153,14 @@ const RecipePage = ({ route }) => {
             <View style={styles.detailsRow}>
               <Feather name="clock" size={20} color="green" />
               <Text style={styles.text}>
+                {"  "}
                 {recipeDetails.ready_in_minutes} mins
               </Text>
             </View>
             <View style={styles.progressContainer}>
               <Text style={styles.text}>
-                {percentage_of_ingredients_owned.toFixed(0)}% of Ingredients
+                {owned_items?.length} /{" "}
+                {recipeDetails.extended_ingredients?.length} Ingredients
               </Text>
               <View style={styles.progressBar}>
                 <ProgressBar
@@ -163,19 +174,44 @@ const RecipePage = ({ route }) => {
           </View>
 
           <Text style={styles.subheading}>Description</Text>
-          <Text style={styles.text} numberOfLines={5}>
-            {recipeDetails.summary}
-          </Text>
-          <RenderHtml
-            baseStyle={styles.text}
-            contentWidth={WIDTH}
-            source={{
-              html: `<div>${recipeDetails.summary}</div>`,
-            }}
-          />
+          {recipeDetails.description ? (
+            <Text
+              style={styles.text}
+              // numberOfLines={5}
+            >
+              {recipeDetails.description}
+            </Text>
+          ) : (
+            <RenderHtml
+              baseStyle={styles.text}
+              contentWidth={WIDTH}
+              source={{
+                html: truncateDescription(recipeDetails.summary),
+              }}
+            />
+          )}
           <View style={styles.fullIngredients}>
-            <Text style={styles.subheading}>Ingredients</Text>
-            {recipeDetails.extended_ingredients.map((ingredient, i) => (
+            <Text style={styles.subheading}>Owned Ingredients</Text>
+            {owned_items.map((ingredient, i) => (
+              <View key={i} style={styles.ingredient}>
+                <Image
+                  style={styles.ingredientImage}
+                  source={{
+                    uri: `https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`,
+                  }}
+                />
+                <View style={styles.ingredientTextContainer}>
+                  <Text style={styles.ingredientText}>
+                    {entitle(ingredient.name)}
+                  </Text>
+                  <Text style={styles.ingredientAmount}>
+                    {ingredient.amount} {ingredient.unit}
+                  </Text>
+                </View>
+              </View>
+            ))}
+            <Text style={styles.subheading}>Missing Ingredients</Text>
+            {missing_items.map((ingredient, i) => (
               <View key={i} style={styles.ingredient}>
                 <Image
                   style={styles.ingredientImage}
@@ -212,6 +248,35 @@ const RecipePage = ({ route }) => {
                 No detailed instructions available for this recipe.
               </Text>
             )}
+
+            {recipeDetails.instructions &&
+              recipeDetails.instructions.length > 0 &&
+              Array.isArray(recipeDetails.instructions) && (
+                <>
+                  <Text style={styles.subheading}>Better Instructions</Text>
+                  {recipeDetails.instructions.map((instructions, index) => (
+                    <View key={index} style={styles.instruction}>
+                      <Text style={styles.text}>{index + 1}. </Text>
+                      <RenderHtml
+                        baseStyle={styles.text}
+                        contentWidth={WIDTH}
+                        source={{
+                          html:
+                            "<div>" +
+                            instructions
+                              .map((instruction, i) =>
+                                instruction.text
+                                  ? "<span>" + instruction.text + "</span>"
+                                  : "<b>" + instruction.ingredient + "</b>"
+                              )
+                              .join("") +
+                            "</div>",
+                        }}
+                      />
+                    </View>
+                  ))}
+                </>
+              )}
           </View>
         </View>
       </ScrollView>
@@ -312,6 +377,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "white",
   },
+  boldText: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "white",
+  },
   fullIngredients: {
     marginTop: 10,
     marginBottom: 5,
@@ -350,6 +420,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingVertical: 8,
     marginBottom: 7,
+    paddingRight: 20,
   },
 });
 

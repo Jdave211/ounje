@@ -1,6 +1,13 @@
 export const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 export const entitle = (name) => capitalize(name.split("_").join(" "));
 
+export const extract_fulfilled_results = (promises) => {
+  const fulfilled = promises
+    .filter((promise) => promise.status === "fulfilled")
+    .map((promise) => promise.value);
+
+  return fulfilled;
+};
 export const flatten_nested_objects = (nestedObject, keys) => {
   const flatten = (obj, keys, parentKeys = {}) => {
     if (keys.length === 0) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,53 +12,50 @@ import { useNavigation } from "@react-navigation/native";
 import { AntDesign } from "@expo/vector-icons";
 import { useAppStore, useTmpStore } from "@stores/app-store";
 import { useRecipeOptionsStore } from "../../stores/recipe-options-store";
+import { useInventoryHooks } from "../../hooks/usePercentageOfIngredientsOwned";
 
 const RecipeOptions = () => {
   const navigation = useNavigation();
 
   const user_id = useAppStore((state) => state.user_id);
   const recipeOptions = useRecipeOptionsStore((state) => state.recipe_options);
+  const dish_types = useRecipeOptionsStore((state) => state.dish_types);
+  console.log({ dish_types });
+  const dish_types_set = useMemo(
+    () => new Set(dish_types.map((t) => t.toLowerCase())),
+    [dish_types]
+  );
 
-  const store_selected_recipes = async (selected_recipes) => {
-    const recipe_image_bucket = "recipe_images";
+  const { separateIngredients } = useInventoryHooks();
+  const sorted_recipe_options = useMemo(
+    () =>
+      recipeOptions
+        .slice()
+        .sort((a, b) => {
+          let a_score = JSON.parse(a.dish_types).reduce(
+            (acc, dish_type) =>
+              acc + dish_types_set.has(dish_type.toLowerCase()),
+            0
+          );
+          let b_score = JSON.parse(b.dish_types).reduce(
+            (acc, dish_type) =>
+              acc + dish_types_set.has(dish_type.toLowerCase()),
+            0
+          );
 
-    await Promise.allSettled(
-      selected_recipes.map(async (recipe) => {
-        let recipe_image = await generate_image(
-          "a zoomed out image showing the full dish of " + recipe.image_prompt
-        );
+          const { owned_items: a_owned_items, missing_Items: a_missing_items } =
+            separateIngredients(a);
+          a_score += a_owned_items.length / a.extended_ingredients.length;
 
-        let storage_path = `${current_run.id}/${recipe.name}.jpeg`;
-        let image_storage_response = await store_image(
-          recipe_image_bucket,
-          storage_path,
-          recipe_image
-        );
+          const { owned_items: b_owned_items, missing_Items: b_missing_items } =
+            separateIngredients(b);
+          b_score += b_owned_items.length / b.extended_ingredients.length;
 
-        return image_storage_response;
-      })
-    );
-
-    const recipe_records = selected_recipes.map((recipe) => {
-      delete recipe.image_prompt;
-      let storage_path = `${current_run.id}/${recipe.name}.jpeg`;
-
-      let {
-        data: { publicUrl: image_url },
-      } = supabase.storage.from(recipe_image_bucket).getPublicUrl(storage_path);
-
-      recipe["image_url"] = image_url;
-
-      return recipe;
-    });
-
-    console.log("recipe_records: ", recipe_records);
-
-    return await supabase
-      .from("recipes")
-      .upsert(recipe_records, { onConflict: ["name"] })
-      .throwOnError();
-  };
+          return b_score - a_score;
+        })
+        .slice(0, 25),
+    [recipeOptions, dish_types_set]
+  );
 
   const navigate_to_saved_recipes = () => {
     navigation.navigate("SavedRecipes");
@@ -79,9 +76,13 @@ const RecipeOptions = () => {
         <AntDesign name="arrowleft" size={24} color="white" />
       </TouchableOpacity>
       <View style={styles.content}>
+        {/* <Text style={{ color: "white", fontSize: 15, marginBottom: 10 }}>
+          Displaying {sorted_recipe_options.length} recipes
+        </Text> */}
         <Text style={styles.text}>Generated Recipes</Text>
+
         <ScrollView style={styles.recipes}>
-          {recipeOptions.map((recipeOption, index) => (
+          {sorted_recipe_options.map((recipeOption, index) => (
             <TouchableOpacity
               key={index}
               onPress={navigate_to_recipe_page(recipeOption.id)}

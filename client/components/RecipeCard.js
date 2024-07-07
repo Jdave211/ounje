@@ -53,7 +53,6 @@ const RecipeCard = ({
     setIsRecipeSaved(shouldSave);
 
     if (shouldSave) {
-      console.log({ recipeDetails });
       await supabase
         .from("saved_recipes")
         .insert([
@@ -111,7 +110,7 @@ const RecipeCard = ({
                 borderTopLeftRadius: 10,
                 borderTopRightRadius: 10,
               }}
-              source={{ uri: imageUrl || recipeDetails.image }}
+              source={{ uri: imageUrl || recipeDetails?.image }}
             />
           </View>
           <View style={{ padding: 10 }}>

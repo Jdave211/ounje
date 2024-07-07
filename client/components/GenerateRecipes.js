@@ -5,20 +5,28 @@ import { FOOD_ITEMS } from "../utils/constants";
 import {
   GENERATE_RECIPE_LIST_FROM_INGREDIENTS_PROMPT,
   GENERATE_RECIPES_PROMPT,
+  GENERATE_RECIPE_DETAILS_PROMPT_V2,
 } from "../utils/prompts";
-import { supabase } from "../utils/supabase";
+import { supabase, generate_and_store_image } from "../utils/supabase";
 import CaseConvert, { objectToSnake } from "ts-case-convert";
 import { useNavigation } from "@react-navigation/native";
-import { openai, extract_json } from "../utils/openai";
+import {
+  openai,
+  extract_json,
+  format_generated_recipe,
+  format_spoonacular_recipe,
+} from "../utils/openai";
 import { useAppStore, useTmpStore } from "@stores/app-store";
 import { useRecipeOptionsStore } from "../stores/recipe-options-store";
-import { find_recipes_by_ingredients } from "../utils/spoonacular";
+import {
+  find_recipes_by_ingredients,
+  find_recipes_by_ingredients_and_store,
+} from "../utils/spoonacular";
+import { generate_image } from "../utils/stability";
+import { map, zip } from "itertools";
+import { nanoid } from "nanoid/non-secure";
 
-export default function GenerateRecipes({
-  onLoading,
-  onRecipesGenerated,
-  selectedMealType,
-}) {
+export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
   const navigation = useNavigation();
   const [isLoading, setIsLoading] = useState(false);
 
@@ -26,6 +34,11 @@ export default function GenerateRecipes({
   const setRecipeOptions = useRecipeOptionsStore(
     (state) => state.setRecipeOptions
   );
+
+  const selectedMealType = useRecipeOptionsStore(
+    (state) => state.dish_types[0]
+  );
+  console.log({ selectedMealType });
 
   const getInventoryFoodItems = useAppStore(
     (state) => state.inventory.getFoodItems
@@ -68,13 +81,16 @@ export default function GenerateRecipes({
         response_format: { type: "json_object" },
       });
 
-      const recipe_list_response = JSON.parse(recipe_list_response_text);
-      console.log({ recipe_list_response });
+      const recipe_list_response = [
+        JSON.parse(recipe_list_response_text).recipes[0],
+      ];
+
+      // console.log({ recipe_list_response });
 
       const generate_recipe_details = async (recipe) => {
         const system_prompt = {
           role: "system",
-          content: GENERATE_RECIPES_PROMPT,
+          content: GENERATE_RECIPE_DETAILS_PROMPT_V2,
         };
         const recipe_details_request = {
           role: "user",
@@ -93,68 +109,65 @@ export default function GenerateRecipes({
           response_format: { type: "json_object" },
         });
 
-        return JSON.parse(recipe_details_response);
+        // console.log({ recipe_details_response });
+        const recipe_details_parsed_to_json = JSON.parse(
+          recipe_details_response
+        );
+        console.log({ recipe_details_parsed_to_json });
+        return recipe_details_parsed_to_json;
       };
 
-      const recipe_details = await Promise.allSettled(
+      const recipe_details_bulk_request = Promise.allSettled(
         recipe_list_response.map(generate_recipe_details)
       );
 
-      // Follow-up requests for different recipes
-      for (let i = 0; i < 3; i++) {
-        response = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            systemPrompt,
-            userPrompt,
-            {
-              role: "user",
-              content:
-                "Give me another distinct recipe in JSON. In no way should it be related to the previous one(fruit salad -> apple fruit salad). instead do something like fruit salad -> apple pie",
-            },
-          ],
-          response_format: { type: "json_object" },
-        });
-        console.log("Additional recipe", response.choices[0].message.content);
-        recipes.push(JSON.parse(response.choices[0].message.content));
-      }
-      console.log("GPT Recipes", recipes);
-
-      // Parse and format the GPT recipes
-      const formattedRecipes = recipes.flat().map((recipe) => ({
-        id: `gpt_${Math.random().toString(36).substr(2, 9)}`, // Unique ID for GPT recipes
-        title: recipe.Recipe,
-        summary: recipe.Summary,
-        instructions: recipe.Instructions,
-        ingredients: recipe.Ingredients,
-        image: "", // Placeholder for image URL
-        ready_in_minutes: recipe.CookTime,
-        servings: recipe.Servings,
-        calories: recipe.Calories,
-      }));
-
-      console.log("Formatted GPT Recipes:", formattedRecipes);
-
-      // Generate DALL-E images for each recipe
-      const recipesWithImages = await Promise.all(
-        formattedRecipes.map(async (recipe) => {
-          try {
-            const response = await openai.images.generate({
-              model: "dall-e-3",
-              prompt: `A delicious dish of ${recipe.title}`,
-              n: 1,
-              size: "1024x1024",
-            });
-            recipe.image = response.data[0].url;
-          } catch (error) {
-            console.error("Error generating image for recipe:", error);
-            recipe.image = ""; // Fallback to empty string if image generation fails
-          }
-          return recipe;
-        })
+      const generated_recipe_images_bulk_request = Promise.allSettled(
+        recipe_list_response.map(({ title, description }) =>
+          generate_and_store_image(
+            "a delicious dish of a recipe descibed as " + description,
+            "recipe_images",
+            title.split(" ").join("_").toLowerCase() +
+              "_" +
+              nanoid().slice(0, 4) +
+              ".jpeg"
+          )
+        )
       );
 
-      return recipesWithImages;
+      const [
+        recipe_details_bulk_response,
+        // generated_recipe_images_bulk_response,
+      ] = await Promise.all([
+        recipe_details_bulk_request,
+        // generated_recipe_images_bulk_request,
+      ]);
+
+      // console.log({ recipe_details_bulk_response });
+      const generated_bulk_recipes = [];
+
+      for (const recipe_async_res of recipe_details_bulk_response) {
+        const recipe = recipe_async_res.value;
+
+        recipe.image = "";
+        recipe.image_type = "image/jpeg";
+        // const image = image_async_res.value;
+        // recipe.image_url = supabase.storage
+        //   .from("recipe_images")
+        //   .getPublicUrl(image.path).data.publicUrl;
+
+        recipe.summary = recipe.description;
+
+        format_generated_recipe(recipe);
+        generated_bulk_recipes.push(recipe);
+      }
+
+      const { data: generated_recipes } = await supabase
+        .from("recipe_ids")
+        .insert(generated_bulk_recipes)
+        .select()
+        .throwOnError();
+
+      return generated_recipes;
     } catch (error) {
       console.error("Error generating recipes with GPT:", error);
       return [];
@@ -162,7 +175,6 @@ export default function GenerateRecipes({
   };
 
   const generateRecipes = async () => {
-    console.log("Food Items:", foodItems);
     if (foodItems.length === 0) {
       Alert.alert(
         "Error",
@@ -174,30 +186,44 @@ export default function GenerateRecipes({
         setIsLoading(true);
         onLoading(true);
 
-        const selectedFoodItems = foodItems;
+        const { stored_suggested_recipes, new_suggested_recipes } =
+          await find_recipes_by_ingredients(foodItems);
 
-        const suggested_recipes = await find_recipes_by_ingredients(foodItems);
+        // // Format spoonacular recipe details and generate gpt recipes
+        // const new_formatted_recipes_request = Promise.all(
+        //   new_suggested_recipes.map(format_spoonacular_recipe)
+        // );
 
-        await supabase
+        // const [
+        //   new_formatted_recipes,
+        //   gpt_generated_recipes,
+        // ] = await Promise.all([
+        //   new_formatted_recipes_request,
+        //   generateGPTRecipes(foodItems, stored_suggested_recipes),
+        // ]);
+
+        const new_formatted_recipes = new_suggested_recipes;
+
+        const { data: new_stored_recipes } = await supabase
           .from("recipe_ids")
-          .upsert(suggested_recipes, { onConflict: "id" });
+          .upsert(new_formatted_recipes, {
+            onConflict: "spoonacular_id",
+            // ignoreDuplicates: true, // note: duplicates will be missing from returned data in recipes_with_ids
+          })
+          .select()
+          .throwOnError();
 
-        // Generate GPT recipes
-        const gptRecipes = await generateGPTRecipes(
-          selectedFoodItems,
-          suggested_recipes
-        );
-
-        // Combine GPT recipes with Spoonacular recipes
-        const allRecipes = [
-          //...suggested_recipes,
-          ...gptRecipes,
+        const total_recipes = [
+          ...stored_suggested_recipes,
+          ...new_stored_recipes,
+          // ...gpt_generated_recipes,
         ];
 
-        setRecipeOptions(allRecipes); // Update the temporary state with the combined recipes
-        console.log("All Recipes:", allRecipes);
+        setRecipeOptions(total_recipes); // Update the temporary state with the combined recipes
+        console.log("All Recipes:", total_recipes);
       } catch (error) {
         console.error("Error generating recipes:", error);
+        console.trace(error);
         Alert.alert("Error", "Failed to generate recipes.");
       } finally {
         setIsLoading(false);

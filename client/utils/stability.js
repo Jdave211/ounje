@@ -1,10 +1,11 @@
 import axios from "axios";
+import { Buffer } from "buffer";
 
 export const generate_image = async (prompt) => {
   const image_form_data = {
     prompt: prompt,
     output_format: "jpeg",
-    model: "sd3",
+    model: "sd3-large-turbo", // sd3-large
   };
 
   const response = await axios.postForm(
@@ -17,7 +18,7 @@ export const generate_image = async (prompt) => {
         Authorization: `Bearer ${process.env.STABILITY_API_KEY}`,
         Accept: "image/*",
       },
-    },
+    }
   );
 
   if (response.status !== 200) {

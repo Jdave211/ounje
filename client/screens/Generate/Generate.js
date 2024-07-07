@@ -17,14 +17,15 @@ import generate_bg from "@assets/generate_bg.jpg";
 import { supabase, fetchUserProfile } from "@utils/supabase";
 import { useQuery } from "react-query";
 import { useAppStore } from "@stores/app-store";
+import { useRecipeOptionsStore } from "../../stores/recipe-options-store";
 
 export default function Generate({ route }) {
   const { session } = route.params;
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedFlavour, setSelectedFlavour] = useState(null);
   const [recipes, setRecipes] = useState([]);
   const navigation = useNavigation();
 
+  const setDishTypes = useRecipeOptionsStore((state) => state.setDishTypes);
   const flavors = ["Breakfast", "Lunch", "Dinner", "Snack"];
 
   const handleLoading = (loading) => {
@@ -67,7 +68,19 @@ export default function Generate({ route }) {
           ) : (
             <>
               <SelectList
-                setSelected={setSelectedFlavour}
+                setSelected={(dish_type) => {
+                  if (
+                    isNaN(Number(dish_type)) &&
+                    typeof dish_type === "string"
+                  ) {
+                    // console.log(
+                    //   dish_type,
+                    //   isNaN(Number(dish_type)),
+                    //   !Number(dish_type).isNaN
+                    // );
+                    setDishTypes([dish_type]);
+                  }
+                }}
                 data={flavors}
                 placeholder="Select a flavor"
                 placeholderStyles={{
@@ -91,14 +104,13 @@ export default function Generate({ route }) {
                 }}
                 defaultOption={{
                   key: "1",
-                  value: "What type of meal are you feeling?",
+                  value: "What type of dish are you feeling?",
                 }}
               />
               <View style={{ flex: 0.3 }}>
                 <GenerateRecipes
                   onLoading={handleLoading}
                   onRecipesGenerated={setRecipes}
-                  selectedMealType={selectedFlavour}
                 />
                 <View style={{ padding: 10 }}>
                   {recipes.map((recipe, index) => (

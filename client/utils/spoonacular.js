@@ -1,5 +1,5 @@
 import axios from "axios";
-import { supabase } from "./supabase";
+import { supabase, fetchRecipes } from "./supabase";
 import { objectToSnake } from "ts-case-convert";
 
 // spoonacular api
@@ -47,14 +47,20 @@ export const get_bulk_recipe_details = async (ids) => {
 
   return recipe_options;
 };
-export const find_recipes_by_ingredients = async (ingredients) => {
+export const find_recipes_by_ingredients = async (
+  ingredients,
+  max_recipes = 200,
+  ranking = "maximize_owned_ingredients", // "minimum_missing_ingredients"
+  ignorePantry = true
+) => {
   const { data: suggestedRecipes } = await axios.get(
     "https://api.spoonacular.com/recipes/findByIngredients",
     {
       params: {
         ingredients: ingredients.map(({ name }) => name).join(", "),
-        number: 7,
-        ranking: 1,
+        number: max_recipes,
+        ranking: ranking === "maximize_owned_ingredients" ? 1 : 2,
+        ignorePantry,
       },
       headers: {
         "x-api-key": process.env.SPOONACULAR_API_KEY,
@@ -64,13 +70,73 @@ export const find_recipes_by_ingredients = async (ingredients) => {
 
   const suggested_recipe_ids = suggestedRecipes.map((recipe) => recipe.id);
 
-  const recipes = await get_bulk_recipe_details(suggested_recipe_ids);
-  return recipes.map((recipe) => format_recipe(recipe));
+  const stored_suggested_recipes = await fetchRecipes(
+    "spoonacular_id",
+    suggested_recipe_ids
+  );
+
+  const stored_suggested_recipes_id_set = new Set();
+  stored_suggested_recipes.forEach((recipe) =>
+    stored_suggested_recipes_id_set.add(recipe.spoonacular_id)
+  );
+
+  const new_recipe_ids = suggested_recipe_ids.filter(
+    (id) => !stored_suggested_recipes_id_set.has(id)
+  );
+
+  const new_suggested_recipes = [];
+  if (new_recipe_ids.length > 0) {
+    const recipes = await get_bulk_recipe_details(suggested_recipe_ids);
+    for (const recipe of recipes) {
+      new_suggested_recipes.push(format_recipe(recipe));
+    }
+  }
+
+  return { stored_suggested_recipes, new_suggested_recipes };
 };
 
-export const format_recipe = (recipe) => {
-  return objectToSnake(recipe);
+export const find_recipes_by_ingredients_and_store = async (ingredients) => {
+  const suggested_recipes = await find_recipes_by_ingredients(ingredients);
+  // todo: post processing recipes with chatgpt to update description and instructions before storing
+  console.log({ suggested_recipes });
+  const { data: recipes_with_ids } = await supabase
+    .from("recipe_ids")
+    .upsert(suggested_recipes, {
+      onConflict: "spoonacular_id",
+      // ignoreDuplicates: true, // note: duplicates will be missing from returned data in recipes_with_ids
+    })
+    .select()
+    .throwOnError();
+
+  // const recipes_with_ids = await fetchRecipes(
+  //   "spoonacular_id",
+  //   suggested_recipes.map((recipe) => recipe.spoonacular_id)
+  // );
+
+  return recipes_with_ids;
 };
+
+export const format_recipe = (recipe_obj) => {
+  const recipe = objectToSnake(recipe_obj);
+  recipe.spoonacular_id = recipe.id;
+  delete recipe.id;
+  delete recipe.cheap;
+  delete recipe.gaps;
+  delete recipe.missed_ingredient_count;
+  delete recipe.missed_ingredients;
+  delete recipe.used_ingredients;
+  delete recipe.used_ingredient_count;
+  delete recipe.user_tags;
+  delete recipe.unused_ingredients;
+  delete recipe.unknown_ingredients;
+  delete recipe.open_license;
+  delete recipe.report;
+  delete recipe.suspicious_data_score;
+  console.log({ tips: recipe.tips });
+  delete recipe.tips;
+  return recipe;
+};
+
 
 export const parse_ingredients = async (ingredients) => {
   const params = new URLSearchParams();
