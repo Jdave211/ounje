@@ -13,7 +13,13 @@
       "distribution": "internal"
     },
     "production": {
-      "node": "18.20.0"
+      "node": "18.20.0",
+      "ios": {
+        "buildType": "app-store"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {

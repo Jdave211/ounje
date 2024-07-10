@@ -2,7 +2,7 @@
   "expo": {
     "name": "ounje",
     "slug": "ounje",
-    "version": "1.0.1",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -18,7 +18,11 @@
         "NSCameraUsageDescription": "Let Oúnje access your camera so we can generate recipes.",
         "NSPhotoLibraryUsageDescription": "Let Oúnje access your photos to generate recipes."
       },
-      "bundleIdentifier": "net.ounje"
+      "bundleIdentifier": "net.ounje",
+      "buildNumber": "2",
+      "entitlements": {
+        "aps-environment": "development"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -29,8 +33,14 @@
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.RECORD_AUDIO"
-      ]
+        "android.permission.RECORD_AUDIO",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "com.google.android.c2dm.permission.RECEIVE",
+        "android.permission.WAKE_LOCK"
+      ],
+      "package": "net.ounje",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"
