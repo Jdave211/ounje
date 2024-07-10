@@ -336,12 +336,18 @@ const Inventory = () => {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Virtual Inventory</Text>
           {foodItems && foodItems.length === 0 ? (
-            <>
+            <View
+              style={{
+                flex: 2,
+                justifyContent: "center",
+                alignContent: "center",
+              }}
+            >
               <Empty />
               <Text style={styles.warning}>
                 Your inventory is empty. Add some items to get started.
               </Text>
-            </>
+            </View>
           ) : (
             foodItems.map((item, i) => (
               <View key={i} style={styles.ingredient}>

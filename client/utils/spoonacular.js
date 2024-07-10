@@ -18,7 +18,7 @@ export const get_recipe_details = async (id) => {
         includeNutrition: true,
       },
       headers: {
-        "x-api-key": process.env.SPOONACULAR_API_KEY,
+        "x-api-key": process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY,
       },
     })
     .catch((error) => {
@@ -37,7 +37,7 @@ export const get_bulk_recipe_details = async (ids) => {
         ids: ids.join(", "),
       },
       headers: {
-        "x-api-key": process.env.SPOONACULAR_API_KEY,
+        "x-api-key": process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY,
       },
     })
     .catch((error) => {
@@ -63,7 +63,7 @@ export const find_recipes_by_ingredients = async (
         ignorePantry,
       },
       headers: {
-        "x-api-key": process.env.SPOONACULAR_API_KEY,
+        "x-api-key": process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY,
       },
     }
   );
@@ -137,7 +137,6 @@ export const format_recipe = (recipe_obj) => {
   return recipe;
 };
 
-
 export const parse_ingredients = async (ingredients) => {
   const params = new URLSearchParams();
   params.append("ingredientList", ingredients.join("\n"));
@@ -146,7 +145,7 @@ export const parse_ingredients = async (ingredients) => {
   const { data } = await axios
     .post("https://api.spoonacular.com/recipes/parseIngredients", params, {
       headers: {
-        "x-api-key": process.env.SPOONACULAR_API_KEY,
+        "x-api-key": process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY,
         "Content-Type": "application/x-www-form-urlencoded",
       },
     })

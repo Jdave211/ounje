@@ -2,7 +2,7 @@ import OpenAi from "openai";
 import { EDIT_DESCRIPTION_AND_INSTRUCTIONS_PROMPT } from "./prompts";
 
 export const openai = new OpenAi({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.EXPO_PUBLIC_OPENAI_API_KEY,
 });
 
 export const format_generated_recipe = (recipe) => {
