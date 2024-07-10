@@ -7,6 +7,7 @@
     "start-c": "expo start -c",
     "android": "expo run:android",
     "ios": "expo run:ios",
+    "build-ios": "eas build --platform ios",
     "web": "expo start --web"
   },
   "dependencies": {
@@ -94,7 +95,6 @@
     "url": "^0.10.3",
     "util": "^0.10.4",
     "vm-browserify": "^0.0.4",
-    "winston": "^3.13.0",
     "zustand": "^4.5.4"
   },
   "devDependencies": {

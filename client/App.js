@@ -18,7 +18,7 @@ import Welcome from "./screens/Onboarding/Welcome";
 import FirstLogin from "./screens/Onboarding/FirstLogin";
 import Auth from "./screens/Onboarding/Auth";
 import Layout from "./_layout";
-import SavedRecipes from "./screens/Collection";
+import Collection from "./screens/Collection";
 import Inventory from "./screens/Inventory";
 import Profile from "./screens/Profile";
 import Community from "./screens/Community";
@@ -32,68 +32,34 @@ import PremiumSubscription from "./screens/Settings/PremiumSubscription";
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
-function GenerateStack({ route }) {
-  const { session } = route.params;
-
+// Note: initialParams is deprecated in react-navigation components, Stack.Screen and Tab.Screen
+function GenerateStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen
-        name="Generate"
-        component={Generate}
-        initialParams={{ session }}
-      />
-      <Stack.Screen
-        name="RecipeOptions"
-        component={RecipeOptions}
-        initialParams={{ session }}
-      />
-      <Stack.Screen
-        name="RecipePage"
-        component={RecipePage}
-        initialParams={{ session }}
-      />
+      <Stack.Screen name="Generate" component={Generate} />
+      <Stack.Screen name="RecipeOptions" component={RecipeOptions} />
+      <Stack.Screen name="RecipePage" component={RecipePage} />
     </Stack.Navigator>
   );
 }
 
-function CollectionStack({ route }) {
-  const { session } = route.params;
-
+function CollectionStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen
-        name="CollectionPage"
-        component={SavedRecipes}
-        initialParams={{ session }}
-      />
-      <Stack.Screen
-        name="RecipePage"
-        component={RecipePage}
-        initialParams={{ session }}
-      />
+      <Stack.Screen name="CollectionPage" component={Collection} />
+      <Stack.Screen name="RecipePage" component={RecipePage} />
     </Stack.Navigator>
   );
 }
 
-function ProfileStack({ route }) {
-  const { session } = route.params;
-
+function ProfileStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen
-        name="Profile"
-        component={Profile}
-        initialParams={{ session }}
-      />
-      <Stack.Screen
-        name="Settings"
-        component={Settings}
-        initialParams={{ session }}
-      />
+      <Stack.Screen name="Profile" component={Profile} />
+      <Stack.Screen name="Settings" component={Settings} />
       <Stack.Screen
         name="PremiumSubscription"
         component={PremiumSubscription}
-        initialParams={{ session }}
       />
     </Stack.Navigator>
   );
@@ -105,7 +71,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [firstLogin, setFirstLogin] = useState(false);
 
-  const userId = useAppStore((state) => state.userId);
   const set_user_id = useAppStore((state) => state.set_user_id);
 
   const queryClient = new QueryClient();
@@ -157,7 +122,7 @@ export default function App() {
         setSession(session);
         if (session?.user) {
           const userId = session.user.id;
-          set_user_id(userId)
+          set_user_id(userId);
 
           supabase
             .from("profiles")
@@ -193,12 +158,10 @@ export default function App() {
     );
   }
 
-  
-
   return (
     <GestureHandlerRootView>
-      <QueryClientProvider client={queryClient}>
-        <NavigationContainer ref={navigationRef}>
+      <NavigationContainer ref={navigationRef}>
+        <QueryClientProvider client={queryClient}>
           <View style={styles.container}>
             {session ? (
               firstLogin ? (
@@ -216,13 +179,11 @@ export default function App() {
                       name="Home"
                       component={GenerateStack}
                       options={{ headerShown: false }}
-                      initialParams={{ session }}
                     />
                     <Tab.Screen
                       name="Collection"
                       component={CollectionStack}
                       options={{ headerShown: false }}
-                      initialParams={{ session }}
                     />
                     <Tab.Screen
                       name="Community"
@@ -243,7 +204,6 @@ export default function App() {
                       name="Profile"
                       component={Profile}
                       options={{ headerShown: false }}
-                      initialParams={{ session }}
                     />
                     <Tab.Screen
                       name="Auth"
@@ -251,10 +211,9 @@ export default function App() {
                       options={{ headerShown: false }}
                     />
                     <Tab.Screen
-                      name='ProfilePage'
+                      name="ProfilePage"
                       component={ProfileStack}
                       options={{ headerShown: false }}
-                      initialParams={{ session }}
                     />
                   </Tab.Navigator>
                 </Layout>
@@ -266,8 +225,8 @@ export default function App() {
             <StatusBar style="light" />
           </View>
           <Toast />
-        </NavigationContainer>
-      </QueryClientProvider>
+        </QueryClientProvider>
+      </NavigationContainer>
     </GestureHandlerRootView>
   );
 }

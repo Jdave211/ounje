@@ -63,7 +63,7 @@ export const fetchSavedRecipesByUser = async (user_id) => {
 export const fetchUserProfile = async (userId) => {
   if (!userId) throw new Error("User ID not available when fetching profile");
 
-  const { data: profileData, error: profileError } = await supabase
+  const { data: profileData } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", userId)
