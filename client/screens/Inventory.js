@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -54,17 +54,17 @@ const Inventory = () => {
   const getFoodItems = useAppStore((state) => state.inventory.getFoodItems);
   const getImages = useAppStore((state) => state.inventory.getImages);
   const setInventoryData = useAppStore(
-    (state) => state.inventory.setInventoryData
+    (state) => state.inventory.setInventoryData,
   );
 
   const addManuallyAddedItems = useAppStore(
-    (state) => state.inventory.addManuallyAddedItems
+    (state) => state.inventory.addManuallyAddedItems,
   );
   const replaceImageAndItsItems = useAppStore(
-    (state) => state.inventory.replaceImageAndItsItems
+    (state) => state.inventory.replaceImageAndItsItems,
   );
   const addImagesAndItems = useAppStore(
-    (state) => state.inventory.addImagesAndItems
+    (state) => state.inventory.addImagesAndItems,
   );
 
   const foodItems = getFoodItems();
@@ -76,7 +76,7 @@ const Inventory = () => {
   const { refetch: refetchInventoryData } = useQuery(
     ["inventoryImages", userId],
     async () => fetchInventoryData(userId),
-    { onSuccess: (inventoryData) => setInventoryData(inventoryData) }
+    { onSuccess: (inventoryData) => setInventoryData(inventoryData) },
   );
 
   const addNewItem = async () => {
@@ -98,7 +98,7 @@ const Inventory = () => {
 
     await addInventoryItem(
       userId,
-      newly_stored_items.map(({ id }) => id)
+      newly_stored_items.map(({ id }) => id),
     );
 
     addManuallyAddedItems(newly_stored_items);
@@ -114,10 +114,6 @@ const Inventory = () => {
   };
 
   const handleRemoveSelected = async (food_item) => {
-    // const updatedFoodItems = foodItems.filter(
-    //   (foodItem) => !selected.includes(foodItem.name)
-    // );
-
     await removeInventoryItems(userId, [food_item.id]);
     refetchInventoryData();
 
@@ -180,7 +176,7 @@ const Inventory = () => {
             Alert.alert("Success", "Image has been Added.");
           }
         }
-      }
+      },
     );
   };
 
@@ -230,29 +226,27 @@ const Inventory = () => {
             const imageUri = result.assets[0].uri;
             const base64Image = await convertImageToBase64(imageUri);
 
-            // Optionally, you can send the image for processing
             setIsLoading(true);
             await sendImages([base64Image]);
             refetchInventoryData();
             setIsLoading(false);
             Alert.alert("Success", "Image has been replaced.");
 
-            // Close the modal
             setModalVisible(false);
           }
         }
-      }
+      },
     );
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <View style={styles.container}>
       {isLoading && (
         <View style={styles.loader}>
           <ActivityIndicator size="large" color="#38F096" />
         </View>
       )}
-      <View style={styles.scrollViewContent}>
+      <ScrollView contentContainerStyle={styles.scrollViewContent}>
         <View style={styles.imageSection}>
           <View style={styles.imageContainer}>
             {inventoryImages?.length === 0 ? (
@@ -373,8 +367,8 @@ const Inventory = () => {
             ))
           )}
         </View>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 };
 

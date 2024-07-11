@@ -43,7 +43,7 @@ export default function Generate() {
 
         return profile;
       }
-    }
+    },
   );
 
   const name = useMemo(() => profileData?.name?.split(" ")[0], [profileData]);
@@ -106,7 +106,7 @@ export default function Generate() {
                 }}
                 defaultOption={{
                   key: "1",
-                  value: "What type of dish are you feeling?",
+                  value: "What type of meal are you interested in?",
                 }}
               />
               <View style={{ flex: 0.3 }}>

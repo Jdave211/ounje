@@ -47,7 +47,7 @@
     "link": "^2.1.1",
     "nanoid": "^5.0.7",
     "navigation": "^6.2.0",
-    "openai": "^4.47.1",
+    "openai": "^4.52.5",
     "path-browserify": "^0.0.0",
     "process": "^0.11.10",
     "querystring-es3": "^0.2.1",
