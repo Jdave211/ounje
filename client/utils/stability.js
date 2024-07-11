@@ -15,7 +15,7 @@ export const generate_image = async (prompt) => {
       validateStatus: undefined,
       responseType: "arraybuffer",
       headers: {
-        Authorization: `Bearer ${process.env.STABILITY_API_KEY}`,
+        Authorization: `Bearer ${process.env.EXPO_PUBLIC_STABILITY_API_KEY}`,
         Accept: "image/*",
       },
     }

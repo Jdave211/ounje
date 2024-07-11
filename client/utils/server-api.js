@@ -2,12 +2,12 @@ import axios from "axios";
 import { supabase, fetchImageSignedUrl, fetchFoodItems } from "./supabase";
 
 export const server_link = (path) => {
-  //  let baseUrl = "https://api.ounje.net";
+   let baseUrl = "https://ounje-96135ef6a801.herokuapp.com";
 
-  // if (process.env.NODE_ENV === "development") {
-  //   baseUrl = "http://localhost:8080";
-  // }
-  const url = new URL(path, process.env.SERVER_URL);
+   if (process.env.EXPO_PUBLIC_NODE_ENV !== "production") {
+     baseUrl = "http://localhost:8080";
+   }
+   const url = new URL(path, baseUrl);
 
   return url.toString();
 };

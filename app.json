@@ -11,6 +11,11 @@
     ],
     "ios": {
       "bundleIdentifier": "net.ounje"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "7679151c-dcd0-4f9d-a6a4-d54cc1f29204"
+      }
     }
   }
 }

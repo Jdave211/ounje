@@ -4,7 +4,6 @@
 import { createStore, createPersistentStore } from "../utils/store";
 
 const inventoryStore = (set, get) => {
-  console.log({ get: get() });
   const getAllFoodItems = () => {
     const inventoryData = get().data;
 

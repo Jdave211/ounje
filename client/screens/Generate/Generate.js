@@ -19,8 +19,7 @@ import { useQuery } from "react-query";
 import { useAppStore } from "../../stores/app-store";
 import { useRecipeOptionsStore } from "../../stores/recipe-options-store";
 
-export default function Generate({ route }) {
-  const { session } = route.params;
+export default function Generate() {
   const [isLoading, setIsLoading] = useState(false);
   const [recipes, setRecipes] = useState([]);
   const navigation = useNavigation();
@@ -35,19 +34,22 @@ export default function Generate({ route }) {
   const userId = useAppStore((state) => state.user_id);
 
   const { data: profileData, error: profileError } = useQuery(
-    ["profileData", session],
+    ["profileData", userId],
     async () => {
-      // setIsLoading(true); // Start loading
-      let profile = await fetchUserProfile(userId);
-      // setIsLoading(false); // End loading
+      if (userId) {
+        // setIsLoading(true); // Start loading
+        let profile = await fetchUserProfile(userId);
+        // setIsLoading(false); // End loading
 
-      return profile;
+        return profile;
+      }
     }
   );
 
   const name = useMemo(() => profileData?.name?.split(" ")[0], [profileData]);
 
   console.log({ userId, profileData, name, profileError });
+
   if (profileError) {
     Alert.alert("Error fetching profile", profileError.message);
   }

@@ -7,6 +7,7 @@
   "scripts": {
     "start": "cd client && npm run start",
     "android": "cd client && npm run android",
+    "deploy-ios": "cd client && eas build --platform ios",
     "ios": "cd client && npm run ios -c",
     "web": "cd client && npm run web",
     "server": "nodemon server/server.js"
