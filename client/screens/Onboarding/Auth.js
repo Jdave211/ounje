@@ -68,49 +68,58 @@ export default function Auth() {
           <View style={[styles.verticallySpaced, styles.mt20]}>
             <Input
               label="Email"
-              leftIcon={{ type: "font-awesome", name: "envelope" }}
+              leftIcon={{
+                type: "font-awesome",
+                name: "envelope",
+                color: "gray",
+              }}
               onChangeText={(text) => setEmail(text)}
               value={email}
               placeholder="email@address.com"
-              autoCapitalize={"none"}
+              autoCapitalize="none"
               inputStyle={{ color: "white" }}
               placeholderTextColor="gray"
+              containerStyle={styles.inputContainer}
             />
           </View>
           <View style={styles.verticallySpaced}>
             <Input
               label="Password"
-              leftIcon={{ type: "font-awesome", name: "lock" }}
+              leftIcon={{ type: "font-awesome", name: "lock", color: "gray" }}
               rightIcon={{
                 type: "font-awesome",
                 name: passwordVisible ? "eye-slash" : "eye",
                 onPress: togglePasswordVisibility,
+                color: "gray",
               }}
               onChangeText={(text) => setPassword(text)}
               value={password}
               secureTextEntry={!passwordVisible}
               placeholder="Password"
-              autoCapitalize={"none"}
+              autoCapitalize="none"
               inputStyle={{ color: "white" }}
               placeholderTextColor="gray"
+              containerStyle={styles.inputContainer}
             />
           </View>
           <View style={styles.verticallySpaced}>
             <Input
               label="Confirm Password"
-              leftIcon={{ type: "font-awesome", name: "lock" }}
+              leftIcon={{ type: "font-awesome", name: "lock", color: "gray" }}
               rightIcon={{
                 type: "font-awesome",
                 name: confirmPasswordVisible ? "eye-slash" : "eye",
                 onPress: toggleConfirmPasswordVisibility,
+                color: "gray",
               }}
               onChangeText={(text) => setConfirmPassword(text)}
               value={confirmPassword}
               secureTextEntry={!confirmPasswordVisible}
               placeholder="Confirm Password"
-              autoCapitalize={"none"}
+              autoCapitalize="none"
               inputStyle={{ color: "white" }}
               placeholderTextColor="gray"
+              containerStyle={styles.inputContainer}
             />
           </View>
           <View style={[styles.verticallySpaced, styles.signupButton]}>
@@ -118,9 +127,15 @@ export default function Auth() {
               title="Sign up"
               disabled={loading}
               onPress={() => signUpWithEmail()}
-              buttonStyle={{ backgroundColor: "green" }}
+              buttonStyle={styles.signUpButton}
             />
           </View>
+        </View>
+        <View style={styles.tipContainer}>
+          <Text style={styles.tipText}>
+            {"\u2022"} Tip of the Day: Stay hydrated! Drinking water is
+            essential for maintaining optimal health and well-being.
+          </Text>
         </View>
       </View>
     </TouchableWithoutFeedback>
@@ -132,28 +147,55 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 12,
     justifyContent: "flex-start",
+    backgroundColor: "#1E1E1E",
+    borderRadius: 15,
   },
   header: {
-    zIndex: 100,
     marginBottom: 20,
     marginTop: 20,
   },
   headerText: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
     color: "white",
     textAlign: "center",
   },
-  body: {},
+  body: {
+    flex: 1,
+  },
   verticallySpaced: {
     paddingTop: 4,
     paddingBottom: 4,
-    borderRadius: 10,
   },
   mt20: {
     marginTop: 20,
   },
+  inputContainer: {
+    borderBottomWidth: 0,
+  },
   signupButton: {
     marginTop: 5,
+  },
+  signUpButton: {
+    backgroundColor: "#2E7D32",
+    height: 50,
+    borderRadius: 25,
+    width: "100%",
+    marginBottom: 10,
+  },
+  tipContainer: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    top: "90%",
+    padding: 10,
+    backgroundColor: "#2E2E2E",
+    borderRadius: 10,
+  },
+  tipText: {
+    color: "white",
+    fontSize: 14,
+    textAlign: "center",
   },
 });

@@ -1,4 +1,4 @@
-import 'react-native-gesture-handler';
+import "react-native-gesture-handler";
 import React, { useState, useEffect, useCallback } from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, View, ActivityIndicator } from "react-native";
@@ -12,7 +12,7 @@ import { createStackNavigator } from "@react-navigation/stack";
 import { supabase } from "./utils/supabase";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { QueryClient, QueryClientProvider } from "react-query";
-import {useAppStore} from "./stores/app-store";
+import { useAppStore } from "./stores/app-store";
 
 import Welcome from "./screens/Onboarding/Welcome";
 import FirstLogin from "./screens/Onboarding/FirstLogin";
@@ -25,9 +25,10 @@ import Community from "./screens/Community";
 import Generate from "./screens/Generate/Generate";
 import RecipeOptions from "./screens/Generate/RecipeOptions";
 import RecipePage from "./screens/RecipePage";
-import CountCalories from "./screens/CountCalories";
+import CountCalories from "./screens/Calories/CountCalories";
 import Settings from "./screens/Settings/Settings";
 import PremiumSubscription from "./screens/Settings/PremiumSubscription";
+import CaloriesPaywall from "./screens/Calories/CaloriesPaywall";
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -61,6 +62,8 @@ function ProfileStack() {
         name="PremiumSubscription"
         component={PremiumSubscription}
       />
+      <Stack.Screen name="CaloriesPaywall" component={CaloriesPaywall} />
+      <Stack.Screen name="CountCalories" component={CountCalories} />
     </Stack.Navigator>
   );
 }
@@ -140,7 +143,7 @@ export default function App() {
               }
             });
         }
-      }
+      },
     );
 
     return () => {
@@ -213,6 +216,11 @@ export default function App() {
                     <Tab.Screen
                       name="ProfilePage"
                       component={ProfileStack}
+                      options={{ headerShown: false }}
+                    />
+                    <Tab.Screen
+                      name="PremiumSubscription"
+                      component={PremiumSubscription}
                       options={{ headerShown: false }}
                     />
                   </Tab.Navigator>

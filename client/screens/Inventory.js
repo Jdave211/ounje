@@ -46,6 +46,7 @@ const Inventory = () => {
   const [newItem, setNewItem] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [_foodItems, setFoodItems] = useState([]);
+  const [notificationVisible, setNotificationVisible] = useState(false);
 
   const userId = useAppStore((state) => state.user_id);
   const inventory = useAppStore((state) => state.inventory);
@@ -110,6 +111,7 @@ const Inventory = () => {
       type: "success",
       text1: "Item added!",
       text2: `${newItem} has been added to your inventory.`,
+      onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
 
@@ -121,6 +123,7 @@ const Inventory = () => {
       type: "success",
       text1: "Item removed!",
       text2: `${food_item.name} has been removed from your inventory.`,
+      onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
 
@@ -368,6 +371,28 @@ const Inventory = () => {
           )}
         </View>
       </ScrollView>
+      {notificationVisible && (
+        <TouchableOpacity
+          style={styles.notification}
+          onPress={() => {
+            setNotificationVisible(false);
+            navigation.navigate("Home"); // Adjust the route name as needed
+          }}
+        >
+          <Text style={styles.notificationText}>
+            Go to{" "}
+            <Text
+              style={{
+                fontWeight: "bold",
+                fontStyle: "italic",
+              }}
+            >
+              Home{" "}
+            </Text>
+            to generate recipes
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 };
@@ -566,6 +591,22 @@ const styles = StyleSheet.create({
   ingredientText: {
     fontSize: 16,
     color: "white",
+  },
+  notification: {
+    position: "absolute",
+    bottom: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: "#1f1f1f", // Subtle background color to match the theme
+    borderRadius: 5,
+    padding: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 2, // Slight elevation for subtle depth
+  },
+  notificationText: {
+    color: "white",
+    fontSize: 14,
   },
 });
 

@@ -2,12 +2,9 @@ import axios from "axios";
 import { supabase, fetchImageSignedUrl, fetchFoodItems } from "./supabase";
 
 export const server_link = (path) => {
-   let baseUrl = "https://ounje-96135ef6a801.herokuapp.com";
+  const baseUrl = "https://ounje-96135ef6a801.herokuapp.com";
 
-   if (process.env.EXPO_PUBLIC_NODE_ENV !== "production") {
-     baseUrl = "http://localhost:8080";
-   }
-   const url = new URL(path, baseUrl);
+  const url = new URL(path, baseUrl);
 
   return url.toString();
 };
@@ -38,7 +35,7 @@ export const fetchInventoryData = async (userId) => {
   });
 
   inventory.manually_added_items = inventory.manually_added_items.map(
-    (id) => food_items_map[id]
+    (id) => food_items_map[id],
   );
 
   return inventory;

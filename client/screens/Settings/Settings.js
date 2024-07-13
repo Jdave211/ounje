@@ -125,13 +125,16 @@ const SettingsScreen = ({ navigation }) => {
             }
           },
         },
-      ]
+      ],
     );
   };
 
   const renderItem = ({ item }) => (
     <TouchableOpacity
-      style={[styles.item, item.title === "Subscribe to Premium" && styles.glow]}
+      style={[
+        styles.item,
+        item.title === "Subscribe to Premium" && styles.glow,
+      ]}
       onPress={() => handlePress(item.screen)}
     >
       <View style={styles.iconContainer}>
@@ -167,7 +170,7 @@ const SettingsScreen = ({ navigation }) => {
         <Button
           title={deleteAcc ? "Deleting Account..." : "Delete Account"}
           type="clear"
-          titleStyle={{ color: "red", fontSize: 16, fontWeight: "bold"}}
+          titleStyle={{ color: "red", fontSize: 16, fontWeight: "bold" }}
           onPress={handleDeleteAccount}
           disabled={deleteAcc}
           buttonStyle={styles.deleteButton}
@@ -236,7 +239,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
   },
   glow: {
-    shadowColor: 'gray', // Green glow effect
+    shadowColor: "gray", // Green glow effect
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 10,
