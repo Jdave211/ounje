@@ -26,6 +26,8 @@ export default function Generate() {
 
   const setDishTypes = useRecipeOptionsStore((state) => state.setDishTypes);
   const flavors = ["Breakfast", "Lunch", "Dinner", "Snack"];
+  const calorieRanges = ["<200", "200-400", "400-600", ">600"];
+  const timeRanges = ["<15 min", "15-30 min", "30-60 min", ">60 min"];
 
   const handleLoading = (loading) => {
     setIsLoading(loading);
@@ -37,16 +39,27 @@ export default function Generate() {
     ["profileData", userId],
     async () => {
       if (userId) {
-        // setIsLoading(true); // Start loading
         let profile = await fetchUserProfile(userId);
-        // setIsLoading(false); // End loading
-
         return profile;
       }
     },
   );
 
   const name = useMemo(() => profileData?.name?.split(" ")[0], [profileData]);
+
+  const handlePremiumFeature = (feature) => {
+    Alert.alert(
+      "Premium Feature",
+      `The ${feature} feature is available for premium subscribers only. Please upgrade to premium to access this feature.`,
+      [
+        {
+          text: "Go Premium",
+          onPress: () => navigation.navigate("PremiumSubscription"),
+        },
+        { text: "Cancel", style: "cancel" },
+      ],
+    );
+  };
 
   console.log({ userId, profileData, name, profileError });
 
@@ -75,11 +88,6 @@ export default function Generate() {
                     isNaN(Number(dish_type)) &&
                     typeof dish_type === "string"
                   ) {
-                    // console.log(
-                    //   dish_type,
-                    //   isNaN(Number(dish_type)),
-                    //   !Number(dish_type).isNaN
-                    // );
                     setDishTypes([dish_type]);
                   }
                 }}
@@ -103,12 +111,36 @@ export default function Generate() {
                   marginTop: 10,
                   marginBottom: 10,
                   borderColor: "white",
+                  borderRadius: 13,
+                  height: 55,
                 }}
                 defaultOption={{
                   key: "1",
                   value: "What type of meal are you interested in?",
                 }}
               />
+              <TouchableOpacity
+                onPress={() => handlePremiumFeature("calorie range")}
+                style={styles.touchableOpacity}
+              >
+                <View style={[styles.selectContainer, styles.disabled]}>
+                  <Text style={[styles.selectText, styles.disabledText]}>
+                    Select a calorie range per serving
+                  </Text>
+                  <FontAwesome5 name="chevron-down" size={12} color="gray" />
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handlePremiumFeature("time to prepare")}
+                style={styles.touchableOpacity}
+              >
+                <View style={[styles.selectContainer, styles.disabled]}>
+                  <Text style={[styles.selectText, styles.disabledText]}>
+                    Select time to prepare
+                  </Text>
+                  <FontAwesome5 name="chevron-down" size={12} color="gray" />
+                </View>
+              </TouchableOpacity>
               <View style={{ flex: 0.3 }}>
                 <GenerateRecipes
                   onLoading={handleLoading}
@@ -166,5 +198,29 @@ const styles = StyleSheet.create({
   selectedTextStyle: {
     color: "white",
     fontWeight: "bold",
+  },
+  touchableOpacity: {
+    marginBottom: 10,
+  },
+  selectContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 15,
+    borderColor: "white",
+    borderWidth: 1,
+    borderRadius: 13,
+    marginTop: 10,
+  },
+  disabled: {
+    borderColor: "gray",
+  },
+  selectText: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "bold",
+  },
+  disabledText: {
+    color: "gray",
   },
 });

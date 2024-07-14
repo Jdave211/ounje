@@ -20,6 +20,7 @@ import Auth from "./screens/Onboarding/Auth";
 import Layout from "./_layout";
 import Collection from "./screens/Collection";
 import Inventory from "./screens/Inventory";
+import PremiumInventory from "./screens/PremiumInventory";
 import Profile from "./screens/Profile";
 import Community from "./screens/Community";
 import Generate from "./screens/Generate/Generate";
@@ -29,17 +30,27 @@ import CountCalories from "./screens/Calories/CountCalories";
 import Settings from "./screens/Settings/Settings";
 import PremiumSubscription from "./screens/Settings/PremiumSubscription";
 import CaloriesPaywall from "./screens/Calories/CaloriesPaywall";
+import HomePremium from "./screens/Generate/PremiumGenerate"; // Ensure the correct import path
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
 // Note: initialParams is deprecated in react-navigation components, Stack.Screen and Tab.Screen
 function GenerateStack() {
+  // const isPremium = useAppStore((state) => state.is_premium);
+  const isPremium = false; // Set to true for testing purposes
+
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="Generate" component={Generate} />
-      <Stack.Screen name="RecipeOptions" component={RecipeOptions} />
-      <Stack.Screen name="RecipePage" component={RecipePage} />
+      {isPremium ? (
+        <Stack.Screen name="HomePremium" component={HomePremium} />
+      ) : (
+        <>
+          <Stack.Screen name="Generate" component={Generate} />
+          <Stack.Screen name="RecipeOptions" component={RecipeOptions} />
+          <Stack.Screen name="RecipePage" component={RecipePage} />
+        </>
+      )}
     </Stack.Navigator>
   );
 }

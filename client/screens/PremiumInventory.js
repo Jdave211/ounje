@@ -30,7 +30,7 @@ import {
 import { entitle } from "../utils/helpers";
 import Empty from "../components/Empty";
 
-const Inventory = () => {
+const InventoryPremium = () => {
   const navigation = useNavigation();
   const [selectedImage, setSelectedImage] = useState(null);
   const [newItem, setNewItem] = useState("");
@@ -67,21 +67,6 @@ const Inventory = () => {
   );
 
   const addNewItem = async () => {
-    if (foodItems.length >= 15) {
-      Alert.alert(
-        "Premium Feature",
-        "You have reached the maximum limit of 15 items. Please upgrade to premium to add more items.",
-        [
-          {
-            text: "Go Premium",
-            onPress: () => navigation.navigate("PremiumSubscription"),
-          },
-          { text: "Cancel", style: "cancel" },
-        ],
-      );
-      return;
-    }
-
     if (newItem.trim() === "") {
       Alert.alert("Error", "Please enter a valid item name.");
       return;
@@ -183,7 +168,7 @@ const Inventory = () => {
     );
   };
 
-  const handleReplaceImage = async () => {
+  const handleReplaceImage = async (index) => {
     const { status: cameraRollPerm } =
       await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -263,21 +248,21 @@ const Inventory = () => {
                 />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity
-                onPress={() => {
-                  setSelectedImage(inventoryImages[0]);
-                  setModalVisible(true);
-                }}
-                style={styles.imageWrapper}
-              >
-                <Image
-                  source={{ uri: inventoryImages[0] }}
-                  style={styles.image}
-                />
-                <View style={styles.overlay}>
-                  <Text style={styles.overlayText}>Tap to replace</Text>
-                </View>
-              </TouchableOpacity>
+              inventoryImages.map((imageUrl, index) => (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => {
+                    setSelectedImage(imageUrl);
+                    setModalVisible(true);
+                  }}
+                  style={styles.imageWrapper}
+                >
+                  <Image source={{ uri: imageUrl }} style={styles.image} />
+                  <View style={styles.overlay}>
+                    <Text style={styles.overlayText}>Tap to replace</Text>
+                  </View>
+                </TouchableOpacity>
+              ))
             )}
           </View>
         </View>
@@ -302,7 +287,9 @@ const Inventory = () => {
               />
               <TouchableOpacity
                 style={styles.replaceButton}
-                onPress={handleReplaceImage}
+                onPress={() =>
+                  handleReplaceImage(inventoryImages.indexOf(selectedImage))
+                }
               >
                 <Text style={styles.buttonText}>Replace Image</Text>
               </TouchableOpacity>
@@ -608,4 +595,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Inventory;
+export default InventoryPremium;

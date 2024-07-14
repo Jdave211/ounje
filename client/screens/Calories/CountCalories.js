@@ -30,7 +30,7 @@ const CountCalories = () => {
   const [calorieImageUris, setCalorieImageUris] = useState([]);
   const userId = useAppStore((state) => state.user_id);
   // const isPremium = useAppStore((state) => state.isPremium); // Assuming there's a state to check for premium status
-  const isPremium = true; // For testing purposes
+  const isPremium = false; // For testing purposes
 
   const { convertImageToBase64, storeCaloryImages } = useImageProcessing();
 
