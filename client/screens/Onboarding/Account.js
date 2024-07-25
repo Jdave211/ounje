@@ -4,12 +4,10 @@ import {
   StyleSheet,
   View,
   Alert,
-  Image,
   ActivityIndicator,
   TouchableOpacity,
 } from "react-native";
 import { Button, Input, Icon } from "react-native-elements";
-import { FontAwesome6 } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import { useAppStore } from "../../stores/app-store";
 import { useNavigation } from "@react-navigation/native";
@@ -26,8 +24,8 @@ export default function Account({ session }) {
   const clearAllAppState = useAppStore((state) => state.clearAllAppState);
 
   useEffect(() => {
-    if (session) getProfile();
-  }, [session]);
+    if (session && !user_id.startsWith("guest")) getProfile();
+  }, [session, user_id]);
 
   async function getProfile() {
     try {
@@ -96,6 +94,13 @@ export default function Account({ session }) {
       }
 
       clearAllAppState();
+      useAppStore.getState().set_user_id(null);
+
+      // Log the user_id after a brief delay to allow state to update
+      setTimeout(() => {
+        const updatedUserId = useAppStore.getState().user_id;
+        console.log("user id:", updatedUserId); // This should now log null
+      }, 500);
 
       Toast.show({
         type: "success",
@@ -139,35 +144,48 @@ export default function Account({ session }) {
             placeholderTextColor="white" // Add this line
           />
         </View>
-        <View style={styles.verticallySpaced}>
-          <Input
-            label="Name"
-            value={name || ""}
-            onChangeText={(text) => setName(text)}
-            inputStyle={{ color: "white" }} // Add this line
-            placeholderTextColor="white" // Add this line
-          />
-        </View>
+        {!user_id.startsWith("guest") && (
+          <>
+            <View style={styles.verticallySpaced}>
+              <Input
+                label="Name"
+                value={name || ""}
+                onChangeText={(text) => setName(text)}
+                inputStyle={{ color: "white" }} // Add this line
+                placeholderTextColor="white" // Add this line
+              />
+            </View>
 
-        <View style={[styles.verticallySpaced]}>
-          <Button
-            title={loading ? "Loading ..." : "Update"}
-            onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
-            disabled={loading}
-            buttonStyle={{ backgroundColor: "#282C35", borderRadius: 15 }}
-          />
-        </View>
+            <View style={[styles.verticallySpaced]}>
+              <Button
+                title={loading ? "Loading ..." : "Update"}
+                onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
+                disabled={loading}
+                buttonStyle={{ backgroundColor: "#282C35", borderRadius: 15 }}
+              />
+            </View>
+          </>
+        )}
       </View>
 
       <View style={styles.verticallySpaced}>
         <View style={{ alignItems: "center" }}>
-          <Button
-            title={signingOut ? "Signing Out..." : "Sign Out"}
-            type="clear"
-            titleStyle={{ color: "red" }}
-            onPress={handleSignOut}
-            disabled={signingOut}
-          />
+          {user_id.startsWith("guest") ? (
+            <Button
+              title={"Log In"}
+              type="clear"
+              titleStyle={{ color: "green", fontWeight: "bold" }}
+              onPress={() => set_user_id(null)}
+            />
+          ) : (
+            <Button
+              title={signingOut ? "Signing Out..." : "Sign Out"}
+              type="clear"
+              titleStyle={{ color: "red", fontWeight: "bold" }}
+              onPress={handleSignOut}
+              disabled={signingOut}
+            />
+          )}
           {signingOut && <ActivityIndicator size="small" color="red" />}
         </View>
       </View>

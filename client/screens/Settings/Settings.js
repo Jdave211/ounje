@@ -16,18 +16,18 @@ import { useAppStore } from "../../stores/app-store";
 import { useNavigation } from "@react-navigation/native";
 
 const settingsData = [
-  {
-    category: "Account",
-    data: [
-      {
-        id: "1",
-        title: "Subscribe to Premium",
-        description: "Unlock all premium features by subscribing.",
-        icon: "star",
-        screen: "PremiumSubscription",
-      },
-    ],
-  },
+  // {
+  //   category: "Account",
+  //   data: [
+  //     {
+  //       id: "1",
+  //       title: "Subscribe to Premium",
+  //       description: "Unlock all premium features by subscribing.",
+  //       icon: "star",
+  //       screen: "PremiumSubscription",
+  //     },
+  //   ],
+  // },
   {
     category: "Support",
     data: [

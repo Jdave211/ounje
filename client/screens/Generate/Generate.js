@@ -26,6 +26,16 @@ export default function Generate() {
 
   const setDishTypes = useRecipeOptionsStore((state) => state.setDishTypes);
   const flavors = ["Breakfast", "Lunch", "Dinner", "Snack"];
+<<<<<<< Updated upstream
+=======
+  const calorieRanges = [
+    "<200 kcal",
+    "200-500 kcal",
+    "500-800 kcal",
+    ">800kcal",
+  ];
+  const timeRanges = ["<15 min", "15-30 min", "30-60 min", ">60 min"];
+>>>>>>> Stashed changes
 
   const handleLoading = (loading) => {
     setIsLoading(loading);
@@ -36,17 +46,25 @@ export default function Generate() {
   const { data: profileData, error: profileError } = useQuery(
     ["profileData", userId],
     async () => {
+<<<<<<< Updated upstream
       if (userId) {
         // setIsLoading(true); // Start loading
+=======
+      if (userId && !userId.startsWith("guest")) {
+>>>>>>> Stashed changes
         let profile = await fetchUserProfile(userId);
         // setIsLoading(false); // End loading
 
         return profile;
       }
     },
+    {
+      enabled: !!userId && !userId.startsWith("guest"), // Only run the query if user_id is not null and does not start with "guest"
+    },
   );
 
-  const name = useMemo(() => profileData?.name?.split(" ")[0], [profileData]);
+  const name =
+    useMemo(() => profileData?.name?.split(" ")[0], [profileData]) ?? "there";
 
   console.log({ userId, profileData, name, profileError });
 
@@ -109,6 +127,31 @@ export default function Generate() {
                   value: "What type of meal are you interested in?",
                 }}
               />
+<<<<<<< Updated upstream
+=======
+              {/* <TouchableOpacity
+                onPress={() => handlePremiumFeature("calorie range")}
+                style={styles.touchableOpacity}
+              >
+                <View style={[styles.selectContainer, styles.disabled]}>
+                  <Text style={[styles.selectText, styles.disabledText]}>
+                    Select a calorie range per serving
+                  </Text>
+                  <FontAwesome5 name="chevron-down" size={12} color="gray" />
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handlePremiumFeature("time to prepare")}
+                style={styles.touchableOpacity}
+              >
+                <View style={[styles.selectContainer, styles.disabled]}>
+                  <Text style={[styles.selectText, styles.disabledText]}>
+                    Select time to prepare
+                  </Text>
+                  <FontAwesome5 name="chevron-down" size={12} color="gray" />
+                </View>
+              </TouchableOpacity> */}
+>>>>>>> Stashed changes
               <View style={{ flex: 0.3 }}>
                 <GenerateRecipes
                   onLoading={handleLoading}

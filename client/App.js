@@ -33,8 +33,9 @@ import CaloriesPaywall from "./screens/Calories/CaloriesPaywall";
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
-// Note: initialParams is deprecated in react-navigation components, Stack.Screen and Tab.Screen
 function GenerateStack() {
+  const isPremium = useAppStore((state) => state.is_premium);
+
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Generate" component={Generate} />
@@ -75,7 +76,7 @@ export default function App() {
   const [firstLogin, setFirstLogin] = useState(false);
 
   const set_user_id = useAppStore((state) => state.set_user_id);
-
+  const user_id = useAppStore((state) => state.user_id);
   const queryClient = new QueryClient();
 
   const getSession = useCallback(async () => {
@@ -95,7 +96,6 @@ export default function App() {
 
     if (session?.user) {
       const userId = session.user.id;
-
       set_user_id(userId);
 
       console.log("User signed in, fetching profile...");
@@ -115,7 +115,7 @@ export default function App() {
         setFirstLogin(false);
       }
     }
-  }, []);
+  }, [set_user_id]);
 
   useEffect(() => {
     getSession();
@@ -153,6 +153,12 @@ export default function App() {
     };
   }, [getSession]);
 
+  useEffect(() => {
+    if (user_id) {
+      setLoading(false);
+    }
+  }, [user_id]);
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -166,7 +172,7 @@ export default function App() {
       <NavigationContainer ref={navigationRef}>
         <QueryClientProvider client={queryClient}>
           <View style={styles.container}>
-            {session ? (
+            {user_id ? ( // Check if the user ID is set (logged in or guest)
               firstLogin ? (
                 <FirstLogin
                   onProfileComplete={() => setFirstLogin(false)}

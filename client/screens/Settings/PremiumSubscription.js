@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  Alert,
 } from "react-native";
 import { Icon } from "react-native-elements";
 
@@ -32,7 +33,7 @@ const plansData = {
         "Calorie Tracking",
         "Beta Features Access",
       ],
-      billed: "monthly",
+      billed: "Coming Soon",
     },
   ],
   annually: [
@@ -58,7 +59,7 @@ const plansData = {
         "Calorie Tracking",
         "Beta Features Access",
       ],
-      billed: "save $12",
+      billed: "Coming Soon",
     },
   ],
   lifetime: [
@@ -84,7 +85,7 @@ const plansData = {
         "Calorie Tracking",
         "Beta Features Access",
       ],
-      billed: "limited time offer",
+      billed: "Coming Soon",
     },
   ],
 };
@@ -201,9 +202,14 @@ export default function PremiumSubscription({ navigation }) {
       {isPremiumPlan && (
         <TouchableOpacity
           style={styles.subscribeButton}
-          onPress={() => alert("Premium Will be Released Soon!")}
+          onPress={() =>
+            Alert.alert(
+              "Coming Soon",
+              "Premium subscriptions will be available soon!",
+            )
+          }
         >
-          <Text style={styles.subscribeButtonText}>Subscribe Now</Text>
+          <Text style={styles.subscribeButtonText}></Text>
         </TouchableOpacity>
       )}
     </View>

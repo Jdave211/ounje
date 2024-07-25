@@ -77,8 +77,7 @@ export default function SignIn() {
           setPostLoginLoading(true);
           setTimeout(() => {
             setPostLoginLoading(false);
-            // Navigate to main page or dashboard here
-          }, 3000); // Show loader for 3 seconds (adjust as needed)
+          }, 2000); // Show loader for 3 seconds (adjust as needed)
         }
       }
     }

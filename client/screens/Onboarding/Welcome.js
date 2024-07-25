@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   StyleSheet,
   View,
@@ -12,16 +12,33 @@ import SignIn from "./SignIn";
 import { Ionicons } from "@expo/vector-icons";
 import welcomepic3 from "../../assets/welcomepic3.jpg";
 import { LinearGradient } from "expo-linear-gradient";
+import { useNavigation } from "@react-navigation/native";
+import Toast from "react-native-toast-message";
+import { useAppStore } from "../../stores/app-store"; // Import useAppStore
 
 const Welcome = () => {
   const [signupModalVisible, setSignupModalVisible] = useState(false);
   const [signinModalVisible, setSigninModalVisible] = useState(false);
+  const navigation = useNavigation();
+  const set_user_id = useAppStore((state) => state.set_user_id); // Get the set_user_id function from the store
 
   const handleSignup = () => {
     setSignupModalVisible(true);
   };
+
   const handleSignin = () => {
     setSigninModalVisible(true);
+  };
+
+  const continueAsGuest = () => {
+    const guestUserId = "guest_" + new Date().getTime(); // Create a unique guest user ID
+    set_user_id(guestUserId); // Set the user ID for guest access
+    Toast.show({
+      type: "success",
+      text1: "Guest Sign In",
+      text2: "You are now signed in as a guest.",
+    });
+    console.log("Continuing as guest with ID:", guestUserId);
   };
 
   return (
@@ -42,7 +59,13 @@ const Welcome = () => {
             <Text style={styles.text}>Get Started</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.signinButton} onPress={handleSignin}>
-            <Text style={styles.text}>Sign In</Text>
+            <Text style={[styles.text, styles.signinText]}>Sign In</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.guestButton}
+            onPress={continueAsGuest}
+          >
+            <Text style={styles.guestText}>Continue as Guest ~</Text>
           </TouchableOpacity>
         </View>
         <Modal
@@ -139,6 +162,24 @@ const styles = StyleSheet.create({
   },
   text: {
     color: "white",
+    fontWeight: "bold",
+  },
+  signinText: {
+    fontWeight: "bold",
+    paddingBottom: 5,
+    fontSize: 16,
+  },
+  guestButton: {
+    alignItems: "center",
+    paddingTop: 10,
+    borderRadius: 10,
+    marginTop: 5,
+  },
+  guestText: {
+    color: "#B2FFFF",
+    fontStyle: "italic",
+    fontWeight: "bold",
+    fontSize: 13,
   },
   modalView: {
     flex: 0.8,
