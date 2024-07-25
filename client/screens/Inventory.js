@@ -49,13 +49,9 @@ const Inventory = () => {
   const [notificationVisible, setNotificationVisible] = useState(false);
 
   const userId = useAppStore((state) => state.user_id);
-<<<<<<< Updated upstream
   const inventory = useAppStore((state) => state.inventory);
-
   const inventoryData = useAppStore((state) => state.inventory.data);
-=======
   const setUserId = useAppStore((state) => state.set_user_id);
->>>>>>> Stashed changes
   const getFoodItems = useAppStore((state) => state.inventory.getFoodItems);
   const getImages = useAppStore((state) => state.inventory.getImages);
   const setInventoryData = useAppStore(
@@ -103,8 +99,6 @@ const Inventory = () => {
   };
 
   const addNewItem = async () => {
-<<<<<<< Updated upstream
-=======
     if (userId.startsWith("guest")) {
       showAuthAlert();
       return;
@@ -125,7 +119,6 @@ const Inventory = () => {
       return;
     }
 
->>>>>>> Stashed changes
     if (newItem.trim() === "") {
       Alert.alert("Error", "Please enter a valid item name.");
       return;
@@ -238,16 +231,12 @@ const Inventory = () => {
     );
   };
 
-<<<<<<< Updated upstream
   const handleReplaceImage = async (index) => {
-=======
-  const handleReplaceImage = async () => {
     if (userId.startsWith("guest")) {
       showAuthAlert();
       return;
     }
 
->>>>>>> Stashed changes
     const { status: cameraRollPerm } =
       await ImagePicker.requestMediaLibraryPermissionsAsync();
 

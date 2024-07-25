@@ -26,8 +26,6 @@ export default function Generate() {
 
   const setDishTypes = useRecipeOptionsStore((state) => state.setDishTypes);
   const flavors = ["Breakfast", "Lunch", "Dinner", "Snack"];
-<<<<<<< Updated upstream
-=======
   const calorieRanges = [
     "<200 kcal",
     "200-500 kcal",
@@ -35,7 +33,6 @@ export default function Generate() {
     ">800kcal",
   ];
   const timeRanges = ["<15 min", "15-30 min", "30-60 min", ">60 min"];
->>>>>>> Stashed changes
 
   const handleLoading = (loading) => {
     setIsLoading(loading);
@@ -46,15 +43,8 @@ export default function Generate() {
   const { data: profileData, error: profileError } = useQuery(
     ["profileData", userId],
     async () => {
-<<<<<<< Updated upstream
-      if (userId) {
-        // setIsLoading(true); // Start loading
-=======
       if (userId && !userId.startsWith("guest")) {
->>>>>>> Stashed changes
         let profile = await fetchUserProfile(userId);
-        // setIsLoading(false); // End loading
-
         return profile;
       }
     },
@@ -127,8 +117,6 @@ export default function Generate() {
                   value: "What type of meal are you interested in?",
                 }}
               />
-<<<<<<< Updated upstream
-=======
               {/* <TouchableOpacity
                 onPress={() => handlePremiumFeature("calorie range")}
                 style={styles.touchableOpacity}
@@ -151,7 +139,6 @@ export default function Generate() {
                   <FontAwesome5 name="chevron-down" size={12} color="gray" />
                 </View>
               </TouchableOpacity> */}
->>>>>>> Stashed changes
               <View style={{ flex: 0.3 }}>
                 <GenerateRecipes
                   onLoading={handleLoading}
