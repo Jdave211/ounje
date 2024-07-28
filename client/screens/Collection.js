@@ -5,12 +5,16 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Dimensions,
 } from "react-native";
 import RecipeCard from "../components/RecipeCard";
 import { useNavigation } from "@react-navigation/native";
 import { useAppStore } from "../stores/app-store";
 import { useQuery } from "react-query";
 import { fetchSavedRecipesByUser } from "../utils/supabase";
+
+const screenWidth = Dimensions.get("window").width;
+const screenHeight = Dimensions.get("window").height;
 
 const SavedRecipes = () => {
   const navigation = useNavigation();
@@ -70,11 +74,11 @@ const SavedRecipes = () => {
 
   return (
     <View style={styles.container}>
-      <View style={{ marginBottom: 10 }}>
+      <View style={{ marginBottom: screenHeight * 0.02 }}>
         <Text style={styles.text}>Saved Recipes</Text>
       </View>
       {savedRecipes && savedRecipes.length > 0 ? (
-        <ScrollView>
+        <ScrollView contentContainerStyle={styles.scrollViewContent}>
           {savedRecipes.map((recipe_id, i) => (
             <TouchableOpacity
               key={i}
@@ -97,25 +101,29 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#121212",
-    paddingTop: 55,
-    paddingBottom: 11,
+    paddingTop: screenHeight * 0.07, // Responsive padding
+    paddingBottom: screenHeight * 0.02, // Responsive padding
+  },
+  scrollViewContent: {
+    flexGrow: 1,
+    paddingHorizontal: screenWidth * 0.04, // Responsive padding
   },
   text: {
     color: "white",
-    fontSize: 24,
+    fontSize: screenWidth * 0.06, // Responsive font size
     fontWeight: "bold",
   },
   noRecipesText: {
     color: "white",
-    fontSize: 18,
+    fontSize: screenWidth * 0.045, // Responsive font size
     textAlign: "center",
-    marginTop: 20,
+    marginTop: screenHeight * 0.03, // Responsive margin
   },
   loginText: {
     color: "#38F096",
     textDecorationLine: "underline",
     fontWeight: "bold",
-    fontSize: 16,
+    fontSize: screenWidth * 0.04, // Responsive font size
   },
 });
 

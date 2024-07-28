@@ -9,6 +9,7 @@ import {
   ActionSheetIOS,
   Modal,
   ScrollView,
+  Dimensions,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -17,6 +18,10 @@ import axios from "axios";
 import useImageProcessing from "../../hooks/useImageProcessing";
 import { useAppStore } from "../../stores/app-store";
 import Paywall from "./CaloriesPaywall"; // Importing the Paywall component
+import { Platform } from "react-native"; // Import Platform
+
+const screenWidth = Dimensions.get("window").width;
+const screenHeight = Dimensions.get("window").height;
 
 const CountCalories = () => {
   const [image, setImage] = useState(null);
@@ -239,161 +244,168 @@ const CountCalories = () => {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Calorie Counter</Text>
-      <Text style={styles.instructions}>
-        Take a picture of your meal, then click on Analyze to count the
-        calories!
-      </Text>
-      <Text style={styles.warning}>
-        Please make sure the food items are accurately centered in the picture.
-      </Text>
-      <View style={styles.imageContainer}>
-        {image ? (
-          <Image source={{ uri: image }} style={styles.image} />
-        ) : (
-          <TouchableOpacity
-            style={styles.uploadButton}
-            onPress={showActionSheet}
-          >
-            <AntDesign name="camerao" size={40} color="white" />
-            <Text style={styles.uploadText}>Upload or Take Photo</Text>
-          </TouchableOpacity>
-        )}
-        {image && (
-          <TouchableOpacity style={styles.removeButton} onPress={clearImage}>
-            <Feather name="trash-2" size={24} color="white" />
-          </TouchableOpacity>
-        )}
-      </View>
-      <View style={styles.analyzeButtonContainer}>
-        {loading ? (
-          <ActivityIndicator size="large" color="#38F096" />
-        ) : (
-          <TouchableOpacity style={styles.analyzeButton} onPress={analyzeImage}>
-            <Text style={styles.analyzeButtonText}>Analyze Calories</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
+    <ScrollView contentContainerStyle={styles.scrollContainer}>
+      <View style={styles.container}>
+        <Text style={styles.title}>Calorie Counter</Text>
+        <Text style={styles.instructions}>
+          Take a picture of your meal, then click on Analyze to count the
+          calories!
+        </Text>
+        <Text style={styles.warning}>
+          Please make sure the food items are accurately centered in the
+          picture.
+        </Text>
+        <View style={styles.imageContainer}>
+          {image ? (
+            <Image source={{ uri: image }} style={styles.image} />
+          ) : (
             <TouchableOpacity
-              style={styles.closeIcon}
-              onPress={() => setModalVisible(false)}
+              style={styles.uploadButton}
+              onPress={showActionSheet}
             >
-              <AntDesign name="close" size={24} color="white" />
+              <AntDesign name="camerao" size={40} color="white" />
+              <Text style={styles.uploadText}>Upload or Take Photo</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Your Calories</Text>
-            <View style={styles.totalContainer}>
-              <Text style={styles.totalCalories}>{calories} Cal</Text>
-              {macros && (
-                <View style={styles.macrosContainer}>
-                  <View style={styles.macroRow}>
-                    <Text style={styles.macroLabel}>Proteins:</Text>
-                    <Text style={styles.macroValue}>{macros.proteins} g</Text>
-                  </View>
-                  <View style={styles.macroRow}>
-                    <Text style={styles.macroLabel}>Fat:</Text>
-                    <Text style={styles.macroValue}>{macros.fat} g</Text>
-                  </View>
-                  <View style={styles.macroRow}>
-                    <Text style={styles.macroLabel}>Carbs:</Text>
-                    <Text style={styles.macroValue}>{macros.carbs} g</Text>
-                  </View>
-                  <View style={styles.macroRow}>
-                    <Text style={styles.macroLabel}>Fibers:</Text>
-                    <Text style={styles.macroValue}>{macros.fibers} g</Text>
-                  </View>
-                  <View style={styles.macroRow}>
-                    <Text style={styles.macroLabel}>Sugars:</Text>
-                    <Text style={styles.macroValue}>{macros.sugars} g</Text>
-                  </View>
-                </View>
-              )}
-            </View>
-            <ScrollView style={styles.modalScroll}>
-              <View style={styles.foodItemsContainer}>
-                {foodItems.map((item, index) => (
-                  <View key={index} style={styles.foodItem}>
-                    <Text style={styles.foodName}>
-                      {item.topChoice.food_info.display_name}
-                    </Text>
-                    <Text style={styles.foodCalories}>
-                      {(
-                        item.topChoice.food_info.nutrition.calories_100g *
-                        (item.topChoice.quantity / 100)
-                      ).toFixed(0)}{" "}
-                      Cal
-                    </Text>
-                    <Text style={styles.foodQuantity}>
-                      {item.topChoice.quantity}g
-                    </Text>
-                    <Text style={styles.alternativesHeader}>or</Text>
-                    {item.alternatives.map((alt, altIndex) => (
-                      <Text key={altIndex} style={styles.alternative}>
-                        {alt.food_info.display_name}
-                      </Text>
-                    ))}
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
-            <Text style={styles.disclaimer}>
-              The information provided may not be 100% accurate. We recommend
-              using it as a helpful guide and applying your best judgment.
-            </Text>
-          </View>
+          )}
+          {image && (
+            <TouchableOpacity style={styles.removeButton} onPress={clearImage}>
+              <Feather name="trash-2" size={24} color="white" />
+            </TouchableOpacity>
+          )}
         </View>
-      </Modal>
-    </View>
+        <View style={styles.analyzeButtonContainer}>
+          {loading ? (
+            <ActivityIndicator size="large" color="#38F096" />
+          ) : (
+            <TouchableOpacity
+              style={styles.analyzeButton}
+              onPress={analyzeImage}
+            >
+              <Text style={styles.analyzeButtonText}>Analyze Calories</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={modalVisible}
+          onRequestClose={() => setModalVisible(false)}
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <TouchableOpacity
+                style={styles.closeIcon}
+                onPress={() => setModalVisible(false)}
+              >
+                <AntDesign name="close" size={24} color="white" />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Your Calories</Text>
+              <View style={styles.totalContainer}>
+                <Text style={styles.totalCalories}>{calories} Cal</Text>
+                {macros && (
+                  <View style={styles.macrosContainer}>
+                    <View style={styles.macroRow}>
+                      <Text style={styles.macroLabel}>Proteins:</Text>
+                      <Text style={styles.macroValue}>{macros.proteins} g</Text>
+                    </View>
+                    <View style={styles.macroRow}>
+                      <Text style={styles.macroLabel}>Fat:</Text>
+                      <Text style={styles.macroValue}>{macros.fat} g</Text>
+                    </View>
+                    <View style={styles.macroRow}>
+                      <Text style={styles.macroLabel}>Carbs:</Text>
+                      <Text style={styles.macroValue}>{macros.carbs} g</Text>
+                    </View>
+                    <View style={styles.macroRow}>
+                      <Text style={styles.macroLabel}>Fibers:</Text>
+                      <Text style={styles.macroValue}>{macros.fibers} g</Text>
+                    </View>
+                    <View style={styles.macroRow}>
+                      <Text style={styles.macroLabel}>Sugars:</Text>
+                      <Text style={styles.macroValue}>{macros.sugars} g</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+              <ScrollView style={styles.modalScroll}>
+                <View style={styles.foodItemsContainer}>
+                  {foodItems.map((item, index) => (
+                    <View key={index} style={styles.foodItem}>
+                      <Text style={styles.foodName}>
+                        {item.topChoice.food_info.display_name}
+                      </Text>
+                      <Text style={styles.foodCalories}>
+                        {(
+                          item.topChoice.food_info.nutrition.calories_100g *
+                          (item.topChoice.quantity / 100)
+                        ).toFixed(0)}{" "}
+                        Cal
+                      </Text>
+                      <Text style={styles.foodQuantity}>
+                        {item.topChoice.quantity}g
+                      </Text>
+                      <Text style={styles.alternativesHeader}>or</Text>
+                      {item.alternatives.map((alt, altIndex) => (
+                        <Text key={altIndex} style={styles.alternative}>
+                          {alt.food_info.display_name}
+                        </Text>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+              <Text style={styles.disclaimer}>
+                The information provided may not be 100% accurate. We recommend
+                using it as a helpful guide and applying your best judgment.
+              </Text>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
+  scrollContainer: {
+    flexGrow: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: "#121212",
-    padding: 20,
+    paddingHorizontal: 20,
     justifyContent: "center",
     alignItems: "center",
   },
   title: {
-    fontSize: 24,
+    fontSize: screenWidth * 0.07, // Responsive font size
     fontWeight: "bold",
     color: "white",
-    position: "absolute",
-    top: 70,
+    marginTop: screenHeight * 0.05, // Responsive margin
     textAlign: "center",
-    width: "100%",
   },
   instructions: {
     color: "white",
-    marginBottom: 50,
     fontWeight: "bold",
-    fontSize: 17,
+    fontSize: screenWidth * 0.045, // Responsive font size
     textAlign: "center",
+    marginVertical: screenHeight * 0.02, // Responsive margin
   },
   warning: {
     color: "gray",
-    fontSize: 15,
+    fontSize: screenWidth * 0.04, // Responsive font size
     textAlign: "center",
-    marginBottom: 20,
+    marginBottom: screenHeight * 0.02, // Responsive margin
   },
   imageContainer: {
-    width: 300,
-    height: 300,
+    width: screenHeight < 700 ? screenWidth * 0.6 : screenWidth * 0.8, // Smaller for smaller screens
+    height: screenHeight < 700 ? screenWidth * 0.6 : screenWidth * 0.8, // Smaller for smaller screens
     borderRadius: 10,
     borderColor: "white",
     borderWidth: 2,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: screenHeight * 0.03, // Responsive margin
     backgroundColor: "#1f1f1f",
     position: "relative",
   },
@@ -405,27 +417,27 @@ const styles = StyleSheet.create({
   uploadButton: {
     justifyContent: "center",
     alignItems: "center",
-    paddingVertical: 40,
+    paddingVertical: screenHeight * 0.05, // Responsive padding
   },
   uploadText: {
     color: "white",
-    fontSize: 16,
-    marginTop: 10,
+    fontSize: screenWidth * 0.04, // Responsive font size
+    marginTop: screenHeight * 0.01, // Responsive margin
   },
   analyzeButtonContainer: {
     width: "80%",
     alignItems: "center",
-    marginTop: 30,
+    marginTop: screenHeight * 0.03, // Responsive margin
   },
   analyzeButton: {
     backgroundColor: "#38F096",
     borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 25,
+    paddingVertical: screenHeight * 0.015, // Responsive padding
+    paddingHorizontal: screenWidth * 0.1, // Responsive padding
   },
   analyzeButtonText: {
     color: "#121212",
-    fontSize: 18,
+    fontSize: screenWidth * 0.045, // Responsive font size
     fontWeight: "bold",
   },
   modalContainer: {
@@ -448,10 +460,10 @@ const styles = StyleSheet.create({
     right: 10,
   },
   modalTitle: {
-    fontSize: 24,
+    fontSize: screenWidth * 0.07, // Responsive font size
     fontWeight: "bold",
     color: "white",
-    marginBottom: 10,
+    marginBottom: screenHeight * 0.02, // Responsive margin
     textAlign: "center",
   },
   modalScroll: {
@@ -467,25 +479,25 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   foodName: {
-    fontSize: 18,
+    fontSize: screenWidth * 0.045, // Responsive font size
     color: "white",
     fontWeight: "bold",
   },
   foodCalories: {
-    fontSize: 16,
+    fontSize: screenWidth * 0.04, // Responsive font size
     color: "#38F096",
   },
   foodQuantity: {
-    fontSize: 14,
+    fontSize: screenWidth * 0.035, // Responsive font size
     color: "gray",
   },
   alternativesHeader: {
-    fontSize: 12,
+    fontSize: screenWidth * 0.03, // Responsive font size
     color: "gray",
     marginVertical: 5,
   },
   alternative: {
-    fontSize: 14,
+    fontSize: screenWidth * 0.035, // Responsive font size
     color: "lightgray",
   },
   totalContainer: {
@@ -493,7 +505,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   totalCalories: {
-    fontSize: 24,
+    fontSize: screenWidth * 0.07, // Responsive font size
     fontWeight: "bold",
     color: "#38F096",
   },
@@ -509,17 +521,17 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   macroLabel: {
-    fontSize: 16,
+    fontSize: screenWidth * 0.04, // Responsive font size
     color: "white",
   },
   macroValue: {
-    fontSize: 16,
+    fontSize: screenWidth * 0.04, // Responsive font size
     color: "white",
     textAlign: "right",
   },
   disclaimer: {
     color: "gray",
-    fontSize: 14,
+    fontSize: screenWidth * 0.035, // Responsive font size
     textAlign: "center",
     marginTop: 10,
   },

@@ -11,6 +11,7 @@ import {
   TextInput,
   ActionSheetIOS,
   ActivityIndicator,
+  Dimensions,
 } from "react-native";
 import { FontAwesome5, AntDesign, MaterialIcons } from "@expo/vector-icons";
 import { MultipleSelectList } from "../components/MultipleSelectList";
@@ -36,6 +37,9 @@ import {
 } from "../utils/server-api";
 import { entitle } from "../utils/helpers";
 import Empty from "../components/Empty";
+
+const screenWidth = Dimensions.get("window").width;
+const screenHeight = Dimensions.get("window").height;
 
 const Inventory = () => {
   const navigation = useNavigation();
@@ -312,7 +316,11 @@ const Inventory = () => {
               >
                 <Image
                   source={camera}
-                  style={{ width: 100, height: 100, margin: 1 }}
+                  style={{
+                    width: screenWidth * 0.25,
+                    height: screenWidth * 0.25,
+                    margin: 1,
+                  }} // Responsive width and height
                 />
               </TouchableOpacity>
             ) : (
@@ -463,7 +471,7 @@ const styles = StyleSheet.create({
     color: "white",
     marginBottom: 10,
     fontWeight: "bold",
-    fontSize: 14,
+    fontSize: screenWidth * 0.035, // Responsive font size
     textAlign: "center",
   },
   imageSection: {
@@ -483,8 +491,8 @@ const styles = StyleSheet.create({
   },
   image: {
     borderRadius: 10,
-    width: 100,
-    height: 100,
+    width: screenWidth * 0.25, // Responsive width
+    height: screenWidth * 0.25, // Responsive height
   },
   overlay: {
     position: "absolute",
@@ -499,7 +507,7 @@ const styles = StyleSheet.create({
   },
   overlayText: {
     color: "#fff",
-    fontSize: 12,
+    fontSize: screenWidth * 0.03, // Responsive font size
   },
   addImageButton: {
     borderRadius: 10,
@@ -530,8 +538,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   modalImage: {
-    width: 300,
-    height: 300,
+    width: screenWidth * 0.75, // Responsive width
+    height: screenWidth * 0.75, // Responsive height
     resizeMode: "contain",
   },
   replaceButton: {
@@ -549,7 +557,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     color: "#fff",
-    fontSize: 18,
+    fontSize: screenWidth * 0.045, // Responsive font size
     fontWeight: "bold",
     marginBottom: 10,
   },
@@ -631,8 +639,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   ingredientImage: {
-    width: 30,
-    height: 30,
+    width: screenWidth * 0.08, // Responsive width
+    height: screenWidth * 0.08, // Responsive height
     borderRadius: 10,
     marginRight: 10,
   },
@@ -642,7 +650,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   ingredientText: {
-    fontSize: 16,
+    fontSize: screenWidth * 0.04, // Responsive font size
     color: "white",
   },
   notification: {
@@ -659,7 +667,7 @@ const styles = StyleSheet.create({
   },
   notificationText: {
     color: "white",
-    fontSize: 14,
+    fontSize: screenWidth * 0.035, // Responsive font size
   },
 });
 

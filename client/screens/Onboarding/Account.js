@@ -6,6 +6,8 @@ import {
   Alert,
   ActivityIndicator,
   TouchableOpacity,
+  Dimensions,
+  ScrollView,
 } from "react-native";
 import { Button, Input, Icon } from "react-native-elements";
 import Toast from "react-native-toast-message";
@@ -13,6 +15,9 @@ import { useAppStore } from "../../stores/app-store";
 import { useNavigation } from "@react-navigation/native";
 
 export default function Account({ session }) {
+  const screenWidth = Dimensions.get("window").width;
+  const screenHeight = Dimensions.get("window").height;
+
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -117,86 +122,98 @@ export default function Account({ session }) {
   }
 
   return (
-    <View
-      style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
-    >
-      <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
-        <TouchableOpacity
-          onPress={() => {
-            navigation.navigate("Settings");
-          }}
-        >
-          <Icon
-            name="settings"
-            type="material"
-            color="#fff"
-            containerStyle={{ marginRight: 15, paddingTop: 45 }}
-          />
-        </TouchableOpacity>
-      </View>
-      <View style={styles.content}>
-        <View style={[styles.verticallySpaced, styles.mt20]}>
-          <Input
-            label="Email"
-            value={session?.user?.email}
-            disabled
-            inputStyle={{ color: "white" }} // Add this line
-            placeholderTextColor="white" // Add this line
-          />
+    <ScrollView contentContainerStyle={styles.scrollContainer}>
+      <View
+        style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
+      >
+        <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+          <TouchableOpacity
+            onPress={() => {
+              navigation.navigate("Settings");
+            }}
+          >
+            <Icon
+              name="settings"
+              type="material"
+              color="#fff"
+              containerStyle={{
+                marginRight: screenWidth * 0.04, // Responsive margin
+                paddingTop: screenHeight * 0.06, // Responsive padding
+              }}
+            />
+          </TouchableOpacity>
         </View>
-        {!user_id.startsWith("guest") && (
-          <>
-            <View style={styles.verticallySpaced}>
-              <Input
-                label="Name"
-                value={name || ""}
-                onChangeText={(text) => setName(text)}
-                inputStyle={{ color: "white" }} // Add this line
-                placeholderTextColor="white" // Add this line
-              />
-            </View>
-
-            <View style={[styles.verticallySpaced]}>
-              <Button
-                title={loading ? "Loading ..." : "Update"}
-                onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
-                disabled={loading}
-                buttonStyle={{ backgroundColor: "#282C35", borderRadius: 15 }}
-              />
-            </View>
-          </>
-        )}
-      </View>
-
-      <View style={styles.verticallySpaced}>
-        <View style={{ alignItems: "center" }}>
-          {user_id.startsWith("guest") ? (
-            <Button
-              title={"Log In"}
-              type="clear"
-              titleStyle={{ color: "green", fontWeight: "bold" }}
-              onPress={() => set_user_id(null)}
+        <View style={styles.content}>
+          <View style={[styles.verticallySpaced, styles.mt20]}>
+            <Input
+              label="Email"
+              value={session?.user?.email}
+              disabled
+              inputStyle={{ color: "white" }}
+              placeholderTextColor="white"
             />
-          ) : (
-            <Button
-              title={signingOut ? "Signing Out..." : "Sign Out"}
-              type="clear"
-              titleStyle={{ color: "red", fontWeight: "bold" }}
-              onPress={handleSignOut}
-              disabled={signingOut}
-            />
+          </View>
+          {!user_id.startsWith("guest") && (
+            <>
+              <View style={styles.verticallySpaced}>
+                <Input
+                  label="Name"
+                  value={name || ""}
+                  onChangeText={(text) => setName(text)}
+                  inputStyle={{ color: "white" }}
+                  placeholderTextColor="white"
+                />
+              </View>
+
+              <View style={[styles.verticallySpaced]}>
+                <Button
+                  title={loading ? "Loading ..." : "Update"}
+                  onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
+                  disabled={loading}
+                  buttonStyle={{
+                    backgroundColor: "#282C35",
+                    borderRadius: 15,
+                    paddingVertical: screenHeight * 0.015, // Responsive padding
+                  }}
+                />
+              </View>
+            </>
           )}
-          {signingOut && <ActivityIndicator size="small" color="red" />}
         </View>
+
+        <View style={styles.verticallySpaced}>
+          <View style={{ alignItems: "center" }}>
+            {user_id.startsWith("guest") ? (
+              <Button
+                title={"Log In"}
+                type="clear"
+                titleStyle={{ color: "green", fontWeight: "bold" }}
+                onPress={() => set_user_id(null)}
+              />
+            ) : (
+              <Button
+                title={signingOut ? "Signing Out..." : "Sign Out"}
+                type="clear"
+                titleStyle={{ color: "red", fontWeight: "bold" }}
+                onPress={handleSignOut}
+                disabled={signingOut}
+              />
+            )}
+            {signingOut && <ActivityIndicator size="small" color="red" />}
+          </View>
+        </View>
+        <Toast />
       </View>
-      <Toast />
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  scrollContainer: {
+    flexGrow: 1,
+  },
   container: {
-    padding: 12,
+    padding: Dimensions.get("window").width * 0.03, // Responsive padding
     backgroundColor: "#121212",
   },
   content: {
@@ -204,11 +221,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   verticallySpaced: {
-    paddingTop: 4,
-    paddingBottom: 25,
+    paddingTop: Dimensions.get("window").height * 0.005, // Responsive padding
+    paddingBottom: Dimensions.get("window").height * 0.03, // Responsive padding
     alignSelf: "stretch",
   },
   mt20: {
-    marginTop: 20,
+    marginTop: Dimensions.get("window").height * 0.025, // Responsive margin
   },
 });

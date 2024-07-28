@@ -37,14 +37,14 @@ const RecipePage = ({ route }) => {
 
   const { data: recipeDetails } = useQuery(
     ["recipeDetails", recipe_id],
-    async () => await fetchRecipeDetails(recipe_id)
+    async () => await fetchRecipeDetails(recipe_id),
   );
   const { data: isAlreadySaved } = useQuery(
     ["isRecipeSaved", user_id],
     async () => await fetchIsRecipeSavedByUser(user_id, recipe_id),
     {
       onSuccess: () => setIsRecipeSaved(isAlreadySaved),
-    }
+    },
   );
   const percentage_of_ingredients_owned =
     usePercentageOfIngredientsOwned(recipeDetails);
@@ -52,7 +52,7 @@ const RecipePage = ({ route }) => {
   const { separateIngredients } = useInventoryHooks();
   const { owned_items, missing_items } = useMemo(
     () => separateIngredients(recipeDetails),
-    [recipeDetails]
+    [recipeDetails],
   );
 
   const handleSave = async () => {
@@ -241,7 +241,7 @@ const RecipePage = ({ route }) => {
                     <Text style={styles.text}>{number}.</Text>
                     <Text style={styles.text}>{step}</Text>
                   </View>
-                )
+                ),
               )
             ) : (
               <Text style={styles.text}>
@@ -267,7 +267,7 @@ const RecipePage = ({ route }) => {
                               .map((instruction, i) =>
                                 instruction.text
                                   ? "<span>" + instruction.text + "</span>"
-                                  : "<b>" + instruction.ingredient + "</b>"
+                                  : "<b>" + instruction.ingredient + "</b>",
                               )
                               .join("") +
                             "</div>",

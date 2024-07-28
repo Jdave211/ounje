@@ -7,6 +7,7 @@ import {
   ImageBackground,
   Alert,
   ScrollView,
+  Dimensions,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { SelectList } from "react-native-dropdown-select-list";
@@ -83,11 +84,6 @@ export default function Generate() {
                     isNaN(Number(dish_type)) &&
                     typeof dish_type === "string"
                   ) {
-                    // console.log(
-                    //   dish_type,
-                    //   isNaN(Number(dish_type)),
-                    //   !Number(dish_type).isNaN
-                    // );
                     setDishTypes([dish_type]);
                   }
                 }}
@@ -117,28 +113,6 @@ export default function Generate() {
                   value: "What type of meal are you interested in?",
                 }}
               />
-              {/* <TouchableOpacity
-                onPress={() => handlePremiumFeature("calorie range")}
-                style={styles.touchableOpacity}
-              >
-                <View style={[styles.selectContainer, styles.disabled]}>
-                  <Text style={[styles.selectText, styles.disabledText]}>
-                    Select a calorie range per serving
-                  </Text>
-                  <FontAwesome5 name="chevron-down" size={12} color="gray" />
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => handlePremiumFeature("time to prepare")}
-                style={styles.touchableOpacity}
-              >
-                <View style={[styles.selectContainer, styles.disabled]}>
-                  <Text style={[styles.selectText, styles.disabledText]}>
-                    Select time to prepare
-                  </Text>
-                  <FontAwesome5 name="chevron-down" size={12} color="gray" />
-                </View>
-              </TouchableOpacity> */}
               <View style={{ flex: 0.3 }}>
                 <GenerateRecipes
                   onLoading={handleLoading}
@@ -169,7 +143,6 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    paddingTop: 0,
     justifyContent: "flex-end",
   },
   header: {
