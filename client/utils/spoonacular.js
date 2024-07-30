@@ -47,6 +47,7 @@ export const get_bulk_recipe_details = async (ids) => {
 
   return recipe_options;
 };
+
 export const find_recipes_by_ingredients = async (
   ingredients,
   max_recipes = 200,
