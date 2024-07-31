@@ -26,6 +26,7 @@ import {
   useInventoryHooks,
   usePercentageOfIngredientsOwned,
 } from "../hooks/usePercentageOfIngredientsOwned";
+import IngredientCard from "../components/IngredientCard";
 
 const RecipePage = ({ route }) => {
   const { width: WIDTH } = useWindowDimensions();
@@ -37,14 +38,14 @@ const RecipePage = ({ route }) => {
 
   const { data: recipeDetails } = useQuery(
     ["recipeDetails", recipe_id],
-    async () => await fetchRecipeDetails(recipe_id),
+    async () => await fetchRecipeDetails(recipe_id)
   );
   const { data: isAlreadySaved } = useQuery(
     ["isRecipeSaved", user_id],
     async () => await fetchIsRecipeSavedByUser(user_id, recipe_id),
     {
       onSuccess: () => setIsRecipeSaved(isAlreadySaved),
-    },
+    }
   );
   const percentage_of_ingredients_owned =
     usePercentageOfIngredientsOwned(recipeDetails);
@@ -52,7 +53,7 @@ const RecipePage = ({ route }) => {
   const { separateIngredients } = useInventoryHooks();
   const { owned_items, missing_items } = useMemo(
     () => separateIngredients(recipeDetails),
-    [recipeDetails],
+    [recipeDetails]
   );
 
   const handleSave = async () => {
@@ -192,43 +193,54 @@ const RecipePage = ({ route }) => {
           )}
           <View style={styles.fullIngredients}>
             <Text style={styles.subheading}>Owned Ingredients</Text>
-            {owned_items.map((ingredient, i) => (
-              <View key={i} style={styles.ingredient}>
-                <Image
-                  style={styles.ingredientImage}
-                  source={{
-                    uri: `https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`,
-                  }}
-                />
-                <View style={styles.ingredientTextContainer}>
-                  <Text style={styles.ingredientText}>
-                    {entitle(ingredient.name)}
-                  </Text>
-                  <Text style={styles.ingredientAmount}>
-                    {ingredient.amount} {ingredient.unit}
-                  </Text>
+            <View
+              style={{
+                flex: 3,
+                flexDirection: "row",
+                flexWrap: "wrap",
+                // justifyContent: "space-between",
+              }}
+            >
+              {owned_items.map((ingredient, i) => (
+                <View
+                  key={i}
+                  style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+                >
+                  <IngredientCard
+                    key={i}
+                    name={ingredient.name}
+                    image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                    amount={ingredient.amount}
+                    unit={ingredient.measures?.us.unit_short}
+                  />
                 </View>
-              </View>
-            ))}
+              ))}
+            </View>
+
             <Text style={styles.subheading}>Missing Ingredients</Text>
-            {missing_items.map((ingredient, i) => (
-              <View key={i} style={styles.ingredient}>
-                <Image
-                  style={styles.ingredientImage}
-                  source={{
-                    uri: `https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`,
-                  }}
-                />
-                <View style={styles.ingredientTextContainer}>
-                  <Text style={styles.ingredientText}>
-                    {entitle(ingredient.name)}
-                  </Text>
-                  <Text style={styles.ingredientAmount}>
-                    {ingredient.amount} {ingredient.unit}
-                  </Text>
+            <View
+              style={{
+                flex: 3,
+                flexDirection: "row",
+                flexWrap: "wrap",
+                height: "100%",
+              }}
+            >
+              {missing_items.map((ingredient, i) => (
+                <View
+                  key={i}
+                  style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+                >
+                  <IngredientCard
+                    key={i}
+                    name={ingredient.name}
+                    image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                    amount={ingredient.amount}
+                    unit={ingredient.measures?.us.unit_short}
+                  />
                 </View>
-              </View>
-            ))}
+              ))}
+            </View>
           </View>
           <View style={styles.fullInstructions}>
             <Text style={styles.subheading}>Instructions</Text>
@@ -241,7 +253,7 @@ const RecipePage = ({ route }) => {
                     <Text style={styles.text}>{number}.</Text>
                     <Text style={styles.text}>{step}</Text>
                   </View>
-                ),
+                )
               )
             ) : (
               <Text style={styles.text}>
@@ -267,7 +279,7 @@ const RecipePage = ({ route }) => {
                               .map((instruction, i) =>
                                 instruction.text
                                   ? "<span>" + instruction.text + "</span>"
-                                  : "<b>" + instruction.ingredient + "</b>",
+                                  : "<b>" + instruction.ingredient + "</b>"
                               )
                               .join("") +
                             "</div>",

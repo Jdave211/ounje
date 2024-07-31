@@ -37,6 +37,7 @@ import {
 } from "../utils/server-api";
 import { entitle } from "../utils/helpers";
 import Empty from "../components/Empty";
+import IngredientCard from "../components/IngredientCard";
 
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
@@ -59,17 +60,17 @@ const Inventory = () => {
   const getFoodItems = useAppStore((state) => state.inventory.getFoodItems);
   const getImages = useAppStore((state) => state.inventory.getImages);
   const setInventoryData = useAppStore(
-    (state) => state.inventory.setInventoryData,
+    (state) => state.inventory.setInventoryData
   );
 
   const addManuallyAddedItems = useAppStore(
-    (state) => state.inventory.addManuallyAddedItems,
+    (state) => state.inventory.addManuallyAddedItems
   );
   const replaceImageAndItsItems = useAppStore(
-    (state) => state.inventory.replaceImageAndItsItems,
+    (state) => state.inventory.replaceImageAndItsItems
   );
   const addImagesAndItems = useAppStore(
-    (state) => state.inventory.addImagesAndItems,
+    (state) => state.inventory.addImagesAndItems
   );
 
   const foodItems = getFoodItems();
@@ -81,7 +82,7 @@ const Inventory = () => {
   const { refetch: refetchInventoryData } = useQuery(
     ["inventoryImages", userId],
     async () => fetchInventoryData(userId),
-    { onSuccess: (inventoryData) => setInventoryData(inventoryData) },
+    { onSuccess: (inventoryData) => setInventoryData(inventoryData) }
   );
 
   const showAuthAlert = () => {
@@ -98,7 +99,7 @@ const Inventory = () => {
           onPress: () => setUserId(null),
         },
       ],
-      { cancelable: true },
+      { cancelable: true }
     );
   };
 
@@ -118,7 +119,7 @@ const Inventory = () => {
             onPress: () => navigation.navigate("PremiumSubscription"),
           },
           { text: "Cancel", style: "cancel" },
-        ],
+        ]
       );
       return;
     }
@@ -141,7 +142,7 @@ const Inventory = () => {
 
     await addInventoryItem(
       userId,
-      newly_stored_items.map(({ id }) => id),
+      newly_stored_items.map(({ id }) => id)
     );
 
     addManuallyAddedItems(newly_stored_items);
@@ -231,7 +232,7 @@ const Inventory = () => {
             Alert.alert("Success", "Image has been Added.");
           }
         }
-      },
+      }
     );
   };
 
@@ -295,7 +296,7 @@ const Inventory = () => {
             setModalVisible(false);
           }
         }
-      },
+      }
     );
   };
 
@@ -393,43 +394,44 @@ const Inventory = () => {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Virtual Inventory</Text>
-          {foodItems && foodItems.length === 0 ? (
-            <View
-              style={{
-                flex: 2,
-                justifyContent: "center",
-                alignContent: "center",
-              }}
-            >
-              <Empty />
-              <Text style={styles.warning}>
-                Your inventory is empty. Add some items to get started.
-              </Text>
-            </View>
-          ) : (
-            foodItems.map((item, i) => (
-              <View key={i} style={styles.ingredient}>
-                <Image
-                  style={styles.ingredientImage}
-                  source={{
-                    uri: `https://img.spoonacular.com/ingredients_100x100/${item.image}`,
-                  }}
-                />
-                <View style={styles.ingredientTextContainer}>
-                  <Text style={styles.ingredientText}>
-                    {item.name && entitle(item.name)}
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.removeButton}
-                  onPress={() => handleRemoveSelected(item)}
-                >
-                  <MaterialIcons name="delete" size={15} color="white" />
-                </TouchableOpacity>
+          <View
+            style={{
+              flex: 3,
+              flexDirection: "row",
+              flexWrap: "wrap",
+              // justifyContent: "space-between",
+            }}
+          >
+            {foodItems && foodItems.length === 0 ? (
+              <View
+                style={{
+                  flex: 2,
+                  justifyContent: "center",
+                  alignContent: "center",
+                }}
+              >
+                <Empty />
+                <Text style={styles.warning}>
+                  Your inventory is empty. Add some items to get started.
+                </Text>
               </View>
-            ))
-          )}
+            ) : (
+              foodItems.map((item, i) => (
+                <View
+                  key={i}
+                  style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+                >
+                  <IngredientCard
+                    key={i}
+                    name={item.name}
+                    image={`https://img.spoonacular.com/ingredients_100x100/${item.image}`}
+                    showCancelButton={true}
+                    onCancel={() => handleRemoveSelected(item)}
+                  />
+                </View>
+              ))
+            )}
+          </View>
         </View>
       </ScrollView>
       {notificationVisible && (
