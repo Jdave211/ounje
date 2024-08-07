@@ -51,7 +51,7 @@ export default function Generate() {
     },
     {
       enabled: !!userId && !userId.startsWith("guest"), // Only run the query if user_id is not null and does not start with "guest"
-    },
+    }
   );
 
   const name =
@@ -67,10 +67,11 @@ export default function Generate() {
     <ImageBackground source={generate_bg} style={styles.backgroundImage}>
       <View style={styles.overlay}>
         <View style={styles.header}>
-          <Text style={styles.text}>Hi {name}, </Text>
           <Text style={styles.text}>
-            Select your preferences,
-            <Text style={{ color: "black" }}> and get to</Text> cooking...
+            Hi <Text style={{ fontSize: 25 }}>{name}</Text>,{" "}
+          </Text>
+          <Text style={styles.text}>
+            Select your preferences, and get to cooking...
           </Text>
         </View>
         <View style={styles.content}>

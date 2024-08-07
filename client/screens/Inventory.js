@@ -109,21 +109,6 @@ const Inventory = () => {
       return;
     }
 
-    if (foodItems.length >= 100) {
-      Alert.alert(
-        "Premium Feature",
-        "You have reached the maximum limit of 15 items. Please upgrade to premium to add more items.",
-        [
-          {
-            text: "Go Premium",
-            onPress: () => navigation.navigate("PremiumSubscription"),
-          },
-          { text: "Cancel", style: "cancel" },
-        ]
-      );
-      return;
-    }
-
     if (newItem.trim() === "") {
       Alert.alert("Error", "Please enter a valid item name.");
       return;
@@ -131,6 +116,7 @@ const Inventory = () => {
 
     setIsLoading(true); // Start loading
     const newlyParsedFoodItems = await parse_ingredients([newItem]);
+    console.log({ newlyParsedFoodItems });
 
     if (!newlyParsedFoodItems || newlyParsedFoodItems.length === 0) {
       Alert.alert("Error", "Please add only food items.");
@@ -138,7 +124,19 @@ const Inventory = () => {
       return;
     }
 
-    const newly_stored_items = await storeNewFoodItems(newlyParsedFoodItems);
+    // Check for duplicates by Spoonacular ID
+    const existingItemIds = new Set(foodItems.map((item) => item.id)); // Assuming each item has a unique id
+    const nonDuplicateItems = newlyParsedFoodItems.filter(
+      (item) => !existingItemIds.has(item.id)
+    );
+
+    if (nonDuplicateItems.length === 0) {
+      Alert.alert("Duplicate Item", "This item is already in your inventory.");
+      setIsLoading(false); // Stop loading
+      return;
+    }
+
+    const newly_stored_items = await storeNewFoodItems(nonDuplicateItems);
 
     await addInventoryItem(
       userId,
@@ -394,14 +392,7 @@ const Inventory = () => {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Virtual Inventory</Text>
-          <View
-            style={{
-              flex: 3,
-              flexDirection: "row",
-              flexWrap: "wrap",
-              // justifyContent: "space-between",
-            }}
-          >
+          <View style={styles.centeredContainer}>
             {foodItems && foodItems.length === 0 ? (
               <View
                 style={{
@@ -468,6 +459,7 @@ const styles = StyleSheet.create({
   },
   scrollViewContent: {
     flexGrow: 1,
+    justifyContent: "center",
   },
   warning: {
     color: "white",
@@ -587,6 +579,12 @@ const styles = StyleSheet.create({
   buttonText: {
     color: "white",
     fontWeight: "bold",
+  },
+  centeredContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "center",
   },
   selectedTextStyle: {
     color: "#32cd32",

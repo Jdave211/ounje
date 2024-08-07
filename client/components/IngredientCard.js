@@ -1,13 +1,7 @@
-import {
-  View,
-  Text,
-  ScrollView,
-  Image,
-  StyleSheet,
-  TouchableHighlight,
-} from "react-native";
+import React from "react";
+import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
 import { entitle } from "../utils/helpers";
-import { FontAwesome, Feather, MaterialIcons } from "@expo/vector-icons";
 
 const IngredientCard = ({
   name,
@@ -20,37 +14,15 @@ const IngredientCard = ({
   return (
     <View style={styles.ingredient}>
       {showCancelButton && (
-        <TouchableHighlight
-          style={{
-            backgroundColor: "rgb(180, 180, 180)",
-            borderRadius: 100,
-            zIndex: 1,
-            position: "absolute",
-            right: -5,
-            top: -5,
-          }}
-          onPress={() => this.submitSuggestion(this.props)}
-          underlayColor="#fff"
-        >
-          <MaterialIcons
-            name="cancel"
-            size={18}
-            color="black"
-            style={{}}
-            onPress={onCancel}
-          />
-        </TouchableHighlight>
+        <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
+          <MaterialIcons name="cancel" size={18} color="white" />
+        </TouchableOpacity>
       )}
-      <View>
-        <Image
-          style={styles.ingredientImage}
-          source={{
-            uri: image,
-          }}
-        />
+      <View style={styles.imageContainer}>
+        <Image style={styles.ingredientImage} source={{ uri: image }} />
       </View>
       <Text style={styles.ingredientText}>{entitle(name)}</Text>
-      {amount && (
+      {amount !== undefined && unit !== undefined && (
         <Text style={styles.ingredientAmount}>
           {amount} {unit}
         </Text>
@@ -61,46 +33,52 @@ const IngredientCard = ({
 
 const styles = StyleSheet.create({
   ingredient: {
-    flex: 1,
-    // display: "flex",
-    flexDirection: "column",
+    width: 100,
+    height: 120,
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: "auto",
-    padding: 5,
-    width: 90,
-    height: 100,
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
+    padding: 10,
+    borderRadius: 10,
+    marginRight: 10,
+    marginBottom: 10,
+    position: "relative",
+    backgroundColor: "transparent", // No background for the whole card
+  },
+  cancelButton: {
+    position: "absolute",
+    top: 5,
+    right: 5,
+    borderRadius: 15,
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  imageContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.2)", // Background for the image container
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
   },
   ingredientImage: {
-    width: 40,
-    height: 40,
-    // borderRadius: 10,
-    // marginRight: 10,
-  },
-  ingredientTextContainer: {
-    flex: 1,
-    flexDirection: "column",
-    // alignItems: "flex-start",
+    width: 60,
+    height: 60,
+    borderRadius: 10,
   },
   ingredientText: {
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: "600",
     color: "white",
+    textAlign: "center",
   },
   ingredientAmount: {
-    fontSize: 13,
+    fontSize: 12,
     color: "gray",
-  },
-  fullInstructions: {
     marginTop: 5,
-    marginBottom: 45,
-  },
-  instruction: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    paddingVertical: 8,
-    marginBottom: 7,
-    paddingRight: 20,
+    textAlign: "center",
   },
 });
 

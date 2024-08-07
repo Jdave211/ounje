@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "../../utils/supabase";
 import {
   StyleSheet,
@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Dimensions,
   ScrollView,
+  Text,
 } from "react-native";
 import { Button, Input, Icon } from "react-native-elements";
 import Toast from "react-native-toast-message";
@@ -22,6 +23,7 @@ export default function Account({ session }) {
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [signingOut, setSigningOut] = useState(false);
+  const [selectedTab, setSelectedTab] = useState("Account");
   const navigation = useNavigation();
 
   const set_user_id = useAppStore((state) => state.set_user_id);
@@ -126,6 +128,48 @@ export default function Account({ session }) {
       <View
         style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
       >
+        <View style={styles.header}>
+          <Text style={styles.headerText}>Profile</Text>
+          <Text style={styles.headerSubtext}>
+            User preferences, restrictions, & more
+          </Text>
+        </View>
+        <View style={styles.segmentedControl}>
+          <TouchableOpacity
+            style={[
+              styles.segmentButton,
+              selectedTab === "Account" && styles.segmentButtonSelected,
+            ]}
+            onPress={() => setSelectedTab("Account")}
+          >
+            <Text
+              style={[
+                styles.segmentButtonText,
+                selectedTab === "Account" && styles.segmentButtonTextSelected,
+              ]}
+            >
+              Account
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.segmentButton,
+              selectedTab === "Preferences" && styles.segmentButtonSelected,
+            ]}
+            onPress={() => setSelectedTab("Preferences")}
+          >
+            <Text
+              style={[
+                styles.segmentButtonText,
+                selectedTab === "Preferences" &&
+                  styles.segmentButtonTextSelected,
+              ]}
+            >
+              Preferences
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
           <TouchableOpacity
             onPress={() => {
@@ -137,49 +181,61 @@ export default function Account({ session }) {
               type="material"
               color="#fff"
               containerStyle={{
-                marginRight: screenWidth * 0.04, // Responsive margin
-                paddingTop: screenHeight * 0.06, // Responsive padding
+                marginRight: screenWidth * 0.04,
+                paddingTop: screenHeight * 0.06,
               }}
             />
           </TouchableOpacity>
         </View>
-        <View style={styles.content}>
-          <View style={[styles.verticallySpaced, styles.mt20]}>
-            <Input
-              label="Email"
-              value={session?.user?.email}
-              disabled
-              inputStyle={{ color: "white" }}
-              placeholderTextColor="white"
-            />
-          </View>
-          {!user_id.startsWith("guest") && (
-            <>
-              <View style={styles.verticallySpaced}>
-                <Input
-                  label="Name"
-                  value={name || ""}
-                  onChangeText={(text) => setName(text)}
-                  inputStyle={{ color: "white" }}
-                  placeholderTextColor="white"
-                />
-              </View>
 
-              <View style={[styles.verticallySpaced]}>
-                <Button
-                  title={loading ? "Loading ..." : "Update"}
-                  onPress={() => updateProfile({ name, avatar_url: avatarUrl })}
-                  disabled={loading}
-                  buttonStyle={{
-                    backgroundColor: "#282C35",
-                    borderRadius: 15,
-                    paddingVertical: screenHeight * 0.015, // Responsive padding
-                  }}
-                />
-              </View>
-            </>
-          )}
-        </View>
+        {selectedTab === "Account" ? (
+          <View style={styles.content}>
+            <View style={[styles.verticallySpaced, styles.mt20]}>
+              <Input
+                label="Email"
+                value={session?.user?.email}
+                disabled
+                inputStyle={{ color: "white" }}
+                placeholderTextColor="white"
+              />
+            </View>
+            {!user_id.startsWith("guest") && (
+              <>
+                <View style={styles.verticallySpaced}>
+                  <Input
+                    label="Name"
+                    value={name || ""}
+                    onChangeText={(text) => setName(text)}
+                    inputStyle={{ color: "white" }}
+                    placeholderTextColor="white"
+                  />
+                </View>
+
+                <View style={[styles.verticallySpaced]}>
+                  <Button
+                    title={loading ? "Loading ..." : "Update"}
+                    onPress={() =>
+                      updateProfile({ name, avatar_url: avatarUrl })
+                    }
+                    disabled={loading}
+                    buttonStyle={{
+                      backgroundColor: "#282C35",
+                      borderRadius: 15,
+                      paddingVertical: screenHeight * 0.015,
+                    }}
+                  />
+                </View>
+              </>
+            )}
+          </View>
+        ) : (
+          <View style={styles.content}>
+            <Text style={styles.headerText}>Dietary Restrictions</Text>
+            <Text style={styles.text}>Details about dietary restrictions.</Text>
+            <Text style={styles.headerText}>Preferences</Text>
+            <Text style={styles.text}>User food preferences details.</Text>
+          </View>
+        )}
 
         <View style={styles.verticallySpaced}>
           <View style={{ alignItems: "center" }}>
@@ -213,19 +269,62 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   container: {
-    padding: Dimensions.get("window").width * 0.03, // Responsive padding
+    padding: Dimensions.get("window").width * 0.03,
     backgroundColor: "#121212",
+  },
+  header: {
+    padding: Dimensions.get("window").width * 0.03,
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
+    marginTop: Dimensions.get("window").height * 0.06,
+  },
+  headerText: {
+    color: "#fff",
+    fontSize: 25,
+    fontWeight: "bold",
+  },
+  headerSubtext: {
+    color: "gray",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    alignSelf: "stretch",
+    marginBottom: 20,
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  segmentButtonSelected: {
+    borderBottomWidth: 2,
+    borderBottomColor: "gray",
+  },
+  segmentButtonText: {
+    color: "gray",
+    fontSize: 16,
+  },
+  segmentButtonTextSelected: {
+    color: "white",
+    fontWeight: "bold",
   },
   content: {
     flex: 1,
     justifyContent: "center",
   },
   verticallySpaced: {
-    paddingTop: Dimensions.get("window").height * 0.005, // Responsive padding
-    paddingBottom: Dimensions.get("window").height * 0.03, // Responsive padding
+    paddingTop: Dimensions.get("window").height * 0.005,
+    paddingBottom: Dimensions.get("window").height * 0.03,
     alignSelf: "stretch",
   },
   mt20: {
-    marginTop: Dimensions.get("window").height * 0.025, // Responsive margin
+    marginTop: Dimensions.get("window").height * 0.025,
+  },
+  text: {
+    color: "#fff",
+    fontSize: 16,
+    marginVertical: 10,
   },
 });

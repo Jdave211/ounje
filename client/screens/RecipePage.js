@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -193,54 +193,44 @@ const RecipePage = ({ route }) => {
           )}
           <View style={styles.fullIngredients}>
             <Text style={styles.subheading}>Owned Ingredients</Text>
-            <View
-              style={{
-                flex: 3,
-                flexDirection: "row",
-                flexWrap: "wrap",
-                // justifyContent: "space-between",
-              }}
+            <ScrollView
+              horizontal={true}
+              showsHorizontalScrollIndicator={false}
             >
-              {owned_items.map((ingredient, i) => (
-                <View
-                  key={i}
-                  style={{ width: 90, marginBottom: 10, marginRight: 10 }}
-                >
-                  <IngredientCard
-                    key={i}
-                    name={ingredient.name}
-                    image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
-                    amount={ingredient.amount}
-                    unit={ingredient.measures?.us.unit_short}
-                  />
-                </View>
-              ))}
-            </View>
+              <View style={styles.horizontalScroll}>
+                {owned_items.map((ingredient, i) => (
+                  <View key={i} style={styles.ingredientCardWrapper}>
+                    <IngredientCard
+                      key={i}
+                      name={ingredient.name}
+                      image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                      amount={ingredient.amount}
+                      unit={ingredient.measures?.us.unit_short}
+                    />
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
 
             <Text style={styles.subheading}>Missing Ingredients</Text>
-            <View
-              style={{
-                flex: 3,
-                flexDirection: "row",
-                flexWrap: "wrap",
-                height: "100%",
-              }}
+            <ScrollView
+              horizontal={true}
+              showsHorizontalScrollIndicator={false}
             >
-              {missing_items.map((ingredient, i) => (
-                <View
-                  key={i}
-                  style={{ width: 90, marginBottom: 10, marginRight: 10 }}
-                >
-                  <IngredientCard
-                    key={i}
-                    name={ingredient.name}
-                    image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
-                    amount={ingredient.amount}
-                    unit={ingredient.measures?.us.unit_short}
-                  />
-                </View>
-              ))}
-            </View>
+              <View style={styles.horizontalScroll}>
+                {missing_items.map((ingredient, i) => (
+                  <View key={i} style={styles.ingredientCardWrapper}>
+                    <IngredientCard
+                      key={i}
+                      name={ingredient.name}
+                      image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                      amount={ingredient.amount}
+                      unit={ingredient.measures?.us.unit_short}
+                    />
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
           </View>
           <View style={styles.fullInstructions}>
             <Text style={styles.subheading}>Instructions</Text>
@@ -398,30 +388,15 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 5,
   },
-  ingredient: {
+  horizontalScroll: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
+    justifyContent: "center",
   },
-  ingredientImage: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
+  ingredientCardWrapper: {
+    width: 90,
+    marginBottom: 10,
     marginRight: 10,
-  },
-  ingredientTextContainer: {
-    flex: 1,
-    flexDirection: "column",
-    alignItems: "flex-start",
-  },
-  ingredientText: {
-    fontSize: 16,
-    color: "white",
-  },
-  ingredientAmount: {
-    fontSize: 14,
-    color: "gray",
   },
   fullInstructions: {
     marginTop: 5,

@@ -36,6 +36,7 @@ const CountCalories = () => {
   const userId = useAppStore((state) => state.user_id);
   // const isPremium = useAppStore((state) => state.isPremium); // Assuming there's a state to check for premium status
   const isPremium = true; // For testing purposes
+  const isGuest = userId && userId.startsWith("guest");
 
   const { convertImageToBase64, storeCaloryImages } = useImageProcessing();
 
@@ -103,7 +104,7 @@ const CountCalories = () => {
     const manipulatedImage = await ImageManipulator.manipulateAsync(
       uri,
       actions,
-      saveOptions,
+      saveOptions
     );
     return manipulatedImage;
   };
@@ -120,7 +121,7 @@ const CountCalories = () => {
         } else if (buttonIndex === 2) {
           pickImage();
         }
-      },
+      }
     );
   };
 
@@ -154,14 +155,14 @@ const CountCalories = () => {
             Authorization: "Api-Key Ykg5QjJS.mj5OnDHC5QLQoMmkzLBgX0GYRyknzLi1",
             "Content-Type": "multipart/form-data",
           },
-        },
+        }
       );
 
       if (response.status === 200) {
         const data = response.data;
 
         let allMealNames = data.items.map(
-          (item) => item.food[0].food_info.display_name,
+          (item) => item.food[0].food_info.display_name
         );
         setMealName(allMealNames.join(", ") || "Unknown Meal");
 
@@ -196,7 +197,7 @@ const CountCalories = () => {
 
           if (foodItem.ingredients && foodItem.ingredients.length > 0) {
             foodItem.ingredients.forEach((ingredient) =>
-              calculateNutrients(ingredient, multiplier),
+              calculateNutrients(ingredient, multiplier)
             );
           }
         };
@@ -221,7 +222,7 @@ const CountCalories = () => {
           sugars: totalMacros.sugars.toFixed(2),
         });
 
-        if (calorieImages.length > 0) {
+        if (!isGuest && calorieImages.length > 0) {
           await storeCaloryImages(userId, calorieImages);
         }
 
