@@ -384,6 +384,39 @@ const Inventory = () => {
                   ))
                 )}
               </View>
+              <View style={styles.imageContainer}>
+                {inventoryImages?.length === 1 ? (
+                  <TouchableOpacity
+                    style={styles.addImageButton}
+                    onPress={handleAddImage}
+                  >
+                    <Image
+                      source={camera}
+                      style={{
+                        width: screenWidth * 0.25,
+                        height: screenWidth * 0.25,
+                        margin: 1,
+                      }} // Responsive width and height
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  inventoryImages.map((imageUrl, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      onPress={() => {
+                        setSelectedImage(imageUrl);
+                        setModalVisible(true);
+                      }}
+                      style={styles.imageWrapper}
+                    >
+                      <Image source={{ uri: imageUrl }} style={styles.image} />
+                      <View style={styles.overlay}>
+                        <Text style={styles.overlayText}>Tap to replace</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                )}
+                </View>
             </View>
 
             <Modal

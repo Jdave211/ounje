@@ -19,7 +19,7 @@ import FirstLogin from "./screens/Onboarding/FirstLogin";
 import Auth from "./screens/Onboarding/Auth";
 import Layout from "./_layout";
 import Collection from "./screens/Collection";
-import Inventory from "./screens/Inventory";
+import Inventory from "./screens/Inventory/";
 import Profile from "./screens/Profile";
 import Community from "./screens/Community";
 import Generate from "./screens/Generate/Generate";
