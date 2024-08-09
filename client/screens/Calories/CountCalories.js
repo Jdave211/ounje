@@ -10,6 +10,7 @@ import {
   Modal,
   ScrollView,
   Dimensions,
+  Platform,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -18,7 +19,6 @@ import axios from "axios";
 import useImageProcessing from "../../hooks/useImageProcessing";
 import { useAppStore } from "../../stores/app-store";
 import Paywall from "./CaloriesPaywall"; // Importing the Paywall component
-import { Platform } from "react-native"; // Import Platform
 
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
@@ -33,8 +33,8 @@ const CountCalories = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [calorieImages, setCalorieImages] = useState([]);
   const [calorieImageUris, setCalorieImageUris] = useState([]);
+  const [selectedTab, setSelectedTab] = useState("Analyze Calories");
   const userId = useAppStore((state) => state.user_id);
-  // const isPremium = useAppStore((state) => state.isPremium); // Assuming there's a state to check for premium status
   const isPremium = true; // For testing purposes
   const isGuest = userId && userId.startsWith("guest");
 
@@ -245,47 +245,103 @@ const CountCalories = () => {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContainer}>
-      <View style={styles.container}>
-        <Text style={styles.title}>Calorie Counter</Text>
-        <Text style={styles.instructions}>
-          Take a picture of your meal, then click on Analyze to count the
-          calories!
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerText}>Calorie Counter</Text>
+        <Text style={styles.headerSubtext}>
+          Analyze your meals and view calorie history
         </Text>
-        <Text style={styles.warning}>
-          Please make sure the food items are accurately centered in the
-          picture.
-        </Text>
-        <View style={styles.imageContainer}>
-          {image ? (
-            <Image source={{ uri: image }} style={styles.image} />
-          ) : (
-            <TouchableOpacity
-              style={styles.uploadButton}
-              onPress={showActionSheet}
-            >
-              <AntDesign name="camerao" size={40} color="white" />
-              <Text style={styles.uploadText}>Upload or Take Photo</Text>
-            </TouchableOpacity>
-          )}
-          {image && (
-            <TouchableOpacity style={styles.removeButton} onPress={clearImage}>
-              <Feather name="trash-2" size={24} color="white" />
-            </TouchableOpacity>
-          )}
-        </View>
-        <View style={styles.analyzeButtonContainer}>
-          {loading ? (
-            <ActivityIndicator size="large" color="#38F096" />
-          ) : (
-            <TouchableOpacity
-              style={styles.analyzeButton}
-              onPress={analyzeImage}
-            >
-              <Text style={styles.analyzeButtonText}>Analyze Calories</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+      </View>
+
+      <View style={styles.segmentedControl}>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "Analyze Calories" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("Analyze Calories")}
+        >
+          <Text
+            style={[
+              styles.segmentButtonText,
+              selectedTab === "Analyze Calories" &&
+                styles.segmentButtonTextSelected,
+            ]}
+          >
+            Analyze Calories
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "Calories History" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("Calories History")}
+        >
+          <Text
+            style={[
+              styles.segmentButtonText,
+              selectedTab === "Calories History" &&
+                styles.segmentButtonTextSelected,
+            ]}
+          >
+            Calories History
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
+        {selectedTab === "Analyze Calories" ? (
+          <View style={styles.content}>
+            <View style={styles.imageContainer}>
+              {image ? (
+                <Image source={{ uri: image }} style={styles.image} />
+              ) : (
+                <TouchableOpacity
+                  style={styles.uploadButton}
+                  onPress={() => {
+                    Platform.OS === "ios" ? showActionSheet() : pickImage();
+                  }}
+                >
+                  <AntDesign name="camerao" size={40} color="white" />
+                  <Text style={styles.uploadText}>Upload or Take Photo</Text>
+                </TouchableOpacity>
+              )}
+              {image && (
+                <TouchableOpacity
+                  style={styles.removeButton}
+                  onPress={clearImage}
+                >
+                  <Feather name="trash-2" size={24} color="white" />
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.calorieInstructions}>
+              <Text style={styles.instructionsText}>
+                Take a photo of your meal or upload an image to analyze the
+                calories.
+              </Text>
+            </View>
+            <View style={styles.analyzeButtonContainer}>
+              {loading ? (
+                <ActivityIndicator size="large" color="#38F096" />
+              ) : (
+                <TouchableOpacity
+                  style={styles.analyzeButton}
+                  onPress={analyzeImage}
+                >
+                  <Text style={styles.analyzeButtonText}>Analyze Calories</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.content}>
+            <Text style={styles.text}>
+              Calories History will be displayed here.
+            </Text>
+          </View>
+        )}
+
         <Modal
           animationType="slide"
           transparent={true}
@@ -362,8 +418,8 @@ const CountCalories = () => {
             </View>
           </View>
         </Modal>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 };
 
@@ -372,73 +428,100 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   container: {
-    flex: 1,
+    padding: Dimensions.get("window").width * 0.03,
     backgroundColor: "#121212",
-    paddingHorizontal: 20,
-    justifyContent: "center",
+    flexGrow: 1,
+  },
+  header: {
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
+    marginBottom: Dimensions.get("window").height * 0.05,
+    marginTop: Dimensions.get("window").height * 0.1,
+    marginLeft: Dimensions.get("window").width * 0.03,
+  },
+  headerText: {
+    color: "#fff",
+    fontSize: 25,
+    fontWeight: "bold",
+  },
+  headerSubtext: {
+    color: "gray",
+    fontSize: screenWidth * 0.04,
+    marginTop: 5,
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    alignSelf: "stretch",
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#282C35",
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 10,
     alignItems: "center",
   },
-  title: {
-    fontSize: screenWidth * 0.07, // Responsive font size
-    fontWeight: "bold",
-    color: "white",
-    marginTop: screenHeight * 0.05, // Responsive margin
-    textAlign: "center",
+  segmentButtonSelected: {
+    borderBottomWidth: 2,
+    borderBottomColor: "gray",
   },
-  instructions: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: screenWidth * 0.045, // Responsive font size
-    textAlign: "center",
-    marginVertical: screenHeight * 0.02, // Responsive margin
-  },
-  warning: {
+  segmentButtonText: {
     color: "gray",
-    fontSize: screenWidth * 0.04, // Responsive font size
-    textAlign: "center",
-    marginBottom: screenHeight * 0.02, // Responsive margin
+    fontSize: 16,
+  },
+  segmentButtonTextSelected: {
+    color: "white",
+    fontWeight: "bold",
+  },
+  content: {
+    flex: 1,
+    alignItems: "center",
   },
   imageContainer: {
-    width: screenHeight < 700 ? screenWidth * 0.6 : screenWidth * 0.8, // Smaller for smaller screens
-    height: screenHeight < 700 ? screenWidth * 0.6 : screenWidth * 0.8, // Smaller for smaller screens
-    borderRadius: 10,
-    borderColor: "white",
-    borderWidth: 2,
+    width: screenWidth * 0.8,
+    height: screenWidth * 0.5,
+    borderRadius: 15,
+    borderColor: "gray",
+    borderWidth: 1,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: screenHeight * 0.03, // Responsive margin
     backgroundColor: "#1f1f1f",
+    marginBottom: screenHeight * 0.03,
     position: "relative",
   },
   image: {
     width: "100%",
     height: "100%",
-    borderRadius: 10,
+    borderRadius: 15,
+  },
+  calorieInstructions: {},
+  instructionsText: {
+    color: "gray",
   },
   uploadButton: {
     justifyContent: "center",
     alignItems: "center",
-    paddingVertical: screenHeight * 0.05, // Responsive padding
+    paddingVertical: screenHeight * 0.02,
   },
   uploadText: {
     color: "white",
-    fontSize: screenWidth * 0.04, // Responsive font size
-    marginTop: screenHeight * 0.01, // Responsive margin
+    fontSize: screenWidth * 0.04,
+    marginTop: screenHeight * 0.01,
   },
   analyzeButtonContainer: {
     width: "80%",
     alignItems: "center",
-    marginTop: screenHeight * 0.03, // Responsive margin
+    marginTop: screenHeight * 0.03,
   },
   analyzeButton: {
     backgroundColor: "#38F096",
     borderRadius: 10,
-    paddingVertical: screenHeight * 0.015, // Responsive padding
-    paddingHorizontal: screenWidth * 0.1, // Responsive padding
+    paddingVertical: screenHeight * 0.015,
+    paddingHorizontal: screenWidth * 0.1,
   },
   analyzeButtonText: {
     color: "#121212",
-    fontSize: screenWidth * 0.045, // Responsive font size
+    fontSize: screenWidth * 0.045,
     fontWeight: "bold",
   },
   modalContainer: {
@@ -461,10 +544,10 @@ const styles = StyleSheet.create({
     right: 10,
   },
   modalTitle: {
-    fontSize: screenWidth * 0.07, // Responsive font size
+    fontSize: screenWidth * 0.07,
     fontWeight: "bold",
     color: "white",
-    marginBottom: screenHeight * 0.02, // Responsive margin
+    marginBottom: screenHeight * 0.02,
     textAlign: "center",
   },
   modalScroll: {
@@ -480,25 +563,25 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   foodName: {
-    fontSize: screenWidth * 0.045, // Responsive font size
+    fontSize: screenWidth * 0.045,
     color: "white",
     fontWeight: "bold",
   },
   foodCalories: {
-    fontSize: screenWidth * 0.04, // Responsive font size
+    fontSize: screenWidth * 0.04,
     color: "#38F096",
   },
   foodQuantity: {
-    fontSize: screenWidth * 0.035, // Responsive font size
+    fontSize: screenWidth * 0.035,
     color: "gray",
   },
   alternativesHeader: {
-    fontSize: screenWidth * 0.03, // Responsive font size
+    fontSize: screenWidth * 0.03,
     color: "gray",
     marginVertical: 5,
   },
   alternative: {
-    fontSize: screenWidth * 0.035, // Responsive font size
+    fontSize: screenWidth * 0.035,
     color: "lightgray",
   },
   totalContainer: {
@@ -506,7 +589,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   totalCalories: {
-    fontSize: screenWidth * 0.07, // Responsive font size
+    fontSize: screenWidth * 0.07,
     fontWeight: "bold",
     color: "#38F096",
   },
@@ -522,17 +605,17 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   macroLabel: {
-    fontSize: screenWidth * 0.04, // Responsive font size
+    fontSize: screenWidth * 0.04,
     color: "white",
   },
   macroValue: {
-    fontSize: screenWidth * 0.04, // Responsive font size
+    fontSize: screenWidth * 0.04,
     color: "white",
     textAlign: "right",
   },
   disclaimer: {
     color: "gray",
-    fontSize: screenWidth * 0.035, // Responsive font size
+    fontSize: screenWidth * 0.035,
     textAlign: "center",
     marginTop: 10,
   },

@@ -124,73 +124,58 @@ export default function Account({ session }) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContainer}>
-      <View
-        style={[styles.container, { flex: 1, justifyContent: "space-between" }]}
-      >
-        <View style={styles.header}>
-          <Text style={styles.headerText}>Profile</Text>
-          <Text style={styles.headerSubtext}>
-            User preferences, restrictions, & more
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerText}>Profile</Text>
+        <Text style={styles.headerSubtext}>
+          User preferences, restrictions, & more
+        </Text>
+        <TouchableOpacity
+          style={styles.settingsButton}
+          onPress={() => navigation.navigate("Settings")}
+        >
+          <Icon name="settings" type="material" color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.segmentedControl}>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "Account" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("Account")}
+        >
+          <Text
+            style={[
+              styles.segmentButtonText,
+              selectedTab === "Account" && styles.segmentButtonTextSelected,
+            ]}
+          >
+            Account
           </Text>
-        </View>
-        <View style={styles.segmentedControl}>
-          <TouchableOpacity
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "Preferences" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("Preferences")}
+        >
+          <Text
             style={[
-              styles.segmentButton,
-              selectedTab === "Account" && styles.segmentButtonSelected,
+              styles.segmentButtonText,
+              selectedTab === "Preferences" && styles.segmentButtonTextSelected,
             ]}
-            onPress={() => setSelectedTab("Account")}
           >
-            <Text
-              style={[
-                styles.segmentButtonText,
-                selectedTab === "Account" && styles.segmentButtonTextSelected,
-              ]}
-            >
-              Account
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.segmentButton,
-              selectedTab === "Preferences" && styles.segmentButtonSelected,
-            ]}
-            onPress={() => setSelectedTab("Preferences")}
-          >
-            <Text
-              style={[
-                styles.segmentButtonText,
-                selectedTab === "Preferences" &&
-                  styles.segmentButtonTextSelected,
-              ]}
-            >
-              Preferences
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
-          <TouchableOpacity
-            onPress={() => {
-              navigation.navigate("Settings");
-            }}
-          >
-            <Icon
-              name="settings"
-              type="material"
-              color="#fff"
-              containerStyle={{
-                marginRight: screenWidth * 0.04,
-                paddingTop: screenHeight * 0.06,
-              }}
-            />
-          </TouchableOpacity>
-        </View>
-
+            Preferences
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
         {selectedTab === "Account" ? (
           <View style={styles.content}>
-            <View style={[styles.verticallySpaced, styles.mt20]}>
+            <View style={styles.verticallySpaced}>
               <Input
                 label="Email"
                 value={session?.user?.email}
@@ -211,18 +196,14 @@ export default function Account({ session }) {
                   />
                 </View>
 
-                <View style={[styles.verticallySpaced]}>
+                <View style={styles.verticallySpaced}>
                   <Button
                     title={loading ? "Loading ..." : "Update"}
                     onPress={() =>
                       updateProfile({ name, avatar_url: avatarUrl })
                     }
                     disabled={loading}
-                    buttonStyle={{
-                      backgroundColor: "#282C35",
-                      borderRadius: 15,
-                      paddingVertical: screenHeight * 0.015,
-                    }}
+                    buttonStyle={styles.updateButton}
                   />
                 </View>
               </>
@@ -237,7 +218,7 @@ export default function Account({ session }) {
           </View>
         )}
 
-        <View style={styles.verticallySpaced}>
+        <View style={styles.signOutContainer}>
           <View style={{ alignItems: "center" }}>
             {user_id.startsWith("guest") ? (
               <Button
@@ -250,7 +231,12 @@ export default function Account({ session }) {
               <Button
                 title={signingOut ? "Signing Out..." : "Sign Out"}
                 type="clear"
-                titleStyle={{ color: "red", fontWeight: "bold" }}
+                titleStyle={{
+                  color: "gray",
+                  fontWeight: "bold",
+                  textDecorationLine: "underline",
+                  textDecorationColor: "red",
+                }}
                 onPress={handleSignOut}
                 disabled={signingOut}
               />
@@ -259,8 +245,8 @@ export default function Account({ session }) {
           </View>
         </View>
         <Toast />
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -270,28 +256,37 @@ const styles = StyleSheet.create({
   },
   container: {
     padding: Dimensions.get("window").width * 0.03,
-    backgroundColor: "#121212",
+    backgroundColor: "#181818", // Slightly different background color
+    flexGrow: 1,
   },
   header: {
-    padding: Dimensions.get("window").width * 0.03,
     justifyContent: "flex-start",
     alignItems: "flex-start",
-    marginTop: Dimensions.get("window").height * 0.06,
+    marginBottom: Dimensions.get("window").height * 0.04,
+    marginTop: Dimensions.get("window").height * 0.1,
+    marginLeft: Dimensions.get("window").width * 0.03,
   },
   headerText: {
-    color: "#fff",
+    color: "#e0e0e0", // Slightly different text color
     fontSize: 25,
     fontWeight: "bold",
   },
   headerSubtext: {
     color: "gray",
     fontSize: 16,
-    fontWeight: "bold",
+    marginTop: 5,
+  },
+  settingsButton: {
+    position: "absolute",
+    top: 10,
+    right: 10,
   },
   segmentedControl: {
     flexDirection: "row",
     alignSelf: "stretch",
     marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#383838", // Slightly different border color
   },
   segmentButton: {
     flex: 1,
@@ -313,18 +308,23 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     justifyContent: "center",
+    marginTop: 20,
   },
   verticallySpaced: {
-    paddingTop: Dimensions.get("window").height * 0.005,
-    paddingBottom: Dimensions.get("window").height * 0.03,
+    marginVertical: 10,
     alignSelf: "stretch",
   },
-  mt20: {
-    marginTop: Dimensions.get("window").height * 0.025,
+  updateButton: {
+    backgroundColor: "#383838", // Slightly different button color
+    borderRadius: 15,
+    paddingVertical: Dimensions.get("window").height * 0.015,
   },
   text: {
-    color: "#fff",
+    color: "#e0e0e0", // Slightly different text color
     fontSize: 16,
     marginVertical: 10,
+  },
+  signOutContainer: {
+    marginVertical: Dimensions.get("window").height * 0.05,
   },
 });

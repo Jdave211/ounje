@@ -49,10 +49,10 @@ export const fetchSavedRecipesByUser = async (user_id) => {
   console.log({ saved_recipes: recipes });
 
   if (recipes) {
-    // Use a Set to store unique recipe_ids
+    // Reverse the array to get the most recently saved recipes first
     const uniqueRecipeIds = Array.from(
       new Set(recipes.map(({ recipe_id }) => recipe_id))
-    );
+    ).reverse();
 
     return uniqueRecipeIds;
   }

@@ -13,7 +13,7 @@ import {
   ScrollView,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { supabase } from "../../utils/supabase";
+import { fetchInventoryData, supabase } from "../../utils/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import name_bg from "../../assets/name_bg.jpg";
 import diet_bg from "../../assets/diet_bg.jpeg";
@@ -32,6 +32,7 @@ import {
   parse_ingredients,
 } from "../../utils/spoonacular";
 import useImageProcessing from "../../hooks/useImageProcessing"; // Import the custom hook
+import { useAppStore } from "../../stores/app-store";
 
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
 
@@ -44,6 +45,10 @@ const FirstLogin = ({ onProfileComplete, session }) => {
   const [currentQuestion, setCurrentQuestion] = useState(0);
 
   const { loading, convertImageToBase64, sendImages } = useImageProcessing();
+
+  const setInventoryData = useAppStore(
+    (state) => state.inventory.setInventoryData
+  );
 
   const bg = [name_bg, diet_bg, fridge_bg];
 
@@ -107,7 +112,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
             setFridgeImages((prevImages) => [...prevImages, base64Image]);
           }
         }
-      },
+      }
     );
   };
 
@@ -125,7 +130,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           onPress: () => saveProfile(true),
         },
       ],
-      { cancelable: true },
+      { cancelable: true }
     );
   };
 
@@ -149,6 +154,8 @@ const FirstLogin = ({ onProfileComplete, session }) => {
 
       if (fridgeImages.length > 0) {
         await sendImages(fridgeImages);
+        const inventoryData = await fetchInventoryData(user.id);
+        setInventoryData(inventoryData);
       }
 
       const updates = {

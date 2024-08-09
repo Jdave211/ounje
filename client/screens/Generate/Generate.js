@@ -67,9 +67,7 @@ export default function Generate() {
     <ImageBackground source={generate_bg} style={styles.backgroundImage}>
       <View style={styles.overlay}>
         <View style={styles.header}>
-          <Text style={styles.text}>
-            Hi <Text style={{ fontSize: 25 }}>{name}</Text>,{" "}
-          </Text>
+          <Text style={[styles.text, styles.name]}>Hi {name}</Text>
           <Text style={styles.text}>
             Select your preferences, and get to cooking...
           </Text>
@@ -153,6 +151,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderBottomLeftRadius: 10,
     borderBottomRightRadius: 10,
+  },
+  name: {
+    fontSize: 25,
+    fontWeight: "bold",
   },
   text: {
     color: "white",

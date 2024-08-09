@@ -26,7 +26,7 @@ const RecipeOptions = () => {
   const dish_types = useRecipeOptionsStore((state) => state.dish_types);
   const dish_types_set = useMemo(
     () => new Set(dish_types.map((t) => t.toLowerCase())),
-    [dish_types],
+    [dish_types]
   );
 
   const { separateIngredients } = useInventoryHooks();
@@ -38,31 +38,25 @@ const RecipeOptions = () => {
           let a_score = JSON.parse(a.dish_types).reduce(
             (acc, dish_type) =>
               acc + dish_types_set.has(dish_type.toLowerCase()),
-            0,
+            0
           );
           let b_score = JSON.parse(b.dish_types).reduce(
             (acc, dish_type) =>
               acc + dish_types_set.has(dish_type.toLowerCase()),
-            0,
+            0
           );
 
-          const { owned_items: a_owned_items, missing_Items: a_missing_items } =
-            separateIngredients(a);
+          const { owned_items: a_owned_items } = separateIngredients(a);
           a_score += a_owned_items.length / a.extended_ingredients.length;
 
-          const { owned_items: b_owned_items, missing_Items: b_missing_items } =
-            separateIngredients(b);
+          const { owned_items: b_owned_items } = separateIngredients(b);
           b_score += b_owned_items.length / b.extended_ingredients.length;
 
           return b_score - a_score;
         })
         .slice(0, 25),
-    [recipeOptions, dish_types_set],
+    [recipeOptions, dish_types_set]
   );
-
-  const navigate_to_saved_recipes = () => {
-    navigation.navigate("SavedRecipes");
-  };
 
   const navigate_to_recipe_page = (recipe_id) => () => {
     navigation.navigate("RecipePage", { id: recipe_id });
@@ -76,8 +70,11 @@ const RecipeOptions = () => {
       >
         <AntDesign name="arrowleft" size={24} color="white" />
       </TouchableOpacity>
+      <View style={styles.header}>
+        <Text style={styles.headerText}>Generated Recipes</Text>
+        <Text style={styles.subHeaderText}>Here are your recipes</Text>
+      </View>
       <View style={styles.content}>
-        <Text style={styles.text}>Generated Recipes</Text>
         <ScrollView style={styles.recipes}>
           {sorted_recipe_options.map((recipeOption, index) => (
             <TouchableOpacity
@@ -123,21 +120,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 1,
   },
+  header: {
+    justifyContent: "flex-end",
+    alignItems: "flex-end",
+    marginBottom: Dimensions.get("window").height * 0.01,
+    marginTop: Dimensions.get("window").height * 0.068,
+    marginLeft: Dimensions.get("window").width * 0.03,
+  },
+  headerText: {
+    color: "#fff",
+    fontSize: 25,
+    fontWeight: "bold",
+  },
+  subHeaderText: {
+    color: "gray",
+    fontSize: screenWidth * 0.04,
+  },
   content: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingTop: screenHeight * 0.05, // Responsive padding
-  },
-  text: {
-    color: "white",
-    fontSize: screenWidth * 0.05, // Responsive font size
-    fontWeight: "bold",
-    position: "absolute",
-    top: screenHeight * 0.05, // Responsive position
+    marginTop: screenHeight * 0.01, // Responsive margin
   },
   recipes: {
-    marginTop: screenHeight * 0.1, // Responsive margin
+    marginTop: screenHeight * 0.04, // Responsive margin
     width: "100%",
     height: "100%",
   },

@@ -176,12 +176,7 @@ const RecipePage = ({ route }) => {
 
           <Text style={styles.subheading}>Description</Text>
           {recipeDetails.description ? (
-            <Text
-              style={styles.text}
-              // numberOfLines={5}
-            >
-              {recipeDetails.description}
-            </Text>
+            <Text style={styles.text}>{recipeDetails.description}</Text>
           ) : (
             <RenderHtml
               baseStyle={styles.text}
@@ -233,15 +228,15 @@ const RecipePage = ({ route }) => {
             </ScrollView>
           </View>
           <View style={styles.fullInstructions}>
-            <Text style={styles.subheading}>Instructions</Text>
+            <Text style={styles.subheading}>Cooking Steps</Text>
             {recipeDetails.analyzed_instructions &&
             recipeDetails.analyzed_instructions[0] &&
             recipeDetails.analyzed_instructions[0].steps ? (
               recipeDetails.analyzed_instructions[0].steps.map(
                 ({ step, number }) => (
                   <View key={number} style={styles.instruction}>
-                    <Text style={styles.text}>{number}.</Text>
-                    <Text style={styles.text}>{step}</Text>
+                    <Text style={styles.instructionNumber}>{number}</Text>
+                    <Text style={styles.instructionText}>{step}</Text>
                   </View>
                 )
               )
@@ -250,35 +245,6 @@ const RecipePage = ({ route }) => {
                 No detailed instructions available for this recipe.
               </Text>
             )}
-
-            {recipeDetails.instructions &&
-              recipeDetails.instructions.length > 0 &&
-              Array.isArray(recipeDetails.instructions) && (
-                <>
-                  <Text style={styles.subheading}>Better Instructions</Text>
-                  {recipeDetails.instructions.map((instructions, index) => (
-                    <View key={index} style={styles.instruction}>
-                      <Text style={styles.text}>{index + 1}. </Text>
-                      <RenderHtml
-                        baseStyle={styles.text}
-                        contentWidth={WIDTH}
-                        source={{
-                          html:
-                            "<div>" +
-                            instructions
-                              .map((instruction, i) =>
-                                instruction.text
-                                  ? "<span>" + instruction.text + "</span>"
-                                  : "<b>" + instruction.ingredient + "</b>"
-                              )
-                              .join("") +
-                            "</div>",
-                        }}
-                      />
-                    </View>
-                  ))}
-                </>
-              )}
           </View>
         </View>
       </ScrollView>
@@ -307,7 +273,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveButton: {
-    //backgroundColor: "#2e2d2d",
     borderRadius: 100,
     padding: 8,
     width: 50,
@@ -315,12 +280,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     position: "absolute",
     right: 10,
-  },
-  saved: {
-    backgroundColor: "#2e2d2d", // Style for the saved state
-  },
-  notSaved: {
-    backgroundColor: "green", // Style for the not saved state
   },
   carouselItem: {
     flex: 1,
@@ -335,7 +294,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   title: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
     color: "white",
     marginBottom: 10,
@@ -379,11 +338,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "white",
   },
-  boldText: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "white",
-  },
   fullIngredients: {
     marginTop: 10,
     marginBottom: 5,
@@ -407,7 +361,20 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     paddingVertical: 8,
     marginBottom: 7,
-    paddingRight: 20,
+    paddingRight: 15,
+  },
+  instructionNumber: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "white",
+    marginRight: 10,
+  },
+  instructionText: {
+    fontSize: 16,
+    color: "white",
+    flex: 1,
+    flexWrap: "wrap",
+    paddingLeft: 8,
   },
 });
 

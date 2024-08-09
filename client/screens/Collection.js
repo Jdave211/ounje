@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -17,9 +17,10 @@ const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
 
 const SavedRecipes = () => {
+  const [selectedTab, setSelectedTab] = useState("SavedRecipes");
   const navigation = useNavigation();
   const user_id = useAppStore((state) => state.user_id);
-  const setUserId = useAppStore((state) => state.set_user_id); // Get the set_user_id function from the store
+  const setUserId = useAppStore((state) => state.set_user_id);
 
   const {
     data: savedRecipes,
@@ -29,8 +30,8 @@ const SavedRecipes = () => {
     ["savedRecipes", user_id],
     async () => await fetchSavedRecipesByUser(user_id),
     {
-      enabled: !!user_id, // Only run the query if user_id is not null
-    },
+      enabled: !!user_id,
+    }
   );
 
   const navigate_to_recipe_page = (recipe_id) => () => {
@@ -45,7 +46,7 @@ const SavedRecipes = () => {
           Please{" "}
           <TouchableOpacity
             onPress={() => {
-              setUserId(null); // Nullify the user ID
+              setUserId(null);
             }}
           >
             <Text style={styles.loginText}>log in</Text>
@@ -74,56 +75,150 @@ const SavedRecipes = () => {
 
   return (
     <View style={styles.container}>
-      <View style={{ marginBottom: screenHeight * 0.02 }}>
-        <Text style={styles.text}>Saved Recipes</Text>
+      <View style={styles.header}>
+        <Text style={styles.headerText}>Collection</Text>
+        <Text style={styles.headerSubtext}>Your favorite recipes & more</Text>
       </View>
-      {savedRecipes && savedRecipes.length > 0 ? (
-        <ScrollView contentContainerStyle={styles.scrollViewContent}>
-          {savedRecipes.map((recipe_id, i) => (
-            <TouchableOpacity
-              key={i}
-              onPress={navigate_to_recipe_page(recipe_id)}
-            >
-              <RecipeCard id={recipe_id} showBookmark={true} />
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      ) : (
-        <Text style={styles.noRecipesText}>No recipes have been saved.</Text>
-      )}
+
+      <View style={styles.segmentedControl}>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "SavedRecipes" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("SavedRecipes")}
+        >
+          <Text
+            style={[
+              styles.segmentButtonText,
+              selectedTab === "SavedRecipes" &&
+                styles.segmentButtonTextSelected,
+            ]}
+          >
+            Saved Recipes
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "Discover" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("Discover")}
+        >
+          <Text
+            style={[
+              styles.segmentButtonText,
+              selectedTab === "Discover" && styles.segmentButtonTextSelected,
+            ]}
+          >
+            Discover
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+        {selectedTab === "SavedRecipes" && (
+          <View style={styles.content}>
+            {savedRecipes && savedRecipes.length > 0 ? (
+              savedRecipes.map((recipe_id, i) => (
+                <TouchableOpacity
+                  key={i}
+                  onPress={navigate_to_recipe_page(recipe_id)}
+                  style={styles.recipeCard}
+                >
+                  <RecipeCard id={recipe_id} showBookmark={true} />
+                </TouchableOpacity>
+              ))
+            ) : (
+              <Text style={styles.noRecipesText}>
+                No recipes have been saved.
+              </Text>
+            )}
+          </View>
+        )}
+
+        {selectedTab === "Discover" && (
+          <View style={styles.content}>
+            <Text style={styles.noRecipesText}>
+              Discover new recipes and save them to your collection.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#121212",
-    paddingTop: screenHeight * 0.07, // Responsive padding
-    paddingBottom: screenHeight * 0.02, // Responsive padding
-  },
   scrollViewContent: {
     flexGrow: 1,
-    paddingHorizontal: screenWidth * 0.04, // Responsive padding
+    backgroundColor: "#121212",
   },
-  text: {
-    color: "white",
-    fontSize: screenWidth * 0.06, // Responsive font size
+  container: {
+    padding: Dimensions.get("window").width * 0.03,
+    backgroundColor: "#121212",
+    flexGrow: 1,
+  },
+  header: {
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
+    marginBottom: Dimensions.get("window").height * 0.05,
+    marginTop: Dimensions.get("window").height * 0.1,
+    marginLeft: Dimensions.get("window").width * 0.03,
+  },
+  headerText: {
+    color: "#fff",
+    fontSize: 25,
     fontWeight: "bold",
+  },
+  headerSubtext: {
+    color: "gray",
+    fontSize: screenWidth * 0.04,
+    marginTop: 5,
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    alignSelf: "stretch",
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#282C35",
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  segmentButtonSelected: {
+    borderBottomWidth: 2,
+    borderBottomColor: "gray",
+  },
+  segmentButtonText: {
+    color: "gray",
+    fontSize: 16,
+  },
+  segmentButtonTextSelected: {
+    color: "white",
+    fontWeight: "bold",
+  },
+  content: {
+    flex: 1,
+    justifyContent: "center",
+    width: "100%",
+    paddingBottom: screenHeight * 0.28,
+  },
+  recipeCard: {
+    marginBottom: screenHeight * 0.02,
   },
   noRecipesText: {
     color: "white",
-    fontSize: screenWidth * 0.045, // Responsive font size
+    fontSize: screenWidth * 0.045,
     textAlign: "center",
-    marginTop: screenHeight * 0.03, // Responsive margin
+    marginTop: screenHeight * 0.02,
   },
   loginText: {
     color: "#38F096",
     textDecorationLine: "underline",
     fontWeight: "bold",
-    fontSize: screenWidth * 0.04, // Responsive font size
+    fontSize: screenWidth * 0.04,
   },
 });
 

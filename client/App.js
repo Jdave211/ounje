@@ -143,7 +143,7 @@ export default function App() {
               }
             });
         }
-      },
+      }
     );
 
     return () => {
@@ -248,7 +248,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "black",
+    backgroundColor: "#121212",
     color: "white",
   },
   text: {

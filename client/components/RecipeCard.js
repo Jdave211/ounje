@@ -1,13 +1,9 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState } from "react";
 import { View, Text, StyleSheet, Image, TouchableOpacity } from "react-native";
-import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
+import { Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import { supabase } from "../utils/supabase";
-import harvestImage from "../assets/harvest.png";
-import { AnimatedCircularProgress } from "react-native-circular-progress";
 import { Bar as ProgressBar } from "react-native-progress";
-import { FOOD_ITEMS } from "../utils/constants";
-import fridge_bg from "../assets/fridge_bg.jpg";
 import { useAppStore } from "../stores/app-store";
 import { useQuery } from "react-query";
 import { fetchRecipeDetails } from "../utils/spoonacular";
@@ -28,8 +24,6 @@ const RecipeCard = ({
 
   const user_id = useAppStore((state) => state.user_id);
 
-  // here in useQuery, "recipeDetails" acts as the key for the cache and the
-  // second parameter is a dynamic parameter used to refetch the data when the recipe_id changes
   const { data: recipeDetails } = useQuery(
     ["recipeDetails", recipe_id],
     async () => await fetchRecipeDetails(recipe_id)
@@ -92,98 +86,46 @@ const RecipeCard = ({
   return (
     <View style={styles.container}>
       {recipeDetails || title ? (
-        <View
-          style={{
-            borderRadius: 10,
-            borderWidth: 1,
-            padding: 5,
-            margin: 10,
-            backgroundColor: "#2e2d2d",
-          }}
-        >
-          <View style={{ width: "100%", padding: 0 }}>
-            <Image
-              style={{
-                width: "100%",
-                height: 150,
-                borderRadius: 10,
-                borderTopLeftRadius: 10,
-                borderTopRightRadius: 10,
-              }}
-              source={{ uri: imageUrl || recipeDetails?.image }}
-            />
-          </View>
-          <View style={{ padding: 10 }}>
-            <View style={{ ...styles.imageTextContainer, marginBottom: 5 }}>
-              <Text style={styles.title} numberOfLines={1}>
-                {title || recipeDetails.title}
-              </Text>
-            </View>
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingRight: 20,
-                  }}
-                >
-                  <Feather name="clock" size={20} color="white" />
-                  <Text style={{ ...styles.text, marginLeft: 10 }}>
-                    {readyInMinutes || recipeDetails.ready_in_minutes} mins
-                  </Text>
-                </View>
-                <View>
-                  <Text style={styles.text}>
-                    {new Number(percentage).toFixed(0)}% of{" "}
-                  </Text>
-                  <ProgressBar
-                    color="green"
-                    progress={percentage / 100}
-                    width={60}
-                  />
-                </View>
-                <View style={{ marginLeft: 7 }}>
-                  <Image
-                    source={harvestImage}
-                    style={{ resizeMode: "cover", width: 24, height: 24 }}
-                  />
-                </View>
+        <View style={styles.card}>
+          <Image
+            style={styles.image}
+            source={{ uri: imageUrl || recipeDetails?.image }}
+          />
+          <View style={styles.cardContent}>
+            <Text style={styles.title} numberOfLines={2}>
+              {title || recipeDetails.title}
+            </Text>
+            <View style={styles.detailsContainer}>
+              <View style={styles.detailItem}>
+                <Feather name="clock" size={16} color="#8A8A8A" />
+                <Text style={styles.detailText}>
+                  {readyInMinutes || recipeDetails.ready_in_minutes} mins
+                </Text>
               </View>
-              {showBookmark && (
-                <View>
-                  <TouchableOpacity
-                    style={styles.saveButton}
-                    onPress={handleSave}
-                  >
-                    {isRecipeSaved ? (
-                      <MaterialIcons
-                        name="bookmark-add"
-                        size={24}
-                        color="green"
-                      />
-                    ) : (
-                      <MaterialIcons
-                        name="bookmark-border"
-                        size={24}
-                        color="white"
-                      />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
             </View>
+            <View style={styles.progressContainer}>
+              <Text style={styles.detailText}>
+                {new Number(percentage).toFixed(0)}% of Ingredients
+              </Text>
+              <ProgressBar
+                color="white"
+                progress={percentage / 100}
+                width={80}
+                style={styles.progressBar}
+              />
+            </View>
+            {showBookmark && (
+              <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+                <MaterialIcons
+                  name={isRecipeSaved ? "bookmark" : "bookmark-border"}
+                  size={24}
+                  color={isRecipeSaved ? "#38F096" : "#8A8A8A"}
+                />
+                <Text style={styles.saveButtonText}>
+                  {isRecipeSaved ? "Saved" : "Save"}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       ) : null}
@@ -194,40 +136,70 @@ const RecipeCard = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    marginBottom: 20,
   },
-  title: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginRight: 20,
-    color: "white",
-  },
-  recipeContent: {
-    backgroundColor: "#c7a27c",
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "white",
-  },
-  imageTextContainer: {
-    flexDirection: "row",
+  card: {
+    borderRadius: 15,
+    backgroundColor: "#2E2E2E",
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.8,
+    shadowRadius: 5,
+    elevation: 5,
   },
   image: {
-    width: 100,
-    height: 100,
-    marginLeft: 15,
+    width: "100%",
+    height: 160,
+    borderTopLeftRadius: 15,
+    borderTopRightRadius: 15,
   },
-  subheading: {
+  cardContent: {
+    padding: 15,
+  },
+  title: {
     fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 5,
-    color: "white",
+    fontWeight: "900",
+    color: "#FFFFFF",
+    marginBottom: 8,
   },
-  text: {
-    fontSize: 16,
-    color: "white",
+  detailsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 15,
   },
-  save: {
-    alignSelf: "flex-end",
+  detailItem: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  detailText: {
+    marginLeft: 5,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#8A8A8A",
+  },
+  progressContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center", // Center the progress section
+    marginBottom: 15,
+  },
+  progressBar: {
+    marginLeft: 10, // Spacing between text and progress bar
+  },
+  saveButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#383838",
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  saveButtonText: {
+    color: "#8A8A8A",
+    fontSize: 14,
+    marginLeft: 5,
   },
 });
 

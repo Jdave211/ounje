@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Dimensions,
 } from "react-native";
+import { Button, Icon } from "react-native-elements";
 import { FontAwesome5, AntDesign, MaterialIcons } from "@expo/vector-icons";
 import { MultipleSelectList } from "../components/MultipleSelectList";
 import {
@@ -52,6 +53,7 @@ const Inventory = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [_foodItems, setFoodItems] = useState([]);
   const [notificationVisible, setNotificationVisible] = useState(false);
+  const [selectedTab, setSelectedTab] = useState("Inventory");
 
   const userId = useAppStore((state) => state.user_id);
   const inventory = useAppStore((state) => state.inventory);
@@ -300,130 +302,181 @@ const Inventory = () => {
 
   return (
     <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerText}>Inventory</Text>
+        <Text style={styles.headerSubtext}>Your inventory & grocery list</Text>
+      </View>
+
+      <View style={styles.segmentedControl}>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "Inventory" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("Inventory")}
+        >
+          <Text
+            style={[
+              styles.segmentButtonText,
+              selectedTab === "Inventory" && styles.segmentButtonTextSelected,
+            ]}
+          >
+            Inventory
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.segmentButton,
+            selectedTab === "GroceryList" && styles.segmentButtonSelected,
+          ]}
+          onPress={() => setSelectedTab("GroceryList")}
+        >
+          <Text
+            style={[
+              styles.segmentButtonText,
+              selectedTab === "GroceryList" && styles.segmentButtonTextSelected,
+            ]}
+          >
+            Grocery List
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {isLoading && (
         <View style={styles.loader}>
           <ActivityIndicator size="large" color="#38F096" />
         </View>
       )}
       <ScrollView contentContainerStyle={styles.scrollViewContent}>
-        <View style={styles.imageSection}>
-          <View style={styles.imageContainer}>
-            {inventoryImages?.length === 0 ? (
-              <TouchableOpacity
-                style={styles.addImageButton}
-                onPress={handleAddImage}
-              >
-                <Image
-                  source={camera}
-                  style={{
-                    width: screenWidth * 0.25,
-                    height: screenWidth * 0.25,
-                    margin: 1,
-                  }} // Responsive width and height
-                />
-              </TouchableOpacity>
-            ) : (
-              inventoryImages.map((imageUrl, index) => (
-                <TouchableOpacity
-                  key={index}
-                  onPress={() => {
-                    setSelectedImage(imageUrl);
-                    setModalVisible(true);
-                  }}
-                  style={styles.imageWrapper}
-                >
-                  <Image source={{ uri: imageUrl }} style={styles.image} />
-                  <View style={styles.overlay}>
-                    <Text style={styles.overlayText}>Tap to replace</Text>
-                  </View>
-                </TouchableOpacity>
-              ))
-            )}
-          </View>
-        </View>
-
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={modalVisible}
-          onRequestClose={() => setModalVisible(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <TouchableOpacity
-              style={styles.close}
-              onPress={() => setModalVisible(false)}
-            >
-              <AntDesign name="closecircle" size={30} color="white" />
-            </TouchableOpacity>
-            <View style={styles.modalView}>
-              <Image
-                source={{ uri: selectedImage }}
-                style={styles.modalImage}
-              />
-              <TouchableOpacity
-                style={styles.replaceButton}
-                onPress={() =>
-                  handleReplaceImage(inventoryImages.indexOf(selectedImage))
-                }
-              >
-                <Text style={styles.buttonText}>Replace Image</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Add New Food Item</Text>
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your food item"
-              placeholderTextColor="gray"
-              autoCapitalize="none"
-              maxLength={50}
-              value={newItem}
-              onChangeText={setNewItem}
-            />
-            <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
-              <Text style={styles.buttonText}>Add</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Virtual Inventory</Text>
-          <View style={styles.centeredContainer}>
-            {foodItems && foodItems.length === 0 ? (
-              <View
-                style={{
-                  flex: 2,
-                  justifyContent: "center",
-                  alignContent: "center",
-                }}
-              >
-                <Empty />
-                <Text style={styles.warning}>
-                  Your inventory is empty. Add some items to get started.
-                </Text>
+        {selectedTab === "Inventory" ? (
+          <>
+            <View style={styles.imageSection}>
+              <View style={styles.imageContainer}>
+                {inventoryImages?.length === 0 ? (
+                  <TouchableOpacity
+                    style={styles.addImageButton}
+                    onPress={handleAddImage}
+                  >
+                    <Image
+                      source={camera}
+                      style={{
+                        width: screenWidth * 0.25,
+                        height: screenWidth * 0.25,
+                        margin: 1,
+                      }} // Responsive width and height
+                    />
+                  </TouchableOpacity>
+                ) : (
+                  inventoryImages.map((imageUrl, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      onPress={() => {
+                        setSelectedImage(imageUrl);
+                        setModalVisible(true);
+                      }}
+                      style={styles.imageWrapper}
+                    >
+                      <Image source={{ uri: imageUrl }} style={styles.image} />
+                      <View style={styles.overlay}>
+                        <Text style={styles.overlayText}>Tap to replace</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                )}
               </View>
-            ) : (
-              foodItems.map((item, i) => (
-                <View
-                  key={i}
-                  style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+            </View>
+
+            <Modal
+              animationType="slide"
+              transparent={true}
+              visible={modalVisible}
+              onRequestClose={() => setModalVisible(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <TouchableOpacity
+                  style={styles.close}
+                  onPress={() => setModalVisible(false)}
                 >
-                  <IngredientCard
-                    key={i}
-                    name={item.name}
-                    image={`https://img.spoonacular.com/ingredients_100x100/${item.image}`}
-                    showCancelButton={true}
-                    onCancel={() => handleRemoveSelected(item)}
+                  <AntDesign name="closecircle" size={30} color="white" />
+                </TouchableOpacity>
+                <View style={styles.modalView}>
+                  <Image
+                    source={{ uri: selectedImage }}
+                    style={styles.modalImage}
                   />
+                  <TouchableOpacity
+                    style={styles.replaceButton}
+                    onPress={() =>
+                      handleReplaceImage(inventoryImages.indexOf(selectedImage))
+                    }
+                  >
+                    <Text style={styles.buttonText}>Replace Image</Text>
+                  </TouchableOpacity>
                 </View>
-              ))
-            )}
+              </View>
+            </Modal>
+
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Add New Food Item</Text>
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter your food item"
+                  placeholderTextColor="gray"
+                  autoCapitalize="none"
+                  maxLength={50}
+                  value={newItem}
+                  onChangeText={setNewItem}
+                />
+                <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
+                  <Text style={styles.buttonText}>Add</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Virtual Inventory</Text>
+              <View style={styles.centeredContainer}>
+                {foodItems && foodItems.length === 0 ? (
+                  <View
+                    style={{
+                      flex: 2,
+                      justifyContent: "center",
+                      alignContent: "center",
+                    }}
+                  >
+                    <Empty />
+                    <Text style={styles.warning}>
+                      Your inventory is empty. Add some items to get started.
+                    </Text>
+                  </View>
+                ) : (
+                  foodItems.map((item, i) => (
+                    <View
+                      key={i}
+                      style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+                    >
+                      <IngredientCard
+                        key={i}
+                        name={item.name}
+                        image={`https://img.spoonacular.com/ingredients_100x100/${item.image}`}
+                        showCancelButton={true}
+                        onCancel={() => handleRemoveSelected(item)}
+                      />
+                    </View>
+                  ))
+                )}
+              </View>
+            </View>
+          </>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Grocery List</Text>
+            <Text style={styles.warning}>
+              No items in your grocery list yet.
+            </Text>
           </View>
-        </View>
+        )}
       </ScrollView>
       {notificationVisible && (
         <TouchableOpacity
@@ -455,11 +508,53 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#121212",
-    padding: 20,
+    padding: Dimensions.get("window").width * 0.03,
   },
   scrollViewContent: {
     flexGrow: 1,
     justifyContent: "center",
+    padding: 8,
+  },
+  header: {
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
+    marginBottom: Dimensions.get("window").height * 0.05,
+    marginTop: Dimensions.get("window").height * 0.1,
+    marginLeft: Dimensions.get("window").width * 0.03,
+  },
+  headerText: {
+    color: "#fff",
+    fontSize: 25,
+    fontWeight: "bold",
+  },
+  headerSubtext: {
+    color: "gray",
+    fontSize: 16,
+    marginTop: 5,
+  },
+  segmentedControl: {
+    flexDirection: "row",
+    alignSelf: "stretch",
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#282C35",
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  segmentButtonSelected: {
+    borderBottomWidth: 2,
+    borderBottomColor: "gray",
+  },
+  segmentButtonText: {
+    color: "gray",
+    fontSize: 16,
+  },
+  segmentButtonTextSelected: {
+    color: "white",
+    fontWeight: "bold",
   },
   warning: {
     color: "white",
@@ -469,7 +564,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   imageSection: {
-    marginTop: 20,
+    marginTop: 4,
   },
   imageContainer: {
     flexDirection: "row",
