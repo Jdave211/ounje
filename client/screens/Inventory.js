@@ -26,6 +26,8 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
 import * as ImagePicker from "expo-image-picker";
 import camera from "../assets/camera_icon.png";
+import fridge from "../assets/fridge.png";
+import pantry from "../assets/pantry.png";
 import { parse_ingredients } from "../utils/spoonacular";
 import useImageProcessing from "../hooks/useImageProcessing";
 import { useAppStore } from "../stores/app-store";
@@ -39,6 +41,7 @@ import {
 import { entitle } from "../utils/helpers";
 import Empty from "../components/Empty";
 import IngredientCard from "../components/IngredientCard";
+import { T } from "ramda";
 
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
@@ -352,19 +355,20 @@ const Inventory = () => {
           <>
             <View style={styles.imageSection}>
               <View style={styles.imageContainer}>
+              <Text style={styles.imageTitle}>Fridge</Text>
                 {inventoryImages?.length === 0 ? (
                   <TouchableOpacity
                     style={styles.addImageButton}
                     onPress={handleAddImage}
                   >
                     <Image
-                      source={camera}
-                      style={{
-                        width: screenWidth * 0.25,
-                        height: screenWidth * 0.25,
-                        margin: 1,
-                      }} // Responsive width and height
+                      source={fridge}
+                      style={styles.image
+                      } // Responsive width and height
                     />
+                    <View style={styles.overlay}>
+                        <Text style={styles.overlayTextAdd}>Tap to add+</Text>
+                      </View>
                   </TouchableOpacity>
                 ) : (
                   inventoryImages.map((imageUrl, index) => (
@@ -385,19 +389,19 @@ const Inventory = () => {
                 )}
               </View>
               <View style={styles.imageContainer}>
+              <Text style={styles.imageTitle}>Pantry</Text>
                 {inventoryImages?.length === 1 ? (
                   <TouchableOpacity
                     style={styles.addImageButton}
                     onPress={handleAddImage}
                   >
                     <Image
-                      source={camera}
-                      style={{
-                        width: screenWidth * 0.25,
-                        height: screenWidth * 0.25,
-                        margin: 1,
-                      }} // Responsive width and height
+                      source={pantry}
+                      style={styles.image} // Responsive width and height
                     />
+                    <View style={styles.overlay}>
+                        <Text style={styles.overlayTextAdd}>Tap to add+</Text>
+                      </View>
                   </TouchableOpacity>
                 ) : (
                   inventoryImages.map((imageUrl, index) => (
@@ -597,15 +601,22 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   imageSection: {
-    marginTop: 4,
+    flexDirection: "row",
+    justifyContent: "space-around", // Adjust as necessary to space the containers
+    alignItems: "flex-start",
   },
   imageContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    alignItems: "center",
+    flexDirection: "column",
+    alignItems: "center", // Center items in the column
     marginBottom: 15,
     padding: 15,
+  },
+  imageTitle: {
+    color: "#fff",
+    fontSize: screenWidth * 0.04, // Responsive font size
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 6,
   },
   imageWrapper: {
     position: "relative",
@@ -631,12 +642,16 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: screenWidth * 0.03, // Responsive font size
   },
+  overlayTextAdd: {
+    color: "#fff",
+    fontSize: screenWidth * 0.03, // Responsive font size
+    fontWeight: "bold",
+  },
   addImageButton: {
     borderRadius: 10,
-    padding: 20,
     alignItems: "center",
-    justifyContent: "center",
-  },
+    justifyContent: "center", // Removed any padding that would extend the overlay beyond the image
+  },  
   addImageText: {
     color: "#fff",
     fontSize: 18,
