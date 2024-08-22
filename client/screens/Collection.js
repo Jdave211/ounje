@@ -137,9 +137,10 @@ const SavedRecipes = () => {
         )}
 
         {selectedTab === "Discover" && (
-          <View style={styles.content}>
-            <Text style={styles.noRecipesText}>
-              Discover new recipes and save them to your collection.
+          <View style={styles.discoverCard}>
+            <Text style={styles.discoverCardTitle}>Discover Recipes</Text>
+            <Text style={styles.warning}>
+              Save more recipes to discover ones that meet your taste!
             </Text>
           </View>
         )}
@@ -213,6 +214,22 @@ const styles = StyleSheet.create({
     fontSize: screenWidth * 0.045,
     textAlign: "center",
     marginTop: screenHeight * 0.02,
+  },
+  discoverCard: {
+    backgroundColor: "#1f1f1f",
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+  },
+  discoverCardTitle: {
+    color: "#fff",
+    fontSize: screenWidth * 0.045, // Responsive font size
+    fontWeight: "bold",
+    marginBottom: 10,
+  },
+  warning: {
+    color: "gray",
+    fontSize: screenWidth * 0.04,
   },
   loginText: {
     color: "#38F096",

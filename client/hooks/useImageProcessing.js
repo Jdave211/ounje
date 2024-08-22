@@ -122,93 +122,103 @@ const useImageProcessing = () => {
 
   const sendImages = async (fridgeImages) => {
     setLoading(true);
-
-    const image_paths = await uploadImages(userId, fridgeImages);
-
-    console.log("stored images", { image_paths });
-    const foodItemsObject = await extractFoodItemsFromImage(fridgeImages);
-
-    console.log("extracted food items");
-
-    const foodItemNames = extractNames(foodItemsObject);
-
-    console.log("extracted food item names");
-    const parsed_ingredients = await parse_ingredients(foodItemNames);
-
-    const parsed_food_items = parsed_ingredients.filter(
-      ({ spoonacular_id }) => !!spoonacular_id
-    );
-
-    console.log({
-      foodItemNames: foodItemNames.length,
-      parsed_food_items: parsed_food_items.length,
-    });
-
-    console.log("retrieved parsed_food_items");
-
-    const stored_food_items = await storeNewFoodItems(parsed_food_items);
-
-    const stored_food_items_map_by_spoonacular_id = stored_food_items.reduce(
-      (acc, item) => {
-        acc[item.spoonacular_id] = item;
-        return acc;
-      },
-      {}
-    );
-
-    console.log({ stored_food_items_map_by_spoonacular_id });
-
-    const parsed_food_items_map_by_original = parsed_food_items.reduce(
-      (acc, item) => {
-        acc[item.original] =
-          stored_food_items_map_by_spoonacular_id[item.spoonacular_id];
-        return acc;
-      },
-      {}
-    );
-
-    console.log({ parsed_food_items_map_by_original });
-
-    const food_items_by_image = Object.entries(foodItemsObject).map(
-      ([image_name, value], i) => {
-        const food_item_names = extractNames(value);
-
-        const food_item_ids = food_item_names
-          .map((item) => {
-            const parsed_item = parsed_food_items_map_by_original[item];
-
-            return parsed_item?.id || null;
-          })
-          .filter((item) => !!item);
-
-        console.log({
-          food_item_names,
-          food_item_ids,
-        });
-
-        return {
-          name: image_name,
-          image: image_paths[i],
-          food_items: food_item_ids,
-        };
+  
+    try {
+      const image_paths = await uploadImages(userId, fridgeImages);
+      console.log("stored images", { image_paths });
+  
+      const foodItemsObject = await extractFoodItemsFromImage(fridgeImages);
+      console.log("extracted food items");
+  
+      const foodItemNames = extractNames(foodItemsObject);
+      console.log("extracted food item names");
+  
+      // If food item names are invalid or empty, throw an error
+      if (!foodItemNames || foodItemNames.length === 0) {
+        throw new Error("No valid food items extracted from the image.");
       }
-    );
-
-    console.log({ food_items_by_image });
-
-    await axios.delete(server_link("v1/inventory/images/"), {
-      data: {
+  
+      const parsed_ingredients = await parse_ingredients(foodItemNames);
+  
+      const parsed_food_items = parsed_ingredients.filter(
+        ({ spoonacular_id }) => !!spoonacular_id
+      );
+  
+      console.log({
+        foodItemNames: foodItemNames.length,
+        parsed_food_items: parsed_food_items.length,
+      });
+  
+      console.log("retrieved parsed_food_items");
+  
+      const stored_food_items = await storeNewFoodItems(parsed_food_items);
+  
+      const stored_food_items_map_by_spoonacular_id = stored_food_items.reduce(
+        (acc, item) => {
+          acc[item.spoonacular_id] = item;
+          return acc;
+        },
+        {}
+      );
+  
+      console.log({ stored_food_items_map_by_spoonacular_id });
+  
+      const parsed_food_items_map_by_original = parsed_food_items.reduce(
+        (acc, item) => {
+          acc[item.original] =
+            stored_food_items_map_by_spoonacular_id[item.spoonacular_id];
+          return acc;
+        },
+        {}
+      );
+  
+      console.log({ parsed_food_items_map_by_original });
+  
+      const food_items_by_image = Object.entries(foodItemsObject).map(
+        ([image_name, value], i) => {
+          const food_item_names = extractNames(value);
+  
+          const food_item_ids = food_item_names
+            .map((item) => {
+              const parsed_item = parsed_food_items_map_by_original[item];
+              return parsed_item?.id || null;
+            })
+            .filter((item) => !!item);
+  
+          console.log({
+            food_item_names,
+            food_item_ids,
+          });
+  
+          return {
+            name: image_name,
+            image: image_paths[i],
+            food_items: food_item_ids,
+          };
+        }
+      );
+  
+      console.log({ food_items_by_image });
+  
+      await axios.delete(server_link("v1/inventory/images/"), {
+        data: {
+          user_id: userId,
+        },
+      });
+  
+      await axios.post(server_link("v1/inventory/images/"), {
         user_id: userId,
-      },
-    });
-
-    await axios.post(server_link("v1/inventory/images/"), {
-      user_id: userId,
-      images_and_food_items: food_items_by_image,
-    });
-
-    setLoading(false);
+        images_and_food_items: food_items_by_image,
+      });
+  
+    } catch (error) {
+      console.error("Error during image processing:", error);
+      Alert.alert("Error", "An error occurred while processing the images. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
+  
 
   return { loading, convertImageToBase64, sendImages, storeCaloryImages };
 };

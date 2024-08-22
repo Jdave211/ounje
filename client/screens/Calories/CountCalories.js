@@ -335,9 +335,10 @@ const CountCalories = () => {
             </View>
           </View>
         ) : (
-          <View style={styles.content}>
-            <Text style={styles.text}>
-              Calories History will be displayed here.
+          <View style={styles.discoverCard}>
+            <Text style={styles.discoverCardTitle}>Calories History</Text>
+            <Text style={styles.warning}>
+              Analyze calories to view and manage your history!
             </Text>
           </View>
         )}
@@ -552,6 +553,22 @@ const styles = StyleSheet.create({
   },
   modalScroll: {
     flex: 1,
+  },
+  discoverCard: {
+    backgroundColor: "#1f1f1f",
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 20,
+  },
+  discoverCardTitle: {
+    color: "#fff",
+    fontSize: screenWidth * 0.045, // Responsive font size
+    fontWeight: "bold",
+    marginBottom: 10,
+  },
+  warning: {
+    color: "gray",
+    fontSize: screenWidth * 0.04,
   },
   foodItemsContainer: {
     paddingBottom: 10,
