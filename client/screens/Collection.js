@@ -115,7 +115,7 @@ const SavedRecipes = () => {
           </Text>
         </TouchableOpacity>
       </View>
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollViewContent}>
         {selectedTab === "SavedRecipes" && (
           <View style={styles.content}>
             {savedRecipes && savedRecipes.length > 0 ? (

@@ -350,7 +350,7 @@ const Inventory = () => {
           <ActivityIndicator size="large" color="#38F096" />
         </View>
       )}
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollViewContent}>
         {selectedTab === "Inventory" ? (
           <>
             <View style={styles.imageSection}>
@@ -507,11 +507,16 @@ const Inventory = () => {
             </View>
           </>
         ) : (
+
+          <View>
+            <Text style={styles.cardTitle}>Grocery Icon</Text>
+            
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Grocery List</Text>
             <Text style={styles.warning}>
               No items in your grocery list yet.
             </Text>
+          </View>
           </View>
         )}
       </ScrollView>
