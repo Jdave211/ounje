@@ -32,6 +32,7 @@ import {
   parse_ingredients,
 } from "../../utils/spoonacular";
 import useImageProcessing from "../../hooks/useImageProcessing"; // Import the custom hook
+import AddItems from "./AddItems";
 import { useAppStore } from "../../stores/app-store";
 
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 10);
@@ -255,6 +256,10 @@ const FirstLogin = ({ onProfileComplete, session }) => {
         </ScrollView>
       </View>
     </View>,
+    <View style={styles.addItemsContainer}>
+      <Text style={styles.name_text}>Select items for your inventory</Text>
+      <AddItems />
+    </View>,
   ];
 
   return (
@@ -276,7 +281,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           <MaterialCommunityIcons name="page-next" size={24} color="white" />
         </TouchableOpacity>
       )}
-      {!loading && currentQuestion === 2 && (
+      {!loading && currentQuestion === 3 && (
         <TouchableOpacity
           style={styles.next_button}
           onPress={() => {

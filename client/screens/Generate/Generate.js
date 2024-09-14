@@ -14,6 +14,7 @@ import { SelectList } from "react-native-dropdown-select-list";
 import { FontAwesome5 } from "@expo/vector-icons";
 import GenerateRecipes from "../../components/GenerateRecipes"; // Ensure the correct import path
 import Loading from "../../components/Loading"; // Ensure the correct import path
+import RecipeBubble from "../../components/RecipeBubble"; // Ensure the correct import path
 import generate_bg from "../../assets/generate_bg.jpg";
 import { supabase, fetchUserProfile } from "../../utils/supabase";
 import { useQuery } from "react-query";

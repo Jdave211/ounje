@@ -38,7 +38,6 @@ const CheckIngredients = () => {
   const user_id = useAppStore((state) => state.user_id);
 
   useEffect(() => {
-
     const fetchFoodItems = async () => {
       let retrieved_text = await AsyncStorage.getItem("food_items");
       let retrieved_food_items = JSON.parse(retrieved_text);
@@ -96,7 +95,7 @@ const CheckIngredients = () => {
     let removed_items_set = new Set(removed_items);
 
     const filtered_food_items = food_items_array.filter(
-      (item) => !removed_items_set.has(item.name),
+      (item) => !removed_items_set.has(item.name)
     );
 
     setFoodItemsArray(filtered_food_items);
@@ -129,7 +128,7 @@ const CheckIngredients = () => {
     await AsyncStorage.setItem("food_items", JSON.stringify(food_items));
     await AsyncStorage.setItem(
       "food_items_array",
-      JSON.stringify(food_items_array),
+      JSON.stringify(food_items_array)
     );
 
     navigation.navigate("Inventory");
@@ -169,7 +168,7 @@ const CheckIngredients = () => {
       (section, i) => ({
         key: i.toString(),
         value: section,
-      }),
+      })
     );
 
     return (
@@ -210,7 +209,7 @@ const CheckIngredients = () => {
                 items.map((item, _i) => ({
                   key: item.name,
                   value: item.name,
-                })),
+                }))
             );
 
             return (
