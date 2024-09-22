@@ -178,131 +178,261 @@ const Inventory = () => {
     });
   };
 
+  // const handleAddImage = async () => {
+  //   if (userId.startsWith("guest")) {
+  //     showAuthAlert();
+  //     return;
+  //   }
+
+  //   const { status: cameraRollPerm } =
+  //     await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+  //   if (cameraRollPerm !== "granted") {
+  //     alert("Sorry, we need camera roll permissions to make this work!");
+  //     return;
+  //   }
+
+  //   const { status: cameraPerm } =
+  //     await ImagePicker.requestCameraPermissionsAsync();
+
+  //   if (cameraPerm !== "granted") {
+  //     alert("Sorry, we need camera permissions to make this work!");
+  //     return;
+  //   }
+
+  //   ActionSheetIOS.showActionSheetWithOptions(
+  //     {
+  //       options: ["Cancel", "Take Photo", "Choose from Library"],
+  //       cancelButtonIndex: 0,
+  //     },
+  //     async (buttonIndex) => {
+  //       if (buttonIndex === 1 || buttonIndex === 2) {
+  //         let result;
+  //         if (buttonIndex === 1) {
+  //           result = await ImagePicker.launchCameraAsync({
+  //             mediaTypes: ImagePicker.MediaTypeOptions.All,
+  //             allowsEditing: true,
+  //             aspect: [4, 3],
+  //             quality: 1,
+  //           });
+  //         } else {
+  //           result = await ImagePicker.launchImageLibraryAsync({
+  //             mediaTypes: ImagePicker.MediaTypeOptions.All,
+  //             allowsEditing: true,
+  //             aspect: [4, 3],
+  //             quality: 1,
+  //           });
+  //         }
+
+  //         if (!result.canceled) {
+  //           const imageUri = result.assets[0].uri;
+  //           setInventoryImages((prevUris) => [...prevUris, imageUri]);
+  //           const base64Image = await convertImageToBase64(imageUri);
+  //           setIsLoading(true);
+  //           await sendImages([base64Image]);
+  //           refetchInventoryData();
+  //           setIsLoading(false);
+  //           Alert.alert("Success", "Image has been Added.");
+  //         }
+  //       }
+  //     }
+  //   );
+  // };
+
+  // const handleReplaceImage = async (index) => {
+  //   if (userId.startsWith("guest")) {
+  //     showAuthAlert();
+  //     return;
+  //   }
+
+  //   const { status: cameraRollPerm } =
+  //     await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+  //   if (cameraRollPerm !== "granted") {
+  //     alert("Sorry, we need camera roll permissions to make this work!");
+  //     return;
+  //   }
+
+  //   const { status: cameraPerm } =
+  //     await ImagePicker.requestCameraPermissionsAsync();
+
+  //   if (cameraPerm !== "granted") {
+  //     alert("Sorry, we need camera permissions to make this work!");
+  //     return;
+  //   }
+
+  //   ActionSheetIOS.showActionSheetWithOptions(
+  //     {
+  //       options: ["Cancel", "Take Photo", "Choose from Library"],
+  //       cancelButtonIndex: 0,
+  //     },
+  //     async (buttonIndex) => {
+  //       if (buttonIndex === 1 || buttonIndex === 2) {
+  //         let result;
+
+  //         if (buttonIndex === 1) {
+  //           result = await ImagePicker.launchCameraAsync({
+  //             mediaTypes: ImagePicker.MediaTypeOptions.All,
+  //             allowsEditing: true,
+  //             aspect: [4, 3],
+  //             quality: 1,
+  //           });
+  //         } else {
+  //           result = await ImagePicker.launchImageLibraryAsync({
+  //             mediaTypes: ImagePicker.MediaTypeOptions.All,
+  //             allowsEditing: true,
+  //             aspect: [4, 3],
+  //             quality: 1,
+  //           });
+  //         }
+
+  //         if (!result.canceled) {
+  //           const imageUri = result.assets[0].uri;
+  //           const base64Image = await convertImageToBase64(imageUri);
+
+  //           setIsLoading(true);
+  //           await sendImages([base64Image]);
+  //           refetchInventoryData();
+  //           setIsLoading(false);
+  //           Alert.alert("Success", "Image has been replaced.");
+
+  //           setModalVisible(false);
+  //         }
+  //       }
+  //     }
+  //   );
+  // };
+
+ 
   const handleAddImage = async () => {
     if (userId.startsWith("guest")) {
       showAuthAlert();
       return;
     }
-
-    const { status: cameraRollPerm } =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
-
+  
+    const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (cameraRollPerm !== "granted") {
       alert("Sorry, we need camera roll permissions to make this work!");
       return;
     }
-
-    const { status: cameraPerm } =
-      await ImagePicker.requestCameraPermissionsAsync();
-
+  
+    const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
     if (cameraPerm !== "granted") {
       alert("Sorry, we need camera permissions to make this work!");
       return;
     }
-
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        options: ["Cancel", "Take Photo", "Choose from Library"],
-        cancelButtonIndex: 0,
-      },
-      async (buttonIndex) => {
-        if (buttonIndex === 1 || buttonIndex === 2) {
-          let result;
-          if (buttonIndex === 1) {
-            result = await ImagePicker.launchCameraAsync({
+  
+    Alert.alert(
+      "Select Photo",
+      "Choose an option:",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Take Photo",
+          onPress: async () => {
+            const result = await ImagePicker.launchCameraAsync({
               mediaTypes: ImagePicker.MediaTypeOptions.All,
               allowsEditing: true,
               aspect: [4, 3],
               quality: 1,
             });
-          } else {
-            result = await ImagePicker.launchImageLibraryAsync({
+            handleImageSelection(result);
+          },
+        },
+        {
+          text: "Choose from Library",
+          onPress: async () => {
+            const result = await ImagePicker.launchImageLibraryAsync({
               mediaTypes: ImagePicker.MediaTypeOptions.All,
               allowsEditing: true,
               aspect: [4, 3],
               quality: 1,
             });
-          }
-
-          if (!result.canceled) {
-            const imageUri = result.assets[0].uri;
-            setInventoryImages((prevUris) => [...prevUris, imageUri]);
-            const base64Image = await convertImageToBase64(imageUri);
-            setIsLoading(true);
-            await sendImages([base64Image]);
-            refetchInventoryData();
-            setIsLoading(false);
-            Alert.alert("Success", "Image has been Added.");
-          }
-        }
-      }
+            handleImageSelection(result);
+          },
+        },
+      ],
+      { cancelable: true }
     );
   };
-
+  
   const handleReplaceImage = async (index) => {
     if (userId.startsWith("guest")) {
       showAuthAlert();
       return;
     }
-
-    const { status: cameraRollPerm } =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
-
+  
+    const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (cameraRollPerm !== "granted") {
       alert("Sorry, we need camera roll permissions to make this work!");
       return;
     }
-
-    const { status: cameraPerm } =
-      await ImagePicker.requestCameraPermissionsAsync();
-
+  
+    const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
     if (cameraPerm !== "granted") {
       alert("Sorry, we need camera permissions to make this work!");
       return;
     }
-
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        options: ["Cancel", "Take Photo", "Choose from Library"],
-        cancelButtonIndex: 0,
-      },
-      async (buttonIndex) => {
-        if (buttonIndex === 1 || buttonIndex === 2) {
-          let result;
-
-          if (buttonIndex === 1) {
-            result = await ImagePicker.launchCameraAsync({
+  
+    Alert.alert(
+      "Select Photo",
+      "Choose an option:",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Take Photo",
+          onPress: async () => {
+            const result = await ImagePicker.launchCameraAsync({
               mediaTypes: ImagePicker.MediaTypeOptions.All,
               allowsEditing: true,
               aspect: [4, 3],
               quality: 1,
             });
-          } else {
-            result = await ImagePicker.launchImageLibraryAsync({
+            handleImageSelection(result, index);
+          },
+        },
+        {
+          text: "Choose from Library",
+          onPress: async () => {
+            const result = await ImagePicker.launchImageLibraryAsync({
               mediaTypes: ImagePicker.MediaTypeOptions.All,
               allowsEditing: true,
               aspect: [4, 3],
               quality: 1,
             });
-          }
-
-          if (!result.canceled) {
-            const imageUri = result.assets[0].uri;
-            const base64Image = await convertImageToBase64(imageUri);
-
-            setIsLoading(true);
-            await sendImages([base64Image]);
-            refetchInventoryData();
-            setIsLoading(false);
-            Alert.alert("Success", "Image has been replaced.");
-
-            setModalVisible(false);
-          }
-        }
-      }
+            handleImageSelection(result, index);
+          },
+        },
+      ],
+      { cancelable: true }
     );
   };
-
+  
+  const handleImageSelection = async (result, index) => {
+    if (!result.canceled) {
+      const imageUri = result.assets[0].uri;
+      const base64Image = await convertImageToBase64(imageUri);
+  
+      setIsLoading(true);
+      await sendImages([base64Image]);
+      refetchInventoryData();
+      setIsLoading(false);
+  
+      const message = index !== undefined ? "Image has been replaced." : "Image has been added.";
+      Alert.alert("Success", message);
+      
+      if (index !== undefined) {
+        setModalVisible(false); // Close modal if replacing an image
+      }
+    }
+  };
+  
   return (
     <View style={styles.container}>
       <View style={styles.header}>

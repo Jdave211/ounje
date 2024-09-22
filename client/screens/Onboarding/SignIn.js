@@ -181,6 +181,7 @@ export default function SignIn() {
               disabled={loading}
               onPress={handleSignIn}
               buttonStyle={styles.signInButton}
+              titleStyle={{ color: '#000',}} // Ensure text is centered
             />
             <Button
               title="Forgot password?"
@@ -242,8 +243,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#2E7D32",
     height: 50,
     borderRadius: 25,
-    width: "100%",
-    marginBottom: 10,
+    width: "90%",
+    // marginBottom: 10,
+    justifyContent: 'center', // Center content vertically
+    alignItems: 'center', // Center content horizontally
   },
   forgotButton: {
     backgroundColor: "transparent",

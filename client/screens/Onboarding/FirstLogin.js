@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   ActionSheetIOS,
   ScrollView,
+  Platform,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { fetchInventoryData, supabase } from "../../utils/supabase";
@@ -61,6 +62,8 @@ const FirstLogin = ({ onProfileComplete, session }) => {
     "Diabetic",
   ];
 
+ 
+  // chnge the code for android start the camera now...
   const pickImage = async () => {
     const { status: cameraRollPerm } =
       await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -78,45 +81,64 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       return;
     }
 
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        options: ["Cancel", "Take Photo", "Choose from Library"],
-        cancelButtonIndex: 0,
-      },
-      async (buttonIndex) => {
-        if (buttonIndex === 1) {
-          let result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 1,
-          });
-
-          if (!result.canceled) {
-            const uri = result.assets[0].uri;
-            setFridgeImageUris((prevUris) => [...prevUris, uri]);
-            const base64Image = await convertImageToBase64(uri);
-            setFridgeImages((prevImages) => [...prevImages, base64Image]);
-          }
-        } else if (buttonIndex === 2) {
-          let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 1,
-          });
-
-          if (!result.canceled) {
-            const uri = result.assets[0].uri;
-            setFridgeImageUris((prevUris) => [...prevUris, uri]);
-            const base64Image = await convertImageToBase64(uri);
-            setFridgeImages((prevImages) => [...prevImages, base64Image]);
-          }
+    if (Platform.OS === 'ios') {
+      // iOS-specific ActionSheet
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["Cancel", "Take Photo", "Choose from Library"],
+          cancelButtonIndex: 0,
+        },
+        async (buttonIndex) => {
+          handleActionSheetSelection(buttonIndex);
         }
-      }
-    );
+      );
+    } else {
+      // Android alternative
+      Alert.alert(
+        'Select Option',
+        'Choose to take a photo or pick from the library',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Take Photo', onPress: () => handleActionSheetSelection(1) },
+          { text: 'Choose from Library', onPress: () => handleActionSheetSelection(2) },
+        ]
+      );
+    }
   };
 
+  const handleActionSheetSelection = async (buttonIndex) => {
+    if (buttonIndex === 1) {
+      // Launch camera
+      let result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 1,
+      });
+
+      if (!result.canceled) {
+        const uri = result.assets[0].uri;
+        setFridgeImageUris((prevUris) => [...prevUris, uri]);
+        const base64Image = await convertImageToBase64(uri);
+        setFridgeImages((prevImages) => [...prevImages, base64Image]);
+      }
+    } else if (buttonIndex === 2) {
+      // Pick from library
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 1,
+      });
+
+      if (!result.canceled) {
+        const uri = result.assets[0].uri;
+        setFridgeImageUris((prevUris) => [...prevUris, uri]);
+        const base64Image = await convertImageToBase64(uri);
+        setFridgeImages((prevImages) => [...prevImages, base64Image]);
+      }
+    }
+  };
   const confirmSaveProfileWithoutImages = () => {
     Alert.alert(
       "No Fridge Images",
@@ -168,8 +190,10 @@ const FirstLogin = ({ onProfileComplete, session }) => {
       const { error: profileError } = await supabase
         .from("profiles")
         .upsert(updates, {
-          returning: "minimal",
+          returning: "representation",
+          
         });
+        console.log("========================================= updates: ", updates);
 
       if (profileError) {
         console.error("Error updating profile:", profileError);
@@ -246,13 +270,21 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           <Image source={camera_icon} style={{ width: 50, height: 50 }} />
         </TouchableOpacity>
         <ScrollView horizontal>
-          {fridgeImageUris.map((uri, index) => (
-            <Image
-              key={index}
-              source={{ uri }}
-              style={{ width: 100, height: 100, margin: 5 }}
-            />
-          ))}
+          {fridgeImageUris.map(
+            (uri, index) => (
+              console.log(
+                "===================================== fridgeImageUris",
+                uri
+              ),
+              (
+                <Image
+                  key={index}
+                  source={{ uri }}
+                  style={{ width: 100, height: 100, margin: 5 }}
+                />
+              )
+            )
+          )}
         </ScrollView>
       </View>
     </View>,
@@ -281,7 +313,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
           <MaterialCommunityIcons name="page-next" size={24} color="white" />
         </TouchableOpacity>
       )}
-      {!loading && currentQuestion === 3 && (
+      {!loading && currentQuestion === 2 && (
         <TouchableOpacity
           style={styles.next_button}
           onPress={() => {
@@ -290,6 +322,7 @@ const FirstLogin = ({ onProfileComplete, session }) => {
             } else {
               saveProfile();
             }
+            saveProfile();
           }}
         >
           <MaterialCommunityIcons name="check-circle" size={24} color="white" />
@@ -347,3 +380,80 @@ const styles = StyleSheet.create({
 });
 
 export default FirstLogin;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// const pickImage = async () => {
+  //   const { status: cameraRollPerm } =
+  //     await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+  //   if (cameraRollPerm !== "granted") {
+  //     alert("Sorry, we need camera roll permissions to make this work!");
+  //     return;
+  //   }
+
+  //   const { status: cameraPerm } =
+  //     await ImagePicker.requestCameraPermissionsAsync();
+
+  //   if (cameraPerm !== "granted") {
+  //     alert("Sorry, we need camera permissions to make this work!");
+  //     return;
+  //   }
+
+  //   ActionSheetIOS.showActionSheetWithOptions(
+  //     {
+  //       options: ["Cancel", "Take Photo", "Choose from Library"],
+  //       cancelButtonIndex: 0,
+  //     },
+  //     async (buttonIndex) => {
+  //       if (buttonIndex === 1) {
+  //         let result = await ImagePicker.launchCameraAsync({
+  //           mediaTypes: ImagePicker.MediaTypeOptions.All,
+  //           allowsEditing: true,
+  //           aspect: [4, 3],
+  //           quality: 1,
+  //         });
+
+  //         if (!result.canceled) {
+  //           const uri = result.assets[0].uri;
+  //           setFridgeImageUris((prevUris) => [...prevUris, uri]);
+  //           const base64Image = await convertImageToBase64(uri);
+  //           setFridgeImages((prevImages) => [...prevImages, base64Image]);
+  //         }
+  //       } else if (buttonIndex === 2) {
+  //         let result = await ImagePicker.launchImageLibraryAsync({
+  //           mediaTypes: ImagePicker.MediaTypeOptions.All,
+  //           allowsEditing: true,
+  //           aspect: [4, 3],
+  //           quality: 1,
+  //         });
+
+  //         if (!result.canceled) {
+  //           const uri = result.assets[0].uri;
+  //           setFridgeImageUris((prevUris) => [...prevUris, uri]);
+  //           const base64Image = await convertImageToBase64(uri);
+  //           setFridgeImages((prevImages) => [...prevImages, base64Image]);
+  //         }
+  //       }
+  //     }
+  //   );
+  // };

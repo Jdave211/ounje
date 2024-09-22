@@ -228,14 +228,13 @@ export default function Account({ session }) {
                 onPress={() => set_user_id(null)}
               />
             ) : (
+              //chnage in this code for both side
               <Button
                 title={signingOut ? "Signing Out..." : "Sign Out"}
                 type="clear"
                 titleStyle={{
                   color: "gray",
                   fontWeight: "bold",
-                  textDecorationLine: "underline",
-                  textDecorationColor: "red",
                 }}
                 onPress={handleSignOut}
                 disabled={signingOut}

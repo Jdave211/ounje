@@ -6,6 +6,7 @@ import {
   ImageBackground,
   TouchableOpacity,
   Modal,
+  StatusBar,
 } from "react-native";
 import Auth from "./Auth";
 import SignIn from "./SignIn";
@@ -43,6 +44,8 @@ const Welcome = () => {
 
   return (
     <ImageBackground source={welcomepic3} style={styles.background}>
+      {/*change the UI of the welcom screen for the android side */}
+      <StatusBar backgroundColor={'#0001'}/>
       <LinearGradient
         colors={["rgba(0,0,0,0.6)", "transparent"]}
         style={styles.overlay}
