@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "ounje",
+    "slug": "ounje",
+    "version": "1.1.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Let Oúnje access your camera so we can generate recipes.",
+        "NSPhotoLibraryUsageDescription": "Let Oúnje access your photos to generate recipes."
+      },
+      "bundleIdentifier": "net.ounje",
+      "buildNumber": "2",
+      "entitlements": {
+        "aps-environment": "development"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "com.google.android.c2dm.permission.RECEIVE",
+        "android.permission.WAKE_LOCK"
+      ],
+      "package": "net.ounje",
+      "versionCode": 2
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "openAIKey": "@env:OPENAI_API_KEY",
+      "eas": {
+        "projectId": "7679151c-dcd0-4f9d-a6a4-d54cc1f29204"
+      }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Let Oúnje access your photos to generate recipes.",
+          "cameraPermission": "Let Oúnje access your camera so we can generate recipes."
+        }
+      ]
+    ]
+  }
+}

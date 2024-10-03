@@ -1,0 +1,28 @@
+{
+  "cli": {
+    "version": ">= 10.1.1"
+  },
+  "build": {
+    "development": {
+      "node": "18.20.0",
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "node": "18.20.0",
+      "distribution": "internal"
+    },
+    "production": {
+      "node": "18.20.0",
+      "ios": {
+        "buildType": "app-store"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

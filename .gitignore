@@ -1,0 +1,5 @@
+.env
+node_modules
+.expo
+package-lock.json
+.DS_Store
