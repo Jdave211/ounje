@@ -68,7 +68,9 @@ export default function Generate() {
     <ImageBackground source={generate_bg} style={styles.backgroundImage}>
       <View style={styles.overlay}>
         <View style={styles.header}>
-          <Text style={[styles.text, styles.name]}>Hi {name}</Text>
+          <View style={styles.headerTop}>
+            <Text style={[styles.text, styles.name]}>Hi {name}</Text>
+          </View>
           <Text style={styles.text}>
             Select your preferences, and get to cooking...
           </Text>
@@ -153,8 +155,25 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 10,
     borderBottomRightRadius: 10,
   },
+  headerTop: {
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   name: {
     fontSize: 25,
+    fontWeight: "bold",
+  },
+  talkButton: {
+    backgroundColor: "#f08a5d",
+    paddingVertical: 5,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+  },
+  talkButtonText: {
+    color: "white",
+    fontSize: 16,
     fontWeight: "bold",
   },
   text: {
