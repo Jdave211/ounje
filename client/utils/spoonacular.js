@@ -104,7 +104,7 @@ export const find_recipes_by_ingredients_and_store = async (ingredients) => {
     .from("recipe_ids")
     .upsert(suggested_recipes, {
       onConflict: "spoonacular_id",
-      // ignoreDuplicates: true, // note: duplicates will be missing from returned data in recipes_with_ids
+      ignoreDuplicates: true, // note: duplicates will be missing from returned data in recipes_with_ids
     })
     .select()
     .throwOnError();
