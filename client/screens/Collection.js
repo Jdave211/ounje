@@ -168,6 +168,7 @@ const SavedRecipes = () => {
                 No recipes have been saved.
               </Text>
             )}
+
           </View>
         )}
 
