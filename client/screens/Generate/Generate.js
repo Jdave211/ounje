@@ -9,11 +9,18 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { SelectList } from "react-native-dropdown-select-list";
 import { FontAwesome5 } from "@expo/vector-icons";
+<<<<<<< Updated upstream
 import Swiper from 'react-native-swiper';
 
 import GenerateRecipes from "../../components/GenerateRecipes";
 import Loading from "../../components/Loading";
 import RecipeBubble from "../../components/RecipeBubble";
+=======
+import GenerateRecipes from "../../components/GenerateRecipes"; // Ensure the correct import path
+import TalkTuah from "./TalkTuah";
+import Loading from "../../components/Loading"; // Ensure the correct import path
+import RecipeBubble from "../../components/RecipeBubble"; // Ensure the correct import path
+>>>>>>> Stashed changes
 import generate_bg from "../../assets/generate_bg.jpg";
 import { supabase, fetchUserProfile } from "../../utils/supabase";
 import { useQuery } from "react-query";
@@ -115,6 +122,7 @@ export default function Generate() {
                   arrowicon={
                     <FontAwesome5 name="chevron-down" size={12} color={"white"} />
                   }
+<<<<<<< Updated upstream
                   search={false}
                   boxStyles={{
                     marginTop: 10,
@@ -125,6 +133,33 @@ export default function Generate() {
                     key: "1",
                     value: "What type of meal are you interested in?",
                   }}
+=======
+                }}
+                data={flavors}
+                inputStyles={{ color: "white", fontWeight: "bold" }}
+                selectedTextStyle={styles.selectedTextStyle}
+                dropdownTextStyles={{ color: "white", fontWeight: "bold" }}
+                save="value"
+                maxHeight={900}
+                arrowicon={
+                  <FontAwesome5 name="chevron-down" size={12} color={"white"} />
+                }
+                search={false}
+                boxStyles={{
+                  marginTop: 10,
+                  marginBottom: 10,
+                  borderColor: "white",
+                }}
+                defaultOption={{
+                  key: "1",
+                  value: "What type of meal are you interested in?",
+                }}
+              />
+              <View style={{ flex: 0.3 }}>
+                <GenerateRecipes
+                  onLoading={handleLoading}
+                  onRecipesGenerated={setRecipes}
+>>>>>>> Stashed changes
                 />
                 <View style={{ flex: 0.3 }}>
                   <GenerateRecipes
