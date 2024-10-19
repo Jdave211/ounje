@@ -1,6 +1,8 @@
-import React from "react";
+// IngredientCard.js
+
+import React, { useState } from "react";
 import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
-import { MaterialIcons } from "@expo/vector-icons";
+import { MaterialIcons, AntDesign } from "@expo/vector-icons";
 import { entitle } from "../utils/helpers";
 
 const IngredientCard = ({
@@ -10,10 +12,23 @@ const IngredientCard = ({
   unit,
   onCancel,
   showCancelButton = false,
+  showAddButton = false,
+  onAddPress,
 }) => {
   // Split the name into words and determine the number of lines
   const words = entitle(name).split(" ");
   const numberOfLines = words.length > 1 ? 2 : 1;
+
+  // State to manage whether the ingredient has been added
+  const [isAdded, setIsAdded] = useState(false);
+
+  // Handle the add button press
+  const handleAddPress = () => {
+    if (onAddPress) {
+      onAddPress();
+      setIsAdded(true); // Update state to reflect that the ingredient has been added
+    }
+  };
 
   return (
     <View style={styles.ingredient}>
@@ -21,6 +36,16 @@ const IngredientCard = ({
         <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
           <MaterialIcons name="cancel" size={18} color="white" />
         </TouchableOpacity>
+      )}
+      {showAddButton && !isAdded && (
+        <TouchableOpacity style={styles.addButton} onPress={handleAddPress}>
+          <AntDesign name="pluscircle" size={18} color="white" />
+        </TouchableOpacity>
+      )}
+      {isAdded && (
+        <View style={styles.addedOverlay}>
+          <AntDesign name="checkcircle" size={18} color="green" />
+        </View>
       )}
       <View style={styles.imageContainer}>
         <Image style={styles.ingredientImage} source={{ uri: image }} />
@@ -64,6 +89,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 1,
     backgroundColor: "rgba(0, 0, 0, 0.3)",
+  },
+  addButton: {
+    position: "absolute",
+    top: 13,
+    right: 13,
+    borderRadius: 15,
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+  },
+  addedOverlay: {
+    position: "absolute",
+    top: 13,
+    right: 13,
+    zIndex: 2,
   },
   imageContainer: {
     width: 80,

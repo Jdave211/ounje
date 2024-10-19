@@ -92,7 +92,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       setRecipeOptions(total_recipes);
       console.log("All Recipes:", total_recipes);
     } catch (error) {
-      console.error("============ Error generating recipes:", error);
+      console.error("Error generating recipes:", error);
       console.trace(error);
       Alert.alert("Error", "Failed to generate recipes.");
     } finally {
@@ -104,9 +104,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
   return (
     <View style={styles.container}>
-      
       <TouchableOpacity
-       //change the Ui for the Generate recipe button both side
         style={styles.buttonContainer}
         onPress={generateRecipes}
         disabled={isLoading}
@@ -124,9 +122,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 20,
   },
-  //change the Ui for the Generate recipe button
   buttonContainer: {
-    width: 200,
+    width: 275,
     height: 50,
     backgroundColor: "#282C35",
     borderRadius: 10,
@@ -137,6 +134,7 @@ const styles = StyleSheet.create({
   buttonText: {
     color: "#fff",
     fontWeight: "bold",
+    fontSize: 18,
   },
   closeButton: {
     marginTop: 20,
