@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   buttonContainer: {
-    width: 200,
+    width: 275,
     height: 50,
     backgroundColor: "#282C35",
     borderRadius: 10,
@@ -134,6 +134,7 @@ const styles = StyleSheet.create({
   buttonText: {
     color: "#fff",
     fontWeight: "bold",
+    fontSize: 18,
   },
   closeButton: {
     marginTop: 20,

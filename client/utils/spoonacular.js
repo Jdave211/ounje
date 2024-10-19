@@ -104,7 +104,7 @@ export const find_recipes_by_ingredients_and_store = async (ingredients) => {
     .from("recipe_ids")
     .upsert(suggested_recipes, {
       onConflict: "spoonacular_id",
-      // ignoreDuplicates: true, // note: duplicates will be missing from returned data in recipes_with_ids
+      ignoreDuplicates: true, // note: duplicates will be missing from returned data in recipes_with_ids
     })
     .select()
     .throwOnError();
@@ -116,6 +116,31 @@ export const find_recipes_by_ingredients_and_store = async (ingredients) => {
 
   return recipes_with_ids;
 };
+
+export const extract_recipe_from_website = async (recipeUrl) => {
+  try {
+    const { data: recipe } = await axios.get('https://api.spoonacular.com/recipes/extract', {
+      params: {
+        url: recipeUrl,
+        // forceExtraction: true, // Optional: forces extraction even for supported sites
+      },
+      headers: {
+        'x-api-key': process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY, // Replace with your API key variable
+      },
+    });
+
+    // Format the recipe to match your database schema
+    const formattedRecipe = format_recipe(recipe);
+    console.log({ formattedRecipe });
+    return formattedRecipe;
+  } catch (error) {
+    console.error("extract_recipe_from_website:", error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// export const extract_recipe_from_url = async (url) => {
+
 
 export const format_recipe = (recipe_obj) => {
   const recipe = objectToSnake(recipe_obj);
@@ -197,3 +222,4 @@ export const format_parsed_food_items = (_parsed_food_item) => {
   delete parsed_food_item.id;
   return parsed_food_item;
 };
+

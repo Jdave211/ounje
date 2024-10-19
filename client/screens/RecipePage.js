@@ -1,3 +1,5 @@
+// RecipePage.js
+
 import React, { useState, useMemo } from "react";
 import {
   View,
@@ -40,21 +42,28 @@ const RecipePage = ({ route }) => {
     ["recipeDetails", recipe_id],
     async () => await fetchRecipeDetails(recipe_id)
   );
+
   const { data: isAlreadySaved } = useQuery(
-    ["isRecipeSaved", user_id],
+    ["isRecipeSaved", user_id, recipe_id],
     async () => await fetchIsRecipeSavedByUser(user_id, recipe_id),
     {
       onSuccess: () => setIsRecipeSaved(isAlreadySaved),
     }
   );
-  const percentage_of_ingredients_owned =
-    usePercentageOfIngredientsOwned(recipeDetails);
 
+  // State variables for owned and missing items
   const { separateIngredients } = useInventoryHooks();
-  const { owned_items, missing_items } = useMemo(
+  const initialIngredients = useMemo(
     () => separateIngredients(recipeDetails),
     [recipeDetails]
   );
+  const [ownedItems, setOwnedItems] = useState(initialIngredients.owned_items);
+  const [missingItems, setMissingItems] = useState(initialIngredients.missing_items);
+
+  // Recalculate the percentage whenever ownedItems or total ingredients change
+  const totalIngredients = recipeDetails?.extended_ingredients?.length || 0;
+  const percentage_of_ingredients_owned =
+    totalIngredients > 0 ? (ownedItems.length / totalIngredients) * 100 : 0;
 
   const handleSave = async () => {
     const localIsRecipeSaved = !isRecipeSaved;
@@ -86,14 +95,10 @@ const RecipePage = ({ route }) => {
   };
 
   const onReturnToPreviousPage = () => {
-    const currentNavigationState = navigation.getState();
-    console.log("Current Navigation State:", currentNavigationState);
-
-    // Navigate back to the previous screen
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
-      console.warn("STFU"); // omo this guy was really warning the code
+      console.warn("No previous page available");
     }
   };
 
@@ -105,6 +110,34 @@ const RecipePage = ({ route }) => {
     return description.length > 200
       ? description.substring(0, 200) + "..."
       : description;
+  };
+
+  // Function to add ingredient to inventory
+  const addIngredientToInventory = (ingredient) => {
+    const inventory = useAppStore.getState().inventory;
+    const newFoodItem = {
+      // Structure this object according to your inventory schema
+      name: ingredient.name,
+      quantity: ingredient.amount,
+      unit: ingredient.measures?.us.unit_short || ingredient.unit,
+      image: ingredient.image,
+      // Add any other necessary fields
+    };
+
+    // Add the new food item to the inventory
+    inventory.addFoodItem(newFoodItem);
+
+    // Update the owned and missing items state
+    setOwnedItems((prevOwnedItems) => [...prevOwnedItems, ingredient]);
+    setMissingItems((prevMissingItems) =>
+      prevMissingItems.filter((item) => item.id !== ingredient.id)
+    );
+
+    Toast.show({
+      type: "success",
+      text1: "Ingredient Added",
+      text2: `${ingredient.name} has been added to your inventory.`,
+    });
   };
 
   return (
@@ -152,7 +185,7 @@ const RecipePage = ({ route }) => {
           <Text style={styles.title}>{recipeDetails.title}</Text>
           <View style={styles.details}>
             <View style={styles.detailsRow}>
-              <Feather name="clock" size={20} color="green" />
+              <Feather name="clock" size={20} color="silver" />
               <Text style={styles.text}>
                 {"  "}
                 {recipeDetails.ready_in_minutes} mins
@@ -160,14 +193,13 @@ const RecipePage = ({ route }) => {
             </View>
             <View style={styles.progressContainer}>
               <Text style={styles.text}>
-                {owned_items?.length} /{" "}
-                {recipeDetails.extended_ingredients?.length} Ingredients
+                {ownedItems?.length} / {totalIngredients} Ingredients
               </Text>
               <View style={styles.progressBar}>
                 <ProgressBar
                   progress={percentage_of_ingredients_owned / 100}
                   width={100}
-                  color="green"
+                  color="#393E46"
                 />
                 <Image source={harvestImage} style={styles.harvestImage} />
               </View>
@@ -193,12 +225,12 @@ const RecipePage = ({ route }) => {
               showsHorizontalScrollIndicator={false}
             >
               <View style={styles.horizontalScroll}>
-                {owned_items.map((ingredient, i) => (
+                {ownedItems.map((ingredient, i) => (
                   <View key={i} style={styles.ingredientCardWrapper}>
                     <IngredientCard
-                      key={i}
+                      key={ingredient.id || i}
                       name={ingredient.name}
-                      image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                      image={`https://spoonacular.com/cdn/ingredients_100x100/${ingredient.image}`}
                       amount={ingredient.amount}
                       unit={ingredient.measures?.us.unit_short}
                     />
@@ -213,14 +245,16 @@ const RecipePage = ({ route }) => {
               showsHorizontalScrollIndicator={false}
             >
               <View style={styles.horizontalScroll}>
-                {missing_items.map((ingredient, i) => (
+                {missingItems.map((ingredient, i) => (
                   <View key={i} style={styles.ingredientCardWrapper}>
                     <IngredientCard
-                      key={i}
+                      key={ingredient.id || i}
                       name={ingredient.name}
-                      image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                      image={`https://spoonacular.com/cdn/ingredients_100x100/${ingredient.image}`}
                       amount={ingredient.amount}
                       unit={ingredient.measures?.us.unit_short}
+                      showAddButton={true}
+                      onAddPress={() => addIngredientToInventory(ingredient)}
                     />
                   </View>
                 ))}
@@ -294,7 +328,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   title: {
-    fontSize: 24,
+    fontSize: 27,
     fontWeight: "bold",
     color: "white",
     marginBottom: 10,
@@ -302,7 +336,7 @@ const styles = StyleSheet.create({
   details: {
     flexDirection: "column",
     justifyContent: "space-between",
-    alignItems: "left",
+    alignItems: "flex-start",
     marginBottom: 10,
   },
   detailsRow: {
@@ -345,7 +379,7 @@ const styles = StyleSheet.create({
   horizontalScroll: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
   },
   ingredientCardWrapper: {
     width: 90,
