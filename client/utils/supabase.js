@@ -16,6 +16,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
+
+
 export const store_image = async (bucket, image_path, image) => {
   let { data: response, error } = await supabase.storage
     .from(bucket)
@@ -64,13 +66,37 @@ export const fetchSavedRecipesByUser = async (user_id) => {
     // Use a Set to store unique recipe_ids
     const uniqueRecipeIds = Array.from(
       new Set(recipes.map(({ recipe_id }) => recipe_id))
-    ).reverse();
+    ).reverse();  
 
     return uniqueRecipeIds;
   }
 
   return [];
 };
+
+export const deleteUserProfile = async (userId) => {
+  const { error } = await supabase
+    .from('profiles_v2')  // Use your profiles table name
+    .delete()
+    .eq('id', userId);  // Assuming user_id is the primary key
+
+  if (error) {
+    console.log('Error deleting user profile:', error.message);
+  } else {
+    console.log('User profile deleted successfully');
+  }
+}
+
+// Function to delete user from Supabase authentication
+export const deleteUserAuth = async (user_id) => {
+  const { error } = await supabase.auth.admin.deleteUser(user_id);  // Make sure you have the proper permissions
+
+  if (error) {
+    console.log('Error deleting user from auth:', error.message);
+  } else {
+    console.log('User deleted from authentication system');
+  }
+}
 
 // export const fetchUserProfile = async (userId) => {
 //   if (!userId) throw new Error("User ID not available when fetching profile");

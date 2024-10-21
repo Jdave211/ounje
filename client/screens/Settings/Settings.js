@@ -14,6 +14,7 @@ import { supabase } from "../../utils/supabase";
 import Toast from "react-native-toast-message";
 import { useAppStore } from "../../stores/app-store";
 import { useNavigation } from "@react-navigation/native";
+import { deleteUserProfile, deleteUserAuth } from "../../utils/supabase"
 
 const settingsData = [
   // {
@@ -68,18 +69,24 @@ const settingsData = [
   },
 ];
 
-const SettingsScreen = ({ navigation }) => {
+const SettingsScreen = ({ navigation, userId }) => {
   const [deleteAcc, setDeleteAcc] = useState(false);
   const clearAllAppState = useAppStore((state) => state.clearAllAppState);
   const user_id = useAppStore((state) => state.user_id);
 
-  const handlePress = (screen) => {
+ const handlePress = (screen) => {
+  if (screen) {
     if (screen.startsWith("http")) {
       Linking.openURL(screen);
     } else {
       navigation.navigate(screen);
     }
-  };
+  } else {
+    console.log("No valid screen provided");
+    // You could show an alert or a toast message if desired
+  }
+};
+
 
   const handleDeleteAccount = () => {
     Alert.alert(
@@ -91,25 +98,12 @@ const SettingsScreen = ({ navigation }) => {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            setDeleteAcc(true);
-            try {
-              // Sign out logic
-              const { error: signOutError } = await supabase.auth.signOut();
-              if (signOutError) {
-                throw signOutError;
-              }
-
-              // Delete account logic
-              const { error: deleteError } = await supabase
-                .from("profiles")
-                .delete()
-                .eq("id", user_id);
-
-              if (deleteError) {
-                throw deleteError;
-              }
+            await deleteUserProfile(userId);
+              await deleteUserAuth(userId);
+              console.log('User deleted');
 
               clearAllAppState();
+              useAppStore.getState().set_user_id(null); 
 
               Toast.show({
                 type: "success",
@@ -117,15 +111,11 @@ const SettingsScreen = ({ navigation }) => {
                 text2: "Your account has been successfully deleted.",
               });
 
-              navigation.navigate("Login"); // Navigate to the login screen
-            } catch (error) {
-              Alert.alert("Error", error.message);
-            } finally {
-              setDeleteAcc(false);
-            }
+              
+            
           },
         },
-      ],
+      ]
     );
   };
 

@@ -1,5 +1,3 @@
-
-
 import React, { useState } from "react";
 import {
   View,
@@ -14,6 +12,7 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
   Dimensions,
+  FlatList,
 } from "react-native";
 import { Button, Icon } from "react-native-elements";
 import { FontAwesome5, AntDesign, MaterialIcons } from "@expo/vector-icons";
@@ -48,7 +47,10 @@ import { T } from "ramda";
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
 
-const Inventory = () => {
+const Inventory = ({ route }) => {
+  const groceryList = route.params?.groceryList;
+  console.log("Grocery List: ", groceryList);
+  console.log("Route params:", route.params);
   const navigation = useNavigation();
   const [selected, setSelected] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -80,6 +82,8 @@ const Inventory = () => {
     (state) => state.inventory.addImagesAndItems
   );
 
+  const [ImageConvertLoadng, setImageConvertLoadng] = useState(false);
+
   const foodItems = getFoodItems(); // Get food items from app store
   const inventoryImages = getImages(); // Get inventory images from app store
 
@@ -88,12 +92,12 @@ const Inventory = () => {
 
   // Fetch inventory data using React Query
   const { refetch: refetchInventoryData } = useQuery(
-    ["inventoryImages", userId],  
+    ["inventoryImages", userId],
     async () => fetchInventoryData(userId),
     { onSuccess: (inventoryData) => setInventoryData(inventoryData) } // Set inventory data on success
   );
 
-  // Show authentication alert if user is not logged in 
+  // Show authentication alert if user is not logged in
   const showAuthAlert = () => {
     Alert.alert(
       "Authentication Required",
@@ -112,7 +116,7 @@ const Inventory = () => {
     );
   };
 
-   // Add new item to inventory
+  // Add new item to inventory
   const addNewItem = async () => {
     if (userId.startsWith("guest")) {
       showAuthAlert(); // Show authentication alert for guest users
@@ -187,19 +191,21 @@ const Inventory = () => {
       showAuthAlert();
       return;
     }
-  
-    const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (cameraRollPerm !== "granted") {
       alert("Sorry, we need camera roll permissions to make this work!");
       return;
     }
-  
-    const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
+
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
     if (cameraPerm !== "granted") {
       alert("Sorry, we need camera permissions to make this work!");
       return;
     }
-  
+
     Alert.alert(
       "Select Photo",
       "Choose an option:",
@@ -236,25 +242,84 @@ const Inventory = () => {
       { cancelable: true }
     );
   };
-  
+
+  const handleAddPantryImage = async () => {
+    if (userId.startsWith("guest")) {
+      showAuthAlert();
+      return;
+    }
+
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (cameraRollPerm !== "granted") {
+      alert("Sorry, we need camera roll permissions to make this work!");
+      return;
+    }
+
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
+    if (cameraPerm !== "granted") {
+      alert("Sorry, we need camera permissions to make this work!");
+      return;
+    }
+
+    Alert.alert(
+      "Select Photo",
+      "Choose an option:",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Take Photo",
+          onPress: async () => {
+            const result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.All,
+              allowsEditing: true,
+              aspect: [4, 3],
+              quality: 1,
+            });
+            handleImageSelection(result);
+          },
+        },
+        {
+          text: "Choose from Library",
+          onPress: async () => {
+            const result = await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.All,
+              allowsEditing: true,
+              aspect: [4, 3],
+              quality: 1,
+            });
+            handleImageSelection(result);
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const handleReplaceImage = async (index) => {
     if (userId.startsWith("guest")) {
       showAuthAlert();
       return;
     }
-  
-    const { status: cameraRollPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    const { status: cameraRollPerm } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (cameraRollPerm !== "granted") {
       alert("Sorry, we need camera roll permissions to make this work!");
       return;
     }
-  
-    const { status: cameraPerm } = await ImagePicker.requestCameraPermissionsAsync();
+
+    const { status: cameraPerm } =
+      await ImagePicker.requestCameraPermissionsAsync();
     if (cameraPerm !== "granted") {
       alert("Sorry, we need camera permissions to make this work!");
       return;
     }
-  
+
     Alert.alert(
       "Select Photo",
       "Choose an option:",
@@ -291,20 +356,23 @@ const Inventory = () => {
       { cancelable: true }
     );
   };
-  
+
   const handleImageSelection = async (result, index) => {
     if (!result.canceled) {
       const imageUri = result.assets[0].uri;
       const base64Image = await convertImageToBase64(imageUri);
-  
+
       setIsLoading(true);
       await sendImages([base64Image]);
       refetchInventoryData();
       setIsLoading(false);
-  
-      const message = index !== undefined ? "Image has been replaced." : "Image has been added.";
+
+      const message =
+        index !== undefined
+          ? "Image has been replaced."
+          : "Image has been added.";
       Alert.alert("Success", message);
-      
+
       if (index !== undefined) {
         setModalVisible(false); // Close modal if replacing an image
       }
@@ -358,12 +426,15 @@ const Inventory = () => {
           <ActivityIndicator size="large" color="#38F096" />
         </View>
       )}
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollViewContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollViewContent}
+      >
         {selectedTab === "Inventory" ? (
           <>
             <View style={styles.imageSection}>
               <View style={styles.imageContainer}>
-              <Text style={styles.imageTitle}>Fridge</Text>
+                <Text style={styles.imageTitle}>Fridge</Text>
                 {inventoryImages?.length === 0 ? (
                   <TouchableOpacity
                     style={styles.addImageButton}
@@ -371,12 +442,11 @@ const Inventory = () => {
                   >
                     <Image
                       source={fridge}
-                      style={styles.image
-                      } // Responsive width and height
+                      style={styles.image} // Responsive width and height
                     />
                     <View style={styles.overlay}>
-                        <Text style={styles.overlayTextAdd}>Tap to add+</Text>
-                      </View>
+                      <Text style={styles.overlayTextAdd}>Tap to add+</Text>
+                    </View>
                   </TouchableOpacity>
                 ) : (
                   inventoryImages.map((imageUrl, index) => (
@@ -397,19 +467,19 @@ const Inventory = () => {
                 )}
               </View>
               <View style={styles.imageContainer}>
-              <Text style={styles.imageTitle}>Pantry</Text>
-                {inventoryImages?.length === 1 ? (
+                <Text style={styles.imageTitle}>Pantry</Text>
+                {inventoryImages?.length === 0 ? (
                   <TouchableOpacity
                     style={styles.addImageButton}
-                    onPress={handleAddImage}
+                    onPress={handleAddPantryImage}
                   >
                     <Image
                       source={pantry}
                       style={styles.image} // Responsive width and height
                     />
                     <View style={styles.overlay}>
-                        <Text style={styles.overlayTextAdd}>Tap to add+</Text>
-                      </View>
+                      <Text style={styles.overlayTextAdd}>Tap to add+</Text>
+                    </View>
                   </TouchableOpacity>
                 ) : (
                   inventoryImages.map((imageUrl, index) => (
@@ -418,6 +488,7 @@ const Inventory = () => {
                       onPress={() => {
                         setSelectedImage(imageUrl);
                         setModalVisible(true);
+                        // setModalVisible(false)
                       }}
                       style={styles.imageWrapper}
                     >
@@ -428,7 +499,7 @@ const Inventory = () => {
                     </TouchableOpacity>
                   ))
                 )}
-                </View>
+              </View>
             </View>
 
             <Modal
@@ -451,9 +522,12 @@ const Inventory = () => {
                   />
                   <TouchableOpacity
                     style={styles.replaceButton}
-                    onPress={() =>
-                      handleReplaceImage(inventoryImages.indexOf(selectedImage))
-                    }
+                    onPress={() => {
+                      handleReplaceImage(
+                        inventoryImages.indexOf(selectedImage)
+                      );
+                      setModalVisible(false);
+                    }}
                   >
                     <Text style={styles.buttonText}>Replace Image</Text>
                   </TouchableOpacity>
@@ -515,16 +589,41 @@ const Inventory = () => {
             </View>
           </>
         ) : (
-
           <View>
             <Text style={styles.cardTitle}>Grocery Icon</Text>
-            
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Grocery List</Text>
-            <Text style={styles.warning}>
-              No items in your grocery list yet.
-            </Text>
-          </View>
+
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Grocery List</Text>
+              
+              {/* Conditionally render a message if the groceryList is empty */}
+              {!groceryList || groceryList.length === 0 ? (
+                <Text style={styles.warning}>
+                  No items in your grocery list yet.
+                </Text>
+              ) : (
+                <View style={styles.centeredContainer}>
+                
+                  <FlatList
+                    data={groceryList}
+                    numColumns={3}
+                    keyExtractor={(item, index) => index.toString()}
+                    renderItem={({ item }) => (
+                      <View style={{ width: 90, marginBottom: 10, marginRight: 10 }}>
+                        <Image
+                          resizeMode="contain"
+                          source={{
+                            uri: `https://spoonacular.com/cdn/ingredients_100x100/${item.image}`,
+                          }}
+                          style={{ width: 50, height: 50, alignSelf: 'center'}}
+                        />
+                        <Text style={styles.ingredientText}>{item.name}</Text>
+                      </View>
+                    )}
+                    contentContainerStyle={styles.listContainer}
+                  />
+                </View>
+              )}
+            </View>
           </View>
         )}
       </ScrollView>
@@ -664,7 +763,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center", // Removed any padding that would extend the overlay beyond the image
-  },  
+  },
   addImageText: {
     color: "#fff",
     fontSize: 18,
@@ -700,6 +799,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   card: {
+    
     backgroundColor: "#1f1f1f",
     borderRadius: 10,
     padding: 20,
@@ -825,7 +925,12 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: screenWidth * 0.035, // Responsive font size
   },
+  ingredientText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "white",
+    textAlign: "center",
+  },
 });
 
 export default Inventory;
-

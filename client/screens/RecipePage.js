@@ -38,6 +38,8 @@ const RecipePage = ({ route }) => {
   const PAGE_WIDTH = Dimensions.get("window").width;
   const [isRecipeSaved, setIsRecipeSaved] = useState(false);
   const user_id = useAppStore((state) => state.user_id);
+  const [groceryList, setGroceryList] = useState([]);
+const [inventory, setInventory] = useState([]);
 
   const { data: recipeDetails } = useQuery(
     ["recipeDetails", recipe_id],
@@ -112,12 +114,14 @@ const RecipePage = ({ route }) => {
 
   // Function to add ingredient to inventory
   const addIngredientToInventory = (ingredient) => {
-    console.log("Adding ingredient to inventory:", ingredient);
+    setInventory((prevInventory) => [...prevInventory, ingredient]);
+    console.log("Added to Inventory:", ingredient);
   };
 
   // Function to add ingredient to grocery list
   const addIngredientToGroceryList = (ingredient) => {
-    console.log("Adding ingredient to grocery list:", ingredient);
+    setGroceryList((prevGroceryList) => [...prevGroceryList, ingredient]);
+    console.log("Added to Grocery List:", ingredient);
   };
 
   return (
@@ -248,12 +252,18 @@ const RecipePage = ({ route }) => {
                               text: "Grocery List",
                               onPress: () => {
                                 addIngredientToGroceryList(ingredient);
+                                setTimeout(() => {
+                                  navigation.navigate("Inventory", { groceryList: [...groceryList, ingredient] });
+                                }, 0);
+                                console.log("groceryList",groceryList);
+                                  // Navigate with updated grocery list
                               },
                             },
                             {
                               text: "Inventory",
                               onPress: () => {
                                 addIngredientToInventory(ingredient);
+                                navigation.navigate("Inventory", { inventory });  // Navigate with updated inventory
                               },
                             },
                           ],
