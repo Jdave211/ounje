@@ -155,7 +155,7 @@ const useImageProcessing = () => {
   
       const stored_food_items_map_by_spoonacular_id = stored_food_items.reduce(
         (acc, item) => {
-          acc[item.spoonacular_id] = item;
+          acc[item?.spoonacular_id] = item;
           return acc;
         },
         {}
@@ -166,7 +166,7 @@ const useImageProcessing = () => {
       const parsed_food_items_map_by_original = parsed_food_items.reduce(
         (acc, item) => {
           acc[item.original] =
-            stored_food_items_map_by_spoonacular_id[item.spoonacular_id];
+            stored_food_items_map_by_spoonacular_id[item?.spoonacular_id];
           return acc;
         },
         {}

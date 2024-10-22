@@ -78,7 +78,7 @@ export const find_recipes_by_ingredients = async (
 
   const stored_suggested_recipes_id_set = new Set();
   stored_suggested_recipes.forEach((recipe) =>
-    stored_suggested_recipes_id_set.add(recipe.spoonacular_id)
+    stored_suggested_recipes_id_set.add(recipe?.spoonacular_id)
   );
 
   const new_recipe_ids = suggested_recipe_ids.filter(

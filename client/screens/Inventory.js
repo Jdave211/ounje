@@ -122,46 +122,64 @@ const Inventory = ({ route }) => {
       showAuthAlert(); // Show authentication alert for guest users
       return;
     }
-
-    if (newItem.trim() === "") {
+  
+    const trimmedItem = newItem.trim().toLowerCase(); // Normalize case for comparison
+  
+    if (trimmedItem === "") {
       Alert.alert("Error", "Please enter a valid item name."); // Alert for empty item name
       return;
     }
-
+  
     setIsLoading(true); // Start loading
-    const newlyParsedFoodItems = await parse_ingredients([newItem]); // Parse the new item input
+  
+    // Parse the new item input
+    const newlyParsedFoodItems = await parse_ingredients([newItem]);
     console.log({ newlyParsedFoodItems });
-
+  
+    // Validate the parsed items
     if (!newlyParsedFoodItems || newlyParsedFoodItems.length === 0) {
       Alert.alert("Error", "Please add only food items."); // Alert if no valid food items are found
       setIsLoading(false); // Stop loading
       return;
     }
-
-    // Check for duplicates by Spoonacular ID
-    const existingItemIds = new Set(foodItems.map((item) => item.id)); // Assuming each item has a unique id
+  
+    // Check if any item has an undefined spoonacular_id
+    const invalidItems = newlyParsedFoodItems.filter(item => !item.spoonacular_id);
+    if (invalidItems.length > 0) {
+      Alert.alert("Error", "Please add only valid food items.");
+      setIsLoading(false);
+      return;
+    }
+  
+    // Check for duplicates by item name or spoonacular_id
+    const existingItemNames = new Set(foodItems.map((item) => item.name.toLowerCase()));
+    const existingItemIds = new Set(foodItems.map((item) => item.spoonacular_id)); // Use spoonacular_id here
+  
+    // Check for duplicates by both name and ID (if spoonacular_id is available)
     const nonDuplicateItems = newlyParsedFoodItems.filter(
-      (item) => !existingItemIds.has(item.id)
+      (item) =>
+        (!item.spoonacular_id || !existingItemIds.has(item.spoonacular_id)) &&
+        !existingItemNames.has(item.name.toLowerCase())
     );
-
+  
     if (nonDuplicateItems.length === 0) {
       Alert.alert("Duplicate Item", "This item is already in your inventory.");
       setIsLoading(false); // Stop loading
       return;
     }
-
+  
     const newly_stored_items = await storeNewFoodItems(nonDuplicateItems);
-
+  
     await addInventoryItem(
       userId,
-      newly_stored_items.map(({ id }) => id)
+      newly_stored_items.map(({ spoonacular_id }) => spoonacular_id) // Use spoonacular_id here
     );
-
+  
     addManuallyAddedItems(newly_stored_items);
-
+  
     setNewItem("");
     setIsLoading(false); // Stop loading
-
+  
     Toast.show({
       type: "success",
       text1: "Item added!",
@@ -169,6 +187,7 @@ const Inventory = ({ route }) => {
       onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
+  
 
   const handleRemoveSelected = async (food_item) => {
     if (userId.startsWith("guest")) {
@@ -182,7 +201,7 @@ const Inventory = ({ route }) => {
     Toast.show({
       type: "success",
       text1: "Item removed!",
-      text2: `${food_item.name} has been removed from your inventory.`,
+      text2: `${food_item?.name} has been removed from your inventory.`,
       onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
@@ -577,8 +596,8 @@ const Inventory = ({ route }) => {
                     >
                       <IngredientCard
                         key={i}
-                        name={item.name}
-                        image={`https://img.spoonacular.com/ingredients_100x100/${item.image}`}
+                        name={item?.name}
+                        image={`https://img.spoonacular.com/ingredients_100x100/${item?.image}`}
                         showCancelButton={true}
                         onCancel={() => handleRemoveSelected(item)}
                       />
@@ -594,6 +613,7 @@ const Inventory = ({ route }) => {
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Grocery List</Text>
+              <View style={styles.centeredContainer}></View>
               
               {/* Conditionally render a message if the groceryList is empty */}
               {!groceryList || groceryList.length === 0 ? (
@@ -601,27 +621,42 @@ const Inventory = ({ route }) => {
                   No items in your grocery list yet.
                 </Text>
               ) : (
-                <View style={styles.centeredContainer}>
+                // <View style={styles.centeredContainer}>
                 
-                  <FlatList
-                    data={groceryList}
-                    numColumns={3}
-                    keyExtractor={(item, index) => index.toString()}
-                    renderItem={({ item }) => (
-                      <View style={{ width: 90, marginBottom: 10, marginRight: 10 }}>
-                        <Image
-                          resizeMode="contain"
-                          source={{
-                            uri: `https://spoonacular.com/cdn/ingredients_100x100/${item.image}`,
-                          }}
-                          style={{ width: 50, height: 50, alignSelf: 'center'}}
-                        />
-                        <Text style={styles.ingredientText}>{item.name}</Text>
-                      </View>
-                    )}
-                    contentContainerStyle={styles.listContainer}
-                  />
-                </View>
+                //   <FlatList
+                //     data={groceryList}
+                //     numColumns={3}
+                //     keyExtractor={(item, index) => index.toString()}
+                //     renderItem={({ item }) => (
+                //       <View style={{ width: 90, marginBottom: 10, marginRight: 10 }}>
+                //         <Image
+                //           resizeMode="contain"
+                //           source={{
+                //             uri: `https://spoonacular.com/cdn/ingredients_100x100/${item?.image}`,
+                //           }}
+                //           style={{ width: 50, height: 50, alignSelf: 'center'}}
+                //         />
+                //         <Text style={styles.ingredientText}>{item?.name}</Text>
+                //       </View>
+                //     )}
+                //     contentContainerStyle={styles.listContainer}
+                //   />
+                // </View>
+
+                groceryList.map((item, i) => (
+                  <View
+                    key={i}
+                    style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+                  >
+                    <IngredientCard
+                      key={i}
+                      name={item?.name}
+                      image={`https://img.spoonacular.com/ingredients_100x100/${item?.image}`}
+                      showCancelButton={true}
+                      onCancel={() => handleRemoveSelected(item)}
+                    />
+                  </View>
+                ))
               )}
             </View>
           </View>

@@ -16,7 +16,7 @@ const IngredientCard = ({
   onAddPress,
 }) => {
   // Split the name into words and determine the number of lines
-  const words = entitle(name).split(" ");
+  const words = entitle(name)?.split(" ");
   const numberOfLines = words.length > 1 ? 2 : 1;
 
   // State to manage whether the ingredient has been added

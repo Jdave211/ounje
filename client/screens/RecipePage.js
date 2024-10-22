@@ -1,6 +1,6 @@
 // RecipePage.js
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   View,
   Text,
@@ -118,10 +118,52 @@ const [inventory, setInventory] = useState([]);
     console.log("Added to Inventory:", ingredient);
   };
 
-  // Function to add ingredient to grocery list
+  // // Function to add ingredient to grocery list
+  // const addIngredientToGroceryList = (ingredient) => {
+  //   setGroceryList((prevGroceryList) => [...prevGroceryList, ingredient]);
+  //   console.log("Added to Grocery List:", ingredient);
+  // };
+
+  useEffect(() => {
+    const loadGroceryList = async () => {
+      try {
+        const storedList = await AsyncStorage.getItem('groceryList');
+        if (storedList !== null) {
+          setGroceryList(JSON.parse(storedList));
+        }
+      } catch (e) {
+        console.error('Failed to load the grocery list', e);
+      }
+    };
+
+    loadGroceryList();  
+  }, []);
+
+   // Save the updated list to AsyncStorage
+   const saveGroceryList = async (list) => {
+    try {
+      await AsyncStorage.setItem('groceryList', JSON.stringify(list));
+    } catch (e) {
+      console.error('Failed to save the grocery list', e);
+    }
+  };
+
+  // Add ingredient to the grocery list and navigate
   const addIngredientToGroceryList = (ingredient) => {
-    setGroceryList((prevGroceryList) => [...prevGroceryList, ingredient]);
-    console.log("Added to Grocery List:", ingredient);
+    setGroceryList((prevGroceryList) => {
+      const updatedGroceryList = [...prevGroceryList, ingredient];
+
+      // Save the updated list to AsyncStorage
+      saveGroceryList(updatedGroceryList);
+
+      // Log the updated grocery list to ensure it's correct
+      console.log('Updated Grocery List:', updatedGroceryList);
+
+      // Navigate to the Inventory screen with the updated grocery list
+      navigation.navigate('Inventory', { groceryList: updatedGroceryList });
+
+      return updatedGroceryList; // Return the updated list to update state
+    });
   };
 
   return (
