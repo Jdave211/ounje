@@ -30,6 +30,7 @@ import {
   usePercentageOfIngredientsOwned,
 } from "../hooks/usePercentageOfIngredientsOwned";
 import IngredientCard from "../components/IngredientCard";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const RecipePage = ({ route }) => {
   const { width: WIDTH } = useWindowDimensions();
@@ -158,9 +159,6 @@ const [inventory, setInventory] = useState([]);
 
       // Log the updated grocery list to ensure it's correct
       console.log('Updated Grocery List:', updatedGroceryList);
-
-      // Navigate to the Inventory screen with the updated grocery list
-      navigation.navigate('Inventory', { groceryList: updatedGroceryList });
 
       return updatedGroceryList; // Return the updated list to update state
     });

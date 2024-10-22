@@ -43,12 +43,15 @@ import { entitle } from "../utils/helpers";
 import Empty from "../components/Empty";
 import IngredientCard from "../components/IngredientCard";
 import { T } from "ramda";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
 
 const Inventory = ({ route }) => {
   const groceryList = route.params?.groceryList;
+  const [groceryListAdd, setgroceryListAdd] = useState();
+ 
   console.log("Grocery List: ", groceryList);
   console.log("Route params:", route.params);
   const navigation = useNavigation();
@@ -122,64 +125,70 @@ const Inventory = ({ route }) => {
       showAuthAlert(); // Show authentication alert for guest users
       return;
     }
-  
+
     const trimmedItem = newItem.trim().toLowerCase(); // Normalize case for comparison
-  
+
     if (trimmedItem === "") {
       Alert.alert("Error", "Please enter a valid item name."); // Alert for empty item name
       return;
     }
-  
+
     setIsLoading(true); // Start loading
-  
+
     // Parse the new item input
     const newlyParsedFoodItems = await parse_ingredients([newItem]);
     console.log({ newlyParsedFoodItems });
-  
+
     // Validate the parsed items
     if (!newlyParsedFoodItems || newlyParsedFoodItems.length === 0) {
       Alert.alert("Error", "Please add only food items."); // Alert if no valid food items are found
       setIsLoading(false); // Stop loading
       return;
     }
-  
+
     // Check if any item has an undefined spoonacular_id
-    const invalidItems = newlyParsedFoodItems.filter(item => !item.spoonacular_id);
+    const invalidItems = newlyParsedFoodItems.filter(
+      (item) => !item.spoonacular_id
+    );
     if (invalidItems.length > 0) {
       Alert.alert("Error", "Please add only valid food items.");
       setIsLoading(false);
       return;
     }
-  
+
     // Check for duplicates by item name or spoonacular_id
-    const existingItemNames = new Set(foodItems.map((item) => item.name.toLowerCase()));
-    const existingItemIds = new Set(foodItems.map((item) => item.spoonacular_id)); // Use spoonacular_id here
-  
+    const existingItemNames = new Set(
+      foodItems.map((item) => item.name.toLowerCase())
+    );
+    const existingItemIds = new Set(
+      foodItems.map((item) => item.spoonacular_id)
+    ); // Use spoonacular_id here
+
     // Check for duplicates by both name and ID (if spoonacular_id is available)
     const nonDuplicateItems = newlyParsedFoodItems.filter(
       (item) =>
         (!item.spoonacular_id || !existingItemIds.has(item.spoonacular_id)) &&
         !existingItemNames.has(item.name.toLowerCase())
     );
-  
+
     if (nonDuplicateItems.length === 0) {
       Alert.alert("Duplicate Item", "This item is already in your inventory.");
       setIsLoading(false); // Stop loading
       return;
     }
-  
+
     const newly_stored_items = await storeNewFoodItems(nonDuplicateItems);
-  
+
     await addInventoryItem(
       userId,
       newly_stored_items.map(({ spoonacular_id }) => spoonacular_id) // Use spoonacular_id here
     );
-  
+
     addManuallyAddedItems(newly_stored_items);
-  
+
     setNewItem("");
     setIsLoading(false); // Stop loading
-  
+
     Toast.show({
       type: "success",
       text1: "Item added!",
@@ -187,7 +196,6 @@ const Inventory = ({ route }) => {
       onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
-  
 
   const handleRemoveSelected = async (food_item) => {
     if (userId.startsWith("guest")) {
@@ -205,6 +213,38 @@ const Inventory = ({ route }) => {
       onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (groceryList) {
+        setgroceryListAdd(groceryList);
+        console.log("Conversation ID set: ", groceryList);
+      }
+    }, [groceryList])
+  );
+
+  const handleRemoveGrocery = async (groceryList) => {
+    if (userId.startsWith("guest")) {
+      showAuthAlert();
+      return;
+    }
+const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
+    setgroceryListAdd(updatedList);
+
+     // Update AsyncStorage
+     try {
+      await AsyncStorage.setItem('groceryList', JSON.stringify(updatedList));
+      Toast.show({
+        type: "success",
+        text1: "Item removed!",
+        text2: `${groceryList?.name} has been removed from your grocery.`,
+        onHide: () => setNotificationVisible(true), // Show the notification after the toast
+      });
+    } catch (error) {
+      console.error('Failed to update grocery list in AsyncStorage', error);
+    }
+  };
+
   const handleAddImage = async () => {
     if (userId.startsWith("guest")) {
       showAuthAlert();
@@ -613,8 +653,8 @@ const Inventory = ({ route }) => {
 
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Grocery List</Text>
-              <View style={styles.centeredContainer}></View>
-              
+              <View style={styles.centeredContainer}>
+
               {/* Conditionally render a message if the groceryList is empty */}
               {!groceryList || groceryList.length === 0 ? (
                 <Text style={styles.warning}>
@@ -622,7 +662,7 @@ const Inventory = ({ route }) => {
                 </Text>
               ) : (
                 // <View style={styles.centeredContainer}>
-                
+
                 //   <FlatList
                 //     data={groceryList}
                 //     numColumns={3}
@@ -643,7 +683,7 @@ const Inventory = ({ route }) => {
                 //   />
                 // </View>
 
-                groceryList.map((item, i) => (
+                groceryListAdd.map((item, i) => (
                   <View
                     key={i}
                     style={{ width: 90, marginBottom: 10, marginRight: 10 }}
@@ -653,11 +693,12 @@ const Inventory = ({ route }) => {
                       name={item?.name}
                       image={`https://img.spoonacular.com/ingredients_100x100/${item?.image}`}
                       showCancelButton={true}
-                      onCancel={() => handleRemoveSelected(item)}
+                      onCancel={() => handleRemoveGrocery(item)}
                     />
                   </View>
                 ))
               )}
+            </View>
             </View>
           </View>
         )}
@@ -834,7 +875,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   card: {
-    
     backgroundColor: "#1f1f1f",
     borderRadius: 10,
     padding: 20,
