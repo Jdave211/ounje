@@ -40,7 +40,7 @@ const RecipePage = ({ route }) => {
   const [isRecipeSaved, setIsRecipeSaved] = useState(false);
   const user_id = useAppStore((state) => state.user_id);
   const [groceryList, setGroceryList] = useState([]);
-const [inventory, setInventory] = useState([]);
+  const [inventory, setInventory] = useState([]);
 
   const { data: recipeDetails } = useQuery(
     ["recipeDetails", recipe_id],
@@ -128,24 +128,24 @@ const [inventory, setInventory] = useState([]);
   useEffect(() => {
     const loadGroceryList = async () => {
       try {
-        const storedList = await AsyncStorage.getItem('groceryList');
+        const storedList = await AsyncStorage.getItem("groceryList");
         if (storedList !== null) {
           setGroceryList(JSON.parse(storedList));
         }
       } catch (e) {
-        console.error('Failed to load the grocery list', e);
+        console.error("Failed to load the grocery list", e);
       }
     };
 
-    loadGroceryList();  
+    loadGroceryList();
   }, []);
 
-   // Save the updated list to AsyncStorage
-   const saveGroceryList = async (list) => {
+  // Save the updated list to AsyncStorage
+  const saveGroceryList = async (list) => {
     try {
-      await AsyncStorage.setItem('groceryList', JSON.stringify(list));
+      await AsyncStorage.setItem("groceryList", JSON.stringify(list));
     } catch (e) {
-      console.error('Failed to save the grocery list', e);
+      console.error("Failed to save the grocery list", e);
     }
   };
 
@@ -158,7 +158,7 @@ const [inventory, setInventory] = useState([]);
       saveGroceryList(updatedGroceryList);
 
       // Log the updated grocery list to ensure it's correct
-      console.log('Updated Grocery List:', updatedGroceryList);
+      console.log("Updated Grocery List:", updatedGroceryList);
 
       return updatedGroceryList; // Return the updated list to update state
     });
@@ -293,17 +293,19 @@ const [inventory, setInventory] = useState([]);
                               onPress: () => {
                                 addIngredientToGroceryList(ingredient);
                                 setTimeout(() => {
-                                  navigation.navigate("Inventory", { groceryList: [...groceryList, ingredient] });
+                                  navigation.navigate("Inventory", {
+                                    groceryList: [...groceryList, ingredient],
+                                  });
                                 }, 0);
-                                console.log("groceryList",groceryList);
-                                  // Navigate with updated grocery list
+                                console.log("groceryList", groceryList);
+                                // Navigate with updated grocery list
                               },
                             },
                             {
                               text: "Inventory",
                               onPress: () => {
                                 addIngredientToInventory(ingredient);
-                                navigation.navigate("Inventory", { inventory });  // Navigate with updated inventory
+                                navigation.navigate("Inventory", { inventory }); // Navigate with updated inventory
                               },
                             },
                           ],
