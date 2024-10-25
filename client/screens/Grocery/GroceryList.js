@@ -304,11 +304,11 @@ const GroceryList = () => {
     <View style={styles.container}>
       <Text style={styles.header}>Grocery List</Text>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Add New Food Item</Text>
+        <Text style={styles.cardTitle}>Add New grocery Item</Text>
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
-            placeholder="Enter your food item"
+            placeholder="Enter your grocery item"
             placeholderTextColor="gray"
             autoCapitalize="none"
             maxLength={50}
