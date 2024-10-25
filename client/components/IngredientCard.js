@@ -14,6 +14,7 @@ const IngredientCard = ({
   showCancelButton = false,
   showAddButton = false,
   onAddPress,
+  GroceryItem = false,
 }) => {
   // Split the name into words and determine the number of lines
   const words = entitle(name)?.split(" ");
@@ -31,7 +32,15 @@ const IngredientCard = ({
   };
 
   return (
-    <View style={styles.ingredient}>
+    <View
+      style={[
+        styles.ingredient,
+        {
+          height: GroceryItem ? "auto" : 130,
+          marginBottom: GroceryItem ? "auto" : 10,
+        },
+      ]}
+    >
       {showCancelButton && (
         <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
           <MaterialIcons name="cancel" size={18} color="white" />
@@ -47,16 +56,34 @@ const IngredientCard = ({
           <AntDesign name="checkcircle" size={18} color="green" />
         </View>
       )}
-      <View style={styles.imageContainer}>
-        <Image style={styles.ingredientImage} source={{ uri: image }} />
-      </View>
-      <Text
-        style={styles.ingredientText}
-        adjustsFontSizeToFit
-        numberOfLines={numberOfLines}
-      >
-        {entitle(name)}
-      </Text>
+
+      {GroceryItem ? (
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <View style={[styles.imageContainer, { marginBottom: 1 }]}>
+            <Image style={styles.ingredientImage} source={{ uri: image }} />
+          </View>
+          <Text
+            style={styles.ingredientText}
+            adjustsFontSizeToFit
+            numberOfLines={numberOfLines}
+          >
+            {entitle(name)}
+          </Text>
+        </View>
+      ) : (
+        <View>
+          <View style={styles.imageContainer}>
+            <Image style={styles.ingredientImage} source={{ uri: image }} />
+          </View>
+          <Text
+            style={styles.ingredientText}
+            adjustsFontSizeToFit
+            numberOfLines={numberOfLines}
+          >
+            {entitle(name)}
+          </Text>
+        </View>
+      )}
       {amount !== undefined && unit !== undefined && (
         <Text style={styles.ingredientAmount}>
           {amount} {unit}

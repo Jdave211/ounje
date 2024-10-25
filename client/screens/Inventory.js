@@ -44,6 +44,8 @@ import Empty from "../components/Empty";
 import IngredientCard from "../components/IngredientCard";
 import { T } from "ramda";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import GroceryList from "./Grocery/GroceryList";
+import Pantry from "./Grocery/Pantry";
 
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
@@ -526,7 +528,7 @@ const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
                 )}
               </View>
               <View style={styles.imageContainer}>
-                <Text style={styles.imageTitle}>Pantry</Text>
+                {/* <Text style={styles.imageTitle}>Pantry</Text>
                 {inventoryImages?.length === 0 ? (
                   <TouchableOpacity
                     style={styles.addImageButton}
@@ -557,7 +559,8 @@ const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
                       </View>
                     </TouchableOpacity>
                   ))
-                )}
+                )} */}
+                <Pantry />
               </View>
             </View>
 
@@ -648,6 +651,13 @@ const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
             </View>
           </>
         ) : (
+
+          <View>
+
+            <View>
+
+              <GroceryList/>
+            </View>
           <View>
             <Text style={styles.cardTitle}>Grocery Icon</Text>
 
@@ -661,28 +671,8 @@ const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
                   No items in your grocery list yet.
                 </Text>
               ) : (
-                // <View style={styles.centeredContainer}>
-
-                //   <FlatList
-                //     data={groceryList}
-                //     numColumns={3}
-                //     keyExtractor={(item, index) => index.toString()}
-                //     renderItem={({ item }) => (
-                //       <View style={{ width: 90, marginBottom: 10, marginRight: 10 }}>
-                //         <Image
-                //           resizeMode="contain"
-                //           source={{
-                //             uri: `https://spoonacular.com/cdn/ingredients_100x100/${item?.image}`,
-                //           }}
-                //           style={{ width: 50, height: 50, alignSelf: 'center'}}
-                //         />
-                //         <Text style={styles.ingredientText}>{item?.name}</Text>
-                //       </View>
-                //     )}
-                //     contentContainerStyle={styles.listContainer}
-                //   />
-                // </View>
-
+                
+                
                 groceryListAdd.map((item, i) => (
                   <View
                     key={i}
@@ -700,6 +690,7 @@ const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
               )}
             </View>
             </View>
+          </View>
           </View>
         )}
       </ScrollView>
