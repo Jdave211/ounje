@@ -127,70 +127,74 @@ const Inventory = ({ route }) => {
       showAuthAlert(); // Show authentication alert for guest users
       return;
     }
-
+  
     const trimmedItem = newItem.trim().toLowerCase(); // Normalize case for comparison
-
+  
     if (trimmedItem === "") {
       Alert.alert("Error", "Please enter a valid item name."); // Alert for empty item name
       return;
     }
-
+  
     setIsLoading(true); // Start loading
-
+  
     // Parse the new item input
     const newlyParsedFoodItems = await parse_ingredients([newItem]);
-    console.log({ newlyParsedFoodItems });
-
-    // Validate the parsed items
-    if (!newlyParsedFoodItems || newlyParsedFoodItems.length === 0) {
+    console.log({ newlyParsedFoodItems }); // Debug output
+  
+    // Ensure newlyParsedFoodItems is an array and has items
+    if (!Array.isArray(newlyParsedFoodItems) || newlyParsedFoodItems.length === 0) {
       Alert.alert("Error", "Please add only food items."); // Alert if no valid food items are found
       setIsLoading(false); // Stop loading
       return;
     }
-
-    // Check if any item has an undefined spoonacular_id
-    const invalidItems = newlyParsedFoodItems.filter(
-      (item) => !item.spoonacular_id
-    );
+  
+    // Validate the parsed items
+    const invalidItems = newlyParsedFoodItems.filter(item => !item.spoonacular_id);
     if (invalidItems.length > 0) {
       Alert.alert("Error", "Please add only valid food items.");
       setIsLoading(false);
       return;
     }
-
+  
     // Check for duplicates by item name or spoonacular_id
     const existingItemNames = new Set(
-      foodItems.map((item) => item.name.toLowerCase())
+      foodItems
+        .filter(item => item) // Filter out undefined items
+        .map(item => item.name ? item.name.toLowerCase() : '') // Ensure item.name exists
     );
+  
     const existingItemIds = new Set(
-      foodItems.map((item) => item.spoonacular_id)
-    ); // Use spoonacular_id here
-
-    // Check for duplicates by both name and ID (if spoonacular_id is available)
-    const nonDuplicateItems = newlyParsedFoodItems.filter(
-      (item) =>
-        (!item.spoonacular_id || !existingItemIds.has(item.spoonacular_id)) &&
-        !existingItemNames.has(item.name.toLowerCase())
+      foodItems
+        .filter(item => item) // Filter out undefined items
+        .map(item => item.spoonacular_id) // Use spoonacular_id here
     );
-
+  
+    // Check for duplicates by both name and ID (if spoonacular_id is available)
+    const nonDuplicateItems = newlyParsedFoodItems.filter(item => {
+      const hasValidId = item.spoonacular_id ? existingItemIds.has(item.spoonacular_id) : false;
+      const hasValidName = item.name ? !existingItemNames.has(item.name.toLowerCase()) : false;
+  
+      return (!item.spoonacular_id || !hasValidId) && hasValidName;
+    });
+  
     if (nonDuplicateItems.length === 0) {
       Alert.alert("Duplicate Item", "This item is already in your inventory.");
       setIsLoading(false); // Stop loading
       return;
     }
-
+  
     const newly_stored_items = await storeNewFoodItems(nonDuplicateItems);
-
+  
     await addInventoryItem(
       userId,
       newly_stored_items.map(({ spoonacular_id }) => spoonacular_id) // Use spoonacular_id here
     );
-
+  
     addManuallyAddedItems(newly_stored_items);
-
+  
     setNewItem("");
     setIsLoading(false); // Stop loading
-
+  
     Toast.show({
       type: "success",
       text1: "Item added!",
@@ -198,7 +202,7 @@ const Inventory = ({ route }) => {
       onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
-
+  
   const handleRemoveSelected = async (food_item) => {
     if (userId.startsWith("guest")) {
       showAuthAlert();
@@ -211,7 +215,7 @@ const Inventory = ({ route }) => {
     Toast.show({
       type: "success",
       text1: "Item removed!",
-      text2: `${food_item.name} has been removed from your inventory.`,
+      text2: `${food_item?.name} has been removed from your inventory.`,
       onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
