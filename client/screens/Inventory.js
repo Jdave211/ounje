@@ -211,7 +211,7 @@ const Inventory = ({ route }) => {
     Toast.show({
       type: "success",
       text1: "Item removed!",
-      text2: `${food_item?.name} has been removed from your inventory.`,
+      text2: `${food_item.name} has been removed from your inventory.`,
       onHide: () => setNotificationVisible(true), // Show the notification after the toast
     });
   };
@@ -248,63 +248,6 @@ const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
   };
 
   const handleAddImage = async () => {
-    if (userId.startsWith("guest")) {
-      showAuthAlert();
-      return;
-    }
-
-    const { status: cameraRollPerm } =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (cameraRollPerm !== "granted") {
-      alert("Sorry, we need camera roll permissions to make this work!");
-      return;
-    }
-
-    const { status: cameraPerm } =
-      await ImagePicker.requestCameraPermissionsAsync();
-    if (cameraPerm !== "granted") {
-      alert("Sorry, we need camera permissions to make this work!");
-      return;
-    }
-
-    Alert.alert(
-      "Select Photo",
-      "Choose an option:",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-        {
-          text: "Take Photo",
-          onPress: async () => {
-            const result = await ImagePicker.launchCameraAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.All,
-              allowsEditing: true,
-              aspect: [4, 3],
-              quality: 1,
-            });
-            handleImageSelection(result);
-          },
-        },
-        {
-          text: "Choose from Library",
-          onPress: async () => {
-            const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.All,
-              allowsEditing: true,
-              aspect: [4, 3],
-              quality: 1,
-            });
-            handleImageSelection(result);
-          },
-        },
-      ],
-      { cancelable: true }
-    );
-  };
-
-  const handleAddPantryImage = async () => {
     if (userId.startsWith("guest")) {
       showAuthAlert();
       return;
@@ -528,38 +471,6 @@ const updatedList = groceryListAdd.filter(item => item.id !== groceryList.id);
                 )}
               </View>
               <View style={styles.imageContainer}>
-                {/* <Text style={styles.imageTitle}>Pantry</Text>
-                {inventoryImages?.length === 0 ? (
-                  <TouchableOpacity
-                    style={styles.addImageButton}
-                    onPress={handleAddPantryImage}
-                  >
-                    <Image
-                      source={pantry}
-                      style={styles.image} // Responsive width and height
-                    />
-                    <View style={styles.overlay}>
-                      <Text style={styles.overlayTextAdd}>Tap to add+</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : (
-                  inventoryImages.map((imageUrl, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      onPress={() => {
-                        setSelectedImage(imageUrl);
-                        setModalVisible(true);
-                        // setModalVisible(false)
-                      }}
-                      style={styles.imageWrapper}
-                    >
-                      <Image source={{ uri: imageUrl }} style={styles.image} />
-                      <View style={styles.overlay}>
-                        <Text style={styles.overlayText}>Tap to replace</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))
-                )} */}
                 <Pantry />
               </View>
             </View>
