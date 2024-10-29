@@ -1,74 +1,124 @@
-import { StyleSheet, Text, View, TextInput, FlatList, TouchableOpacity, Dimensions } from "react-native";
+import {
+  StyleSheet,
+  Text,
+  View,
+  TextInput,
+  TouchableOpacity,
+  Dimensions,
+  Alert,
+  Image,
+} from "react-native";
 import React, { useEffect, useState } from "react";
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import IngredientCard from "../../components/IngredientCard";
 import Empty from "../../components/Empty";
 import { supabase } from "../../utils/supabase";
-import Checkbox from 'expo-checkbox';
+import Checkbox from "expo-checkbox";
 
 const screenWidth = Dimensions.get("window").width;
 
 const GroceryList = () => {
-  const [newItem, setNewItem] = useState('');
+  const [newItem, setNewItem] = useState("");
   const [foodItems, setFoodItems] = useState([]);
   const [checkedItems, setCheckedItems] = useState(new Set());
+  const [suggestions, setSuggestions] = useState([]);
 
-  // Fetch food items based on item name
-  const fetchFoodItems = async (itemName) => {
-    const { data, error } = await supabase
-      .from('food_items_grocery')
-      .select('*')
-      .ilike('name', `%${itemName}%`);
+  // Function to fetch unique food items based on item name
+const fetchFoodItems = async (itemName) => {
+  const { data, error } = await supabase
+    .from("food_items_grocery")
+    .select("*")
+    .ilike("name", `%${itemName}%`);
 
-    if (error) {
-      console.error('Error fetching food items:', error);
-      return [];
-    }
+  if (error) {
+    console.error("Error fetching food items:", error);
+    return [];
+  }
 
-    return data;
-  };
+  // Create a Set to filter out duplicate items based on their name
+  const uniqueItems = Array.from(new Set(data.map(item => item.name)))
+    .map(name => data.find(item => item.name === name));
 
-  // Function to add a new item to the grocery list
+  return uniqueItems;
+};
+
+const handleInputChange = async (text) => {
+  setNewItem(text);
+  if (text.trim() !== "") {
+    const matchingItems = await fetchFoodItems(text);
+    setSuggestions(matchingItems); // Show suggestions based on input
+  } else {
+    setSuggestions([]);
+  }
+};
+
   const addNewItem = async () => {
-    if (newItem.trim() === '') return;
+    if (newItem.trim() === "") return;
 
     const existingItems = await fetchFoodItems(newItem);
     let newItemsList = [...foodItems];
 
-    if (existingItems.length > 0) {
-      newItemsList = [...newItemsList, ...existingItems];
-    } else {
-      const newItemData = { id: Date.now(), name: newItem, image: null };
-      const { error } = await supabase.from('food_items_grocery').insert([newItemData]);
+    const itemExists = newItemsList.some(
+      (item) => item.name.toLowerCase() === newItem.toLowerCase()
+    );
 
-      if (!error) {
-        newItemsList.push(newItemData);
+    if (!itemExists) {
+      if (existingItems.length > 0) {
+        existingItems.forEach((item) => {
+          if (
+            !newItemsList.some(
+              (existingItem) =>
+                existingItem.name.toLowerCase() === item.name.toLowerCase()
+            )
+          ) {
+            newItemsList.push(item);
+          }
+        });
+      } else {
+        const newItemData = { id: Date.now(), name: newItem, image: null };
+        const { error } = await supabase
+          .from("food_items_grocery")
+          .insert([newItemData]);
+
+        if (!error) {
+          newItemsList.push(newItemData);
+        }
       }
+    } else {
+      Alert.alert(
+        "Duplicate Item",
+        `The item "${newItem}" is already in the Grocery List.`,
+        [{ text: "OK", onPress: () => setNewItem("") }]
+      );
+      return;
     }
 
     setFoodItems(newItemsList);
-    await AsyncStorage.setItem('groceryItems', JSON.stringify(newItemsList)); // Persist all items
-    setNewItem('');
+    await AsyncStorage.setItem("groceryItems", JSON.stringify(newItemsList)); // Persist all items
+    setNewItem("");
+    setSuggestions([]); // Clear suggestions after adding
   };
 
-  // Function to handle item check/uncheck
-  const handleCheckItem = (itemId) => {
-    setCheckedItems((prevChecked) => {
-      const newChecked = new Set(prevChecked);
-      if (newChecked.has(itemId)) {
+  const handleCheckItem = async (itemId) => {
+    if (checkedItems.has(itemId)) {
+      setCheckedItems((prevChecked) => {
+        const newChecked = new Set(prevChecked);
         newChecked.delete(itemId);
-      } else {
-        newChecked.add(itemId);
-      }
-      return newChecked;
-    });
+        return newChecked;
+      });
+    } else {
+      setFoodItems((prevItems) => {
+        const updatedItems = prevItems.filter((item) => item.id !== itemId);
+        AsyncStorage.setItem("groceryItems", JSON.stringify(updatedItems)); // Persist the updated list
+        return updatedItems;
+      });
+      setCheckedItems((prevChecked) => new Set(prevChecked).add(itemId));
+    }
   };
-
-  // Load items from AsyncStorage when the component mounts
   useEffect(() => {
     const loadItems = async () => {
       try {
-        const storedItems = await AsyncStorage.getItem('groceryItems');
+        const storedItems = await AsyncStorage.getItem("groceryItems");
         if (storedItems) {
           const items = JSON.parse(storedItems);
           setFoodItems(items);
@@ -79,23 +129,13 @@ const GroceryList = () => {
     };
 
     loadItems();
-  }, []);
-
-  // Function to persist checked items to AsyncStorage
-  const persistCheckedItems = async () => {
-    const itemsToStore = foodItems.filter(item => !checkedItems.has(item.id));
-    await AsyncStorage.setItem('groceryItems', JSON.stringify(itemsToStore));
-  };
-
-  useEffect(() => {
-    persistCheckedItems();
-  }, [checkedItems]);
+  }, []); // This empty dependency array ensures this runs only on mount
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Grocery List</Text>
+      {/* <Text style={styles.header}>Grocery List</Text> */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Add New grocery Item</Text>
+        <Text style={styles.cardTitle}>Add New Grocery Item</Text>
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
@@ -104,43 +144,107 @@ const GroceryList = () => {
             autoCapitalize="none"
             maxLength={50}
             value={newItem}
-            onChangeText={setNewItem}
+            onChangeText={handleInputChange}
           />
           <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
             <Text style={styles.buttonText}>Add</Text>
           </TouchableOpacity>
         </View>
+        {suggestions.length > 0 && (
+        <View style={{marginTop: 10}}>
+          {suggestions.map((suggestion) => (
+            <TouchableOpacity
+              key={suggestion.id}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: 10,
+              }}
+              onPress={() => {
+                setNewItem(suggestion.name); // Set the selected suggestion to the TextInput
+                setSuggestions([]); // Clear suggestions
+              }}
+            >
+             <View style={{flexDirection: 'row',  width: 150,gap: 20,
+             paddingHorizontal: 40,
+    height: 80,
+    borderRadius: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,}}>
+              <Image
+                source={{
+                  uri: suggestion.image
+                    ? `https://img.spoonacular.com/ingredients_100x100/${suggestion.image}`
+                    : null,
+                }}
+                style={{width: 50,
+                  height: 50,
+                  borderRadius: 10,}} // Adjust size as needed
+              />
+              <Text style={{ color: "#fff"}}>
+                {suggestion.name}
+              </Text>
+              </View> 
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
       </View>
 
-      <View style={styles.centeredContainer}>
+      
+
+      <View style={styles.card}>
+              <Text style={styles.cardTitle}>Grocery Items</Text>
+              <View style={styles.centeredContainer}>
         {foodItems.length === 0 ? (
-          <View style={{ flex: 2, justifyContent: "center", alignContent: "center" }}>
+          <View
+            style={{
+              flex: 2,
+              justifyContent: "center",
+              alignContent: "center",
+            }}
+          >
             <Empty />
             <Text style={styles.warning}>
               Your grocery list is empty. Add some items to get started.
             </Text>
           </View>
         ) : (
-          <FlatList
-            data={foodItems.filter(item => !checkedItems.has(item.id))}
-            keyExtractor={(item) => item.id ? item.id.toString() : `key-${Math.random()}`}
-            renderItem={({ item }) => (
-              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10, gap: 20 }}>
-                <Checkbox
-                  value={checkedItems.has(item.id)}
-                  onValueChange={() => handleCheckItem(item.id)}
-                />
-                <View style={{ width: 90, marginRight: 10 }}>
-                  <IngredientCard
-                    name={item.name}
-                    image={item.image ? `https://img.spoonacular.com/ingredients_100x100/${item.image}` : null}
-                    GroceryItem={true}
+          <View>
+            {foodItems.map((item) => {
+              return (
+                <View
+                  key={item.id}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginBottom: 10,
+                    gap: 30,
+                  }}
+                >
+                  <Checkbox
+                    value={checkedItems.has(item.id)}
+                    onValueChange={() => handleCheckItem(item.id)}
                   />
+                  <View style={{ width: 90, marginRight: 10 }}>
+                    <IngredientCard
+                      name={item.name}
+                      image={
+                        item.image
+                          ? `https://img.spoonacular.com/ingredients_100x100/${item.image}`
+                          : null
+                      }
+                      GroceryItem={true}
+                    />
+                  </View>
                 </View>
-              </View>
-            )}
-          />
+              );
+            })}
+          </View>
         )}
+      </View>
       </View>
     </View>
   );
@@ -150,12 +254,12 @@ export default GroceryList;
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
+    // padding: 10,
   },
   header: {
-    color: '#ffff',
+    color: "#ffff",
     fontSize: 24,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     marginBottom: 10,
   },
   input: {
@@ -185,8 +289,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   warning: {
-    color: '#fff',
-    textAlign: 'center',
+    color: "#fff",
+    textAlign: "center",
   },
   card: {
     backgroundColor: "#1f1f1f",
@@ -206,10 +310,3 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 });
-
-
-
-
-
-
-

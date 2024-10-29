@@ -133,43 +133,88 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       return;
     }
   
-    try {
-      setIsLoading(true);
+    // try {
+    //   setIsLoading(true);
+    //   onLoading(true);
+  
+    //   const { stored_suggested_recipes, new_suggested_recipes } =
+    //     await find_recipes_by_ingredients(foodItems);
+  
+    //   // Upsert only new suggested recipes
+    //   const { data: new_stored_recipes } = await supabase
+    //     .from("recipe_ids")
+    //     .upsert(new_suggested_recipes, {
+    //       onConflict: "spoonacular_id",
+    //     })
+    //     .select()
+    //     .throwOnError();
+  
+    //   const total_recipes = [
+    //     ...stored_suggested_recipes,
+    //     ...new_stored_recipes,
+    //   ];
+  
+    //   // Remove duplicates by spoonacular_id
+    //   const unique_total_recipes = Array.from(
+    //     new Set(total_recipes.map((recipe) => recipe?.spoonacular_id))
+    //   ).map((id) => total_recipes.find((recipe) => recipe?.spoonacular_id === id));
+  
+    //   setRecipeOptions(unique_total_recipes);
+    //   console.log("All Recipes:", unique_total_recipes);
+    // } catch (error) {
+    //   console.error("Error generating recipes:", error);
+    //   console.trace(error);
+    //   Alert.alert("Error", "Failed to generate recipes.");
+    // } finally {
+    //   setIsLoading(false);
+    //   onLoading(false);
+    //   navigation.navigate("RecipeOptions");
+    // }
+
+    try { 
+      setIsLoading(true); 
       onLoading(true);
   
       const { stored_suggested_recipes, new_suggested_recipes } =
-        await find_recipes_by_ingredients(foodItems);
+          await find_recipes_by_ingredients(foodItems);
   
       // Upsert only new suggested recipes
       const { data: new_stored_recipes } = await supabase
-        .from("recipe_ids")
-        .upsert(new_suggested_recipes, {
-          onConflict: "spoonacular_id",
-        })
-        .select()
-        .throwOnError();
+          .from("recipe_ids")
+          .upsert(new_suggested_recipes, {
+              onConflict: "spoonacular_id",
+          })
+          .select()
+          .throwOnError();
   
       const total_recipes = [
-        ...stored_suggested_recipes,
-        ...new_stored_recipes,
+          ...stored_suggested_recipes,
+          ...new_stored_recipes,
       ];
   
-      // Remove duplicates by spoonacular_id
+      // Log total_recipes to check for null values
+      console.log("Total Recipes:", total_recipes);
+  
+      // Remove duplicates by spoonacular_id and filter out null values
       const unique_total_recipes = Array.from(
-        new Set(total_recipes.map((recipe) => recipe.spoonacular_id))
-      ).map((id) => total_recipes.find((recipe) => recipe.spoonacular_id === id));
+          new Set(total_recipes
+              .filter(recipe => recipe !== null) // First filter out nulls
+              .map(recipe => recipe.spoonacular_id)) // Then map to spoonacular_id
+      ).map(id => total_recipes.find(recipe => recipe && recipe.spoonacular_id === id)) // Ensure recipe is not null here
+        .filter(recipe => recipe !== null); // Final filter to remove null values
   
       setRecipeOptions(unique_total_recipes);
-      console.log("All Recipes:", unique_total_recipes);
-    } catch (error) {
+      console.log("Unique Total Recipes:", unique_total_recipes);
+  } catch (error) {
       console.error("Error generating recipes:", error);
       console.trace(error);
       Alert.alert("Error", "Failed to generate recipes.");
-    } finally {
+  } finally {
       setIsLoading(false);
       onLoading(false);
       navigation.navigate("RecipeOptions");
-    }
+  }
+    
   };
   
   

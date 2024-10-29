@@ -58,7 +58,12 @@ export const find_recipes_by_ingredients = async (
     "https://api.spoonacular.com/recipes/findByIngredients",
     {
       params: {
-        ingredients: ingredients.map(({ name }) => name).join(", "),
+        ingredients: Array.isArray(ingredients)
+        ? ingredients
+            .filter(ingredient => ingredient != null && ingredient.name) // Check for null and presence of name
+            .map(({ name }) => name)
+            .join(", ")
+        : "", 
         number: max_recipes,
         ranking: ranking === "maximize_owned_ingredients" ? 1 : 2,
         ignorePantry,
@@ -119,28 +124,33 @@ export const find_recipes_by_ingredients_and_store = async (ingredients) => {
 
 export const extract_recipe_from_website = async (recipeUrl) => {
   try {
-    const { data: recipe } = await axios.get('https://api.spoonacular.com/recipes/extract', {
-      params: {
-        url: recipeUrl,
-        // forceExtraction: true, // Optional: forces extraction even for supported sites
-      },
-      headers: {
-        'x-api-key': process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY, // Replace with your API key variable
-      },
-    });
+    const { data: recipe } = await axios.get(
+      "https://api.spoonacular.com/recipes/extract",
+      {
+        params: {
+          url: recipeUrl,
+          // forceExtraction: true, // Optional: forces extraction even for supported sites
+        },
+        headers: {
+          "x-api-key": process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY, // Replace with your API key variable
+        },
+      }
+    );
 
     // Format the recipe to match your database schema
     const formattedRecipe = format_recipe(recipe);
     console.log({ formattedRecipe });
     return formattedRecipe;
   } catch (error) {
-    console.error("extract_recipe_from_website:", error.response?.data || error.message);
+    console.error(
+      "extract_recipe_from_website:",
+      error.response?.data || error.message
+    );
     throw error;
   }
 };
 
 // export const extract_recipe_from_url = async (url) => {
-
 
 export const format_recipe = (recipe_obj) => {
   const recipe = objectToSnake(recipe_obj);
@@ -188,7 +198,7 @@ export const parse_ingredients = async (ingredients) => {
     });
 
   // Check if the data contains valid results
-  if (!data || data.length === 0 || data.some((item) => !item.name)) {
+  if (!data || data.length === 0 || data.some((item) => !item?.name)) {
     throw new Error("Invalid ingredient data returned from Spoonacular.");
   }
 

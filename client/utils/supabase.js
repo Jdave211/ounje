@@ -208,8 +208,8 @@ export const fetchFoodItems = async (id_type, ids) => {
 export const storeNewFoodItems = async (parsed_food_items) => {
   const extract_spoonacular_ids = (list) =>
     list
-      .filter((item) => !!item.spoonacular_id)
-      .map((item) => item.spoonacular_id);
+      .filter((item) => !!item?.spoonacular_id)
+      .map((item) => item?.spoonacular_id);
 
   const all_food_item_ids = extract_spoonacular_ids(parsed_food_items);
   const existing_food_items = await fetchFoodItems(
@@ -222,7 +222,7 @@ export const storeNewFoodItems = async (parsed_food_items) => {
   );
 
   const new_food_items = parsed_food_items.filter(
-    (item) => !existing_food_items_set.has(item.spoonacular_id)
+    (item) => !existing_food_items_set.has(item?.spoonacular_id)
   );
 
   await supabase.from("food_items").insert(new_food_items).throwOnError();

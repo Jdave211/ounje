@@ -115,8 +115,15 @@ const RecipePage = ({ route }) => {
 
   // Function to add ingredient to inventory
   const addIngredientToInventory = (ingredient) => {
-    setInventory((prevInventory) => [...prevInventory, ingredient]);
-    console.log("Added to Inventory:", ingredient);
+    setInventory((prevInventory) => {
+      const updatedInventory = [...prevInventory, ingredient];
+  
+      // Navigate to Inventory with the updated inventory list
+      navigation.navigate("Inventory", { inventoryItems: updatedInventory });
+      console.log("Added to Inventory:", updatedInventory);
+  
+      return updatedInventory; // Return updated state
+    });
   };
 
   // // Function to add ingredient to grocery list
@@ -305,7 +312,7 @@ const RecipePage = ({ route }) => {
                               text: "Inventory",
                               onPress: () => {
                                 addIngredientToInventory(ingredient);
-                                navigation.navigate("Inventory", { inventory }); // Navigate with updated inventory
+                                // navigation.navigate("Inventory", { inventory }); // Navigate with updated inventory
                               },
                             },
                           ],
