@@ -4,10 +4,13 @@ import { objectToSnake } from "ts-case-convert";
 
 // spoonacular api
 export const fetchRecipeDetails = async (id) => {
-  const {
-    data: [recipe],
-  } = await supabase.from("recipe_ids").select("*").eq("id", id).throwOnError();
+  // const {
+  //   data: [recipe],
+  // } = await supabase.from("recipe_ids").select("*").eq("id", id).throwOnError();
 
+  const {
+    data: [recipe] = [{}],  // Ensure recipe is always defined
+  } = await supabase.from("recipe_ids").select("*").eq("id", id).throwOnError();
   return recipe;
 };
 
@@ -29,8 +32,28 @@ export const get_recipe_details = async (id) => {
   return recipe;
 };
 
+// export const get_bulk_recipe_details = async (ids) => {
+//   let { data: recipe_options } = await axios
+//     .get(`https://api.spoonacular.com/recipes/informationBulk`, {
+//       params: {
+//         includeNutrition: true,
+//         ids: ids.join(", "),
+//       },
+//       headers: {
+//         "x-api-key": process.env.EXPO_PUBLIC_SPOONACULAR_API_KEY,
+//       },
+//     })
+//     .catch((error) => {
+//       console.error("get_bulk_recipe_details:", error, error.response.data);
+//       return null;
+//     });
+
+//   return recipe_options;
+// };
+
+
 export const get_bulk_recipe_details = async (ids) => {
-  let { data: recipe_options } = await axios
+  let { data: recipe_options = [] } = await axios
     .get(`https://api.spoonacular.com/recipes/informationBulk`, {
       params: {
         includeNutrition: true,
@@ -41,8 +64,8 @@ export const get_bulk_recipe_details = async (ids) => {
       },
     })
     .catch((error) => {
-      console.error("get_bulk_recipe_details:", error, error.response.data);
-      return null;
+      console.error("get_bulk_recipe_details:", error.response?.data || error.message);
+      return { data: [] };  // Return an empty array to prevent null errors
     });
 
   return recipe_options;

@@ -17,7 +17,7 @@ import Checkbox from "expo-checkbox";
 
 const screenWidth = Dimensions.get("window").width;
 
-const GroceryList = ({route}) => {
+const GroceryList = ({ route }) => {
   const groceryList = route?.params?.groceryList;
 
   const [newItem, setNewItem] = useState("");
@@ -251,7 +251,6 @@ const GroceryList = ({route}) => {
                   </View>
                 );
               })}
-                     
             </>
           )}
         </View>

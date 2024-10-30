@@ -69,6 +69,8 @@ const RecipeOptions = () => {
     [recipeOptions, dish_types_set]
   );
 
+  // const sorted_recipe_options = []
+
     // Navigate to the recipe page with the given recipe ID
   const navigate_to_recipe_page = (recipe_id) => () => {
     navigation.navigate("RecipePage", { id: recipe_id });

@@ -90,7 +90,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       ];
   
       // Log total_recipes to check for null values
-      console.log("Total Recipes:", total_recipes);
+      // console.log("Total Recipes:", total_recipes);
   
       // Remove duplicates by spoonacular_id and filter out null values
       const unique_total_recipes = Array.from(
@@ -101,7 +101,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
         .filter(recipe => recipe !== null); // Final filter to remove null values
   
       setRecipeOptions(unique_total_recipes);
-      console.log("Unique Total Recipes:", unique_total_recipes);
+      // console.log("Unique Total Recipes:", unique_total_recipes);
   } catch (error) {
       console.error("Error generating recipes:", error);
       console.trace(error);
