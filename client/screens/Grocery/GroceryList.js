@@ -17,40 +17,44 @@ import Checkbox from "expo-checkbox";
 
 const screenWidth = Dimensions.get("window").width;
 
-const GroceryList = () => {
+const GroceryList = ({route}) => {
+  const groceryList = route?.params?.groceryList;
+
   const [newItem, setNewItem] = useState("");
   const [foodItems, setFoodItems] = useState([]);
   const [checkedItems, setCheckedItems] = useState(new Set());
   const [suggestions, setSuggestions] = useState([]);
 
   // Function to fetch unique food items based on item name
-const fetchFoodItems = async (itemName) => {
-  const { data, error } = await supabase
-    .from("food_items_grocery")
-    .select("*")
-    .ilike("name", `%${itemName}%`);
+  const fetchFoodItems = async (itemName) => {
+    const { data, error } = await supabase
+      .from("food_items_grocery")
+      .select("*")
+      .ilike("name", `%${itemName}%`); // Fetch items containing the entered text
 
-  if (error) {
-    console.error("Error fetching food items:", error);
-    return [];
-  }
+    if (error) {
+      console.error("Error fetching food items:", error);
+      return [];
+    }
 
-  // Create a Set to filter out duplicate items based on their name
-  const uniqueItems = Array.from(new Set(data.map(item => item.name)))
-    .map(name => data.find(item => item.name === name));
+    // Return items containing the exact or closely matched term
+    const uniqueItems = Array.from(new Set(data.map((item) => item.name)))
+      .map((name) => data.find((item) => item.name === name))
+      .filter((item) =>
+        item.name.toLowerCase().includes(itemName.toLowerCase())
+      );
 
-  return uniqueItems;
-};
-
-const handleInputChange = async (text) => {
-  setNewItem(text);
-  if (text.trim() !== "") {
-    const matchingItems = await fetchFoodItems(text);
-    setSuggestions(matchingItems); // Show suggestions based on input
-  } else {
-    setSuggestions([]);
-  }
-};
+    return uniqueItems;
+  };
+  const handleInputChange = async (text) => {
+    setNewItem(text);
+    if (text.trim() !== "") {
+      const matchingItems = await fetchFoodItems(text);
+      setSuggestions(matchingItems); // Show suggestions
+    } else {
+      setSuggestions([]); // Clear suggestions if input is empty
+    }
+  };
 
   const addNewItem = async () => {
     if (newItem.trim() === "") return;
@@ -58,23 +62,23 @@ const handleInputChange = async (text) => {
     const existingItems = await fetchFoodItems(newItem);
     let newItemsList = [...foodItems];
 
+    // Check if item already exists in the grocery list
     const itemExists = newItemsList.some(
       (item) => item.name.toLowerCase() === newItem.toLowerCase()
     );
 
     if (!itemExists) {
       if (existingItems.length > 0) {
-        existingItems.forEach((item) => {
-          if (
-            !newItemsList.some(
-              (existingItem) =>
-                existingItem.name.toLowerCase() === item.name.toLowerCase()
-            )
-          ) {
-            newItemsList.push(item);
-          }
-        });
+        // Add only the selected item
+        const selectedItem = existingItems.find(
+          (item) => item.name.toLowerCase() === newItem.toLowerCase()
+        );
+
+        if (selectedItem) {
+          newItemsList.push(selectedItem);
+        }
       } else {
+        // Add as a new item if not found in fetched data
         const newItemData = { id: Date.now(), name: newItem, image: null };
         const { error } = await supabase
           .from("food_items_grocery")
@@ -94,9 +98,9 @@ const handleInputChange = async (text) => {
     }
 
     setFoodItems(newItemsList);
-    await AsyncStorage.setItem("groceryItems", JSON.stringify(newItemsList)); // Persist all items
+    await AsyncStorage.setItem("groceryItems", JSON.stringify(newItemsList)); // Persist items
     setNewItem("");
-    setSuggestions([]); // Clear suggestions after adding
+    setSuggestions([]); // Clear suggestions
   };
 
   const handleCheckItem = async (itemId) => {
@@ -150,101 +154,107 @@ const handleInputChange = async (text) => {
             <Text style={styles.buttonText}>Add</Text>
           </TouchableOpacity>
         </View>
-        {suggestions.length > 0 && (
-        <View style={{marginTop: 10}}>
-          {suggestions.map((suggestion) => (
-            <TouchableOpacity
-              key={suggestion.id}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: 10,
-              }}
-              onPress={() => {
-                setNewItem(suggestion.name); // Set the selected suggestion to the TextInput
-                setSuggestions([]); // Clear suggestions
-              }}
-            >
-             <View style={{flexDirection: 'row',  width: 150,gap: 20,
-             paddingHorizontal: 40,
-    height: 80,
-    borderRadius: 10,
-    backgroundColor: "rgba(0, 0, 0, 0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,}}>
-              <Image
-                source={{
-                  uri: suggestion.image
-                    ? `https://img.spoonacular.com/ingredients_100x100/${suggestion.image}`
-                    : null,
+        {suggestions?.length > 0 && (
+          <View style={{ marginTop: 10 }}>
+            {suggestions.map((suggestion) => (
+              <TouchableOpacity
+                key={suggestion.id}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginBottom: 10,
                 }}
-                style={{width: 50,
-                  height: 50,
-                  borderRadius: 10,}} // Adjust size as needed
-              />
-              <Text style={{ color: "#fff"}}>
-                {suggestion.name}
-              </Text>
-              </View> 
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-      </View>
-
-      
-
-      <View style={styles.card}>
-              <Text style={styles.cardTitle}>Grocery Items</Text>
-              <View style={styles.centeredContainer}>
-        {foodItems.length === 0 ? (
-          <View
-            style={{
-              flex: 2,
-              justifyContent: "center",
-              alignContent: "center",
-            }}
-          >
-            <Empty />
-            <Text style={styles.warning}>
-              Your grocery list is empty. Add some items to get started.
-            </Text>
-          </View>
-        ) : (
-          <View>
-            {foodItems.map((item) => {
-              return (
+                onPress={() => {
+                  setNewItem(suggestion.name); // Set the selected suggestion to the TextInput
+                  setSuggestions([]); // Clear suggestions
+                }}
+              >
                 <View
-                  key={item.id}
                   style={{
                     flexDirection: "row",
+                    width: 150,
+                    gap: 20,
+                    paddingHorizontal: 40,
+                    height: 80,
+                    borderRadius: 10,
+                    backgroundColor: "rgba(0, 0, 0, 0.2)",
                     alignItems: "center",
-                    marginBottom: 10,
-                    gap: 30,
+                    justifyContent: "center",
+                    marginBottom: 4,
                   }}
                 >
-                  <Checkbox
-                    value={checkedItems.has(item.id)}
-                    onValueChange={() => handleCheckItem(item.id)}
+                  <Image
+                    source={{
+                      uri: suggestion.image
+                        ? `https://img.spoonacular.com/ingredients_100x100/${suggestion.image}`
+                        : null,
+                    }}
+                    style={{ width: 50, height: 50, borderRadius: 10 }} // Adjust size as needed
                   />
-                  <View style={{ width: 90, marginRight: 10 }}>
-                    <IngredientCard
-                      name={item.name}
-                      image={
-                        item.image
-                          ? `https://img.spoonacular.com/ingredients_100x100/${item.image}`
-                          : null
-                      }
-                      GroceryItem={true}
-                    />
-                  </View>
+                  <Text style={{ color: "#fff" }}>{suggestion.name}</Text>
                 </View>
-              );
-            })}
+              </TouchableOpacity>
+            ))}
           </View>
         )}
       </View>
+
+      <View style={[styles.card]}>
+        <Text style={styles.cardTitle}>Grocery Items</Text>
+        <View style={styles.centeredContainer}>
+          {foodItems?.length === 0 ? (
+            <View
+              style={{
+                flex: 2,
+                justifyContent: "center",
+                alignContent: "center",
+              }}
+            >
+              <Empty />
+              <Text style={styles.warning}>
+                Your grocery list is empty. Add some items to get started.
+              </Text>
+            </View>
+          ) : (
+            <>
+              {foodItems.map((item) => {
+                return (
+                  <View
+                    key={item.id}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      // marginBottom: 10,
+                      // gap: 20,
+                    }}
+                  >
+                    <View>
+                      <Checkbox
+                        style={{ marginHorizontal: 12 }}
+                        value={checkedItems.has(item.id)}
+                        onValueChange={() => handleCheckItem(item.id)}
+                      />
+                    </View>
+                    <View
+                      style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+                    >
+                      <IngredientCard
+                        name={item.name}
+                        image={
+                          item.image
+                            ? `https://img.spoonacular.com/ingredients_100x100/${item.image}`
+                            : null
+                        }
+                        GroceryItem={true}
+                      />
+                    </View>
+                  </View>
+                );
+              })}
+                     
+            </>
+          )}
+        </View>
       </View>
     </View>
   );

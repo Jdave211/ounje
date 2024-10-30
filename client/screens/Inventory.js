@@ -606,36 +606,7 @@ const Inventory = ({ route }) => {
             <View>
               <GroceryList />
             </View>
-            <View>
-              <Text style={styles.cardTitle}>Grocery Icon</Text>
-
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Grocery List</Text>
-                <View style={styles.centeredContainer}>
-                  {/* Conditionally render a message if the groceryList is empty */}
-                  {!groceryList || groceryList.length === 0 ? (
-                    <Text style={styles.warning}>
-                      No items in your grocery list yet.
-                    </Text>
-                  ) : (
-                    groceryListAdd.map((item, i) => (
-                      <View
-                        key={i}
-                        style={{ width: 90, marginBottom: 10, marginRight: 10 }}
-                      >
-                        <IngredientCard
-                          key={i}
-                          name={item?.name}
-                          image={`https://img.spoonacular.com/ingredients_100x100/${item?.image}`}
-                          showCancelButton={true}
-                          onCancel={() => handleRemoveGrocery(item)}
-                        />
-                      </View>
-                    ))
-                  )}
-                </View>
-              </View>
-            </View>
+            
           </View>
         )}
       </ScrollView>

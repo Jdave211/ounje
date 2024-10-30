@@ -58,7 +58,7 @@ const IngredientCard = ({
       )}
 
       {GroceryItem ? (
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View style={[styles.ingredientsubview, { flexDirection: 'column'}]}>
           <View style={[styles.imageContainer, { marginBottom: 1 }]}>
             <Image style={styles.ingredientImage} source={{ uri: image }} />
           </View>
@@ -94,6 +94,7 @@ const IngredientCard = ({
 };
 
 const styles = StyleSheet.create({
+  ingredientsubview: { flexDirection: "row", alignItems: "center" },
   ingredient: {
     width: 100,
     height: 130,

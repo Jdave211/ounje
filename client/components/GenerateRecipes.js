@@ -36,72 +36,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
     // ... (existing code for generateGPTRecipes)
   };
 
-  // const generateRecipes = async () => {
-  //   if (userId.startsWith("guest")) {
-  //     Alert.alert(
-  //       "Authentication Required",
-  //       "You need to be logged in with an inventory to generate recipes.",
-  //       [
-  //         {
-  //           text: "Cancel",
-  //           style: "cancel",
-  //         },
-  //         {
-  //           text: "Sign In / Sign Up",
-  //           onPress: () => {
-  //             setUserId(null); // Nullify the user ID
-  //           },
-  //         },
-  //       ],
-  //       { cancelable: true },
-  //     );
-  //     return;
-  //   }
-
-  //   if (foodItems.length === 0) {
-  //     Alert.alert(
-  //       "Error",
-  //       "Please add some food to inventory or take a new picture.",
-  //     );
-  //     navigation.navigate("Inventory");
-  //     return;
-  //   }
-
-  //   try {
-  //     setIsLoading(true);
-  //     onLoading(true);
-
-  //     const { stored_suggested_recipes, new_suggested_recipes } =
-  //       await find_recipes_by_ingredients(foodItems);
-
-  //     const new_formatted_recipes = new_suggested_recipes;
-
-  //     const { data: new_stored_recipes } = await supabase
-  //       .from("recipe_ids")
-  //       .upsert(new_formatted_recipes, {
-  //         onConflict: "spoonacular_id",
-  //       })
-  //       .select()
-  //       .throwOnError();
-
-  //     const total_recipes = [
-  //       ...stored_suggested_recipes,
-  //       ...new_stored_recipes,
-  //     ];
-
-  //     setRecipeOptions(total_recipes);
-  //     console.log("All Recipes:", total_recipes);
-  //   } catch (error) {
-  //     console.error("Error generating recipes:", error);
-  //     console.trace(error);
-  //     Alert.alert("Error", "Failed to generate recipes.");
-  //   } finally {
-  //     setIsLoading(false);
-  //     onLoading(false);
-  //     navigation.navigate("RecipeOptions");
-  //   }
-  // };
-
+  
   const generateRecipes = async () => {
     if (userId.startsWith("guest")) {
       Alert.alert(
@@ -132,44 +67,6 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       navigation.navigate("Inventory");
       return;
     }
-  
-    // try {
-    //   setIsLoading(true);
-    //   onLoading(true);
-  
-    //   const { stored_suggested_recipes, new_suggested_recipes } =
-    //     await find_recipes_by_ingredients(foodItems);
-  
-    //   // Upsert only new suggested recipes
-    //   const { data: new_stored_recipes } = await supabase
-    //     .from("recipe_ids")
-    //     .upsert(new_suggested_recipes, {
-    //       onConflict: "spoonacular_id",
-    //     })
-    //     .select()
-    //     .throwOnError();
-  
-    //   const total_recipes = [
-    //     ...stored_suggested_recipes,
-    //     ...new_stored_recipes,
-    //   ];
-  
-    //   // Remove duplicates by spoonacular_id
-    //   const unique_total_recipes = Array.from(
-    //     new Set(total_recipes.map((recipe) => recipe?.spoonacular_id))
-    //   ).map((id) => total_recipes.find((recipe) => recipe?.spoonacular_id === id));
-  
-    //   setRecipeOptions(unique_total_recipes);
-    //   console.log("All Recipes:", unique_total_recipes);
-    // } catch (error) {
-    //   console.error("Error generating recipes:", error);
-    //   console.trace(error);
-    //   Alert.alert("Error", "Failed to generate recipes.");
-    // } finally {
-    //   setIsLoading(false);
-    //   onLoading(false);
-    //   navigation.navigate("RecipeOptions");
-    // }
 
     try { 
       setIsLoading(true); 
@@ -199,8 +96,8 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       const unique_total_recipes = Array.from(
           new Set(total_recipes
               .filter(recipe => recipe !== null) // First filter out nulls
-              .map(recipe => recipe.spoonacular_id)) // Then map to spoonacular_id
-      ).map(id => total_recipes.find(recipe => recipe && recipe.spoonacular_id === id)) // Ensure recipe is not null here
+              .map(recipe => recipe?.spoonacular_id)) // Then map to spoonacular_id
+      ).map(id => total_recipes.find(recipe => recipe && recipe?.spoonacular_id === id)) // Ensure recipe is not null here
         .filter(recipe => recipe !== null); // Final filter to remove null values
   
       setRecipeOptions(unique_total_recipes);
