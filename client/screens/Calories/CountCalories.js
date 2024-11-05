@@ -35,13 +35,14 @@ const CountCalories = () => {
   const [calorieImages, setCalorieImages] = useState([]);
   const [calorieImageUris, setCalorieImageUris] = useState([]);
   const [selectedTab, setSelectedTab] = useState("Analyze Calories");
+  const [calorieHistory, setCalorieHistory] = useState([]); // New state for calorie history
   const userId = useAppStore((state) => state.user_id);
   const isPremium = true; // For testing purposes
   const isGuest = userId && userId.startsWith("guest");
 
   const { convertImageToBase64, storeCaloryImages } = useImageProcessing();
 
- // Show paywall if user is not premium
+  // Show paywall if user is not premium
   if (!isPremium) {
     return <Paywall />;
   }
@@ -116,7 +117,7 @@ const CountCalories = () => {
 
   // Function to show action sheet for image source selection
   const showActionSheet = () => {
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
           options: ["Cancel", "Take Photo", "Choose from Library"],
@@ -132,16 +133,15 @@ const CountCalories = () => {
       );
     } else {
       Alert.alert(
-        'Select Option',
-        'Choose to take a photo or pick from the library',
+        "Select Option",
+        "Choose to take a photo or pick from the library",
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Take Photo', onPress: () => takePhoto() },
-          { text: 'Choose from Library', onPress: () => pickImage() },
+          { text: "Cancel", style: "cancel" },
+          { text: "Take Photo", onPress: () => takePhoto() },
+          { text: "Choose from Library", onPress: () => pickImage() },
         ]
       );
     }
-    
   };
 
   // Function to reset the analysis state
@@ -248,12 +248,22 @@ const CountCalories = () => {
           sugars: totalMacros.sugars.toFixed(2),
         });
 
+        setCalorieHistory((prevHistory) => [
+          ...prevHistory,
+          {
+            mealName: allMealNames.join(", "),
+            calories: totalCalories.toFixed(0),
+            date: new Date().toLocaleString(), // Add date/time of analysis
+            image: image,
+          },
+        ]);
+
         // Store calorie images if not a guest user
         if (!isGuest && calorieImages.length > 0) {
           await storeCaloryImages(userId, calorieImages);
         }
 
-        setModalVisible(true); // Show modal with results 
+        setModalVisible(true); // Show modal with results
       } else {
         console.error("API call failed with status: ", response.status);
         alert("Failed to analyze the image");
@@ -316,7 +326,7 @@ const CountCalories = () => {
           </Text>
         </TouchableOpacity>
       </View>
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
+      {/* <ScrollView contentContainerStyle={styles.scrollContainer}>
         {selectedTab === "Analyze Calories" ? (
           <View style={styles.content}>
             <View style={styles.imageContainer}>
@@ -362,12 +372,29 @@ const CountCalories = () => {
             </View>
           </View>
         ) : (
-          <View style={styles.discoverCard}>
-            <Text style={styles.discoverCardTitle}>Calories History</Text>
-            <Text style={styles.warning}>
-              Analyze calories to view and manage your history!
-            </Text>
-          </View>
+          <ScrollView style={styles.scrollContainer}>
+            <View style={styles.discoverCard}>
+              {calorieHistory.length > 0 ? (
+                calorieHistory.map((item, index) => (
+                  <View key={index} style={styles.historyCard}>
+                    <Image
+                      source={{ uri: item.image }}
+                      style={styles.historyImage}
+                    />
+                    <Text style={styles.historyMealName}>{item.mealName}</Text>
+                    <Text style={styles.historyCalories}>
+                      {item.calories} Cal
+                    </Text>
+                    <Text style={styles.historyDate}>{item.date}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.warning}>
+                  Analyze calories to view and manage your history!
+                </Text>
+              )}
+            </View>
+          </ScrollView>
         )}
 
         <Modal
@@ -446,7 +473,156 @@ const CountCalories = () => {
             </View>
           </View>
         </Modal>
-      </ScrollView>
+      </ScrollView> */}
+
+<ScrollView contentContainerStyle={styles.scrollContainer} nestedScrollEnabled={true}>
+  {selectedTab === "Analyze Calories" ? (
+    <View style={styles.content}>
+      <View style={styles.imageContainer}>
+        {image ? (
+          <Image source={{ uri: image }} style={styles.image} />
+        ) : (
+          <TouchableOpacity
+            style={styles.uploadButton}
+            onPress={() => {
+              Platform.OS === "ios" ? showActionSheet() : pickImage();
+            }}
+          >
+            <AntDesign name="camerao" size={40} color="white" />
+            <Text style={styles.uploadText}>Upload or Take Photo</Text>
+          </TouchableOpacity>
+        )}
+        {image && (
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={clearImage}
+          >
+            <Feather name="trash-2" size={24} color="white" />
+          </TouchableOpacity>
+        )}
+      </View>
+      <View style={styles.calorieInstructions}>
+        <Text style={styles.instructionsText}>
+          Take a photo of your meal or upload an image to analyze the calories.
+        </Text>
+      </View>
+      <View style={styles.analyzeButtonContainer}>
+        {loading ? (
+          <ActivityIndicator size="large" color="#38F096" />
+        ) : (
+          <TouchableOpacity
+            style={styles.analyzeButton}
+            onPress={analyzeImage}
+          >
+            <Text style={styles.analyzeButtonText}>Analyze Calories</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  ) : (
+    <ScrollView contentContainerStyle={styles.scrollContainer} nestedScrollEnabled={true}>
+    <View style={styles.historyContainer}>
+      {calorieHistory.length > 0 ? (
+        calorieHistory.map((item, index) => (
+          <View key={index} style={styles.historyCard}>
+            <Image
+              source={{ uri: item.image }}
+              style={styles.historyImage}
+            />
+            <Text style={styles.historyMealName}>{item.mealName}</Text>
+            <Text style={styles.historyCalories}>
+              {item.calories} Cal
+            </Text>
+            <Text style={styles.historyDate}>{item.date}</Text>
+          </View>
+        ))
+      ) : (
+        <Text style={styles.warning}>
+          Analyze calories to view and manage your history!
+        </Text>
+      )}
+    </View>
+    </ScrollView>
+  )}
+
+  <Modal
+    animationType="slide"
+    transparent={true}
+    visible={modalVisible}
+    onRequestClose={() => setModalVisible(false)}
+  >
+    <View style={styles.modalContainer}>
+      <View style={styles.modalContent}>
+        <TouchableOpacity
+          style={styles.closeIcon}
+          onPress={() => setModalVisible(false)}
+        >
+          <AntDesign name="close" size={24} color="white" />
+        </TouchableOpacity>
+        <Text style={styles.modalTitle}>Your Calories</Text>
+        <View style={styles.totalContainer}>
+          <Text style={styles.totalCalories}>{calories} Cal</Text>
+          {macros && (
+            <View style={styles.macrosContainer}>
+              <View style={styles.macroRow}>
+                <Text style={styles.macroLabel}>Proteins:</Text>
+                <Text style={styles.macroValue}>{macros.proteins} g</Text>
+              </View>
+              <View style={styles.macroRow}>
+                <Text style={styles.macroLabel}>Fat:</Text>
+                <Text style={styles.macroValue}>{macros.fat} g</Text>
+              </View>
+              <View style={styles.macroRow}>
+                <Text style={styles.macroLabel}>Carbs:</Text>
+                <Text style={styles.macroValue}>{macros.carbs} g</Text>
+              </View>
+              <View style={styles.macroRow}>
+                <Text style={styles.macroLabel}>Fibers:</Text>
+                <Text style={styles.macroValue}>{macros.fibers} g</Text>
+              </View>
+              <View style={styles.macroRow}>
+                <Text style={styles.macroLabel}>Sugars:</Text>
+                <Text style={styles.macroValue}>{macros.sugars} g</Text>
+              </View>
+            </View>
+          )}
+        </View>
+        <ScrollView style={styles.modalScroll}>
+          <View style={styles.foodItemsContainer}>
+            {foodItems.map((item, index) => (
+              <View key={index} style={styles.foodItem}>
+                <Text style={styles.foodName}>
+                  {item.topChoice.food_info.display_name}
+                </Text>
+                <Text style={styles.foodCalories}>
+                  {(
+                    item.topChoice.food_info.nutrition.calories_100g *
+                    (item.topChoice.quantity / 100)
+                  ).toFixed(0)}{" "}
+                  Cal
+                </Text>
+                <Text style={styles.foodQuantity}>
+                  {item.topChoice.quantity}g
+                </Text>
+                <Text style={styles.alternativesHeader}>or</Text>
+                {item.alternatives.map((alt, altIndex) => (
+                  <Text key={altIndex} style={styles.alternative}>
+                    {alt.food_info.display_name}
+                  </Text>
+                ))}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+        <Text style={styles.disclaimer}>
+          The information provided may not be 100% accurate. We recommend
+          using it as a helpful guide and applying your best judgment.
+        </Text>
+      </View>
+    </View>
+  </Modal>
+</ScrollView>
+
     </View>
   );
 };
@@ -454,6 +630,7 @@ const CountCalories = () => {
 const styles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
+    padding: 0,
   },
   container: {
     padding: Dimensions.get("window").width * 0.03,
@@ -582,20 +759,56 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   discoverCard: {
-    backgroundColor: "#1f1f1f",
+    // backgroundColor: "#1f1f1f",
     borderRadius: 10,
-    padding: 20,
+    // padding: 20,
     marginBottom: 20,
   },
-  discoverCardTitle: {
-    color: "#fff",
-    fontSize: screenWidth * 0.045, // Responsive font size
-    fontWeight: "bold",
-    marginBottom: 10,
-  },
+  // discoverCardTitle: {
+  //   color: "#fff",
+  //   fontSize: screenWidth * 0.045, // Responsive font size
+  //   fontWeight: "bold",
+  //   marginBottom: 10,
+  // },
   warning: {
     color: "gray",
     fontSize: screenWidth * 0.04,
+  },
+  historyEntry: {
+    marginVertical: 5,
+    borderBottomWidth: 1,
+    borderColor: "#ccc",
+    paddingBottom: 5,
+  },
+  historyCard: {
+    padding: 10,
+    backgroundColor: "#000",
+    borderRadius: 8,
+    marginBottom: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1,
+    elevation: 3,
+  },
+  historyImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: 8,
+    marginBottom: 5,
+  },
+  historyMealName: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#fff",
+  },
+  historyCalories: {
+    fontSize: 14,
+    color: "#888",
+  },
+  historyDate: {
+    fontSize: 12,
+    color: "#aaa",
   },
   foodItemsContainer: {
     paddingBottom: 10,
