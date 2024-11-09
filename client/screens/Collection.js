@@ -12,6 +12,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useAppStore } from "../stores/app-store";
 import { useQuery, useQueryClient } from "react-query";
 import { fetchSavedRecipesByUser, unsaveRecipe } from "../utils/supabase";
+import DiscoverRecipes from "../components/DiscoverRecipes";
 
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
@@ -171,16 +172,18 @@ const SavedRecipes = () => {
 
           </View>
         )}
+        </ScrollView>
 
         {selectedTab === "Discover" && (
-          <View style={styles.discoverCard}>
-            <Text style={styles.discoverCardTitle}>Discover Recipes</Text>
-            <Text style={styles.warning}>
+          <View>
+            {/* // <Text style={styles.discoverCardTitle}>Discover Recipes</Text> */}
+            {/* <Text style={styles.warning}>
               Save more recipes to discover ones that meet your taste!
-            </Text>
-          </View>
+            </Text> */}
+            <DiscoverRecipes />
+        </View>
         )}
-      </ScrollView>
+      
     </View>
   );
 };
