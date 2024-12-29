@@ -15,7 +15,6 @@ import { AntDesign, Feather, MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 import { supabase } from "../utils/supabase";
 import Carousel from "react-native-reanimated-carousel";
-import { entitle } from "../utils/helpers";
 import harvestImage from "../assets/harvest.png";
 import { Bar as ProgressBar } from "react-native-progress";
 import RenderHtml from "react-native-render-html";
@@ -41,11 +40,15 @@ const RecipePage = ({ route }) => {
   const user_id = useAppStore((state) => state.user_id);
   const [groceryList, setGroceryList] = useState([]);
   const [inventory, setInventory] = useState([]);
+  const [isCookMode, setIsCookMode] = useState(false); // State for Cook Mode
 
+  // Fetch recipe details
   const { data: recipeDetails } = useQuery(
     ["recipeDetails", recipe_id],
     async () => await fetchRecipeDetails(recipe_id)
   );
+
+  // Check if recipe is already saved
   const { data: isAlreadySaved } = useQuery(
     ["isRecipeSaved", user_id],
     async () => await fetchIsRecipeSavedByUser(user_id, recipe_id),
@@ -53,6 +56,7 @@ const RecipePage = ({ route }) => {
       onSuccess: () => setIsRecipeSaved(isAlreadySaved),
     }
   );
+
   const percentage_of_ingredients_owned =
     usePercentageOfIngredientsOwned(recipeDetails);
 
@@ -92,14 +96,10 @@ const RecipePage = ({ route }) => {
   };
 
   const onReturnToPreviousPage = () => {
-    const currentNavigationState = navigation.getState();
-    console.log("Current Navigation State:", currentNavigationState);
-
-    // Navigate back to the previous screen
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
-      console.warn("STFU"); // omo this guy was really warning the code
+      console.warn("Cannot go back");
     }
   };
 
@@ -117,20 +117,14 @@ const RecipePage = ({ route }) => {
   const addIngredientToInventory = (ingredient) => {
     setInventory((prevInventory) => {
       const updatedInventory = [...prevInventory, ingredient];
-  
+
       // Navigate to Inventory with the updated inventory list
       navigation.navigate("Inventory", { inventoryItems: updatedInventory });
       console.log("Added to Inventory:", updatedInventory);
-  
+
       return updatedInventory; // Return updated state
     });
   };
-
-  // // Function to add ingredient to grocery list
-  // const addIngredientToGroceryList = (ingredient) => {
-  //   setGroceryList((prevGroceryList) => [...prevGroceryList, ingredient]);
-  //   console.log("Added to Grocery List:", ingredient);
-  // };
 
   useEffect(() => {
     const loadGroceryList = async () => {
@@ -173,179 +167,217 @@ const RecipePage = ({ route }) => {
 
   return (
     recipeDetails && (
-      <ScrollView
-        style={styles.container}
-        stickyHeaderIndices={[0]}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={onReturnToPreviousPage}
-          >
-            <AntDesign name="arrowleft" size={24} color={"white"} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            {isRecipeSaved ? (
-              <MaterialIcons name="bookmark-add" size={24} color="green" />
-            ) : (
-              <MaterialIcons name="bookmark-border" size={24} color="white" />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <View>
-          <Carousel
-            loop
-            width={PAGE_WIDTH}
-            height={PAGE_WIDTH / 2}
-            data={[0]}
-            scrollAnimationDuration={1000}
-            renderItem={() => (
-              <View style={styles.carouselItem}>
-                <Image
-                  style={styles.carouselImage}
-                  source={{ uri: recipeDetails.image }}
-                />
-              </View>
-            )}
-          />
-        </View>
-
-        <View style={styles.content}>
-          <Text style={styles.title}>{recipeDetails.title}</Text>
-          <View style={styles.details}>
-            <View style={styles.detailsRow}>
-              <Feather name="clock" size={20} color="silver" />
-              <Text style={styles.text}>
-                {"  "}
-                {recipeDetails.ready_in_minutes} mins
-              </Text>
-            </View>
-            <View style={styles.progressContainer}>
-              <Text style={styles.text}>
-                {owned_items?.length} /{" "}
-                {recipeDetails.extended_ingredients?.length} Ingredients
-              </Text>
-              <View style={styles.progressBar}>
-                <ProgressBar
-                  progress={percentage_of_ingredients_owned / 100}
-                  width={100}
-                  color="gray"
-                />
-                <Image source={harvestImage} style={styles.harvestImage} />
-              </View>
-            </View>
+      <View style={styles.container}>
+        <ScrollView
+          style={styles.scrollView}
+          stickyHeaderIndices={[0]}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 80 }} // Adjust for bottom bar height
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={onReturnToPreviousPage}
+            >
+              <AntDesign name="arrowleft" size={24} color={"white"} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
+              {isRecipeSaved ? (
+                <MaterialIcons name="bookmark-add" size={24} color="green" />
+              ) : (
+                <MaterialIcons name="bookmark-border" size={24} color="white" />
+              )}
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.subheading}>Description</Text>
-          {recipeDetails.description ? (
-            <Text style={styles.text}>{recipeDetails.description}</Text>
-          ) : (
-            <RenderHtml
-              baseStyle={styles.text}
-              contentWidth={WIDTH}
-              source={{
-                html: truncateDescription(recipeDetails.summary),
-              }}
+          {/* Carousel */}
+          <View>
+            <Carousel
+              loop
+              width={PAGE_WIDTH}
+              height={PAGE_WIDTH / 2}
+              data={[0]}
+              scrollAnimationDuration={1000}
+              renderItem={() => (
+                <View style={styles.carouselItem}>
+                  <Image
+                    style={styles.carouselImage}
+                    source={{ uri: recipeDetails.image }}
+                  />
+                </View>
+              )}
             />
-          )}
-          <View style={styles.fullIngredients}>
-            <Text style={styles.subheading}>Owned Ingredients</Text>
-            <ScrollView
-              horizontal={true}
-              showsHorizontalScrollIndicator={false}
-            >
-              <View style={styles.horizontalScroll}>
-                {owned_items.map((ingredient, i) => (
-                  <View key={i} style={styles.ingredientCardWrapper}>
-                    <IngredientCard
-                      key={i}
-                      name={ingredient.name}
-                      image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
-                      amount={ingredient.amount}
-                      unit={ingredient.measures?.us.unit_short}
-                    />
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
+          </View>
 
-            <Text style={styles.subheading}>Missing Ingredients</Text>
-            <ScrollView
-              horizontal={true}
-              showsHorizontalScrollIndicator={false}
-            >
-              <View style={styles.horizontalScroll}>
-                {missing_items.map((ingredient, i) => (
-                  <View key={i} style={styles.ingredientCardWrapper}>
-                    <IngredientCard
-                      key={i}
-                      name={ingredient.name}
-                      image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
-                      amount={ingredient.amount}
-                      unit={ingredient.measures?.us.unit_short}
-                      showAddButton={true} // Show the plus sign
-                      onAddPress={() => {
-                        Alert.alert(
-                          "Add Ingredient",
-                          "Add ingredient to grocery list or inventory?",
-                          [
-                            {
-                              text: "Cancel",
-                              style: "cancel",
-                            },
-                            {
-                              text: "Grocery List",
-                              onPress: () => {
-                                addIngredientToGroceryList(ingredient);
-                                setTimeout(() => {
-                                  navigation.navigate("Inventory", {
-                                    groceryList: [...groceryList, ingredient],
-                                  });
-                                }, 0);
-                                console.log("groceryList", groceryList);
-                                // Navigate with updated grocery list
-                              },
-                            },
-                            {
-                              text: "Inventory",
-                              onPress: () => {
-                                addIngredientToInventory(ingredient);
-                                // navigation.navigate("Inventory", { inventory }); // Navigate with updated inventory
-                              },
-                            },
-                          ],
-                          { cancelable: true }
-                        );
-                      }}
-                    />
-                  </View>
-                ))}
+          {/* Content */}
+          <View style={styles.content}>
+            <Text style={styles.title}>{recipeDetails.title}</Text>
+            <View style={styles.details}>
+              <View style={styles.detailsRow}>
+                <Feather name="clock" size={20} color="silver" />
+                <Text style={styles.text}>
+                  {"  "}
+                  {recipeDetails.ready_in_minutes} mins
+                </Text>
               </View>
-            </ScrollView>
-          </View>
-          <View style={styles.fullInstructions}>
-            <Text style={styles.subheading}>Cooking Steps</Text>
-            {recipeDetails.analyzed_instructions &&
-            recipeDetails.analyzed_instructions[0] &&
-            recipeDetails.analyzed_instructions[0].steps ? (
-              recipeDetails.analyzed_instructions[0].steps.map(
-                ({ step, number }) => (
-                  <View key={number} style={styles.instruction}>
-                    <Text style={styles.instructionNumber}>{number}</Text>
-                    <Text style={styles.instructionText}>{step}</Text>
-                  </View>
-                )
-              )
+              <View style={styles.progressContainer}>
+                <Text style={styles.text}>
+                  {owned_items?.length} /{" "}
+                  {recipeDetails.extended_ingredients?.length} Ingredients
+                </Text>
+                <View style={styles.progressBar}>
+                  <ProgressBar
+                    progress={percentage_of_ingredients_owned / 100}
+                    width={100}
+                    color="gray"
+                  />
+                  <Image
+                    source={harvestImage}
+                    style={styles.harvestImage}
+                  />
+                </View>
+              </View>
+            </View>
+
+            {/* Description */}
+            <Text style={styles.subheading}>Description</Text>
+            {recipeDetails.description ? (
+              <Text style={styles.text}>{recipeDetails.description}</Text>
             ) : (
-              <Text style={styles.text}>
-                No detailed instructions available for this recipe.
-              </Text>
+              <RenderHtml
+                baseStyle={styles.text}
+                contentWidth={WIDTH}
+                source={{
+                  html: truncateDescription(recipeDetails.summary),
+                }}
+              />
             )}
+
+            {/* Owned Ingredients */}
+            <View style={styles.fullIngredients}>
+              <Text style={styles.subheading}>Owned Ingredients</Text>
+              <ScrollView
+                horizontal={true}
+                showsHorizontalScrollIndicator={false}
+              >
+                <View style={styles.horizontalScroll}>
+                  {owned_items.map((ingredient, i) => (
+                    <View key={i} style={styles.ingredientCardWrapper}>
+                      <IngredientCard
+                        key={i}
+                        name={ingredient.name}
+                        image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                        amount={ingredient.amount}
+                        unit={ingredient.measures?.us.unit_short}
+                      />
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+
+              {/* Missing Ingredients */}
+              <Text style={styles.subheading}>Missing Ingredients</Text>
+              <ScrollView
+                horizontal={true}
+                showsHorizontalScrollIndicator={false}
+              >
+                <View style={styles.horizontalScroll}>
+                  {missing_items.map((ingredient, i) => (
+                    <View key={i} style={styles.ingredientCardWrapper}>
+                      <IngredientCard
+                        key={i}
+                        name={ingredient.name}
+                        image={`https://img.spoonacular.com/ingredients_100x100/${ingredient.image}`}
+                        amount={ingredient.amount}
+                        unit={ingredient.measures?.us.unit_short}
+                        showAddButton={true} // Show the plus sign
+                        onAddPress={() => {
+                          Alert.alert(
+                            "Add Ingredient",
+                            "Add ingredient to grocery list or inventory?",
+                            [
+                              {
+                                text: "Cancel",
+                                style: "cancel",
+                              },
+                              {
+                                text: "Grocery List",
+                                onPress: () => {
+                                  addIngredientToGroceryList(ingredient);
+                                  setTimeout(() => {
+                                    navigation.navigate("Inventory", {
+                                      groceryList: [
+                                        ...groceryList,
+                                        ingredient,
+                                      ],
+                                    });
+                                  }, 0);
+                                  console.log("groceryList", groceryList);
+                                },
+                              },
+                              {
+                                text: "Inventory",
+                                onPress: () => {
+                                  addIngredientToInventory(ingredient);
+                                },
+                              },
+                            ],
+                            { cancelable: true }
+                          );
+                        }}
+                      />
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            </View>
+
+            {/* Cooking Steps */}
+            <View style={styles.fullInstructions}>
+              <Text style={styles.subheading}>Cooking Steps</Text>
+              {recipeDetails.analyzed_instructions &&
+              recipeDetails.analyzed_instructions[0] &&
+              recipeDetails.analyzed_instructions[0].steps ? (
+                recipeDetails.analyzed_instructions[0].steps.map(
+                  ({ step, number }) => (
+                    <View key={number} style={styles.instruction}>
+                      <Text style={styles.instructionNumber}>{number}</Text>
+                      <Text style={styles.instructionText}>{step}</Text>
+                    </View>
+                  )
+                )
+              ) : (
+                <Text style={styles.text}>
+                  No detailed instructions available for this recipe.
+                </Text>
+              )}
+            </View>
           </View>
+        </ScrollView>
+
+        {/* Bottom Buttons: Alter and Cook */}
+        <View style={styles.bottomBar}>
+          <TouchableOpacity
+            style={styles.bottomButton}
+            onPress={() => {
+              // Implement your Alter functionality here
+              Alert.alert("Alter", "Alter functionality not implemented yet.");
+            }}
+          >
+            <Text style={styles.bottomButtonText}>Ask✨</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.bottomButton}
+            onPress={() => {
+              // Implement your Cook functionality here
+              Alert.alert("Cook", "Cook mode activated!");
+            }}
+          >
+            <Text style={styles.bottomButtonText}>Cook</Text>
+          </TouchableOpacity>
         </View>
-      </ScrollView>
+      </View>
     )
   );
 };
@@ -354,6 +386,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#121212",
+  },
+  scrollView: {
+    flex: 1,
     paddingTop: 45,
     paddingHorizontal: 10,
   },
@@ -400,7 +435,7 @@ const styles = StyleSheet.create({
   details: {
     flexDirection: "column",
     justifyContent: "space-between",
-    alignItems: "left",
+    alignItems: "flex-start",
     marginBottom: 10,
   },
   detailsRow: {
@@ -473,6 +508,27 @@ const styles = StyleSheet.create({
     flex: 1,
     flexWrap: "wrap",
     paddingLeft: 8,
+  },
+  bottomBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 70, // Adjust the height as needed
+    backgroundColor: "#121212",
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: "#333",
+  },
+  bottomButton: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  bottomButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
   },
 });
 

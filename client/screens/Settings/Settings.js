@@ -14,21 +14,22 @@ import { supabase } from "../../utils/supabase";
 import Toast from "react-native-toast-message";
 import { useAppStore } from "../../stores/app-store";
 import { useNavigation } from "@react-navigation/native";
+import PremiumSubscription from "./PremiumSubscription";
 import { deleteUserProfile, deleteUserAuth } from "../../utils/supabase"
 
 const settingsData = [
-  // {
-  //   category: "Account",
-  //   data: [
-  //     {
-  //       id: "1",
-  //       title: "Subscribe to Premium",
-  //       description: "Unlock all premium features by subscribing.",
-  //       icon: "star",
-  //       screen: "PremiumSubscription",
-  //     },
-  //   ],
-  // },
+  {
+    category: "Account",
+    data: [
+      {
+        id: "1",
+        title: "Subscribe to Premium",
+        description: "Unlock all premium features by subscribing.",
+        icon: "star",
+        screen: "PremiumSubscription",
+      },
+    ],
+  },
   {
     category: "Support",
     data: [
@@ -229,7 +230,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
   },
   glow: {
-    shadowColor: "gray", // Green glow effect
+    shadowColor: "black", // Green glow effect
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 10,

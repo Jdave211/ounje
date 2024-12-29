@@ -6,16 +6,17 @@ import {
   TouchableOpacity,
   Dimensions,
   Alert,
-  Image,
+  ScrollView,
 } from "react-native";
 import React, { useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import IngredientCard from "../../components/IngredientCard";
-import Empty from "../../components/Empty";
-import { supabase } from "../../utils/supabase";
 import Checkbox from "expo-checkbox";
+import { supabase } from "../../utils/supabase";
+import axios from "axios";
+import Icon from "react-native-vector-icons/FontAwesome"; // Import FontAwesome icons
 
-const screenWidth = Dimensions.get("window").width;
+const window = Dimensions.get("window");
+const screenWidth = window.width || 360; // Default to 360 if undefined
 
 const GroceryList = ({ route }) => {
   const groceryList = route?.params?.groceryList;
@@ -24,35 +25,85 @@ const GroceryList = ({ route }) => {
   const [foodItems, setFoodItems] = useState([]);
   const [checkedItems, setCheckedItems] = useState(new Set());
   const [suggestions, setSuggestions] = useState([]);
+  const [totalPrice, setTotalPrice] = useState("$0.00");
 
-  // Function to fetch unique food items based on item name
   const fetchFoodItems = async (itemName) => {
     const { data, error } = await supabase
       .from("food_items_grocery")
       .select("*")
-      .ilike("name", `%${itemName}%`); // Fetch items containing the entered text
+      .ilike("name", `%${itemName}%`);
 
     if (error) {
       console.error("Error fetching food items:", error);
       return [];
     }
 
-    // Return items containing the exact or closely matched term
     const uniqueItems = Array.from(new Set(data.map((item) => item.name)))
       .map((name) => data.find((item) => item.name === name))
       .filter((item) =>
         item.name.toLowerCase().includes(itemName.toLowerCase())
       );
 
-    return uniqueItems;
+    // Limit suggestions to 5 items
+    return uniqueItems.slice(0, 4);
   };
+
+  const fetchPriceForItem = async (itemName) => {
+    const options = {
+      method: "GET",
+      url: "https://grocery-pricing-api.p.rapidapi.com/searchGrocery",
+      params: {
+        keyword: itemName,
+        perPage: "10",
+        page: "1",
+      },
+      headers: {
+        "x-rapidapi-key": process.env.SPOONACULAR_API_KEY2,
+        "x-rapidapi-host": "grocery-pricing-api.p.rapidapi.com",
+      },
+    };
+
+    try {
+      const response = await axios.request(options);
+      console.log("Response from grocery pricing API:", response.data);
+      const hits = response.data.hits;
+      if (hits && hits.length > 0) {
+        const firstHit = hits[0];
+        const priceInfo = firstHit.priceInfo;
+
+        // Extract the price from various possible fields
+        let price =
+          priceInfo.itemPrice ||
+          priceInfo.linePrice ||
+          priceInfo.wasPrice ||
+          priceInfo.unitPrice ||
+          "na";
+
+        // Remove any non-price text and keep only the price value
+        price = price.replace(/[^0-9.$]/g, "").trim();
+
+        // Ensure price starts with a dollar sign
+        if (!price.startsWith("$")) {
+          price = `$${price}`;
+        }
+
+        return price;
+      } else {
+        return "$0.00";
+      }
+    } catch (error) {
+      console.error("Error fetching price for item:", error);
+      return "$0.00";
+    }
+  };
+
   const handleInputChange = async (text) => {
     setNewItem(text);
     if (text.trim() !== "") {
       const matchingItems = await fetchFoodItems(text);
-      setSuggestions(matchingItems); // Show suggestions
+      setSuggestions(matchingItems);
     } else {
-      setSuggestions([]); // Clear suggestions if input is empty
+      setSuggestions([]);
     }
   };
 
@@ -62,70 +113,140 @@ const GroceryList = ({ route }) => {
     const existingItems = await fetchFoodItems(newItem);
     let newItemsList = [...foodItems];
 
-    // Check if item already exists in the grocery list
     const itemExists = newItemsList.some(
       (item) => item.name.toLowerCase() === newItem.toLowerCase()
     );
 
     if (!itemExists) {
+      let newItemData = { id: Date.now(), name: newItem, quantity: "1" };
+
+      const price = await fetchPriceForItem(newItem);
+      newItemData.price = price;
+
       if (existingItems.length > 0) {
-        // Add only the selected item
         const selectedItem = existingItems.find(
           (item) => item.name.toLowerCase() === newItem.toLowerCase()
         );
 
         if (selectedItem) {
-          newItemsList.push(selectedItem);
+          newItemData.id = selectedItem.id;
         }
       } else {
-        // Add as a new item if not found in fetched data
-        const newItemData = { id: Date.now(), name: newItem, image: null };
+        // Exclude the price when inserting into the database
+        const { id, name } = newItemData;
         const { error } = await supabase
           .from("food_items_grocery")
-          .insert([newItemData]);
+          .insert([{ id, name }]);
 
-        if (!error) {
-          newItemsList.push(newItemData);
+        if (error) {
+          console.error("Error inserting new item:", error);
         }
       }
+
+      newItemsList.unshift(newItemData); // Add to the top of the list
+      setFoodItems(newItemsList);
+      await AsyncStorage.setItem("groceryItems", JSON.stringify(newItemsList));
+      setNewItem("");
+      setSuggestions([]);
+
+      // Update total price
+      calculateTotalPrice(newItemsList);
     } else {
       Alert.alert(
         "Duplicate Item",
         `The item "${newItem}" is already in the Grocery List.`,
         [{ text: "OK", onPress: () => setNewItem("") }]
       );
-      return;
     }
-
-    setFoodItems(newItemsList);
-    await AsyncStorage.setItem("groceryItems", JSON.stringify(newItemsList)); // Persist items
-    setNewItem("");
-    setSuggestions([]); // Clear suggestions
   };
 
-  const handleCheckItem = async (itemId) => {
-    if (checkedItems.has(itemId)) {
-      setCheckedItems((prevChecked) => {
-        const newChecked = new Set(prevChecked);
+  const calculateTotalPrice = (items) => {
+    const total = items.reduce((sum, item) => {
+      const price = parseFloat(item.price.replace(/[^0-9.]/g, ""));
+      const quantity = parseInt(item.quantity, 10);
+      return sum + (isNaN(price) || isNaN(quantity) ? 0 : price * quantity);
+    }, 0);
+    const totalFormatted = `$${total.toFixed(2)}`;
+    setTotalPrice(totalFormatted);
+  };
+
+  const handleCheckItem = (itemId) => {
+    setCheckedItems((prevChecked) => {
+      const newChecked = new Set(prevChecked);
+      if (newChecked.has(itemId)) {
         newChecked.delete(itemId);
-        return newChecked;
-      });
+      } else {
+        newChecked.add(itemId);
+      }
+      return newChecked;
+    });
+  };
+
+  const handleDeleteSelected = () => {
+    const remainingItems = foodItems.filter(
+      (item) => !checkedItems.has(item.id)
+    );
+    setFoodItems(remainingItems);
+    setCheckedItems(new Set());
+    AsyncStorage.setItem("groceryItems", JSON.stringify(remainingItems));
+
+    // Update total price
+    calculateTotalPrice(remainingItems);
+  };
+
+  const handleDelete = () => {
+    if (checkedItems.size > 0) {
+      // Delete selected items
+      handleDeleteSelected();
     } else {
-      setFoodItems((prevItems) => {
-        const updatedItems = prevItems.filter((item) => item.id !== itemId);
-        AsyncStorage.setItem("groceryItems", JSON.stringify(updatedItems)); // Persist the updated list
-        return updatedItems;
-      });
-      setCheckedItems((prevChecked) => new Set(prevChecked).add(itemId));
+      // Prompt before deleting all
+      Alert.alert(
+        "Delete All Items",
+        "Are you sure you want to delete all items?",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "OK", onPress: handleClearAll },
+        ],
+        { cancelable: false }
+      );
     }
   };
+
+  const handleClearAll = () => {
+    setFoodItems([]);
+    setCheckedItems(new Set());
+    AsyncStorage.removeItem("groceryItems");
+    setTotalPrice("$0.00");
+  };
+
+  const handleQuantityChange = (itemId, value) => {
+    // Allow empty string for quantity input
+    setFoodItems((prevItems) => {
+      const updatedItems = prevItems.map((item) => {
+        if (item.id === itemId) {
+          return { ...item, quantity: value };
+        }
+        return item;
+      });
+      // Save to AsyncStorage
+      AsyncStorage.setItem("groceryItems", JSON.stringify(updatedItems));
+      // Update total price
+      calculateTotalPrice(updatedItems);
+      return updatedItems;
+    });
+  };
+
   useEffect(() => {
     const loadItems = async () => {
       try {
         const storedItems = await AsyncStorage.getItem("groceryItems");
         if (storedItems) {
-          const items = JSON.parse(storedItems);
+          const items = JSON.parse(storedItems).map((item) => ({
+            ...item,
+            quantity: item.quantity || "1", // Set default quantity to 1
+          }));
           setFoodItems(items);
+          calculateTotalPrice(items);
         }
       } catch (error) {
         console.error("Failed to load grocery items:", error);
@@ -133,189 +254,282 @@ const GroceryList = ({ route }) => {
     };
 
     loadItems();
-  }, []); // This empty dependency array ensures this runs only on mount
+  }, []);
 
   return (
     <View style={styles.container}>
-      {/* <Text style={styles.header}>Grocery List</Text> */}
+      {/* Floating Search Bar */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Add New Grocery Item</Text>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Enter your grocery item"
-            placeholderTextColor="gray"
-            autoCapitalize="none"
-            maxLength={50}
-            value={newItem}
-            onChangeText={handleInputChange}
-          />
-          <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
-            <Text style={styles.buttonText}>Add</Text>
-          </TouchableOpacity>
-        </View>
-        {suggestions?.length > 0 && (
-          <View style={{ marginTop: 10 }}>
-            {suggestions.map((suggestion) => (
-              <TouchableOpacity
-                key={suggestion.id}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  marginBottom: 10,
-                }}
-                onPress={() => {
-                  setNewItem(suggestion.name); // Set the selected suggestion to the TextInput
-                  setSuggestions([]); // Clear suggestions
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    width: 150,
-                    gap: 20,
-                    paddingHorizontal: 40,
-                    height: 80,
-                    borderRadius: 10,
-                    backgroundColor: "rgba(0, 0, 0, 0.2)",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    marginBottom: 4,
+        <Text style={styles.cardTitle}>Add New Item</Text>
+        <View style={styles.searchContainer}>
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter item"
+              placeholderTextColor="gray"
+              autoCapitalize="none"
+              maxLength={50}
+              value={newItem}
+              onChangeText={handleInputChange}
+            />
+            <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
+              <Text style={styles.buttonText}>+</Text>
+            </TouchableOpacity>
+          </View>
+          {suggestions?.length > 0 && (
+            <View style={styles.suggestionsContainer}>
+              {suggestions.map((suggestion) => (
+                <TouchableOpacity
+                  key={suggestion.id}
+                  style={styles.suggestion}
+                  onPress={() => {
+                    setNewItem(suggestion.name);
+                    setSuggestions([]);
                   }}
                 >
-                  <Image
-                    source={{
-                      uri: suggestion.image
-                        ? `https://img.spoonacular.com/ingredients_100x100/${suggestion.image}`
-                        : null,
-                    }}
-                    style={{ width: 50, height: 50, borderRadius: 10 }} // Adjust size as needed
-                  />
-                  <Text style={{ color: "#fff" }}>{suggestion.name}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+                  <Text style={styles.suggestionText}>{suggestion.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
       </View>
 
-      <View style={[styles.card]}>
-        <Text style={styles.cardTitle}>Grocery Items</Text>
-        <View style={styles.centeredContainer}>
+      {/* Action Buttons */}
+      <View style={styles.actionsContainer}>
+        <TouchableOpacity style={styles.actionButton} onPress={handleDelete}>
+          <Icon name="trash" size={20} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Grocery List */}
+      <View style={styles.card}>
+        <View style={styles.totalContainer}>
+          <Text style={styles.totalPrice}>Total: {totalPrice}</Text>
+        </View>
+      </View>
+
+      <ScrollView style={styles.scrollView}>
+        <View style={styles.listContainer}>
           {foodItems?.length === 0 ? (
-            <View
-              style={{
-                flex: 2,
-                justifyContent: "center",
-                alignContent: "center",
-              }}
-            >
-              <Empty />
+            <View style={styles.emptyContainer}>
               <Text style={styles.warning}>
-                Your grocery list is empty. Add some items to get started.
+                Your grocery list is empty. Add items to start.
               </Text>
             </View>
           ) : (
             <>
-              {foodItems.map((item) => {
-                return (
-                  <View
-                    key={item.id}
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      // marginBottom: 10,
-                      // gap: 20,
-                    }}
-                  >
-                    <View>
-                      <Checkbox
-                        style={{ marginHorizontal: 12 }}
-                        value={checkedItems.has(item.id)}
-                        onValueChange={() => handleCheckItem(item.id)}
-                      />
-                    </View>
-                    <View
-                      style={{ width: 90, marginBottom: 10, marginRight: 10 }}
+              {foodItems.map((item) => (
+                <View key={item.id} style={styles.itemContainer}>
+                  <Checkbox
+                    style={styles.checkbox}
+                    value={checkedItems.has(item.id)}
+                    onValueChange={() => handleCheckItem(item.id)}
+                  />
+                  <View style={styles.itemDetails}>
+                    <Text
+                      style={[
+                        styles.itemText,
+                        checkedItems.has(item.id) && styles.checkedText,
+                      ]}
                     >
-                      <IngredientCard
-                        name={item.name}
-                        image={
-                          item.image
-                            ? `https://img.spoonacular.com/ingredients_100x100/${item.image}`
-                            : null
+                      {item.name}
+                    </Text>
+                    <View style={styles.quantityPriceContainer}>
+                      <TextInput
+                        style={styles.quantityInput}
+                        keyboardType="numeric"
+                        placeholder="Qty"
+                        placeholderTextColor="#888"
+                        value={item.quantity.toString()}
+                        onChangeText={(value) =>
+                          handleQuantityChange(item.id, value)
                         }
-                        GroceryItem={true}
                       />
+                      <Text style={styles.totalPriceText}>
+                        {(() => {
+                          const price = parseFloat(
+                            item.price.replace(/[^0-9.]/g, "")
+                          );
+                          const quantity = parseInt(item.quantity, 10);
+                          const total =
+                            isNaN(price) || isNaN(quantity)
+                              ? "$0.00"
+                              : `$${(price * quantity).toFixed(2)}`;
+                          return total;
+                        })()}
+                      </Text>
                     </View>
                   </View>
-                );
-              })}
+                </View>
+              ))}
             </>
           )}
         </View>
-      </View>
+      </ScrollView>
     </View>
   );
 };
 
 export default GroceryList;
 
+const fontSize = screenWidth ? screenWidth * 0.045 : 16;
+
 const styles = StyleSheet.create({
   container: {
-    // padding: 10,
-  },
-  header: {
-    color: "#ffff",
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 10,
-  },
-  input: {
     flex: 1,
-    height: 50,
-    borderColor: "white",
-    borderWidth: 1,
-    padding: 10,
-    borderRadius: 10,
-    color: "#fff",
-    backgroundColor: "#333",
-  },
-  addButton: {
-    marginLeft: 10,
-    backgroundColor: "#282C35",
-    borderRadius: 5,
-    padding: 10,
-  },
-  buttonText: {
-    color: "white",
-    fontWeight: "bold",
-  },
-  centeredContainer: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  warning: {
-    color: "#fff",
-    textAlign: "center",
-  },
-  card: {
     backgroundColor: "#1f1f1f",
-    borderRadius: 10,
-    padding: 20,
-    marginBottom: 20,
+    borderRadius: 12, // Curved edges
   },
-  cardTitle: {
-    color: "#fff",
-    fontSize: screenWidth * 0.045,
-    fontWeight: "bold",
-    marginBottom: 10,
+  scrollView: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  searchContainer: {
+    position: "relative",
   },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
+    marginBottom: 0, // Adjusted margin
+  },
+  input: {
+    flex: 1,
+    height: 40,
+    borderColor: "#555",
+    borderWidth: 1,
+    padding: 8,
+    borderRadius: 12, // Curved edges
+    color: "#fff",
+    backgroundColor: "#2a2a2a",
+  },
+  addButton: {
+    marginLeft: 8,
+    backgroundColor: "#3b3b3b",
+    borderRadius: 12, // Curved edges
+    padding: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  buttonText: {
+    color: "white",
+    fontWeight: "bold",
+    fontSize: 18,
+  },
+  card: {
+    backgroundColor: "transparent",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  cardTitle: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "bold",
     marginBottom: 10,
+  },
+  totalPrice: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+  totalContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  suggestionsContainer: {
+    backgroundColor: "#2a2a2a",
+    borderRadius: 12, // Curved edges
+    padding: 8,
+    marginTop: 5, // Spacing between input and suggestions
+  },
+  suggestion: {
+    paddingVertical: 6,
+  },
+  suggestionText: {
+    color: "#ddd",
+    fontSize: 16,
+  },
+  listContainer: {
+    flexDirection: "column",
+    alignItems: "flex-start",
+    paddingBottom: 20,
+  },
+  emptyContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  warning: {
+    color: "#aaa",
+    textAlign: "center",
+    fontSize: 16,
+  },
+  itemContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+    width: "100%",
+    borderBottomColor: "#333",
+    borderBottomWidth: 1,
+    paddingVertical: 8,
+  },
+  checkbox: {
+    marginRight: 12,
+  },
+  itemDetails: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    flex: 1,
+    alignItems: "center",
+  },
+  itemText: {
+    fontSize: 18,
+    color: "#fff",
+    flex: 1,
+  },
+  checkedText: {
+    textDecorationLine: "line-through",
+    color: "#888",
+  },
+  quantityPriceContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  quantityInput: {
+    width: 50,
+    height: 30,
+    borderColor: "#555",
+    borderWidth: 1,
+    borderRadius: 12, // Curved edges
+    color: "white",
+    paddingHorizontal: 5,
+    marginRight: 10,
+    textAlign: "center",
+    backgroundColor: "#2a2a2a",
+  },
+  totalPriceText: {
+    fontSize: 16,
+    color: "#fff",
+    width: 70,
+    textAlign: "right",
+  },
+  actionsContainer: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  actionButton: {
+    backgroundColor: "#3b3b3b",
+    borderRadius: 12, // Curved edges
+    padding: 10,
+    alignItems: "center",
+    flexDirection: "row",
+    marginTop: 15,
+  },
+  actionText: {
+    color: "#fff",
+    fontSize: 14,
   },
 });

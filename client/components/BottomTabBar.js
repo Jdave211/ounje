@@ -24,7 +24,7 @@ const BottomTabBar = () => {
       iconComponent: FontAwesome5,
     },
     {
-      name: "Collection",
+      name: "Coookbook",
       screenName: "Collection",
       iconName: "bookmark",
       iconComponent: FontAwesome,

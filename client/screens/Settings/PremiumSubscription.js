@@ -7,7 +7,7 @@ import {
   ScrollView,
   Alert,
 } from "react-native";
-import { Icon } from "react-native-elements";
+import { MaterialIcons } from "@expo/vector-icons";
 
 const plansData = {
   monthly: [
@@ -33,7 +33,7 @@ const plansData = {
         "Calorie Tracking",
         "Beta Features Access",
       ],
-      billed: "Coming Soon",
+      billed: "Billed Monthly",
     },
   ],
   annually: [
@@ -59,7 +59,7 @@ const plansData = {
         "Calorie Tracking",
         "Beta Features Access",
       ],
-      billed: "Coming Soon",
+      billed: "Billed Yearly",
     },
   ],
   lifetime: [
@@ -85,7 +85,7 @@ const plansData = {
         "Calorie Tracking",
         "Beta Features Access",
       ],
-      billed: "Coming Soon",
+      billed: "Pay once - Lifetime Access",
     },
   ],
 };
@@ -93,7 +93,7 @@ const plansData = {
 export default function PremiumSubscription({ navigation }) {
   const [subscriptionPeriod, setSubscriptionPeriod] = useState("monthly");
   const [selectedPlan, setSelectedPlan] = useState(
-    plansData[subscriptionPeriod][1],
+    plansData[subscriptionPeriod][1]
   );
   const plans = plansData[subscriptionPeriod];
 
@@ -105,111 +105,85 @@ export default function PremiumSubscription({ navigation }) {
 
   return (
     <View style={styles.container}>
+      {/* Back Button */}
       <TouchableOpacity
         onPress={() => navigation.goBack()}
         style={styles.backButton}
       >
-        <Icon name="arrow-back" type="material" color="gray" />
+        <MaterialIcons name="arrow-back-ios" size={24} color="#fff" />
       </TouchableOpacity>
-      <Text style={styles.header}>Subscribe to Premium</Text>
+
+      {/* Header */}
+      <Text style={styles.header}>Upgrade to Premium</Text>
+
+      {/* Subscription Period Toggle */}
       <View style={styles.toggleContainer}>
-        <TouchableOpacity
-          style={[
-            styles.toggleButton,
-            subscriptionPeriod === "monthly" && styles.selectedToggle,
-          ]}
-          onPress={() => {
-            setSubscriptionPeriod("monthly");
-            setSelectedPlan(plansData.monthly[1]);
-          }}
-        >
-          <Text
+        {["monthly", "annually", "lifetime"].map((period) => (
+          <TouchableOpacity
+            key={period}
             style={[
-              styles.toggleText,
-              subscriptionPeriod === "monthly" && styles.selectedToggleText,
+              styles.toggleButton,
+              subscriptionPeriod === period && styles.selectedToggle,
             ]}
+            onPress={() => {
+              setSubscriptionPeriod(period);
+              setSelectedPlan(plansData[period][1]);
+            }}
           >
-            Monthly
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.toggleButton,
-            subscriptionPeriod === "annually" && styles.selectedToggle,
-          ]}
-          onPress={() => {
-            setSubscriptionPeriod("annually");
-            setSelectedPlan(plansData.annually[1]);
-          }}
-        >
-          <Text
-            style={[
-              styles.toggleText,
-              subscriptionPeriod === "annually" && styles.selectedToggleText,
-            ]}
-          >
-            Annual
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.toggleButton,
-            subscriptionPeriod === "lifetime" && styles.selectedToggle,
-          ]}
-          onPress={() => {
-            setSubscriptionPeriod("lifetime");
-            setSelectedPlan(plansData.lifetime[1]);
-          }}
-        >
-          <Text
-            style={[
-              styles.toggleText,
-              subscriptionPeriod === "lifetime" && styles.selectedToggleText,
-            ]}
-          >
-            Lifetime
-          </Text>
-        </TouchableOpacity>
-      </View>
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <View style={styles.planContainer}>
-          {plans.map((plan) => (
-            <TouchableOpacity
-              key={plan.id}
+            <Text
               style={[
-                styles.planBox,
-                selectedPlan.id === plan.id && styles.selectedPlanBox,
+                styles.toggleText,
+                subscriptionPeriod === period && styles.selectedToggleText,
               ]}
-              onPress={() => handlePlanSelect(plan)}
             >
+              {period.charAt(0).toUpperCase() + period.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Plans */}
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
+        {plans.map((plan) => (
+          <TouchableOpacity
+            key={plan.id}
+            style={[
+              styles.planCard,
+              selectedPlan.id === plan.id && styles.selectedPlanCard,
+            ]}
+            onPress={() => handlePlanSelect(plan)}
+          >
+            <View style={styles.planHeader}>
               <Text style={styles.planName}>{plan.name}</Text>
               <Text style={styles.planPrice}>{plan.price}</Text>
-              {plan.billed && (
-                <Text style={styles.planBilled}>{plan.billed}</Text>
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-        <View style={styles.featuresList}>
-          {selectedPlan.features.map((feature, index) => (
-            <View style={styles.featureItem} key={index}>
-              <Icon name="check" type="material" color="#A8BCA1" />
-              <Text style={styles.featureText}>{feature}</Text>
             </View>
-          ))}
-        </View>
+            <View style={styles.featuresList}>
+              {plan.features.map((feature, index) => (
+                <View style={styles.featureItem} key={index}>
+                  <MaterialIcons name="check" size={20} color="silver" />
+                  <Text style={styles.featureText}>{feature}</Text>
+                </View>
+              ))}
+            </View>
+            {plan.billed && (
+              <Text style={styles.planBilled}>{plan.billed}</Text>
+            )}
+          </TouchableOpacity>
+        ))}
       </ScrollView>
+
+      {/* Subscribe Button */}
       {isPremiumPlan && (
         <TouchableOpacity
           style={styles.subscribeButton}
           onPress={() =>
             Alert.alert(
               "Coming Soon",
-              "Premium subscriptions will be available soon!",
+              "Premium subscriptions will be available soon!"
             )
           }
         >
-          <Text style={styles.subscribeButtonText}></Text>
+          <Text style={styles.subscribeButtonText}>Subscribe Now</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -220,117 +194,105 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#121212",
-    padding: 20,
-    paddingTop: 30,
+    paddingTop: 50,
   },
   backButton: {
-    alignSelf: "flex-start",
-    top: 30,
-    right: 10,
-    borderRadius: 8,
-    width: 40,
-    padding: 4,
+    position: "absolute",
+    top: 50,
+    left: 20,
     zIndex: 1,
   },
   header: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "bold",
-    color: "#F5F5F5",
+    color: "#FFFFFF",
     textAlign: "center",
     marginBottom: 20,
   },
   toggleContainer: {
     flexDirection: "row",
-    justifyContent: "center",
+    alignSelf: "center",
+    backgroundColor: "#1e1e1e",
+    borderRadius: 8,
+    overflow: "hidden",
     marginBottom: 20,
   },
   toggleButton: {
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 5,
-    marginHorizontal: 5,
   },
   selectedToggle: {
-    borderColor: "#5FCB73",
+    backgroundColor: "#2E2E2E",
   },
   toggleText: {
-    color: "#F5F5F5",
+    color: "#FFFFFF",
     fontSize: 16,
   },
   selectedToggleText: {
-    color: "#5FCB73",
+    color: "#FFFFFF",
+    fontWeight: "bold",
   },
   scrollContainer: {
-    flexGrow: 1,
-    paddingBottom: 80, // Ensure enough space for the subscribe button
+    paddingHorizontal: 20,
+    paddingBottom: 100,
   },
-  planContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around",
+  planCard: {
+    backgroundColor: "#1e1e1e",
+    borderRadius: 12,
+    padding: 20,
     marginBottom: 20,
   },
-  planBox: {
-    flex: 1,
-    padding: 20,
-    backgroundColor: "#1e1e1e",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#1e1e1e",
-    alignItems: "center",
-    marginHorizontal: 5,
+  selectedPlanCard: {
+    borderWidth: 2,
+    borderColor: "#1B4D3E", // Subtle green border
   },
-  selectedPlanBox: {
-    borderColor: "#5FCB73",
+  planHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
   },
   planName: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "bold",
-    color: "#F5F5F5",
-    marginBottom: 5,
-    fontStyle: "italic",
+    color: "#FFFFFF",
   },
   planPrice: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "bold",
-    color: "#5FCB73",
-  },
-  planDuration: {
-    fontSize: 16,
-    color: "#ddd",
-    marginTop: 5,
+    color: "#FFFFFF",
   },
   planBilled: {
-    fontSize: 16,
+    fontSize: 14,
     color: "gray",
-    marginTop: 5,
+    marginTop: 10,
+    textAlign: "center",
   },
   featuresList: {
-    marginBottom: 20,
+    marginTop: 10,
   },
   featureItem: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 8,
   },
   featureText: {
-    color: "#F5F5F5",
+    color: "#FFFFFF",
     marginLeft: 10,
-    fontSize: 16,
+    fontSize: 15,
   },
   subscribeButton: {
     position: "absolute",
-    bottom: 50,
+    bottom: 30,
     left: 20,
     right: 20,
-    backgroundColor: "#282C35",
+    backgroundColor: "#2E2E2E",
     borderRadius: 8,
     padding: 15,
     alignItems: "center",
   },
   subscribeButtonText: {
-    color: "#5FCB73",
+    color: "#FFFFFF",
     fontSize: 18,
     fontWeight: "bold",
   },

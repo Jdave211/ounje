@@ -12,7 +12,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useAppStore } from "../stores/app-store";
 import { useQuery, useQueryClient } from "react-query";
 import { fetchSavedRecipesByUser, unsaveRecipe } from "../utils/supabase";
-import DiscoverRecipes from "../components/DiscoverRecipes";
+import DiscoverRecipes from "./DiscoverRecipe/DiscoverRecipes";
 
 const screenWidth = Dimensions.get("window").width;
 const screenHeight = Dimensions.get("window").height;
