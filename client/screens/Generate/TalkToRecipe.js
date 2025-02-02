@@ -84,13 +84,13 @@ export default function TalkToRecipe() {
           onSubmitEditing={handleTalkToRecipe}
         />
         <Text style={styles.instructions}>
-          Paste the URL of the recipe you would like to speak to.
+          Paste the URL of the recipe you would like to add.
         </Text>
         <TouchableOpacity style={styles.button} onPress={handleTalkToRecipe}>
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>Talk to My Recipe</Text>
+            <Text style={styles.buttonText}>Add your recipe</Text>
           )}
         </TouchableOpacity>
       </View>

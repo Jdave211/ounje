@@ -1,100 +1,72 @@
-// DiscoverRecipes.js
-
 import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, ActivityIndicator, Dimensions } from 'react-native';
 import {
-  StyleSheet,
-  ActivityIndicator,
-  Dimensions,
-  Text,
-} from 'react-native';
-import {
-  PanGestureHandler,
   GestureHandlerRootView,
+  PanGestureHandler,
 } from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedGestureHandler,
+  useAnimatedStyle,
   withSpring,
   runOnJS,
 } from 'react-native-reanimated';
-import SwipeableCard from './SwipeableCard';
+import RecipeCard from '../../components/RecipeCard';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
+
+// Tweak these for how far/fast you must swipe for removal.
+const SWIPE_THRESHOLD = width * 0.25;
+const VELOCITY_THRESHOLD = 800;
 
 const DiscoverRecipes = () => {
-  const [recipes, setRecipes] = useState([]);
+  // We'll store just ONE recipe at a time
+  const [recipe, setRecipe] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [fetchCount, setFetchCount] = useState(0);
-  const [currentIndex, setCurrentIndex] = useState(0);
 
-  // Shared values for animation
+  // Shared animated values for the current (and only) card
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const rotateZ = useSharedValue(0);
 
   useEffect(() => {
-    fetchRandomRecipes(5); // Fetch initial 10 recipes
+    // Fetch our first single recipe when the component mounts
+    fetchSingleRecipe();
   }, []);
 
-  const fetchRandomRecipes = async (count = 1) => {
+  // Fetch exactly one random recipe
+  const fetchSingleRecipe = async () => {
     try {
       setLoading(true);
-      const newRecipes = [];
+      const response = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
+      const data = await response.json();
 
-      for (let i = 0; i < count; ) {
-        const response = await fetch(
-          'https://www.themealdb.com/api/json/v1/1/random.php'
-        );
-        const data = await response.json();
-
-        const newRecipe = data.meals[0];
-
-        // Use functional update to get the latest state
-        setRecipes((prevRecipes) => {
-          const recipeExists = prevRecipes.some(
-            (recipe) => recipe.idMeal === newRecipe.idMeal
-          );
-
-          if (!recipeExists) {
-            newRecipes.push({
-              ...newRecipe,
-              uniqueKey: `${newRecipe.idMeal}-${fetchCount}-${i}`,
-            });
-            setFetchCount((prevCount) => prevCount + 1);
-            i++; // Only increment if we added a new recipe
-          }
-          return prevRecipes;
-        });
+      if (data.meals && data.meals.length > 0) {
+        setRecipe(data.meals[0]);
+      } else {
+        // If the API returns no valid meal, setRecipe(null) or handle error
+        setRecipe(null);
       }
-
-      setRecipes((prevRecipes) => [...prevRecipes, ...newRecipes]);
     } catch (error) {
-      console.error('Error fetching recipes:', error);
+      console.error('Error fetching single recipe:', error);
+      setRecipe(null);
     } finally {
       setLoading(false);
     }
   };
 
-  const maxVisibleItems = 10;
-
+  // Called after the card has fully swiped off-screen
   const onSwipeComplete = () => {
-    setCurrentIndex((prevIndex) => {
-      const newIndex = prevIndex + 1;
-
-      // Fetch more recipes if needed
-      if (recipes.length - newIndex <= maxVisibleItems * 2) {
-        fetchRandomRecipes(5);
-      }
-
-      return newIndex;
-    });
-
-    // Reset animation values
+    // 1) Reset the card's animation values
     translateX.value = 0;
     translateY.value = 0;
     rotateZ.value = 0;
+
+    // 2) Fetch a new random recipe to display
+    runOnJS(fetchSingleRecipe)();
   };
 
+  // Pan gesture handler for the single card
   const gestureHandler = useAnimatedGestureHandler({
     onStart: (_, context) => {
       context.startX = translateX.value;
@@ -103,25 +75,26 @@ const DiscoverRecipes = () => {
     onActive: (event, context) => {
       translateX.value = context.startX + event.translationX;
       translateY.value = context.startY + event.translationY;
-      rotateZ.value = (translateX.value / width) * 15; // Adjust rotation angle
+      // Slight rotation as we drag horizontally
+      rotateZ.value = (translateX.value / width) * 15; // up to ~15 deg
     },
     onEnd: (event) => {
-      const swipeThreshold = width * 0.25;
-      const velocityThreshold = 800;
-
+      const { velocityX } = event;
       if (
-        Math.abs(translateX.value) > swipeThreshold ||
-        Math.abs(event.velocityX) > velocityThreshold
+        Math.abs(translateX.value) > SWIPE_THRESHOLD ||
+        Math.abs(velocityX) > VELOCITY_THRESHOLD
       ) {
         const toValue = translateX.value > 0 ? width * 1.5 : -width * 1.5;
+        // Animate off the screen, then trigger onSwipeComplete
         translateX.value = withSpring(
           toValue,
-          { velocity: event.velocityX },
+          { velocity: velocityX },
           () => {
             runOnJS(onSwipeComplete)();
           }
         );
       } else {
+        // Snap back if not swiped far enough
         translateX.value = withSpring(0);
         translateY.value = withSpring(0);
         rotateZ.value = withSpring(0);
@@ -129,30 +102,48 @@ const DiscoverRecipes = () => {
     },
   });
 
+  // Animated style to reflect our translate & rotate on the card
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateX: translateX.value },
+        { translateY: translateY.value },
+        { rotateZ: `${rotateZ.value}deg` },
+      ],
+    };
+  });
+
+  // If loading and we have no recipe to show yet
+  if (loading && !recipe) {
+    return (
+      <GestureHandlerRootView style={styles.container}>
+        <ActivityIndicator size="large" color="green" />
+      </GestureHandlerRootView>
+    );
+  }
+
+  // If there's no recipe and we're not loading, maybe show a message
+  if (!recipe && !loading) {
+    return (
+      <GestureHandlerRootView style={styles.container}>
+        <Text style={styles.noMoreText}>No recipe found</Text>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // Otherwise, render our single swipeable card
   return (
     <GestureHandlerRootView style={styles.container}>
-      {recipes.length > currentIndex ? (
-        recipes
-          .slice(currentIndex, currentIndex + maxVisibleItems)
-          .reverse()
-          .map((item, index) => (
-            <SwipeableCard
-              key={item.uniqueKey}
-              item={item}
-              index={index}
-              isTopCard={index === 0}
-              translateX={translateX}
-              translateY={translateY}
-              rotateZ={rotateZ}
-              gestureHandler={gestureHandler}
-              recipesLength={recipes.length}
-            />
-          ))
-      ) : loading ? (
-        <ActivityIndicator size="large" color="green" />
-      ) : (
-        <Text>No more recipes</Text>
-      )}
+      <PanGestureHandler onGestureEvent={gestureHandler}>
+        <Animated.View style={[styles.card, animatedStyle]}>
+          <RecipeCard
+            id={recipe.idMeal}
+            title={recipe.strMeal}
+            imageUrl={recipe.strMealThumb}
+            readyInMinutes={recipe.strCookingTime || '15'}
+          />
+        </Animated.View>
+      </PanGestureHandler>
     </GestureHandlerRootView>
   );
 };
@@ -161,8 +152,23 @@ export default DiscoverRecipes;
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    width: '100%',     // fixed height in px
     alignItems: 'center',
-    paddingTop: 450, // Adjust as needed
+    justifyContent: 'center',
+  },
+  card: {
+    // Dynamic width & height; tweak if you want different ratio
+    width: '80%',           // 80% of screen width
+    height: '60%',          // 60% of screen height
+    maxWidth: 400,          // Optional max
+    maxHeight: 600,         // Optional max
+    borderRadius: 16,
+    // Center its content
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noMoreText: {
+    color: '#fff',
+    fontSize: 18,
   },
 });

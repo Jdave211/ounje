@@ -67,35 +67,40 @@ export default function Account({ session }) {
 
   // Function to update the user profile
   async function updateProfile({ name, avatar_url }) {
-    try {
-      setLoading(true);
-      if (!session?.user) throw new Error("No user on the session!");
+    if (name.trim() !== "") {
+      try {
+        setLoading(true);
+        if (!session?.user) throw new Error("No user on the session!");
 
-      const updates = {
-        id: session?.user.id,
-        name,
-        avatar_url,
-        updated_at: new Date(), // Add updated timestamp
-      };
+        const updates = {
+          id: session?.user.id,
+          name,
+          avatar_url,
+          updated_at: new Date(), // Add updated timestamp
+        };
 
-      const { error } = await supabase.from("profiles").upsert(updates); // Update profile
+        const { error } = await supabase.from("profiles").upsert(updates); // Update profile
 
-      if (error) throw error;
+        if (error) throw error;
 
-      Toast.show({
-        type: "success",
-        text1: "Profile Updated",
-        text2: "Your name has been updated successfully.",
-      });
-    } catch (error) {
-      if (error instanceof Error) {
-        Alert.alert(error.message);
+        Toast.show({
+          type: "success",
+          text1: "Profile Updated",
+          text2: "Your name has been updated successfully.",
+        });
+      } catch (error) {
+        if (error instanceof Error) {
+          Alert.alert(error.message);
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
     }
-  }
 
+  else {
+    Alert.alert("Name cannot be empty!");
+  }
+}
   // Function to handle signing out
   async function handleSignOut() {
     try {

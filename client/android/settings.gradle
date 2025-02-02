@@ -1,18 +1,40 @@
 rootProject.name = 'ounje'
 
 dependencyResolutionManagement {
+  // Change this mode to allow project repositories
+  // repositoriesMode.set(RepositoriesMode.PREFER_PROJECT_REPOS)
+  
+  // Add your repositories here
+  repositories {
+    mavenCentral()
+    google()
+    maven { url 'https://jitpack.io' }
+  }
+  
   versionCatalogs {
     reactAndroidLibs {
-      from(files(new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim(), "../gradle/libs.versions.toml")))
+      from(files(new File(
+        ["node", "--print", "require.resolve('react-native/package.json')"]
+          .execute(null, rootDir).text.trim(), "../gradle/libs.versions.toml"
+      )))
     }
   }
 }
 
-apply from: new File(["node", "--print", "require.resolve('expo/package.json')"].execute(null, rootDir).text.trim(), "../scripts/autolinking.gradle");
-useExpoModules()
+apply from: new File(
+  ["node", "--print", "require.resolve('expo/package.json')"]
+    .execute(null, rootDir).text.trim(), "../scripts/autolinking.gradle"
+);
+useExpoModules();
 
-apply from: new File(["node", "--print", "require.resolve('@react-native-community/cli-platform-android/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim(), "../native_modules.gradle");
-applyNativeModulesSettingsGradle(settings)
+apply from: new File(
+  ["node", "--print", "require.resolve('@react-native-community/cli-platform-android/package.json', { paths: [require.resolve('react-native/package.json')] })"]
+    .execute(null, rootDir).text.trim(), "../native_modules.gradle"
+);
+applyNativeModulesSettingsGradle(settings);
 
-include ':app'
-includeBuild(new File(["node", "--print", "require.resolve('@react-native/gradle-plugin/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile())
+include ':app';
+includeBuild(new File(
+  ["node", "--print", "require.resolve('@react-native/gradle-plugin/package.json', { paths: [require.resolve('react-native/package.json')] })"]
+    .execute(null, rootDir).text.trim()
+).getParentFile());

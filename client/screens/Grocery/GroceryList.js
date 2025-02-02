@@ -97,42 +97,35 @@ const GroceryList = ({ route }) => {
     }
   };
 
-  const handleInputChange = async (text) => {
-    setNewItem(text);
-    if (text.trim() !== "") {
-      const matchingItems = await fetchFoodItems(text);
-      setSuggestions(matchingItems);
-    } else {
-      setSuggestions([]);
-    }
-  };
+  // Modified addNewItem to accept an overrideName
+  const addNewItem = async (overrideName) => {
+    // If overrideName isn't provided, use newItem from state
+    const itemName = overrideName ?? newItem;
 
-  const addNewItem = async () => {
-    if (newItem.trim() === "") return;
+    if (itemName.trim() === "") return;
 
-    const existingItems = await fetchFoodItems(newItem);
+    const existingItems = await fetchFoodItems(itemName);
     let newItemsList = [...foodItems];
 
     const itemExists = newItemsList.some(
-      (item) => item.name.toLowerCase() === newItem.toLowerCase()
+      (item) => item.name.toLowerCase() === itemName.toLowerCase()
     );
 
     if (!itemExists) {
-      let newItemData = { id: Date.now(), name: newItem, quantity: "1" };
+      let newItemData = { id: Date.now(), name: itemName, quantity: "1" };
 
-      const price = await fetchPriceForItem(newItem);
+      const price = await fetchPriceForItem(itemName);
       newItemData.price = price;
 
       if (existingItems.length > 0) {
         const selectedItem = existingItems.find(
-          (item) => item.name.toLowerCase() === newItem.toLowerCase()
+          (item) => item.name.toLowerCase() === itemName.toLowerCase()
         );
-
         if (selectedItem) {
           newItemData.id = selectedItem.id;
         }
       } else {
-        // Exclude the price when inserting into the database
+        // Exclude the price when inserting into DB
         const { id, name } = newItemData;
         const { error } = await supabase
           .from("food_items_grocery")
@@ -143,26 +136,41 @@ const GroceryList = ({ route }) => {
         }
       }
 
-      newItemsList.unshift(newItemData); // Add to the top of the list
+      newItemsList.unshift(newItemData);
       setFoodItems(newItemsList);
       await AsyncStorage.setItem("groceryItems", JSON.stringify(newItemsList));
-      setNewItem("");
+      setNewItem("");  // Clear the input
       setSuggestions([]);
-
-      // Update total price
       calculateTotalPrice(newItemsList);
+
     } else {
       Alert.alert(
         "Duplicate Item",
-        `The item "${newItem}" is already in the Grocery List.`,
+        `The item "${itemName}" is already in the Grocery List.`,
         [{ text: "OK", onPress: () => setNewItem("") }]
       );
     }
   };
 
+  const handleInputChange = async (text) => {
+    setNewItem(text);
+    if (text.trim() !== "") {
+      const matchingItems = await fetchFoodItems(text);
+      setSuggestions(matchingItems);
+    } else {
+      setSuggestions([]);
+    }
+  };
+
+  // This function will be triggered when user taps a suggestion
+  const handleSuggestionPress = async (suggestionName) => {
+    // Immediately add suggestion to the list
+    await addNewItem(suggestionName);
+  };
+
   const calculateTotalPrice = (items) => {
     const total = items.reduce((sum, item) => {
-      const price = parseFloat(item.price.replace(/[^0-9.]/g, ""));
+      const price = parseFloat((item.price || "$0.00").replace(/[^0-9.]/g, ""));
       const quantity = parseInt(item.quantity, 10);
       return sum + (isNaN(price) || isNaN(quantity) ? 0 : price * quantity);
     }, 0);
@@ -189,8 +197,6 @@ const GroceryList = ({ route }) => {
     setFoodItems(remainingItems);
     setCheckedItems(new Set());
     AsyncStorage.setItem("groceryItems", JSON.stringify(remainingItems));
-
-    // Update total price
     calculateTotalPrice(remainingItems);
   };
 
@@ -199,7 +205,6 @@ const GroceryList = ({ route }) => {
       // Delete selected items
       handleDeleteSelected();
     } else {
-      // Prompt before deleting all
       Alert.alert(
         "Delete All Items",
         "Are you sure you want to delete all items?",
@@ -220,7 +225,6 @@ const GroceryList = ({ route }) => {
   };
 
   const handleQuantityChange = (itemId, value) => {
-    // Allow empty string for quantity input
     setFoodItems((prevItems) => {
       const updatedItems = prevItems.map((item) => {
         if (item.id === itemId) {
@@ -228,9 +232,7 @@ const GroceryList = ({ route }) => {
         }
         return item;
       });
-      // Save to AsyncStorage
       AsyncStorage.setItem("groceryItems", JSON.stringify(updatedItems));
-      // Update total price
       calculateTotalPrice(updatedItems);
       return updatedItems;
     });
@@ -243,7 +245,8 @@ const GroceryList = ({ route }) => {
         if (storedItems) {
           const items = JSON.parse(storedItems).map((item) => ({
             ...item,
-            quantity: item.quantity || "1", // Set default quantity to 1
+            quantity: item.quantity || "1", 
+            price: item.price || "$0.00",
           }));
           setFoodItems(items);
           calculateTotalPrice(items);
@@ -259,7 +262,7 @@ const GroceryList = ({ route }) => {
   return (
     <View style={styles.container}>
       {/* Floating Search Bar */}
-      <View style={styles.card}>
+      <View style={[styles.card, styles.cardShadow]}>
         <Text style={styles.cardTitle}>Add New Item</Text>
         <View style={styles.searchContainer}>
           <View style={styles.inputContainer}>
@@ -272,7 +275,7 @@ const GroceryList = ({ route }) => {
               value={newItem}
               onChangeText={handleInputChange}
             />
-            <TouchableOpacity style={styles.addButton} onPress={addNewItem}>
+            <TouchableOpacity style={styles.addButton} onPress={() => addNewItem()}>
               <Text style={styles.buttonText}>+</Text>
             </TouchableOpacity>
           </View>
@@ -282,10 +285,7 @@ const GroceryList = ({ route }) => {
                 <TouchableOpacity
                   key={suggestion.id}
                   style={styles.suggestion}
-                  onPress={() => {
-                    setNewItem(suggestion.name);
-                    setSuggestions([]);
-                  }}
+                  onPress={() => handleSuggestionPress(suggestion.name)}
                 >
                   <Text style={styles.suggestionText}>{suggestion.name}</Text>
                 </TouchableOpacity>
@@ -303,7 +303,7 @@ const GroceryList = ({ route }) => {
       </View>
 
       {/* Grocery List */}
-      <View style={styles.card}>
+      <View style={[styles.card, styles.cardShadow]}>
         <View style={styles.totalContainer}>
           <Text style={styles.totalPrice}>Total: {totalPrice}</Text>
         </View>
@@ -349,7 +349,7 @@ const GroceryList = ({ route }) => {
                       <Text style={styles.totalPriceText}>
                         {(() => {
                           const price = parseFloat(
-                            item.price.replace(/[^0-9.]/g, "")
+                            (item.price || "$0.00").replace(/[^0-9.]/g, "")
                           );
                           const quantity = parseInt(item.quantity, 10);
                           const total =
@@ -381,6 +381,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#1f1f1f",
     borderRadius: 12, // Curved edges
   },
+  // Subtle shadow for cards (especially on Android)
+  cardShadow: {
+    // iOS shadow
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    // Android elevation
+    elevation: 2,
+  },
+
   scrollView: {
     flex: 1,
     paddingHorizontal: 16,
@@ -438,13 +449,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   suggestionsContainer: {
-    backgroundColor: "#2a2a2a",
-    borderRadius: 12, // Curved edges
+    backgroundColor: "#3a3a3a", // Slightly lighter than #2a2a2a
+    borderRadius: 12, 
     padding: 8,
     marginTop: 5, // Spacing between input and suggestions
   },
   suggestion: {
-    paddingVertical: 6,
+    paddingVertical: 8,
+    borderBottomColor: "#555",
+    borderBottomWidth: 0.5,
   },
   suggestionText: {
     color: "#ddd",
@@ -501,7 +514,7 @@ const styles = StyleSheet.create({
     height: 30,
     borderColor: "#555",
     borderWidth: 1,
-    borderRadius: 12, // Curved edges
+    borderRadius: 12,
     color: "white",
     paddingHorizontal: 5,
     marginRight: 10,
@@ -522,7 +535,7 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     backgroundColor: "#3b3b3b",
-    borderRadius: 12, // Curved edges
+    borderRadius: 12,
     padding: 10,
     alignItems: "center",
     flexDirection: "row",
