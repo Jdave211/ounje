@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as FileSystem from "expo-file-system";
 import { Buffer } from "buffer";
+import { Alert } from "react-native";
 import { fetchFoodItems, supabase } from "../utils/supabase";
 import { openai, extract_json } from "../utils/openai";
 import { FOOD_ITEMS_PROMPT } from "../utils/prompts";
@@ -121,75 +122,100 @@ const useImageProcessing = () => {
   };
 
   const sendImages = async (fridgeImages) => {
+    if (!userId) {
+      Alert.alert("Error", "User ID is required");
+      return;
+    }
+
     setLoading(true);
-  
     try {
-      const image_paths = await uploadImages(userId, fridgeImages);
-      console.log("stored images", { image_paths });
-  
-      const foodItemsObject = await extractFoodItemsFromImage(fridgeImages);
-      console.log("extracted food items");
-  
-      const foodItemNames = extractNames(foodItemsObject);
-      console.log("extracted food item names");
-  
-      // If food item names are invalid or empty, throw an error
-      if (!foodItemNames || foodItemNames.length === 0) {
-        throw new Error("No valid food items extracted from the image.");
+      // Step 1: Upload images
+      let image_paths;
+      try {
+        image_paths = await uploadImages(userId, fridgeImages);
+        console.log("Images uploaded successfully", { image_paths });
+      } catch (error) {
+        console.error("Error uploading images:", error);
+        throw new Error("Failed to upload images. Please try again.");
       }
-  
-      const parsed_ingredients = await parse_ingredients(foodItemNames);
-  
+
+      // Step 2: Extract food items from image
+      let foodItemsObject;
+      try {
+        foodItemsObject = await extractFoodItemsFromImage(fridgeImages);
+        console.log("Food items extracted successfully");
+      } catch (error) {
+        console.error("Error extracting food items:", error);
+        throw new Error("Failed to analyze the image contents. Please try again.");
+      }
+
+      // Step 3: Process food items
+      const foodItemNames = extractNames(foodItemsObject);
+      if (!foodItemNames || foodItemNames.length === 0) {
+        throw new Error("No food items were detected in the image. Please try again with a clearer image.");
+      }
+      console.log(`Found ${foodItemNames.length} food items`);
+
+      // Step 4: Parse ingredients
+      let parsed_ingredients;
+      try {
+        parsed_ingredients = await parse_ingredients(foodItemNames);
+        console.log("Ingredients parsed successfully");
+      } catch (error) {
+        console.error("Error parsing ingredients:", error);
+        throw new Error("Failed to process food items. Please try again.");
+      }
+
       const parsed_food_items = parsed_ingredients.filter(
         ({ spoonacular_id }) => !!spoonacular_id
       );
-  
-      console.log({
-        foodItemNames: foodItemNames.length,
-        parsed_food_items: parsed_food_items.length,
-      });
-  
-      console.log("retrieved parsed_food_items");
-  
-      const stored_food_items = await storeNewFoodItems(parsed_food_items);
-  
+
+      if (parsed_food_items.length === 0) {
+        throw new Error("Could not recognize any valid food items. Please try again with different items.");
+      }
+
+      // Step 5: Store food items
+      let stored_food_items;
+      try {
+        stored_food_items = await storeNewFoodItems(parsed_food_items);
+        console.log("Food items stored successfully");
+      } catch (error) {
+        console.error("Error storing food items:", error);
+        throw new Error("Failed to save food items. Please try again.");
+      }
+
+      // Create mappings
       const stored_food_items_map_by_spoonacular_id = stored_food_items.reduce(
         (acc, item) => {
-          acc[item?.spoonacular_id] = item;
+          if (item?.spoonacular_id) {
+            acc[item.spoonacular_id] = item;
+          }
           return acc;
         },
         {}
       );
-  
-      console.log({ stored_food_items_map_by_spoonacular_id });
-  
+
       const parsed_food_items_map_by_original = parsed_food_items.reduce(
         (acc, item) => {
-          acc[item.original] =
-            stored_food_items_map_by_spoonacular_id[item?.spoonacular_id];
+          if (item.original && item?.spoonacular_id) {
+            acc[item.original] = stored_food_items_map_by_spoonacular_id[item.spoonacular_id];
+          }
           return acc;
         },
         {}
       );
-  
-      console.log({ parsed_food_items_map_by_original });
-  
+
+      // Map food items to images
       const food_items_by_image = Object.entries(foodItemsObject).map(
         ([image_name, value], i) => {
           const food_item_names = extractNames(value);
-  
           const food_item_ids = food_item_names
             .map((item) => {
               const parsed_item = parsed_food_items_map_by_original[item];
               return parsed_item?.id || null;
             })
             .filter((item) => !!item);
-  
-          console.log({
-            food_item_names,
-            food_item_ids,
-          });
-  
+
           return {
             name: image_name,
             image: image_paths[i],
@@ -197,23 +223,38 @@ const useImageProcessing = () => {
           };
         }
       );
-  
-      console.log({ food_items_by_image });
-  
-      await axios.delete(server_link("v1/inventory/images/"), {
-        data: {
+
+      // Step 6: Update inventory
+      try {
+        // First delete existing images
+        await axios.delete(server_link("v1/inventory/images/"), {
+          data: { user_id: userId },
+        });
+
+        // Then add new images and food items
+        await axios.post(server_link("v1/inventory/images/"), {
           user_id: userId,
-        },
-      });
-  
-      await axios.post(server_link("v1/inventory/images/"), {
-        user_id: userId,
-        images_and_food_items: food_items_by_image,
-      });
-  
+          images_and_food_items: food_items_by_image,
+        });
+
+        console.log("Inventory updated successfully");
+        const totalItems = food_items_by_image.reduce((sum, img) => sum + img.food_items.length, 0);
+        const message = totalItems > 0
+          ? `Successfully detected ${totalItems} items in your image!`
+          : "Image uploaded but no items were detected. Try taking a clearer photo.";
+        Alert.alert("Success", message);
+        return true;
+      } catch (error) {
+        console.error("Error updating inventory:", error);
+        throw new Error("Failed to update inventory. Please try again.");
+      }
+
     } catch (error) {
       console.error("Error during image processing:", error);
-      Alert.alert("Error", "An error occurred while processing the images. Please try again.");
+      Alert.alert(
+        "Error",
+        error.message || "An error occurred while processing the images. Please try again."
+      );
     } finally {
       setLoading(false);
     }

@@ -2,13 +2,16 @@
   "expo": {
     "name": "ounje",
     "slug": "ounje",
-    "version": "1.0.0",
+    "version": "1.0.5",
     "description": "Generate recipes based off pictures of your fridge and or cupboard",
     "sdkVersion": "51.0.0",
     "platforms": [
       "ios",
       "android"
     ],
+    "android": {
+      "versionCode": 3
+    },
     "ios": {
       "bundleIdentifier": "net.ounje"
     },

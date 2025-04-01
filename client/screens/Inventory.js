@@ -380,22 +380,40 @@ const Inventory = ({ route }) => {
 
   const handleImageSelection = async (result, index) => {
     if (!result.canceled) {
-      const imageUri = result.assets[0].uri;
-      const base64Image = await convertImageToBase64(imageUri);
+      try {
+        const imageUri = result.assets[0].uri;
+        setIsLoading(true);
 
-      setIsLoading(true);
-      await sendImages([base64Image]);
-      refetchInventoryData();
-      setIsLoading(false);
+        // Convert image to base64
+        let base64Image;
+        try {
+          base64Image = await convertImageToBase64(imageUri);
+        } catch (error) {
+          console.error("Error converting image:", error);
+          Alert.alert("Error", "Failed to process the image. Please try again.");
+          return;
+        }
 
-      const message =
-        index !== undefined
-          ? "Image has been replaced."
-          : "Image has been added.";
-      Alert.alert("Success", message);
-
-      if (index !== undefined) {
-        setModalVisible(false); // Close modal if replacing an image
+        // Send image for processing
+        try {
+          const success = await sendImages([base64Image]);
+          if (success) {
+            // Only refetch if sendImages was successful
+            await refetchInventoryData();
+            
+            if (index !== undefined) {
+              setModalVisible(false); // Close modal if replacing an image
+            }
+          }
+        } catch (error) {
+          console.error("Error processing image:", error);
+          // Error alert is handled in sendImages function
+        }
+      } catch (error) {
+        console.error("Unexpected error:", error);
+        Alert.alert("Error", "An unexpected error occurred. Please try again.");
+      } finally {
+        setIsLoading(false);
       }
     }
   };

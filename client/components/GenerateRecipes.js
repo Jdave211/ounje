@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, StyleSheet, TouchableOpacity, Text, Alert } from "react-native";
+import { View, StyleSheet, TouchableOpacity, Text, Alert, ActivityIndicator } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useAppStore, useTmpStore } from "../stores/app-store";
 import { useRecipeOptionsStore } from "../stores/recipe-options-store";
@@ -38,6 +38,7 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
 
   
   const generateRecipes = async () => {
+    // Check if user is logged in
     if (userId.startsWith("guest")) {
       Alert.alert(
         "Authentication Required",
@@ -58,72 +59,135 @@ export default function GenerateRecipes({ onLoading, onRecipesGenerated }) {
       );
       return;
     }
+
+    // Check if meal type is selected
+    if (!selectedMealType) {
+      Alert.alert(
+        "Meal Type Required",
+        "Please select what type of meal you're interested in (Breakfast, Lunch, Dinner, or Snack).",
+      );
+      return;
+    }
   
+    // Check if inventory has items
     if (foodItems.length === 0) {
       Alert.alert(
-        "Error",
-        "Please add some food to inventory or take a new picture.",
+        "Empty Inventory",
+        "Your inventory is empty. Would you like to add some ingredients?",
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+          },
+          {
+            text: "Add Ingredients",
+            onPress: () => navigation.navigate("Inventory"),
+          },
+        ]
       );
-      navigation.navigate("Inventory");
       return;
     }
 
-    try { 
-      setIsLoading(true); 
+    try {
+      setIsLoading(true);
       onLoading(true);
+
+      // Step 1: Find recipes based on ingredients
+      let stored_suggested_recipes, new_suggested_recipes;
+      try {
+        const result = await find_recipes_by_ingredients(foodItems);
+        stored_suggested_recipes = result.stored_suggested_recipes;
+        new_suggested_recipes = result.new_suggested_recipes;
+        console.log(`Found ${new_suggested_recipes.length} new recipes and ${stored_suggested_recipes.length} existing recipes`);
+      } catch (error) {
+        console.error("Error finding recipes:", error);
+        throw new Error("Failed to find recipes with your ingredients. Please try again.");
+      }
   
-      const { stored_suggested_recipes, new_suggested_recipes } =
-          await find_recipes_by_ingredients(foodItems);
-  
-      // Upsert only new suggested recipes
-      const { data: new_stored_recipes } = await supabase
+      // Step 2: Store new recipes
+      let new_stored_recipes;
+      try {
+        const { data, error } = await supabase
           .from("recipe_ids")
           .upsert(new_suggested_recipes, {
-              onConflict: "spoonacular_id",
+            onConflict: "spoonacular_id",
           })
-          .select()
-          .throwOnError();
+          .select();
+        
+        if (error) throw error;
+        new_stored_recipes = data;
+      } catch (error) {
+        console.error("Error storing recipes:", error);
+        throw new Error("Failed to save new recipes. Please try again.");
+      }
   
-      const total_recipes = [
-          ...stored_suggested_recipes,
-          ...new_stored_recipes,
-      ];
-  
-      // Log total_recipes to check for null values
-      // console.log("Total Recipes:", total_recipes);
-  
-      // Remove duplicates by spoonacular_id and filter out null values
+      // Step 3: Process and filter recipes
+      const total_recipes = [...stored_suggested_recipes, ...new_stored_recipes];
+      
+      // Remove duplicates and null values
       const unique_total_recipes = Array.from(
-          new Set(total_recipes
-              .filter(recipe => recipe !== null) // First filter out nulls
-              .map(recipe => recipe?.spoonacular_id)) // Then map to spoonacular_id
-      ).map(id => total_recipes.find(recipe => recipe && recipe?.spoonacular_id === id)) // Ensure recipe is not null here
-        .filter(recipe => recipe !== null); // Final filter to remove null values
+        new Set(total_recipes
+          .filter(recipe => recipe !== null)
+          .map(recipe => recipe?.spoonacular_id))
+      )
+      .map(id => total_recipes.find(recipe => recipe && recipe?.spoonacular_id === id))
+      .filter(recipe => recipe !== null);
   
+      if (unique_total_recipes.length === 0) {
+        throw new Error("No recipes found with your current ingredients. Try adding more ingredients to your inventory.");
+      }
+
       setRecipeOptions(unique_total_recipes);
-      // console.log("Unique Total Recipes:", unique_total_recipes);
-  } catch (error) {
+      
+      // Show success message with recipe count
+      Alert.alert(
+        "Success!",
+        `Found ${unique_total_recipes.length} recipes you can make with your ingredients.`,
+        [
+          {
+            text: "View Recipes",
+            onPress: () => navigation.navigate("RecipeOptions"),
+          },
+        ]
+      );
+
+    } catch (error) {
       console.error("Error generating recipes:", error);
-      console.trace(error);
-      Alert.alert("Error", "Failed to generate recipes.");
-  } finally {
+      Alert.alert(
+        "Recipe Generation Error",
+        error.message || "Failed to generate recipes. Please try again."
+      );
+    } finally {
       setIsLoading(false);
       onLoading(false);
-      navigation.navigate("RecipeOptions");
-  }
-    
+    }
   };
   
   
   return (
     <View style={styles.container}>
       <TouchableOpacity
-        style={styles.buttonContainer}
+        style={[
+          styles.buttonContainer,
+          isLoading && styles.buttonDisabled
+        ]}
         onPress={generateRecipes}
         disabled={isLoading}
       >
-        <Text style={styles.buttonText}>Generate Recipes</Text>
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator color="#fff" style={styles.spinner} />
+            <Text style={styles.buttonText}>Finding Recipes...</Text>
+          </View>
+        ) : (
+          <Text style={styles.buttonText}>Generate Recipes</Text>
+        )}
       </TouchableOpacity>
+      {isLoading && (
+        <Text style={styles.loadingText}>
+          Analyzing your ingredients to find the perfect recipes...
+        </Text>
+      )}
     </View>
   );
 }
@@ -142,12 +206,30 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: "center",
     alignItems: "center",
-    
+  },
+  buttonDisabled: {
+    backgroundColor: "#1a1d22", // Darker shade when disabled
+    opacity: 0.9,
+  },
+  loadingContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  spinner: {
+    marginRight: 10,
   },
   buttonText: {
     color: "#fff",
     fontWeight: "bold",
     fontSize: 18,
+  },
+  loadingText: {
+    color: "#fff",
+    marginTop: 10,
+    fontSize: 14,
+    textAlign: "center",
+    opacity: 0.8,
   },
   closeButton: {
     marginTop: 20,

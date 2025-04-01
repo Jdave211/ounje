@@ -357,7 +357,7 @@ const RecipePage = ({ route }) => {
         </ScrollView>
 
         {/* Bottom Buttons: Alter and Cook */}
-        <View style={styles.bottomBar}>
+        {/* <View style={styles.bottomBar}>
           <TouchableOpacity
             style={styles.bottomButton}
             onPress={() => {
@@ -376,7 +376,7 @@ const RecipePage = ({ route }) => {
           >
             <Text style={styles.bottomButtonText}>Cook</Text>
           </TouchableOpacity>
-        </View>
+        </View> */}
       </View>
     )
   );

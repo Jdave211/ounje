@@ -14,39 +14,70 @@ import { useQuery, useQueryClient } from "react-query";
 import { fetchSavedRecipesByUser, unsaveRecipe } from "../utils/supabase";
 import DiscoverRecipes from "./DiscoverRecipe/DiscoverRecipes";
 
-const screenWidth = Dimensions.get("window").width;
-const screenHeight = Dimensions.get("window").height;
-
 const SavedRecipes = () => {
-  const [selectedTab, setSelectedTab] = useState("SavedRecipes"); // State to track the selected tab (Saved Recipes or Discover)
+  const [dimensions, setDimensions] = useState({
+    width: Dimensions.get("window").width,
+    height: Dimensions.get("window").height,
+  });
+  const [selectedTab, setSelectedTab] = useState("SavedRecipes");
+  // Create styles using current dimensions
+  const styles = React.useMemo(() => getStyles(dimensions), [dimensions]);
   const navigation = useNavigation();
-  const user_id = useAppStore((state) => state.user_id); // Get the user ID from global state
-  const setUserId = useAppStore((state) => state.set_user_id); // Function to update the user ID in global state
+  const user_id = useAppStore((state) => state.user_id);
+  const setUserId = useAppStore((state) => state.set_user_id);
   const queryClient = useQueryClient();
 
-  // Query to fetch saved recipes for the current user
+  // Handle dimension changes
+  useEffect(() => {
+    const subscription = Dimensions.addEventListener("change", ({ window }) => {
+      setDimensions({
+        width: window.width,
+        height: window.height,
+      });
+    });
+
+    return () => {
+      subscription.remove();
+      // Cleanup query cache on unmount
+      queryClient.removeQueries(["savedRecipes", user_id]);
+    };
+  }, [queryClient, user_id]);
+
+  // Query with error handling and retry logic
   const {
     data: savedRecipes,
     isLoading,
     error,
   } = useQuery(
-    ["savedRecipes", user_id], // Query key
-    async () => await fetchSavedRecipesByUser(user_id), // Fetch function
+    ["savedRecipes", user_id],
+    async () => {
+      try {
+        return await fetchSavedRecipesByUser(user_id);
+      } catch (error) {
+        console.error("Error fetching saved recipes:", error);
+        throw new Error("Failed to fetch saved recipes");
+      }
+    },
     {
-      enabled: !!user_id, // Only run the query if user_id is defined
+      enabled: !!user_id && !user_id.startsWith("guest"),
+      retry: 2,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
+      staleTime: 300000, // 5 minutes
+      cacheTime: 3600000, // 1 hour
     }
   );
 
-  // Effect to refetch saved recipes when the screen is focused
-  useEffect(() => {
-    const unsubscribe = navigation.addListener("focus", () => {
-      // Refetch saved recipes when the screen is focused
-      queryClient.invalidateQueries(["savedRecipes", user_id]); // Invalidate the query to trigger a refetch
-      console.log("================ unsaved recipe: ", user_id);
-    });
+  // Memoized focus handler
+  const handleFocus = React.useCallback(() => {
+    if (user_id) {
+      queryClient.invalidateQueries(["savedRecipes", user_id]);
+    }
+  }, [queryClient, user_id]);
 
-    return unsubscribe; // Clean up the event listener
-  }, [navigation, queryClient, user_id]); // Add dependencies to the effect
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("focus", handleFocus);
+    return unsubscribe;
+  }, [navigation, handleFocus]);
 
   const handleUnsaveRecipe = async (recipe_id) => {
     try {
@@ -148,83 +179,97 @@ const SavedRecipes = () => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollViewContent}
       >
-        {selectedTab === "SavedRecipes" && (
+        {selectedTab === "SavedRecipes" ? (
           <View style={styles.content}>
             {savedRecipes && savedRecipes.length > 0 ? (
               savedRecipes.map((recipe_id, i) => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={navigate_to_recipe_page(recipe_id)}
-                  style={styles.recipeCard}
-                >
-                  <RecipeCard
-                    id={recipe_id}
-                    showBookmark={true}
-                    onUnsave={() => handleUnsaveRecipe(recipe_id)}
-                  />
-                </TouchableOpacity>
+                (() => {
+                  try {
+                    return (
+                      <TouchableOpacity
+                        key={recipe_id}
+                        onPress={navigate_to_recipe_page(recipe_id)}
+                        style={styles.recipeCard}
+                      >
+                        <RecipeCard
+                          id={recipe_id}
+                          showBookmark={true}
+                          onUnsave={() => handleUnsaveRecipe(recipe_id)}
+                        />
+                      </TouchableOpacity>
+                    );
+                  } catch (error) {
+                    console.error(`Error rendering recipe card ${recipe_id}:`, error);
+                    return null;
+                  }
+                })()
               ))
             ) : (
               <Text style={styles.noRecipesText}>
                 No recipes have been saved.
               </Text>
             )}
-
+          </View>
+        ) : (
+          <View style={styles.content}>
+            {(() => {
+              try {
+                return <DiscoverRecipes />;
+              } catch (error) {
+                console.error('Error rendering DiscoverRecipes:', error);
+                return (
+                  <Text style={styles.noRecipesText}>
+                    Unable to load discover section. Please try again later.
+                  </Text>
+                );
+              }
+            })()}
           </View>
         )}
-        </ScrollView>
-
-        {selectedTab === "Discover" && (
-          <View>
-            {/* // <Text style={styles.discoverCardTitle}>Discover Recipes</Text> */}
-            {/* <Text style={styles.warning}>
-              Save more recipes to discover ones that meet your taste!
-            </Text> */}
-            <DiscoverRecipes />
-        </View>
-        )}
+      </ScrollView>
       
     </View>
   );
 };
 
-const styles = StyleSheet.create({
+const getStyles = (dimensions) => StyleSheet.create({
   scrollViewContent: {
     flexGrow: 1,
     backgroundColor: "#121212",
   },
   container: {
-    padding: Dimensions.get("window").width * 0.03,
+    padding: Math.min(dimensions.width * 0.03, 30),
     backgroundColor: "#121212",
     flexGrow: 1,
   },
   header: {
     justifyContent: "flex-start",
     alignItems: "flex-start",
-    marginBottom: Dimensions.get("window").height * 0.05,
-    marginTop: Dimensions.get("window").height * 0.1,
-    marginLeft: Dimensions.get("window").width * 0.03,
+    marginBottom: Math.min(dimensions.height * 0.05, 40),
+    marginTop: Math.min(dimensions.height * 0.08, 60),
+    marginLeft: Math.min(dimensions.width * 0.03, 30),
   },
   headerText: {
     color: "#fff",
-    fontSize: 25,
+    fontSize: Math.min(dimensions.width * 0.06, 32),
     fontWeight: "bold",
   },
   headerSubtext: {
     color: "gray",
-    fontSize: screenWidth * 0.04,
+    fontSize: Math.min(dimensions.width * 0.04, 18),
     marginTop: 5,
   },
   segmentedControl: {
     flexDirection: "row",
     alignSelf: "stretch",
-    marginBottom: 20,
+    marginBottom: Math.min(dimensions.height * 0.03, 24),
     borderBottomWidth: 1,
     borderBottomColor: "#282C35",
+    paddingHorizontal: Math.min(dimensions.width * 0.02, 20),
   },
   segmentButton: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: Math.min(dimensions.height * 0.015, 12),
     alignItems: "center",
   },
   segmentButtonSelected: {
@@ -233,7 +278,7 @@ const styles = StyleSheet.create({
   },
   segmentButtonText: {
     color: "gray",
-    fontSize: 16,
+    fontSize: Math.min(dimensions.width * 0.04, 18),
   },
   segmentButtonTextSelected: {
     color: "white",
@@ -243,38 +288,26 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     width: "100%",
-    paddingBottom: screenHeight * 0.28,
+    paddingBottom: Math.min(dimensions.height * 0.2, 120),
+    paddingHorizontal: Math.min(dimensions.width * 0.02, 20),
   },
   recipeCard: {
-    marginBottom: screenHeight * 0.02,
+    marginBottom: Math.min(dimensions.height * 0.02, 16),
+    maxWidth: Math.min(dimensions.width, 600),
+    alignSelf: "center",
+    width: "100%",
   },
   noRecipesText: {
     color: "white",
-    fontSize: screenWidth * 0.045,
+    fontSize: Math.min(dimensions.width * 0.045, 20),
     textAlign: "center",
-    marginTop: screenHeight * 0.02,
-  },
-  discoverCard: {
-    backgroundColor: "#1f1f1f",
-    borderRadius: 10,
-    padding: 20,
-    marginBottom: 20,
-  },
-  discoverCardTitle: {
-    color: "#fff",
-    fontSize: screenWidth * 0.045, // Responsive font size
-    fontWeight: "bold",
-    marginBottom: 10,
-  },
-  warning: {
-    color: "gray",
-    fontSize: screenWidth * 0.04,
+    marginTop: Math.min(dimensions.height * 0.02, 16),
   },
   loginText: {
     color: "#38F096",
     textDecorationLine: "underline",
     fontWeight: "bold",
-    fontSize: screenWidth * 0.04,
+    fontSize: Math.min(dimensions.width * 0.04, 18),
   },
 });
 

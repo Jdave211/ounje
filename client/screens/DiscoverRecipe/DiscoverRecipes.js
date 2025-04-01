@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, ActivityIndicator, Dimensions } from 'react-native';
+import { StyleSheet, Text, ActivityIndicator, Dimensions, TouchableOpacity, View } from 'react-native';
 import {
   GestureHandlerRootView,
   PanGestureHandler,
@@ -35,21 +35,56 @@ const DiscoverRecipes = () => {
   }, []);
 
   // Fetch exactly one random recipe
+  const [error, setError] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const MAX_RETRIES = 3;
+
   const fetchSingleRecipe = async () => {
     try {
       setLoading(true);
-      const response = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
-      const data = await response.json();
+      setError(null);
 
-      if (data.meals && data.meals.length > 0) {
-        setRecipe(data.meals[0]);
-      } else {
-        // If the API returns no valid meal, setRecipe(null) or handle error
-        setRecipe(null);
+      // Add timeout to the fetch request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+      try {
+        const response = await fetch(
+          'https://www.themealdb.com/api/json/v1/1/random.php',
+          { signal: controller.signal }
+        );
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.meals && data.meals.length > 0) {
+          setRecipe(data.meals[0]);
+          setRetryCount(0); // Reset retry count on success
+        } else {
+          throw new Error('No recipe found in response');
+        }
+      } catch (fetchError) {
+        if (fetchError.name === 'AbortError') {
+          throw new Error('Request timed out. Please check your internet connection.');
+        }
+        throw fetchError;
       }
     } catch (error) {
       console.error('Error fetching single recipe:', error);
+      setError(error.message);
       setRecipe(null);
+
+      // Implement retry logic
+      if (retryCount < MAX_RETRIES) {
+        setRetryCount(prev => prev + 1);
+        setTimeout(() => {
+          fetchSingleRecipe();
+        }, 1000 * (retryCount + 1)); // Exponential backoff
+      }
     } finally {
       setLoading(false);
     }
@@ -117,16 +152,51 @@ const DiscoverRecipes = () => {
   if (loading && !recipe) {
     return (
       <GestureHandlerRootView style={styles.container}>
-        <ActivityIndicator size="large" color="green" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#38F096" />
+          <Text style={styles.loadingText}>
+            {retryCount > 0
+              ? `Retrying... (Attempt ${retryCount}/${MAX_RETRIES})`
+              : 'Finding your next delicious recipe...'}
+          </Text>
+        </View>
       </GestureHandlerRootView>
     );
   }
 
-  // If there's no recipe and we're not loading, maybe show a message
+  // If there's an error, show error state with retry button
+  if (!recipe && !loading && error) {
+    return (
+      <GestureHandlerRootView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => {
+              setRetryCount(0);
+              fetchSingleRecipe();
+            }}
+          >
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // If there's no recipe and we're not loading, show empty state
   if (!recipe && !loading) {
     return (
       <GestureHandlerRootView style={styles.container}>
-        <Text style={styles.noMoreText}>No recipe found</Text>
+        <View style={styles.emptyContainer}>
+          <Text style={styles.noMoreText}>No recipes found</Text>
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={fetchSingleRecipe}
+          >
+            <Text style={styles.retryButtonText}>Find New Recipes</Text>
+          </TouchableOpacity>
+        </View>
       </GestureHandlerRootView>
     );
   }

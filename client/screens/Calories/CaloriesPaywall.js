@@ -7,7 +7,6 @@ import {
   ImageBackground,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { BlurView } from "expo-blur";
 
 const CaloriesPaywall = () => {
   const navigation = useNavigation();
@@ -18,7 +17,6 @@ const CaloriesPaywall = () => {
         source={require("../../assets/calories-page.jpeg")} // Change this to your actual background image
         style={styles.backgroundImage}
       >
-        <BlurView intensity={60} style={styles.blurView}>
           <View style={styles.content}>
             <Text style={styles.title}>Premium Feature</Text>
             <Text style={styles.message}>
@@ -35,7 +33,6 @@ const CaloriesPaywall = () => {
               <Text style={styles.buttonText}>Go to Settings</Text>
             </TouchableOpacity>
           </View>
-        </BlurView>
       </ImageBackground>
     </View>
   );

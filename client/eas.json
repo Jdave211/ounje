@@ -15,7 +15,6 @@
     "production": {
       "node": "18.20.0",
       "ios": {
-        "buildType": "app-store"
       },
       "android": {
         "buildType": "app-bundle"
