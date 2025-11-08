@@ -1,0 +1,140 @@
+46616c15-1934-4d56-8503-e787eeb210f1	\N	Dj	\N	["Diabetic"]	f
+45d1b242-c657-406a-a026-d3134f2bc595	2024-05-23 05:34:30.973+00	Tobi Balogun	\N	["Diabetic"]	f
+914457d0-ff51-4a1a-b747-b67cec014704	\N	Keisha	\N	[]	f
+b5b13a55-edbe-4587-a427-98cbdcd38492	\N	Tamilore 	\N	[]	f
+868212f7-5560-4386-8274-5fd6abbe02d6	\N	Brian	\N	[]	f
+91f75dce-8ad2-4869-a812-72d239246187	\N	KTM	\N	[]	f
+5f8ad736-5f57-46f0-a489-183c40d4756d	\N	Akeem	\N	[]	f
+d792787d-e00c-4446-b4fe-c6d5ae27d8a2	\N	\N	\N	None	f
+4ed92b96-5e36-49a9-9963-c64c47f999a0	\N	CUE	\N	["Vegetarian","Lactose Intolerant"]	t
+85ee68bc-f27e-4a75-aa18-cb207fbe6ff6	\N	\N	\N	None	f
+4a530537-222b-46fd-a70a-1665723678a5	\N	Ebuka	\N	[]	f
+f91edeba-cf25-4c8b-bb06-c584a7d36085	\N	Annabel 	\N	[]	f
+b5d6d818-d327-441b-b087-a65ede3fd07a	\N	\N	\N	None	f
+9a665591-3586-4373-ad7b-dd95965d3899	\N	Jr	\N	[]	f
+b461ea44-45b8-4357-ae39-b574257e323c	\N	Akachukwu	\N	[]	f
+03c90d17-30a1-4ede-8860-81e854dd2f38	\N	\N	\N	None	f
+92375877-e9da-4386-b1d6-677128c1358a	\N	\N	\N	None	f
+04289c03-7cf5-4c34-8c42-c6c01a91b862	2024-05-26 17:51:27.111+00	\N	\N	["Lactose Intolerant"]	f
+4c614b14-3010-4e80-9da9-7f642a24af2c	\N	\N	\N	None	f
+3083de0d-6c90-4cf8-8a39-25e5dcdc2da2	\N	Tomi	\N	[]	f
+bc14f8b3-3ec3-42bb-b363-10c57b550dcc	\N	Nate	\N	[]	f
+a90d00ad-1c3c-4bcb-ad61-7f0fdd958477	\N	Kwame	\N	[]	f
+579dda5a-751a-478c-9741-1ff2e62c2140	\N	Ounje Team	\N	["Nut Allergy"]	f
+5740ad5e-0cb9-446f-bc7d-89e6c60fe7fd	\N	Damola Aje	\N	[]	f
+aea603e7-eba8-4101-823d-88435ffc8579	\N	Samminhio	\N	[]	f
+f0cb1721-ac76-4312-97ac-d9c4ab98f2cc	\N	Yourfavoritegghead 	\N	[]	f
+37a63509-ae44-45a1-b797-0f5776f433e1	\N	Chiamaka	\N	[]	f
+f16ef71b-c18c-4afd-a485-ae73ddde9142	\N	A	\N	[]	f
+b9262aee-9f70-4637-ad5b-af39f95289b2	\N	Ibukun	\N	[]	f
+f4656604-ced4-4d43-8e48-97e542aec2cb	\N	Danielle	\N	["Lactose Intolerant"]	f
+232c0619-19d6-4219-978a-6b93843f931e	\N	\N	\N	None	f
+075e9f27-c007-465b-90de-699b23701341	\N	\N	\N	None	f
+0c6372c1-6a57-43da-b76f-4ed651432488	\N	\N	\N	None	f
+23b16ddd-8510-4ca6-af9c-322984669f02	\N	Keehsa	\N	[]	f
+d179eae4-3e06-410d-a98f-7572077dc191	\N	\N	\N	None	f
+8b83c91a-1d79-4775-8013-526914d33149	2024-07-07 01:46:58.33+00	\N	\N	["Lactose Intolerant"]	f
+5985a38a-d15a-498d-8925-d120134703ce	\N	wale	\N	[]	f
+74cf2e6c-9bc4-43a0-8c50-632f756f093b	\N	\N	\N	None	f
+6d3a23da-5afa-4058-8eef-6bd93d02f41e	\N	Peggy	\N	["Diabetic","Gluten Intolerance"]	f
+5e47a59b-bbc7-4ff7-9227-436c3ec62b7f	\N	\N	\N	None	f
+e323f703-0062-4fcf-ba5d-c3cc1af58d99	\N	Raro	\N	[]	f
+7efd0253-6532-4659-896c-9e4dd38d359a	\N	\N	\N	None	f
+bec25e2e-963e-45bf-b376-47c5a5a912a2	\N	Moman	\N	[]	f
+e620b3a7-c61c-4340-b9ce-a1846f10176a	\N	Daniel	\N	[]	f
+11e112a1-a4c4-4cdf-974c-3b7610b990a4	\N	\N	\N	None	f
+ddae2091-bf75-4414-94e1-fae0b90d06f7	\N	\N	\N	None	f
+9bf81427-382f-45ef-80c5-85075e3b4c41	\N	Nkem	\N	[]	f
+d9e46400-6117-44f0-8cca-2aac67547d85	\N	\N	\N	None	f
+870003e3-d5d6-4f71-9265-349045c72fa5	2024-07-31 16:13:43.111+00	John Ezugo	\N	[]	f
+cef48e8f-71e8-4aba-8bbf-4f4249099570	\N	\N	\N	None	f
+9c94381a-d895-45d7-939b-d1a5c8000702	\N	Abel	\N	[]	f
+389a8126-316b-43c8-96fe-74f5b59de205	\N	Tolani	\N	[]	f
+df5f721c-4068-48d3-a493-64fad278eafb	\N	Daniel	\N	[]	f
+8a8d63ca-b304-4e83-9a13-6907f8c1f7ec	\N	Odinaka	\N	[]	f
+40e7657c-7438-4556-a009-2909d2ad10df	\N	\N	\N	None	f
+11916bde-369d-4d6e-bdbc-5967f7f75e73	\N	Patricia 	\N	[]	f
+ba7bfec0-9e3e-4d36-980c-316f2e99e6ad	\N	Hafiz	\N	[]	f
+8893c6b4-2c2a-4cf1-9519-612d0631fc48	\N	\N	\N	None	f
+66769e9a-d7a4-4004-add3-25ac2cbcb130	\N	Oye	\N	[]	f
+151a45a3-e742-44b5-8016-c44d452ef864	\N	Lola	\N	[]	f
+9d7e0e0b-5ce3-442d-bfa4-0f3e0221527c	\N	\N	\N	None	f
+bf082f8e-d2e4-4e3b-99bf-f992b7450605	\N	Orby	\N	[]	f
+784dd73d-6966-4ab9-b850-8bf2c2ae1b86	\N	Sarah Longa	\N	[]	f
+92c1ddc5-e934-43f2-a835-8037e77f8b32	\N	Sandy	\N	[]	f
+43bb058c-5279-4ede-ba93-af467ab41c58	\N	Fadeelah 	\N	[]	f
+87b3aeed-9f6a-4059-acbf-357af1e28c9a	\N	\N	\N	None	f
+baf3006b-81d7-47b3-9713-d7ca3bf31675	\N	Melie	\N	[]	f
+da95e8b9-84c0-4467-be09-11408094fe46	\N	\N	\N	None	f
+1b4c7ec9-c254-4a5e-a81b-8a227e281281	\N	\N	\N	None	f
+346ca382-b2be-4e26-926c-d9a37732a32d	\N	Adam	\N	["Vegetarian"]	f
+f29fb63e-9ff6-4952-abe4-c28babd06676	\N	Fred	\N	[]	f
+a47c7465-a4b3-4093-885d-1d871c0d5213	\N	\N	\N	None	f
+81dacfb8-d3d2-4915-becb-2340a45a3b96	\N	\N	\N	None	f
+68351d17-0efb-482f-aeb1-ebd5404fa5c2	\N	\N	\N	None	f
+42efdc89-c22b-4762-b0de-e0458450620c	\N	\N	\N	None	f
+ad18806f-4339-4787-90ca-4f3dca3f1962	\N	\N	\N	None	f
+f90a9e7f-053e-4567-aa27-c0430c649b7e	\N	AJ 	\N	[]	f
+3227882d-468e-48e7-9f82-1bb742fce1d4	\N	Zuom	\N	[]	f
+237c5fec-ecaa-44b5-b4ed-96928a83ecab	\N	evan nguyen	\N	[]	f
+d4ee7e80-1287-4bea-9314-1ed62cb0683d	\N	Lizzy	\N	[]	f
+3c0b5fe8-dd32-4351-b855-4cac6134474d	\N	Lola	\N	[]	f
+3f1f4649-2d1e-412d-8896-b0936fc4f7f0	\N	\N	\N	None	f
+b12c8e48-d845-4c4a-a885-0ee485c103d8	\N	curtis	\N	[]	f
+e5af80bd-7e66-4ca0-afbc-e612c1b7b7d2	\N	\N	\N	None	f
+2996be53-f6bd-49a4-a87f-483bed1c365d	\N	Elvis	\N	[]	f
+38031bf0-bc13-4a60-b1a8-005c33dc5208	\N	Favour	\N	[]	f
+d052fdda-1f39-42ce-ab22-0dfaaa06745d	\N	Fimi	\N	[]	f
+26e0c07a-0951-4147-9199-c252270ab01d	\N	\N	\N	None	f
+cfb6e527-956b-4bb3-9a71-7526bb8c66f4	\N	\N	\N	None	f
+d3a4cdb4-1c52-4a7a-b0c2-fadecb87d988	\N	\N	\N	None	f
+10dcb462-e647-46f4-b975-59a7fe51d86e	\N	Lou	\N	[]	f
+c823957c-d7d8-4ef0-b469-453513db3dd7	\N	Somto	\N	["Lactose Intolerant"]	f
+eee74450-583c-4d7c-8abb-d6edf3695013	\N	Kemochie	\N	[]	f
+2ecfc858-d117-4bad-abf1-0d9d4efc2516	\N	\N	\N	None	f
+e781eaff-63ff-403d-8c9c-5bebf9611505	2024-08-12 17:31:07.558+00	KELD	\N	[]	f
+1ef5ec5b-8583-496e-9491-e8c59cf1f8e2	\N	Ore	\N	[]	f
+07c07a85-e7ff-4435-9203-5d907988250a	\N	Chisom	\N	[]	f
+e165f6ac-6112-4941-8ad6-83aa1729c8aa	\N	\N	\N	None	f
+0e0ced29-490d-464b-9c53-0a692d916816	\N	\N	\N	None	f
+d4139ae1-8e0a-4fa5-ad70-1130cbc2c62e	\N	EBUBE	\N	[]	f
+efd35523-4d74-4822-b06d-9d4c1ac700cb	\N	Chieloka	\N	[]	f
+0c32559a-e3c5-4db5-ac5d-b05de8a7c6f7	\N	\N	\N	None	f
+a0c467f4-a0f6-4019-af8f-08b09147bfa1	\N	\N	\N	None	f
+647e8723-d549-4c7a-99a4-187d22942d83	\N	Prince Chizzy	\N	[]	f
+403d870f-f26a-4f02-a4d2-59d69e75af35	\N	\N	\N	None	f
+e9f6bb39-e5b6-40b3-b45c-89627ce37c9a	\N	\N	\N	None	f
+4bff690d-166b-464e-8c41-8df7c7a14e7d	\N	\N	\N	None	f
+7fdf4ae8-1127-4f4b-987a-ae13791984c9	\N	\N	\N	None	f
+1ccd2f64-136e-45ec-8be8-16781014af44	2025-02-01 23:12:51.637+00	Dave J		["Vegetarian"]	f
+adef29c4-abaf-4219-bc05-2d33f8ec5af1	\N	Anjali	\N	["Lactose Intolerant","Gluten Intolerance","Nut Allergy","Diabetic"]	f
+6b00a830-7c21-4eaa-827b-634011aa8013	2024-09-23 11:22:16.814+00	Dds	true	["Lactose Intolerant","Gluten Intolerance","Nut Allergy","Diabetic"]	f
+074c8305-2f83-4d7a-af87-0b01c169885e	\N	\N	\N	None	f
+2763f520-3cc9-4075-b1b4-5df2a31ab267	2025-02-11 19:15:31.269+00	Pancakes2113		[]	f
+bb5dffbf-7af8-4730-bf18-468834c4fe08	\N	lepton	\N	[]	f
+9b32f36c-3057-4f63-ac3d-b9daf6df0b5e	\N	Rukky	\N	[]	f
+d05a17a4-51d5-4f5b-b5f2-9e9be9b08e2f	\N	Test	\N	["Lactose Intolerant","Gluten Intolerance","Nut Allergy","Diabetic"]	f
+07336b80-1875-409e-9c34-97e6e305eb7d	\N	Sunshine Emmanuel 	\N	[]	f
+3e3f6fa6-c0bf-4440-90e9-943d6f8b759a	\N	\N	\N	None	f
+c7d5eec8-e38b-457a-bf98-e03136b75cd2	\N	Louisa	\N	[]	f
+d53c4a98-3d98-46b1-aa08-967ceee96925	\N	Adaugo	\N	[]	f
+9233139c-0ee8-4e5f-a9e7-a770cdc80b89	\N	Peace	\N	[]	f
+559af1ed-8df2-422b-bf31-1b8497d6e650	\N	\N	\N	None	f
+1e45c058-d705-401f-b459-10f93b244ca1	\N	\N	\N	None	f
+6bc5ab28-049f-42f8-b46e-546bd5f74858	\N	Hellen	\N	[]	f
+3a2b0f8a-6079-4805-b151-57fc4536af9a	\N	Diana	\N	[]	f
+77d611dc-9820-45f3-93ac-adde840e0ab6	\N	Sam	\N	[]	f
+150c0b75-c257-488f-9a12-052243d3a0e8	\N	\N	\N	None	f
+074cf2d1-ba0a-4367-862b-59a0200ca440	\N	\N	\N	None	f
+9ec1e3df-b666-478a-b2a8-9cbecf4c2eb5	\N	Dididid	\N	["Gluten Intolerance"]	f
+cc17514f-cfc7-4438-bcbd-593f359133e1	\N	\N	\N	None	f
+69c38f60-db16-437a-99af-3cc5d453ae74	\N	\N	\N	None	f
+680941f1-bfbf-42bd-943d-a39cf21fa470	\N	\N	\N	None	f
+58b5ca4a-b684-4383-ad79-6586617e2622	\N	\N	\N	None	f
+113a7f8d-4ece-4efc-91a4-ec9a793967ea	\N	\N	\N	None	f
+
+
+--
+-- Data for Name: profiles_v2; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
