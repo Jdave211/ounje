@@ -84,6 +84,15 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'net.ounje'
+    
+    flavorDimensions "store"
+    productFlavors {
+        play {
+            dimension "store"
+            isDefault = true
+        }
+    }
+    
     defaultConfig {
         applicationId 'net.ounje'
         minSdkVersion rootProject.ext.minSdkVersion
