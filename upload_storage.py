@@ -8,8 +8,8 @@ import json
 from pathlib import Path
 
 # Supabase configuration
-SUPABASE_URL = "https://qoqbuicrhrurbaydmjzd.supabase.co"
-SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvcWJ1aWNyaHJ1cmJheWRtanpkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjE4NjA1MiwiZXhwIjoyMDc3NzYyMDUyfQ.8TTQn1tU1TuFxcmz1VBdD4UCfNykD92Rm29KTrIgerU"
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://ztqptjimmcdoriefkqcx.supabase.co")
+SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 # Backup directory
 BACKUP_DIR = Path("sb_backup/kmvqftoebsmmkhxrgdye")
@@ -67,6 +67,9 @@ def upload_file(bucket_name, file_path, object_name):
 
 def main():
     print("🚀 Starting Supabase storage restoration...")
+
+    if not SERVICE_ROLE_KEY:
+        raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is required for storage uploads.")
     
     # Create buckets
     buckets = ["inventory_images", "recipe_images", "calorie_images2", "pantry_images"]

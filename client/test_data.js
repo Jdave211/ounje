@@ -4,7 +4,7 @@
     created_at: "2024-05-19 02:05:32.40818+00",
     name: "Simple Chicken Salad",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Simple%20Chicken%20Salad/26.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Simple%20Chicken%20Salad/26.jpeg",
     duration: 15,
     servings: 2,
     instructions: [
@@ -65,7 +65,7 @@
     created_at: "2024-05-19 02:05:32.40818+00",
     name: "Easy Yogurt Parfait",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Easy%20Yogurt%20Parfait/26.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Easy%20Yogurt%20Parfait/26.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -105,7 +105,7 @@
     created_at: "2024-05-19 02:05:32.40818+00",
     name: "Egg Salad Sandwich",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Egg%20Salad%20Sandwich/26.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Egg%20Salad%20Sandwich/26.jpeg",
     duration: 20,
     servings: 2,
     instructions: [
@@ -161,7 +161,7 @@
     created_at: "2024-05-19 02:05:32.40818+00",
     name: "Cilantro Hummus Dip",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Cilantro%20Hummus%20Dip/26.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Cilantro%20Hummus%20Dip/26.jpeg",
     duration: 10,
     servings: 4,
     instructions: [
@@ -209,7 +209,7 @@
     created_at: "2024-05-19 02:05:32.40818+00",
     name: "Spicy Mustard Hot Sauce Deviled Eggs",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Spicy%20Mustard%20Hot%20Sauce%20Deviled%20Eggs/26.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Spicy%20Mustard%20Hot%20Sauce%20Deviled%20Eggs/26.jpeg",
     duration: 30,
     servings: 12,
     instructions: [
@@ -265,7 +265,7 @@
     created_at: "2024-05-19 03:16:44.719864+00",
     name: "Chicken Salad Wrap",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Chicken%20Salad%20Wrap/28.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Chicken%20Salad%20Wrap/28.jpeg",
     duration: 15,
     servings: 2,
     instructions: [
@@ -314,7 +314,7 @@
     created_at: "2024-05-19 03:16:44.719864+00",
     name: "Broccoli and Cheese Omelette",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Broccoli%20and%20Cheese%20Omelette/28.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Broccoli%20and%20Cheese%20Omelette/28.jpeg",
     duration: 20,
     servings: 1,
     instructions: [
@@ -366,7 +366,7 @@
     created_at: "2024-05-19 03:16:44.719864+00",
     name: "Fruit and Yogurt Parfait",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Fruit%20and%20Yogurt%20Parfait/28.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Fruit%20and%20Yogurt%20Parfait/28.jpeg",
     duration: 10,
     servings: 2,
     instructions: [
@@ -421,7 +421,7 @@
     created_at: "2024-05-19 03:16:44.719864+00",
     name: "Hummus and Veggie Sandwich",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Hummus%20and%20Veggie%20Sandwich/28.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Hummus%20and%20Veggie%20Sandwich/28.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -476,7 +476,7 @@
     created_at: "2024-05-19 03:16:44.719864+00",
     name: "Veggie Stir-Fry",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Veggie%20Stir-Fry/28.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Veggie%20Stir-Fry/28.jpeg",
     duration: 20,
     servings: 2,
     instructions: [
@@ -524,7 +524,7 @@
     created_at: "2024-05-19 06:28:03.460297+00",
     name: "Chicken Salad Sandwich",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/29/Chicken%20Salad%20Sandwich.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/29/Chicken%20Salad%20Sandwich.jpeg",
     duration: 30,
     servings: 2,
     instructions: [
@@ -580,7 +580,7 @@
     created_at: "2024-05-19 13:27:30.210246+00",
     name: "Creamy Hummus Dip",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/35/Creamy%20Hummus%20Dip.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/35/Creamy%20Hummus%20Dip.jpeg",
     duration: 5,
     servings: 4,
     instructions: [
@@ -610,7 +610,7 @@
     created_at: "2024-05-19 06:28:03.460297+00",
     name: "Scrambled Eggs with Lemon Cilantro",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/29/Scrambled%20Eggs%20with%20Lemon%20Cilantro.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/29/Scrambled%20Eggs%20with%20Lemon%20Cilantro.jpeg",
     duration: 10,
     servings: 2,
     instructions: [
@@ -658,7 +658,7 @@
     created_at: "2024-05-19 06:28:03.460297+00",
     name: "Hummus and Veggie Sandwich",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/29/Hummus%20and%20Veggie%20Sandwich.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/29/Hummus%20and%20Veggie%20Sandwich.jpeg",
     duration: 15,
     servings: 2,
     instructions: [
@@ -720,7 +720,7 @@
     created_at: "2024-05-19 06:28:03.460297+00",
     name: "Yogurt and Fruit Parfait",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/29/Yogurt%20and%20Fruit%20Parfait.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/29/Yogurt%20and%20Fruit%20Parfait.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -759,7 +759,7 @@
     created_at: "2024-05-19 06:28:03.460297+00",
     name: "Spicy Lemon Cilantro Chicken",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/29/Spicy%20Lemon%20Cilantro%20Chicken.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/29/Spicy%20Lemon%20Cilantro%20Chicken.jpeg",
     duration: 40,
     servings: 2,
     instructions: [
@@ -819,7 +819,7 @@
     created_at: "2024-05-19 13:23:42.403997+00",
     name: "Egg and Mixed Greens Tortilla Wrap",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/34/Egg%20and%20Mixed%20Greens%20Tortilla%20Wrap.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/34/Egg%20and%20Mixed%20Greens%20Tortilla%20Wrap.jpeg",
     duration: 15,
     servings: 1,
     instructions: [
@@ -895,7 +895,7 @@
     created_at: "2024-05-19 13:23:42.403997+00",
     name: "Yogurt and Pickle Dip",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/34/Yogurt%20and%20Pickle%20Dip.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/34/Yogurt%20and%20Pickle%20Dip.jpeg",
     duration: 10,
     servings: 2,
     instructions: [
@@ -963,7 +963,7 @@
     created_at: "2024-05-19 13:23:42.403997+00",
     name: "Cilantro Yogurt Sauce",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/34/Cilantro%20Yogurt%20Sauce.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/34/Cilantro%20Yogurt%20Sauce.jpeg",
     duration: 5,
     servings: 2,
     instructions: [
@@ -1024,7 +1024,7 @@
     created_at: "2024-05-19 13:23:42.403997+00",
     name: "Healthy Yogurt Parfait",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/34/Healthy%20Yogurt%20Parfait.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/34/Healthy%20Yogurt%20Parfait.jpeg",
     duration: 5,
     servings: 1,
     instructions: [
@@ -1070,7 +1070,7 @@
     created_at: "2024-05-19 13:27:30.210246+00",
     name: "Mixed Greens Salad with Yogurt Dressing",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/35/Mixed%20Greens%20Salad%20with%20Yogurt%20Dressing.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/35/Mixed%20Greens%20Salad%20with%20Yogurt%20Dressing.jpeg",
     duration: 10,
     servings: 2,
     instructions: [
@@ -1123,7 +1123,7 @@
     created_at: "2024-05-19 13:27:30.210246+00",
     name: "Herb Lemon Chicken",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/35/Herb%20Lemon%20Chicken.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/35/Herb%20Lemon%20Chicken.jpeg",
     duration: 50,
     servings: 2,
     instructions: [
@@ -1176,7 +1176,7 @@
     created_at: "2024-05-19 13:27:30.210246+00",
     name: "Yogurt Herb Dressing",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/35/Yogurt%20Herb%20Dressing.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/35/Yogurt%20Herb%20Dressing.jpeg",
     duration: 5,
     servings: 8,
     instructions: [
@@ -1221,7 +1221,7 @@
     created_at: "2024-05-19 13:43:07.894959+00",
     name: "Hummus and Veggie Tortilla Wrap",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/37/Hummus%20and%20Veggie%20Tortilla%20Wrap.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/37/Hummus%20and%20Veggie%20Tortilla%20Wrap.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -1282,7 +1282,7 @@
     created_at: "2024-05-19 13:43:07.894959+00",
     name: "Cilantro Yogurt Dip",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/37/Cilantro%20Yogurt%20Dip.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/37/Cilantro%20Yogurt%20Dip.jpeg",
     duration: 5,
     servings: 2,
     instructions: [
@@ -1328,7 +1328,7 @@
     created_at: "2024-05-19 13:43:07.894959+00",
     name: "Grilled Cheese with Sriracha",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/37/Grilled%20Cheese%20with%20Sriracha.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/37/Grilled%20Cheese%20with%20Sriracha.jpeg",
     duration: 15,
     servings: 1,
     instructions: [
@@ -1382,7 +1382,7 @@
     created_at: "2024-05-19 13:43:07.894959+00",
     name: "Carrot and Cilantro Salad",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/37/Carrot%20and%20Cilantro%20Salad.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/37/Carrot%20and%20Cilantro%20Salad.jpeg",
     duration: 10,
     servings: 2,
     instructions: [
@@ -1442,7 +1442,7 @@
     created_at: "2024-05-19 18:27:23.793357+00",
     name: "Veggie Wrap with Hummus",
     image_url:
-      '{"data":{"publicUrl":"https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/40/Veggie%20Wrap%20with%20Hummus.jpeg"}}',
+      '{"data":{"publicUrl":"https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/40/Veggie%20Wrap%20with%20Hummus.jpeg"}}',
     duration: 10,
     servings: 1,
     instructions: [
@@ -1501,7 +1501,7 @@
     created_at: "2024-05-19 18:27:23.793357+00",
     name: "Egg and Veggie Salad",
     image_url:
-      '{"data":{"publicUrl":"https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/40/Egg%20and%20Veggie%20Salad.jpeg"}}',
+      '{"data":{"publicUrl":"https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/40/Egg%20and%20Veggie%20Salad.jpeg"}}',
     duration: 20,
     servings: 1,
     instructions: [
@@ -1562,7 +1562,7 @@
     created_at: "2024-05-19 18:27:23.793357+00",
     name: "Yogurt Parfait with Jam",
     image_url:
-      '{"data":{"publicUrl":"https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/40/Yogurt%20Parfait%20with%20Jam.jpeg"}}',
+      '{"data":{"publicUrl":"https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/40/Yogurt%20Parfait%20with%20Jam.jpeg"}}',
     duration: 5,
     servings: 1,
     instructions: [
@@ -1609,7 +1609,7 @@
     created_at: "2024-05-19 18:27:23.793357+00",
     name: "Citrusy Lemonade",
     image_url:
-      '{"data":{"publicUrl":"https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/40/Citrusy%20Lemonade.jpeg"}}',
+      '{"data":{"publicUrl":"https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/40/Citrusy%20Lemonade.jpeg"}}',
     duration: 10,
     servings: 2,
     instructions: [
@@ -1661,7 +1661,7 @@
     created_at: "2024-05-19 18:30:46.299558+00",
     name: "Cheesy Vegetable Stir-fry",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/41/Cheesy%20Vegetable%20Stir-fry.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/41/Cheesy%20Vegetable%20Stir-fry.jpeg",
     duration: 20,
     servings: 2,
     instructions: [
@@ -1707,7 +1707,7 @@
     created_at: "2024-05-19 18:30:46.299558+00",
     name: "Green Peas and Sausage Omelette",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/41/Green%20Peas%20and%20Sausage%20Omelette.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/41/Green%20Peas%20and%20Sausage%20Omelette.jpeg",
     duration: 15,
     servings: 1,
     instructions: [
@@ -1752,7 +1752,7 @@
     created_at: "2024-05-19 18:30:46.299558+00",
     name: "Fruit Yogurt Parfait",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/41/Fruit%20Yogurt%20Parfait.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/41/Fruit%20Yogurt%20Parfait.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -1798,7 +1798,7 @@
     created_at: "2024-05-19 18:30:46.299558+00",
     name: "Avocado and Green Pea Spread Toast",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/41/Avocado%20and%20Green%20Pea%20Spread%20Toast.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/41/Avocado%20and%20Green%20Pea%20Spread%20Toast.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -1843,7 +1843,7 @@
     created_at: "2024-05-19 18:33:03.945971+00",
     name: "Grilled Chicken Sandwich",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/42/Grilled%20Chicken%20Sandwich.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/42/Grilled%20Chicken%20Sandwich.jpeg",
     duration: 20,
     servings: 1,
     instructions: [
@@ -1904,7 +1904,7 @@
     created_at: "2024-05-19 18:33:03.945971+00",
     name: "Yogurt Parfait",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/42/Yogurt%20Parfait.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/42/Yogurt%20Parfait.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -1934,7 +1934,7 @@
     created_at: "2024-05-19 18:33:03.945971+00",
     name: "Spicy Chicken Wrap",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/42/Spicy%20Chicken%20Wrap.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/42/Spicy%20Chicken%20Wrap.jpeg",
     duration: 15,
     servings: 1,
     instructions: [
@@ -1988,7 +1988,7 @@
     created_at: "2024-05-19 18:33:03.945971+00",
     name: "Bell Pepper Omelette",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/42/Bell%20Pepper%20Omelette.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/42/Bell%20Pepper%20Omelette.jpeg",
     duration: 15,
     servings: 1,
     instructions: [
@@ -2031,7 +2031,7 @@
     created_at: "2024-05-19 18:33:03.945971+00",
     name: "Chicken and Bell Pepper Stir-fry",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/42/Chicken%20and%20Bell%20Pepper%20Stir-fry.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/42/Chicken%20and%20Bell%20Pepper%20Stir-fry.jpeg",
     duration: 20,
     servings: 2,
     instructions: [
@@ -2078,7 +2078,7 @@
     created_at: "2024-05-19 19:09:46.802963+00",
     name: "Egg and Vegetable Stir-fry",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/45/Egg%20and%20Vegetable%20Stir-fry.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/45/Egg%20and%20Vegetable%20Stir-fry.jpeg",
     duration: 20,
     servings: 2,
     instructions: [
@@ -2141,7 +2141,7 @@
     created_at: "2024-05-19 19:09:46.802963+00",
     name: "Hummus and Veggie Wrap",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/45/Hummus%20and%20Veggie%20Wrap.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/45/Hummus%20and%20Veggie%20Wrap.jpeg",
     duration: 10,
     servings: 1,
     instructions: [
@@ -2195,7 +2195,7 @@
     created_at: "2024-05-19 19:09:46.802963+00",
     name: "Simple Parsley Salad",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/45/Simple%20Parsley%20Salad.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/45/Simple%20Parsley%20Salad.jpeg",
     duration: 15,
     servings: 2,
     instructions: [
@@ -2239,7 +2239,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Chicken Salad Sandwich",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Chicken%20Salad%20Sandwich.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Chicken%20Salad%20Sandwich.jpeg",
     duration: 20,
     servings: 2,
     instructions: [
@@ -2299,7 +2299,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Tofu Stir-Fry",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Tofu%20Stir-Fry.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Tofu%20Stir-Fry.jpeg",
     duration: 25,
     servings: 2,
     instructions: [
@@ -2353,7 +2353,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Yogurt Parfait",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Yogurt%20Parfait.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Yogurt%20Parfait.jpeg",
     duration: 10,
     servings: 3,
     instructions: [
@@ -2397,7 +2397,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Apple Carrot Slaw",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Apple%20Carrot%20Slaw.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Apple%20Carrot%20Slaw.jpeg",
     duration: 15,
     servings: 4,
     instructions: [
@@ -2456,7 +2456,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Sriracha-Hummus Toast",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Sriracha-Hummus%20Toast.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Sriracha-Hummus%20Toast.jpeg",
     duration: 5,
     servings: 1,
     instructions: [
@@ -2507,7 +2507,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Creamy Lemon Yogurt Dip",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Creamy%20Lemon%20Yogurt%20Dip.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Creamy%20Lemon%20Yogurt%20Dip.jpeg",
     duration: 5,
     servings: 4,
     instructions: [
@@ -2558,7 +2558,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Orange Juice Smoothie",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Orange%20Juice%20Smoothie.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Orange%20Juice%20Smoothie.jpeg",
     duration: 5,
     servings: 2,
     instructions: [
@@ -2602,7 +2602,7 @@
     created_at: "2024-05-20 00:08:05.068223+00",
     name: "Egg and Veggie Scramble",
     image_url:
-      "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/46/Egg%20and%20Veggie%20Scramble.jpeg",
+      "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/46/Egg%20and%20Veggie%20Scramble.jpeg",
     duration: 10,
     servings: 2,
     instructions: [

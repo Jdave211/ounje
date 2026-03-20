@@ -9,7 +9,7 @@ let data = {
   created_at: "2024-05-19 02:05:32.40818+00",
   title: "Simple Chicken Salad",
   image_url:
-    "https://kmvqftoebsmmkhxrgdye.supabase.co/storage/v1/object/public/recipe_images/Simple%20Chicken%20Salad/26.jpeg",
+    "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/Simple%20Chicken%20Salad/26.jpeg",
   duration: 15,
   servings: 2,
   instructions: [
