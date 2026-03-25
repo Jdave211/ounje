@@ -1,6 +1,43 @@
+# Environment
 .env
+.env.local
+
+# Dependencies
 node_modules
-.expo
 package-lock.json
+
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+client/ios/build/
+client/ios/DerivedData/
+client/ios/*.xcworkspace/xcuserdata/
+client/ios/**/*.xccheckout
+client/ios/**/*.moved-to-trash
+client/ios/Pods/
+
+# CocoaPods (keep Podfile.lock)
+# client/ios/Podfile.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Scripts / outputs
+scripts/output/
+scripts/__pycache__/
+*.egg-info/
+
+# Server uploads
+server/uploads/
+
+# Misc
 sb_backup
+*.swp
+*.swo

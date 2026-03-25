@@ -31,7 +31,16 @@ final class MealPlanningAgent {
         self.inventoryProvider = inventoryProvider
     }
 
-    func generatePlan(profile: UserProfile, history: [MealPlan], now: Date = Date()) async -> MealPlan {
+    /// Generates a full meal plan with real provider cart URLs from GroceryService.
+    /// Falls back to local URL building if the server is unreachable.
+    func generatePlan(
+        profile: UserProfile,
+        history: [MealPlan],
+        now: Date = Date(),
+        recipeTitle: String? = nil,
+        recipeImageURL: String? = nil,
+        recipeID: String? = nil
+    ) async -> MealPlan {
         var pipeline: [PipelineDecision] = []
 
         pipeline.append(
@@ -73,13 +82,30 @@ final class MealPlanningAgent {
             )
         )
 
-        let quotes = optimizeProviders(for: groceries, profile: profile)
+        // Try real API quotes first; fall back to local estimate if server is down
+        let quotes: [ProviderQuote]
+        let apiQuotes = await GroceryService.shared.buildQuotes(
+            for: groceries,
+            profile: profile,
+            recipeTitle: recipeTitle,
+            recipeImageURL: recipeImageURL,
+            recipeID: recipeID
+        )
+        if !apiQuotes.isEmpty {
+            quotes = apiQuotes
+        } else {
+            quotes = optimizeProviders(for: groceries, profile: profile)
+        }
+
         if let top = quotes.first {
-            let budgetState = top.estimatedTotal <= profile.budgetPerCycle ? "within budget" : "over budget by \((top.estimatedTotal - profile.budgetPerCycle).asCurrency)"
+            let budgetState = top.estimatedTotal <= profile.budgetPerCycle
+                ? "within budget"
+                : "over budget by \((top.estimatedTotal - profile.budgetPerCycle).asCurrency)"
+            let statusLabel = top.providerStatus == .live ? "live cart" : "deep link"
             pipeline.append(
                 PipelineDecision(
                     stage: .optimizeProvider,
-                    summary: "Best provider: \(top.provider.title) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
+                    summary: "Best provider: \(top.provider.title) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
                 )
             )
         }

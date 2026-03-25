@@ -27,11 +27,11 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .italian: return "Italian"
         case .mexican: return "Mexican"
-        case .mediterranean: return "Mediterranean"
+        case .mediterranean: return "Mediter."
         case .asian: return "Asian"
         case .indian: return "Indian"
         case .american: return "American"
-        case .middleEastern: return "Middle Eastern"
+        case .middleEastern: return "Levantine"
         case .japanese: return "Japanese"
         case .thai: return "Thai"
         case .korean: return "Korean"
@@ -44,6 +44,30 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
         case .ethiopian: return "Ethiopian"
         case .brazilian: return "Brazilian"
         case .vegan: return "Vegan"
+        }
+    }
+
+    var flagEmoji: String? {
+        switch self {
+        case .italian: return "🇮🇹"
+        case .mexican: return "🇲🇽"
+        case .mediterranean: return "🇬🇷"
+        case .asian: return "🌏"
+        case .indian: return "🇮🇳"
+        case .american: return "🇺🇸"
+        case .middleEastern: return "🇱🇧"
+        case .japanese: return "🇯🇵"
+        case .thai: return "🇹🇭"
+        case .korean: return "🇰🇷"
+        case .chinese: return "🇨🇳"
+        case .greek: return "🇬🇷"
+        case .french: return "🇫🇷"
+        case .spanish: return "🇪🇸"
+        case .caribbean: return "🇯🇲"
+        case .westAfrican: return "🇳🇬"
+        case .ethiopian: return "🇪🇹"
+        case .brazilian: return "🇧🇷"
+        case .vegan: return nil
         }
     }
 }
@@ -88,6 +112,46 @@ enum MealCadence: String, CaseIterable, Codable, Identifiable {
         case .weekly: return 5
         case .biweekly: return 9
         case .monthly: return 16
+        }
+    }
+}
+
+enum DeliveryAnchorDay: String, CaseIterable, Codable, Identifiable {
+    case sunday
+    case monday
+    case tuesday
+    case wednesday
+    case thursday
+    case friday
+    case saturday
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sunday: return "Sunday"
+        case .monday: return "Monday"
+        case .tuesday: return "Tuesday"
+        case .wednesday: return "Wednesday"
+        case .thursday: return "Thursday"
+        case .friday: return "Friday"
+        case .saturday: return "Saturday"
+        }
+    }
+
+    var pluralTitle: String {
+        "\(title)s"
+    }
+
+    var weekdayIndex: Int {
+        switch self {
+        case .sunday: return 1
+        case .monday: return 2
+        case .tuesday: return 3
+        case .wednesday: return 4
+        case .thursday: return 5
+        case .friday: return 6
+        case .saturday: return 7
         }
     }
 }
@@ -138,42 +202,147 @@ enum MealExplorationLevel: String, CaseIterable, Codable, Identifiable {
 }
 
 enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
+    case mealme
     case walmart
     case instacart
+    case kroger
     case amazonFresh
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .walmart: return "Walmart"
-        case .instacart: return "Instacart"
+        case .mealme:      return "MealMe"
+        case .walmart:     return "Walmart"
+        case .instacart:   return "Instacart"
+        case .kroger:      return "Kroger"
         case .amazonFresh: return "Amazon Fresh"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .mealme:      return "Best price across 1M+ stores"
+        case .walmart:     return "Everyday low prices"
+        case .instacart:   return "Same-day from local stores"
+        case .kroger:      return "Kroger, Ralphs, Fred Meyer & more"
+        case .amazonFresh: return "Prime delivery"
+        }
+    }
+
+    var logoSystemName: String {
+        switch self {
+        case .mealme:      return "bag.fill"
+        case .walmart:     return "cart.fill"
+        case .instacart:   return "leaf.fill"
+        case .kroger:      return "storefront.fill"
+        case .amazonFresh: return "shippingbox.fill"
         }
     }
 
     var priceMultiplier: Double {
         switch self {
-        case .walmart: return 0.96
-        case .instacart: return 1.08
+        case .mealme:      return 1.00
+        case .walmart:     return 0.96
+        case .instacart:   return 1.08
+        case .kroger:      return 1.00
         case .amazonFresh: return 1.02
         }
     }
 
     var deliveryFee: Double {
         switch self {
-        case .walmart: return 8.95
-        case .instacart: return 9.99
+        case .mealme:      return 0.00   // varies per store — fetched live
+        case .walmart:     return 8.95
+        case .instacart:   return 9.99
+        case .kroger:      return 10.95
         case .amazonFresh: return 7.99
         }
     }
 
     var etaDays: Int {
         switch self {
-        case .walmart: return 2
-        case .instacart: return 1
+        case .mealme:      return 0   // typically same-day
+        case .walmart:     return 2
+        case .instacart:   return 1
+        case .kroger:      return 2
         case .amazonFresh: return 2
         }
+    }
+
+    var deliveryWindowReference: String {
+        switch self {
+        case .mealme:
+            return "MealMe shows real-time windows from your nearest store."
+        case .walmart, .kroger:
+            return "Based on delivery coverage spanning 6 AM to 10:30 PM."
+        case .instacart:
+            return "Based on Instacart scheduled windows starting at 9 AM and running as late as midnight."
+        case .amazonFresh:
+            return "Based on standard daytime grocery delivery windows."
+        }
+    }
+
+    var deliveryWindowOptions: [DeliveryWindowOption] {
+        switch self {
+        case .mealme, .instacart:
+            return [
+                .init(startMinutes: 9 * 60, endMinutes: 11 * 60),
+                .init(startMinutes: 11 * 60, endMinutes: 13 * 60),
+                .init(startMinutes: 13 * 60, endMinutes: 15 * 60),
+                .init(startMinutes: 15 * 60, endMinutes: 17 * 60),
+                .init(startMinutes: 17 * 60, endMinutes: 19 * 60),
+                .init(startMinutes: 19 * 60, endMinutes: 21 * 60),
+                .init(startMinutes: 21 * 60, endMinutes: 23 * 60),
+                .init(startMinutes: 22 * 60, endMinutes: 24 * 60)
+            ]
+        case .walmart, .kroger:
+            return [
+                .init(startMinutes: 6 * 60, endMinutes: 8 * 60),
+                .init(startMinutes: 8 * 60, endMinutes: 10 * 60),
+                .init(startMinutes: 10 * 60, endMinutes: 12 * 60),
+                .init(startMinutes: 12 * 60, endMinutes: 14 * 60),
+                .init(startMinutes: 14 * 60, endMinutes: 16 * 60),
+                .init(startMinutes: 16 * 60, endMinutes: 18 * 60),
+                .init(startMinutes: 18 * 60, endMinutes: 20 * 60),
+                .init(startMinutes: 20 * 60, endMinutes: 22 * 60)
+            ]
+        case .amazonFresh:
+            return [
+                .init(startMinutes: 8 * 60, endMinutes: 10 * 60),
+                .init(startMinutes: 10 * 60, endMinutes: 12 * 60),
+                .init(startMinutes: 12 * 60, endMinutes: 14 * 60),
+                .init(startMinutes: 14 * 60, endMinutes: 16 * 60),
+                .init(startMinutes: 16 * 60, endMinutes: 18 * 60),
+                .init(startMinutes: 18 * 60, endMinutes: 20 * 60)
+            ]
+        }
+    }
+
+    var availableDeliveryMinuteRange: ClosedRange<Int> {
+        let options = deliveryWindowOptions
+        let lower = options.map(\.startMinutes).min() ?? 9 * 60
+        let upper = (options.map(\.endMinutes).max() ?? 21 * 60) - 1
+        return lower...max(lower, upper)
+    }
+
+    func closestDeliveryWindow(to minutes: Int) -> DeliveryWindowOption {
+        if let containing = deliveryWindowOptions.first(where: { minutes >= $0.startMinutes && minutes < $0.endMinutes }) {
+            return containing
+        }
+
+        return deliveryWindowOptions.min {
+            abs($0.startMinutes - minutes) < abs($1.startMinutes - minutes)
+        } ?? deliveryWindowOptions[0]
+    }
+
+    func closestAvailableDeliveryTime(from date: Date, on baseDate: Date = .now) -> Date {
+        let calendar = Calendar.current
+        let minuteOfDay = (calendar.component(.hour, from: date) * 60) + calendar.component(.minute, from: date)
+        let clampedMinutes = min(max(minuteOfDay, availableDeliveryMinuteRange.lowerBound), availableDeliveryMinuteRange.upperBound)
+        let hour = clampedMinutes / 60
+        let minute = clampedMinutes % 60
+        return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: baseDate) ?? baseDate
     }
 
     func buildOrderURL(using items: [GroceryItem], deliveryAddress: DeliveryAddress? = nil) -> URL {
@@ -192,15 +361,57 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
         let rawURL: String
         switch self {
+        case .mealme:
+            rawURL = "https://app.mealme.ai"
         case .walmart:
             rawURL = "https://www.walmart.com/search?q=\(query)"
         case .instacart:
             rawURL = "https://www.instacart.com/store/s?k=\(query)"
+        case .kroger:
+            rawURL = "https://www.kroger.com/search?query=\(query)"
         case .amazonFresh:
             rawURL = "https://www.amazon.com/s?k=\(query)&i=amazonfresh"
         }
 
         return URL(string: rawURL) ?? URL(string: "https://www.google.com/search?q=groceries")!
+    }
+}
+
+struct DeliveryWindowOption: Identifiable, Hashable {
+    let startMinutes: Int
+    let endMinutes: Int
+
+    var id: String {
+        "\(startMinutes)-\(endMinutes)"
+    }
+
+    var title: String {
+        "\(Self.formattedTime(minutes: startMinutes)) – \(Self.formattedTime(minutes: endMinutes))"
+    }
+
+    var shortTitle: String {
+        title.replacingOccurrences(of: ":00", with: "")
+    }
+
+    var detail: String {
+        let durationHours = max(1, (endMinutes - startMinutes) / 60)
+        return durationHours == 1 ? "1-hour window" : "\(durationHours)-hour window"
+    }
+
+    private static func formattedTime(minutes: Int) -> String {
+        let hour24 = min(max(minutes / 60, 0), 24)
+        let minute = minutes % 60
+        let normalizedHour = hour24 == 24 ? 0 : hour24
+        let period = normalizedHour >= 12 ? "PM" : "AM"
+        let hour12Base = normalizedHour % 12
+        let hour12 = hour12Base == 0 ? 12 : hour12Base
+
+        if minute == 0 {
+            return "\(hour12) \(period)"
+        }
+
+        let minuteString = String(format: "%02d", minute)
+        return "\(hour12):\(minuteString) \(period)"
     }
 }
 
@@ -273,17 +484,36 @@ enum BudgetFlexibility: String, CaseIterable, Codable, Identifiable {
 
     var title: String {
         switch self {
-        case .strict: return "Hold the line"
-        case .slightlyFlexible: return "Some flexibility"
-        case .convenienceFirst: return "Pay more for convenience"
+        case .strict: return "Save when possible"
+        case .slightlyFlexible: return "Hold the line"
+        case .convenienceFirst: return "More dynamic"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .strict: return "Stay close to the target budget."
-        case .slightlyFlexible: return "Stretch a bit for noticeably better meals."
-        case .convenienceFirst: return "Spend more when it saves time or improves quality."
+        case .strict: return "Let the planner come in under budget when it can."
+        case .slightlyFlexible: return "Stay close to the target budget by default."
+        case .convenienceFirst: return "Stretch more often for stronger ingredients and better meals."
+        }
+    }
+
+    var calibrationScore: Int {
+        switch self {
+        case .strict: return 18
+        case .slightlyFlexible: return 50
+        case .convenienceFirst: return 82
+        }
+    }
+
+    static func from(calibrationScore: Int) -> BudgetFlexibility {
+        switch calibrationScore {
+        case ..<34:
+            return .strict
+        case 67...:
+            return .convenienceFirst
+        default:
+            return .slightlyFlexible
         }
     }
 }
@@ -333,8 +563,11 @@ struct MealPrepSummarySection: Identifiable, Codable, Hashable {
 }
 
 struct UserProfile: Codable, Hashable {
+    var preferredName: String?
     var preferredCuisines: [CuisinePreference]
     var cadence: MealCadence
+    var deliveryAnchorDay: DeliveryAnchorDay
+    var deliveryTimeMinutes: Int
     var rotationPreference: RecipeRotationPreference
     var maxRepeatsPerCycle: Int
     var storage: StorageProfile
@@ -360,8 +593,11 @@ struct UserProfile: Codable, Hashable {
     var orderingAutonomy: OrderingAutonomyLevel
 
     init(
+        preferredName: String? = nil,
         preferredCuisines: [CuisinePreference],
         cadence: MealCadence,
+        deliveryAnchorDay: DeliveryAnchorDay = .sunday,
+        deliveryTimeMinutes: Int = 18 * 60,
         rotationPreference: RecipeRotationPreference,
         maxRepeatsPerCycle: Int,
         storage: StorageProfile,
@@ -386,8 +622,11 @@ struct UserProfile: Codable, Hashable {
         purchasingBehavior: PurchasingBehavior = .healthier,
         orderingAutonomy: OrderingAutonomyLevel = .autoOrderWithinBudget
     ) {
+        self.preferredName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredCuisines = preferredCuisines
         self.cadence = cadence
+        self.deliveryAnchorDay = deliveryAnchorDay
+        self.deliveryTimeMinutes = max(0, min(deliveryTimeMinutes, 23 * 60 + 59))
         self.rotationPreference = rotationPreference
         self.maxRepeatsPerCycle = maxRepeatsPerCycle
         self.storage = storage
@@ -414,8 +653,11 @@ struct UserProfile: Codable, Hashable {
     }
 
     static let starter = UserProfile(
+        preferredName: nil,
         preferredCuisines: [.american, .chinese, .westAfrican],
         cadence: .weekly,
+        deliveryAnchorDay: .sunday,
+        deliveryTimeMinutes: 18 * 60,
         rotationPreference: .dynamic,
         maxRepeatsPerCycle: 2,
         storage: .starter,
@@ -431,9 +673,18 @@ struct UserProfile: Codable, Hashable {
         favoriteFoods: ["Chicken bowls", "Pasta", "Rice bowls"],
         favoriteFlavors: ["Savory", "Spicy"],
         mealPrepGoals: ["Speed", "Taste", "Variety"],
-        kitchenEquipment: ["Oven", "Stovetop", "Microwave"],
+        kitchenEquipment: [
+            "Microwave",
+            "Oven",
+            "Stovetop",
+            "Air fryer",
+            "Blender",
+            "Rice cooker",
+            "Instant Pot",
+            "Freezer"
+        ],
         budgetWindow: .weekly,
-        budgetFlexibility: .strict,
+        budgetFlexibility: .slightlyFlexible,
         purchasingBehavior: .healthier,
         orderingAutonomy: .autoOrderWithinBudget
     )
@@ -446,8 +697,96 @@ struct UserProfile: Codable, Hashable {
         normalizedUnique(allergies + hardRestrictions + neverIncludeFoods)
     }
 
+    var trimmedPreferredName: String? {
+        guard let preferredName else { return nil }
+        let trimmed = preferredName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     var budgetSummary: String {
         "\(budgetPerCycle.asCurrency) \(budgetWindow == .weekly ? "per week" : "per month")"
+    }
+
+    var cadenceScheduleSummary: String {
+        switch cadence {
+        case .daily:
+            return cadence.title
+        case .everyFewDays, .twiceWeekly:
+            return "\(cadence.title) · starting \(deliveryAnchorDay.pluralTitle.lowercased())"
+        case .weekly:
+            return "\(cadence.title) · on \(deliveryAnchorDay.pluralTitle.lowercased())"
+        case .biweekly:
+            return "\(cadence.title) · every other \(deliveryAnchorDay.title.lowercased())"
+        case .monthly:
+            return "\(cadence.title) · first \(deliveryAnchorDay.title.lowercased())"
+        }
+    }
+
+    var cadenceTitleOnly: String {
+        cadence.title
+    }
+
+    var deliveryTimeText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: dateForDeliveryTime())
+    }
+
+    func scheduledDeliveryDate(after reference: Date = .now) -> Date {
+        let calendar = Calendar.current
+        let hour = deliveryTimeMinutes / 60
+        let minute = deliveryTimeMinutes % 60
+
+        func nextWeeklyOccurrence(weekday: Int) -> Date {
+            let components = DateComponents(hour: hour, minute: minute, weekday: weekday)
+            return calendar.nextDate(
+                after: reference.addingTimeInterval(-60),
+                matching: components,
+                matchingPolicy: .nextTime,
+                repeatedTimePolicy: .first,
+                direction: .forward
+            ) ?? reference
+        }
+
+        switch cadence {
+        case .daily:
+            let todayAtTime = calendar.date(
+                bySettingHour: hour,
+                minute: minute,
+                second: 0,
+                of: reference
+            ) ?? reference
+            if todayAtTime.timeIntervalSince(reference) > 0 {
+                return todayAtTime
+            }
+            return calendar.date(byAdding: .day, value: 1, to: todayAtTime) ?? todayAtTime
+        case .everyFewDays:
+            let future = calendar.date(byAdding: .day, value: cadence.dayInterval, to: reference) ?? reference
+            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: future) ?? future
+        case .twiceWeekly, .weekly:
+            return nextWeeklyOccurrence(weekday: deliveryAnchorDay.weekdayIndex)
+        case .biweekly:
+            let nextAnchor = nextWeeklyOccurrence(weekday: deliveryAnchorDay.weekdayIndex)
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: reference), to: calendar.startOfDay(for: nextAnchor)).day ?? 0
+            if days >= 7 {
+                return nextAnchor
+            }
+            return calendar.date(byAdding: .day, value: 7, to: nextAnchor) ?? nextAnchor
+        case .monthly:
+            let nextMonth = calendar.date(byAdding: .month, value: 1, to: reference) ?? reference
+            let monthInterval = calendar.dateInterval(of: .month, for: nextMonth) ?? DateInterval(start: nextMonth, duration: 30 * 24 * 60 * 60)
+            var candidate = monthInterval.start
+            while calendar.component(.weekday, from: candidate) != deliveryAnchorDay.weekdayIndex {
+                candidate = calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+            }
+            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: candidate) ?? candidate
+        }
+    }
+
+    func dateForDeliveryTime(on date: Date = .now) -> Date {
+        let hour = deliveryTimeMinutes / 60
+        let minute = deliveryTimeMinutes % 60
+        return Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
     }
 
     var userFacingCuisineTitles: [String] {
@@ -511,7 +850,7 @@ struct UserProfile: Codable, Hashable {
             notes.append("The planner will lean into \(joinedOrFallback(Array(favoriteFoods.prefix(3)), fallback: "your go-to meals").lowercased()) first.")
         }
 
-        notes.append("Meal cadence is set to \(cadence.title.lowercased()) with \(consumption.mealsPerWeek) planned meals per week.")
+        notes.append("Meal cadence is set to \(cadenceScheduleSummary.lowercased()) with \(consumption.mealsPerWeek) planned meals per week.")
         notes.append("Budget guardrails are set to \(budgetSummary.lowercased()) with \(budgetFlexibility.title.lowercased()).")
 
         return notes
@@ -557,7 +896,7 @@ struct UserProfile: Codable, Hashable {
             MealPrepSummarySection(
                 title: "Cadence and budget",
                 detail: [
-                    cadence.title,
+                    cadenceScheduleSummary,
                     budgetSummary,
                     budgetFlexibility.subtitle
                 ].joined(separator: "\n")
@@ -619,8 +958,11 @@ struct UserProfile: Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case preferredName
         case preferredCuisines
         case cadence
+        case deliveryAnchorDay
+        case deliveryTimeMinutes
         case rotationPreference
         case maxRepeatsPerCycle
         case storage
@@ -648,8 +990,11 @@ struct UserProfile: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        preferredName = try container.decodeIfPresent(String.self, forKey: .preferredName)
         preferredCuisines = try container.decode([CuisinePreference].self, forKey: .preferredCuisines)
         cadence = try container.decode(MealCadence.self, forKey: .cadence)
+        deliveryAnchorDay = try container.decodeIfPresent(DeliveryAnchorDay.self, forKey: .deliveryAnchorDay) ?? .sunday
+        deliveryTimeMinutes = try container.decodeIfPresent(Int.self, forKey: .deliveryTimeMinutes) ?? UserProfile.starter.deliveryTimeMinutes
         rotationPreference = try container.decode(RecipeRotationPreference.self, forKey: .rotationPreference)
         maxRepeatsPerCycle = try container.decode(Int.self, forKey: .maxRepeatsPerCycle)
         storage = try container.decode(StorageProfile.self, forKey: .storage)
@@ -670,7 +1015,7 @@ struct UserProfile: Codable, Hashable {
         cooksForOthers = try container.decodeIfPresent(Bool.self, forKey: .cooksForOthers) ?? false
         kitchenEquipment = try container.decodeIfPresent([String].self, forKey: .kitchenEquipment) ?? UserProfile.starter.kitchenEquipment
         budgetWindow = try container.decodeIfPresent(BudgetWindow.self, forKey: .budgetWindow) ?? .weekly
-        budgetFlexibility = try container.decodeIfPresent(BudgetFlexibility.self, forKey: .budgetFlexibility) ?? .strict
+        budgetFlexibility = try container.decodeIfPresent(BudgetFlexibility.self, forKey: .budgetFlexibility) ?? .slightlyFlexible
         purchasingBehavior = try container.decodeIfPresent(PurchasingBehavior.self, forKey: .purchasingBehavior) ?? .healthier
         orderingAutonomy = try container.decodeIfPresent(OrderingAutonomyLevel.self, forKey: .orderingAutonomy) ?? .autoOrderWithinBudget
     }
@@ -775,6 +1120,35 @@ struct ProviderQuote: Identifiable, Codable, Hashable {
     var estimatedTotal: Double
     var etaDays: Int
     var orderURL: URL
+    /// "live" = real API cart page, "deep_link" = browser search fallback
+    var providerStatus: ProviderQuoteStatus
+    /// Instacart shoppable links expire after ~24 hrs
+    var expiresAt: Date?
+
+    init(
+        provider: ShoppingProvider,
+        subtotal: Double,
+        deliveryFee: Double,
+        estimatedTotal: Double,
+        etaDays: Int,
+        orderURL: URL,
+        providerStatus: ProviderQuoteStatus = .deepLink,
+        expiresAt: Date? = nil
+    ) {
+        self.provider = provider
+        self.subtotal = subtotal
+        self.deliveryFee = deliveryFee
+        self.estimatedTotal = estimatedTotal
+        self.etaDays = etaDays
+        self.orderURL = orderURL
+        self.providerStatus = providerStatus
+        self.expiresAt = expiresAt
+    }
+}
+
+enum ProviderQuoteStatus: String, Codable, Hashable {
+    case live       // real API — pre-filled cart
+    case deepLink   // browser search fallback
 }
 
 enum AgentStage: String, Codable, CaseIterable, Identifiable {

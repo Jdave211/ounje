@@ -1,4 +1,4 @@
--- Profiles table used by iOS auth, onboarding persistence, and agent setup state.
+-- Expand profiles from a simple onboarding flag into the full onboarding persistence record.
 CREATE TABLE IF NOT EXISTS public.profiles (
   id TEXT PRIMARY KEY,
   email TEXT,
@@ -83,8 +83,6 @@ CREATE TRIGGER trg_profiles_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.set_profiles_updated_at();
 
--- Prototype sync remains open to anon/authenticated because the iOS app is using PostgREST
--- directly with anon credentials during local prototyping.
 ALTER TABLE public.profiles DISABLE ROW LEVEL SECURITY;
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.profiles TO anon, authenticated;

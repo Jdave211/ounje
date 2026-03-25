@@ -15,6 +15,9 @@
 		C1D2E3F40100000100000003 /* ounje/MealPlanningAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */; };
 		C1D2E3F40100000100000004 /* ounje/MealPlanningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000004 /* ounje/MealPlanningModels.swift */; };
 		C1D2E3F40100000100000005 /* ounje/RecipeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000005 /* ounje/RecipeCatalog.swift */; };
+		C1D2E3F40100000100000006 /* ounje/GroceryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000006 /* ounje/GroceryService.swift */; };
+		C1D2E3F40100000100000007 /* ounje/MealMeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */; };
+		C1D2E3F40100000100000008 /* ounje/MealMeCartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +31,9 @@
 		F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAgent.swift; sourceTree = "<group>"; };
 		F1A2B3C40100000100000004 /* ounje/MealPlanningModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningModels.swift; sourceTree = "<group>"; };
 		F1A2B3C40100000100000005 /* ounje/RecipeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/RecipeCatalog.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000006 /* ounje/GroceryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/GroceryService.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealMeModels.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealMeCartView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,6 +55,9 @@
 				F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */,
 				F1A2B3C40100000100000004 /* ounje/MealPlanningModels.swift */,
 				F1A2B3C40100000100000005 /* ounje/RecipeCatalog.swift */,
+				F1A2B3C40100000100000006 /* ounje/GroceryService.swift */,
+				F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */,
+				F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
@@ -151,6 +160,9 @@
 				C1D2E3F40100000100000003 /* ounje/MealPlanningAgent.swift in Sources */,
 				C1D2E3F40100000100000004 /* ounje/MealPlanningModels.swift in Sources */,
 				C1D2E3F40100000100000005 /* ounje/RecipeCatalog.swift in Sources */,
+				C1D2E3F40100000100000006 /* ounje/GroceryService.swift in Sources */,
+				C1D2E3F40100000100000007 /* ounje/MealMeModels.swift in Sources */,
+				C1D2E3F40100000100000008 /* ounje/MealMeCartView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
