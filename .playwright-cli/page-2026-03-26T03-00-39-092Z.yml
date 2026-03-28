@@ -1,0 +1,731 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - banner [ref=e5]:
+        - link "Skip to Main Content" [ref=e6] [cursor=pointer]:
+          - /url: "#maincontent"
+        - text:  
+        - link "Walmart Homepage" [ref=e7] [cursor=pointer]:
+          - /url: /en
+          - img "Walmart" [ref=e8]
+        - generic [ref=e11]:
+          - button "How do you want your items? Toronto, M3J 9Z0 • Toronto Downsview" [expanded] [ref=e13] [cursor=pointer]:
+            - generic [ref=e14]:
+              - generic [ref=e15]:
+                - generic [ref=e17]: How do you want your items?
+                - generic [ref=e18]:
+                  - generic [ref=e22]: Toronto, M3J 9Z0
+                  - generic [ref=e25]:
+                    - generic [ref=e26]: •
+                    - generic [ref=e27]: Toronto Downsview
+              - generic [ref=e29]: 
+          - generic [ref=e30]:
+            - paragraph [ref=e32]: "Screen Reader Instructions: In this dialogue box, you will find toggle buttons to select how you want to shop. After selecting, this option saves to customize your shopping experience throughout Walmart to show you relevant products. If you would like to change your preference, you can trigger this dialogue box on any page. The button to trigger the dialogue box appears after the \"Cart\" button in the reading and keyboard order. The button will be labelled according to the last option you chose. To exit this dialogue box, activate the \"Close\" button or press the \"Escape\" key."
+            - dialog "How do you want your items?" [ref=e34]:
+              - generic [ref=e36]:
+                - list [ref=e37]:
+                  - listitem [ref=e38]:
+                    - button "Pickup" [ref=e39]:
+                      - img [ref=e41]
+                      - generic [ref=e42]: Pickup
+                  - listitem [ref=e43]:
+                    - button "Delivery" [ref=e44]:
+                      - img [ref=e46]
+                      - generic [ref=e47]: Delivery
+                - generic [ref=e49]:
+                  - generic [ref=e54]:
+                    - generic [ref=e58]:
+                      - generic [ref=e60]: Add an address for shopping and delivery
+                      - generic [ref=e62]: Toronto, ON M3J 9Z0
+                    - button "Add address" [active] [ref=e64] [cursor=pointer]
+                  - separator [ref=e66]
+                  - button "Toronto Downsview 3757 KEELE ST, Toronto, ON M3J 1N4 Curbside pickup In-store pickup" [ref=e70]:
+                    - generic [ref=e71]:
+                      - generic [ref=e75]:
+                        - generic [ref=e77]: Toronto Downsview
+                        - generic [ref=e79]: 3757 KEELE ST, Toronto, ON M3J 1N4
+                      - generic [ref=e81]:
+                        - generic [ref=e82]:
+                          - generic [ref=e84]: 
+                          - text: Curbside pickup
+                        - generic [ref=e85]:
+                          - generic [ref=e87]: 
+                          - text: In-store pickup
+                    - generic [ref=e89]: 
+                - button "Close, how do you want your items?" [ref=e90]:
+                  - generic [ref=e91]: 
+          - generic [ref=e92]:
+            - generic [ref=e94]: Toronto, M3J 9Z0
+            - generic [ref=e96]: •
+        - search "Walmart Site-Wide" [ref=e98]:
+          - generic [ref=e99]:
+            - searchbox "Search" [ref=e100]
+            - button [ref=e101] [cursor=pointer]:
+              - generic [ref=e102]: 
+            - button "Search" [ref=e103] [cursor=pointer]:
+              - generic [ref=e104]: 
+        - navigation "Account and Cart" [ref=e105]:
+          - list [ref=e106]:
+            - listitem [ref=e107]:
+              - button "Language English" [ref=e109]:
+                - generic [ref=e110]: 
+                - generic [ref=e111]:
+                  - generic [ref=e112]: Language
+                  - generic [ref=e113]: English
+            - listitem [ref=e114]:
+              - button "Reorder My Items" [ref=e115] [cursor=pointer]:
+                - generic [ref=e116]: 
+                - generic [ref=e117]:
+                  - generic [ref=e118]: Reorder
+                  - generic [ref=e119]: My Items
+              - text:  
+            - listitem [ref=e120]:
+              - button "Sign In Account" [ref=e121] [cursor=pointer]:
+                - generic [ref=e122]: 
+                - generic [ref=e123]:
+                  - generic [ref=e124]: Sign In
+                  - generic [ref=e125]: Account
+              - text:  
+            - listitem [ref=e126]:
+              - button "Cart contains 0 items Total Amount $0.00" [ref=e129]:
+                - generic [ref=e130]: 
+                - generic [ref=e131]: "0"
+                - generic [ref=e132]: $0.00
+      - generic [ref=e133]:
+        - generic [ref=e134]:
+          - navigation "Primary" [ref=e135]:
+            - list [ref=e136]:
+              - listitem [ref=e137]:
+                - button "Departments " [ref=e141]:
+                  - generic [ref=e142]: 
+                  - text: Departments
+                  - generic [ref=e143]: 
+              - listitem [ref=e144]:
+                - button "Services " [ref=e148]:
+                  - generic [ref=e149]: 
+                  - text: Services
+                  - generic [ref=e150]: 
+          - generic [ref=e151]: "|"
+          - navigation "Secondary" [ref=e153]:
+            - list [ref=e154]:
+              - listitem [ref=e155]:
+                - link "Flyer" [ref=e157] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/flyer?icid=home_page_other_weekly_flyer_d_128753_7Y5EU5KV4E
+              - listitem [ref=e158]:
+                - link "Grocery" [ref=e160] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/grocery/10019?icid=home_page_grocery_grocery_d_128750_UIQ8379D3Q
+              - listitem [ref=e161]:
+                - link "My Items" [ref=e163] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/my-items?icid=home_page_other_easy_reorder_d_128749_3RDAW4LI46
+              - listitem [ref=e164]:
+                - link "Rollbacks & more" [ref=e166] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/rollbacks-and-more/6000205319047?icid=home_page_other_rollbacks_n_more_d_159007_HE2W3WVNZL
+              - listitem [ref=e167]:
+                - link "Easter" [ref=e169] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/gifts-holidays/easter/6000197172380?icid=home_page_other_easter_d_174928_1K65Y2PIPA
+              - listitem [ref=e170]:
+                - link "Spring Fashion" [ref=e172] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/shop/inspired-by-social/6000199749624?icid=home_page_clothing_shoes_and_accessories_spring_fashion_d_174929_Q9EEXNZJRO
+              - listitem [ref=e173]:
+                - link "Outdoor Living" [ref=e175] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/browse/outdoor-living/10009?icid=home_page_outdoor_living_outdoor_living_d_173123_I3G89BLNOR
+              - listitem [ref=e176]:
+                - link "Electronics" [ref=e178] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/electronics/10003?icid=home_page_electronics_electronics_d_128758_G9N9AJG9L2
+              - listitem [ref=e179]:
+                - link "Credit Card" [ref=e181] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/walmart-rewards-mastercard/6000205202749?icid=home_page_other_credit_card_d_176121_ONU31FWV83
+        - button "More " [ref=e184] [cursor=pointer]:
+          - generic [ref=e186]: More
+          - generic [ref=e187]: 
+    - main [ref=e191]:
+      - 'heading "Online Shopping Canada: Everyday Low Prices at Walmart.ca!" [level=1] [ref=e193]'
+      - generic [ref=e194]:
+        - generic [ref=e196]:
+          - generic [ref=e199]:
+            - generic [ref=e202]:
+              - img "-" [ref=e204]
+              - generic [ref=e205]:
+                - paragraph [ref=e206]: All Easter at low prices
+                - link "Shop all All Easter at low prices" [ref=e207] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/gifts-holidays/easter/6000197172380?icid=home_page_other_easter_easter_lp_d_177531_Z48Q3YEBQB&athAsset=eyJhdGhjcGlkIjoiNmM2YzA0OWEtMzQ1ZC00YmMwLWFkYTYtMDBjY2FhODkxN2RiIn0=&athena=true
+                  - text: Shop all
+                - link [ref=e208] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/gifts-holidays/easter/6000197172380?icid=home_page_other_easter_easter_lp_d_177531_Z48Q3YEBQB&athAsset=eyJhdGhjcGlkIjoiNmM2YzA0OWEtMzQ1ZC00YmMwLWFkYTYtMDBjY2FhODkxN2RiIn0=&athena=true
+                  - generic [ref=e209]: Shop all
+            - generic [ref=e212]:
+              - generic [ref=e214]:
+                - img "xbox. lifestyle photo" [ref=e216]
+                - generic [ref=e217]:
+                  - paragraph [ref=e218]:
+                    - generic [ref=e219]: Get ready for action
+                  - link "Shop Get ready for action" [ref=e220] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/dad/trk/v1/ck?encrypted=eyJraWQiOiJyc2FfdjEiLCJlbmMiOiJBMTI4R0NNIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.UbxOZwVVJsI8o-irvVa1Dxx2dcFTPz6O6b_mlV9M-p-j1FITy8McBwX4ztXN-PBv8UfHyfKp-_2Xe-PfUY5UD44pZBaQSc_lf5UU9UAEhsIXyJcn1DsX9vkXIxuSVZKF-tHJny3eaRm10er1dGdqc1LdMk69LuKy7-R5ryhdpfPvxAMcmolEYTpcGBM_YVkrHxLRygPK3xCP5uEVge6jWhCogcmxlKL9SD7eA8Fm_Rfe6BMO3PleDWHgVQ3eFLuZZpoanKP34OVATT8hbyM7FG1kYgqhA7BP8PfrkDu1FvViL2zviHsCsqemhI7rnCnv378Ylg_3_ZAZkp4WYORWmw.vheB4lv0O9UOvlw_.GkIUcaDD1wQGL0jAGeY6OXTWt-8khM89k9a8nznBnklNjLcEL6-kgN7rehrBxBlAr3-BJeRGbCVWUPPdF_NXDQDWLAU6LiwuhOPLqgrVkRgfgdYGPaSWmOdh9VJ2iNUVnkgY_TXuy3ZXrSEU5nA4bBo9a6kUxOOSEIKhHiwGBiFClf931q_RG_tjiXNYgzUsuYn8KOi3UDcIUjvS9k0tHiRGQnSLcUzS0T6dfp9mJpE3A21L8DscEq9_PEGkpv-quhRMX8RZvXDq863244imIzdr5eKEV5qw4RImzTL4oocaiVAm-zTwbNqOjXohm93Srx4ajPP8OLwgTMy7XmIw6G2yvgNmz9CrVF2jnwjJ28yQijJ4y95Xb1wmpLbb4DyapY8snyJS0mZO1oIw5XwErErdL1tqs7Qn9VkV_yyBuJLiuyuAvkvey95c8TZ0PP7CEsRxJzBjMQ1ywCuSAPbuIoI28XvJRRCYOLTnLvBkuvlF_237Hea6jRQdKHom5vEePyNS8HDtvPgBO9LZwX7QbJJKfCXnwH4M2NhxSEVmJi3GQyTZ2JjQXw2WRSuMW3ns7QyrQOH6uXGhF6GXcp31Snp-hDKr4JEeO40X8khu-5KxJqUTlvflbN0rW3ArLhEckapIshvXrQbsvFLoMp5fmo8qTMJzLlrKbqptOECjQ7gxcTS_WQUQnIQ9SXd180aflK3u3n4Pj9T5LgL2dfWC2Q5dOectF7LZb3TKNUE7JkofMOazw0VstOOAqGgKP4eXm-ulCOBxiLtWAtcnQS5-tPANWxyFJaYVo0vEJmgEDti-E_JimcdcTKzPlrIEVAoCLMyedjJqUnfRlfSF3kehZwlj57AVpHM14Dny1_r71GXe4A.uC_PU_XIyumOM5eh04fA2A
+                    - text: Shop
+                  - link [ref=e221] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/dad/trk/v1/ck?encrypted=eyJraWQiOiJyc2FfdjEiLCJlbmMiOiJBMTI4R0NNIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.UbxOZwVVJsI8o-irvVa1Dxx2dcFTPz6O6b_mlV9M-p-j1FITy8McBwX4ztXN-PBv8UfHyfKp-_2Xe-PfUY5UD44pZBaQSc_lf5UU9UAEhsIXyJcn1DsX9vkXIxuSVZKF-tHJny3eaRm10er1dGdqc1LdMk69LuKy7-R5ryhdpfPvxAMcmolEYTpcGBM_YVkrHxLRygPK3xCP5uEVge6jWhCogcmxlKL9SD7eA8Fm_Rfe6BMO3PleDWHgVQ3eFLuZZpoanKP34OVATT8hbyM7FG1kYgqhA7BP8PfrkDu1FvViL2zviHsCsqemhI7rnCnv378Ylg_3_ZAZkp4WYORWmw.vheB4lv0O9UOvlw_.GkIUcaDD1wQGL0jAGeY6OXTWt-8khM89k9a8nznBnklNjLcEL6-kgN7rehrBxBlAr3-BJeRGbCVWUPPdF_NXDQDWLAU6LiwuhOPLqgrVkRgfgdYGPaSWmOdh9VJ2iNUVnkgY_TXuy3ZXrSEU5nA4bBo9a6kUxOOSEIKhHiwGBiFClf931q_RG_tjiXNYgzUsuYn8KOi3UDcIUjvS9k0tHiRGQnSLcUzS0T6dfp9mJpE3A21L8DscEq9_PEGkpv-quhRMX8RZvXDq863244imIzdr5eKEV5qw4RImzTL4oocaiVAm-zTwbNqOjXohm93Srx4ajPP8OLwgTMy7XmIw6G2yvgNmz9CrVF2jnwjJ28yQijJ4y95Xb1wmpLbb4DyapY8snyJS0mZO1oIw5XwErErdL1tqs7Qn9VkV_yyBuJLiuyuAvkvey95c8TZ0PP7CEsRxJzBjMQ1ywCuSAPbuIoI28XvJRRCYOLTnLvBkuvlF_237Hea6jRQdKHom5vEePyNS8HDtvPgBO9LZwX7QbJJKfCXnwH4M2NhxSEVmJi3GQyTZ2JjQXw2WRSuMW3ns7QyrQOH6uXGhF6GXcp31Snp-hDKr4JEeO40X8khu-5KxJqUTlvflbN0rW3ArLhEckapIshvXrQbsvFLoMp5fmo8qTMJzLlrKbqptOECjQ7gxcTS_WQUQnIQ9SXd180aflK3u3n4Pj9T5LgL2dfWC2Q5dOectF7LZb3TKNUE7JkofMOazw0VstOOAqGgKP4eXm-ulCOBxiLtWAtcnQS5-tPANWxyFJaYVo0vEJmgEDti-E_JimcdcTKzPlrIEVAoCLMyedjJqUnfRlfSF3kehZwlj57AVpHM14Dny1_r71GXe4A.uC_PU_XIyumOM5eh04fA2A
+                    - generic [ref=e222]: Shop
+              - generic [ref=e225]: Sponsored
+            - generic [ref=e228]:
+              - img "-" [ref=e230]
+              - generic [ref=e231]:
+                - paragraph [ref=e232]: Tori's trendy home picks
+                - link "Shop Tori's trendy home picks" [ref=e233] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/new-trending/6000209497930?icid=home_page_other_nnt_toris_pick_d_177533_XSCHO0XUSI&athAsset=eyJhdGhjcGlkIjoiMmNmMTEyZjMtZWVjOS00ODRmLWJiYjktYzMxODE0NTRkMzU2In0=&athena=true
+                  - text: Shop
+                - link [ref=e234] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/new-trending/6000209497930?icid=home_page_other_nnt_toris_pick_d_177533_XSCHO0XUSI&athAsset=eyJhdGhjcGlkIjoiMmNmMTEyZjMtZWVjOS00ODRmLWJiYjktYzMxODE0NTRkMzU2In0=&athena=true
+                  - generic [ref=e235]: Shop
+          - generic [ref=e237]:
+            - generic [ref=e242]:
+              - list [ref=e243]:
+                - listitem [ref=e244]:
+                  - generic [ref=e246]:
+                    - img "-" [ref=e248]
+                    - generic [ref=e249]:
+                      - paragraph [ref=e250]: Rollbacks & more
+                      - paragraph [ref=e251]: More meals. More savings!
+                      - generic [ref=e252]:
+                        - link "Shop More meals. More savings!" [ref=e253] [cursor=pointer]:
+                          - /url: https://www.walmart.ca/en/shop/rollbacks-and-more/6000205319047?icid=home_page_other_rollbacks_n_more_appliances_d_177560_D6MBGA2K1G
+                          - generic [ref=e254]: Shop
+                        - link [ref=e255] [cursor=pointer]:
+                          - /url: https://www.walmart.ca/en/shop/rollbacks-and-more/6000205319047?icid=home_page_other_rollbacks_n_more_appliances_d_177560_D6MBGA2K1G
+                          - generic [ref=e256]: Shop
+                - listitem [ref=e257]:
+                  - generic [ref=e259]:
+                    - generic [ref=e261]:
+                      - img "lifestyle photo" [ref=e263]
+                      - generic [ref=e264]:
+                        - paragraph [ref=e265]:
+                          - generic [ref=e266]: Wireless days are here!
+                        - generic [ref=e267]:
+                          - link "Shop More meals. More savings!" [ref=e268] [cursor=pointer]:
+                            - /url: https://www.walmart.ca/dad/trk/v1/ck?encrypted=eyJraWQiOiJyc2FfdjEiLCJlbmMiOiJBMTI4R0NNIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.cwFsOBW1-IxYPL7S9QdFf5hguUFf-PJUhPlf9hJdfqIYpcnXpk-sMPqoo_nZyzOOtL78xVYj0zghhBnO0dfxGpejMdDiT3P3f02H7htoB4GnhF67iXkSQA1CltRP5P3gfZ10gFBni52gU5Ymhv69VPitP5HREm7MamzFDzJmnFvovVM6FZdndgZxhuR5nxlPJsTnIWl7hywpku3L1P5LYpU4JqY9kJx_AoCpjA8M8JD08eTfDYJBXBUcflTRrE1xCbU-j8DMWDb5QPf_DrRE0UQJoCQmMNW1yCP2bxQlVKcu_g7L3y5uAM9CdB7QXRdyE3weYCFL9fmIQaIuDLLSHw.BlCSzClkKu0mC3IV.ijHEHirETB7dk_3hg21KrAgF-6_2nVklNMr_Y2gm9oX8ARq7I2ift4WtzG40XPfLVS3ZiczIrToysYKzfFrfyfTpIYT8PSGG70Ar4chXOrslViNW0vVTUXho6vkhC4OrLv9-LceGqLLhITP3Lf3SbTnPGHFL0mbHdlsiQ1ZA0bR46_mqQ5couZtUaKzd81dqRtKls4JEQU0SdEoYeUgZ-QT7UztWorz1yC8oOGVcYaYzIFjeNZ52H7xeC_0mj81Mv82Ph6T805ar-alS2kGN1S6WUP987QMmHw0GKu_LAQQkNn6rhdcGXngEHXWk-jUc3fMqRG_sBb_cT0q6oO_jO2kP_5KedU672MkYQ3UhDx0RUFu8OySk7gd6iZ3cv_96EkxtidLJa_pZ8buX7puTGFT2oioWUEqnq_00lQvElev68bD66EWwSDPVS5rdyI2V6q4r3oe3PiIqTxyXa5BcQ1sVOCgLZ3wTUs_c9akT0MyY9UZ_szIr4CINR10FBYTaEY8tVHN62Q0Lt5KLUaxoqkS95d0sJ7DjgktCqQ2yiUEKihg-XQzpGCfR7tP19TnvdOHOy-vK35s5gz_lyt0sds4D94lyK3aQR_B59Y6uEOO6lNJ2nLlpdg.cykLlbmN0X7ffiNEvcP2cg
+                            - generic [ref=e269]: Shop
+                          - link [ref=e270] [cursor=pointer]:
+                            - /url: https://www.walmart.ca/dad/trk/v1/ck?encrypted=eyJraWQiOiJyc2FfdjEiLCJlbmMiOiJBMTI4R0NNIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.cwFsOBW1-IxYPL7S9QdFf5hguUFf-PJUhPlf9hJdfqIYpcnXpk-sMPqoo_nZyzOOtL78xVYj0zghhBnO0dfxGpejMdDiT3P3f02H7htoB4GnhF67iXkSQA1CltRP5P3gfZ10gFBni52gU5Ymhv69VPitP5HREm7MamzFDzJmnFvovVM6FZdndgZxhuR5nxlPJsTnIWl7hywpku3L1P5LYpU4JqY9kJx_AoCpjA8M8JD08eTfDYJBXBUcflTRrE1xCbU-j8DMWDb5QPf_DrRE0UQJoCQmMNW1yCP2bxQlVKcu_g7L3y5uAM9CdB7QXRdyE3weYCFL9fmIQaIuDLLSHw.BlCSzClkKu0mC3IV.ijHEHirETB7dk_3hg21KrAgF-6_2nVklNMr_Y2gm9oX8ARq7I2ift4WtzG40XPfLVS3ZiczIrToysYKzfFrfyfTpIYT8PSGG70Ar4chXOrslViNW0vVTUXho6vkhC4OrLv9-LceGqLLhITP3Lf3SbTnPGHFL0mbHdlsiQ1ZA0bR46_mqQ5couZtUaKzd81dqRtKls4JEQU0SdEoYeUgZ-QT7UztWorz1yC8oOGVcYaYzIFjeNZ52H7xeC_0mj81Mv82Ph6T805ar-alS2kGN1S6WUP987QMmHw0GKu_LAQQkNn6rhdcGXngEHXWk-jUc3fMqRG_sBb_cT0q6oO_jO2kP_5KedU672MkYQ3UhDx0RUFu8OySk7gd6iZ3cv_96EkxtidLJa_pZ8buX7puTGFT2oioWUEqnq_00lQvElev68bD66EWwSDPVS5rdyI2V6q4r3oe3PiIqTxyXa5BcQ1sVOCgLZ3wTUs_c9akT0MyY9UZ_szIr4CINR10FBYTaEY8tVHN62Q0Lt5KLUaxoqkS95d0sJ7DjgktCqQ2yiUEKihg-XQzpGCfR7tP19TnvdOHOy-vK35s5gz_lyt0sds4D94lyK3aQR_B59Y6uEOO6lNJ2nLlpdg.cykLlbmN0X7ffiNEvcP2cg
+                            - generic [ref=e271]: Shop
+                    - generic [ref=e274]: Sponsored
+                - listitem [ref=e275]:
+                  - generic [ref=e277]:
+                    - generic [ref=e279]:
+                      - img "lifestyle photo" [ref=e281]
+                      - generic [ref=e282]:
+                        - paragraph [ref=e283]:
+                          - generic [ref=e284]: Refresh your look
+                        - generic [ref=e285]:
+                          - link "Shop More meals. More savings!" [ref=e286] [cursor=pointer]:
+                            - /url: https://www.walmart.ca/dad/trk/v1/ck?encrypted=eyJraWQiOiJyc2FfdjEiLCJlbmMiOiJBMTI4R0NNIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.SG79h09vCphzhIcPCFfPUiRVoBEbeagekf4wrbWCJLNz7Phda1HTkKFPOXxKxtM1xqCeHfOsjFxS476vCg_KliYyI7jOL3L8hHK08kSBW-GDeZlj-ox_X2TaJCff9lmQUKZMHQSiWi6iUo01uRB5XMUlA5oI17zAOvJWQb_XrmSW3tqsm6Eg9VTK5ooiSKFz-W76jRoWElbBFlwIGx8kv4Afaf3ueFm9vIXlnjpztQagWHMOCEDAsxYWaqI2-e-ufxBtS1pAnPq9XZ-5GAUM59zkwo2KzWEA82kFkC4d33K22oSwMBk9Nw40hhaYYX_qeCuWavE3WIKcEHN4F4ex_A.LUlXiIZ3F9aejb3-.unDvidUceGCPdhAvT3-eGy1nscWqd56kf6eMReze44J3ENa0Rv5oOniXl2qTkYlKX-YA-ZS5-aNQEx6AUPTl54Wn1O3ZQ0ZphsAW26CbsrUFuae6s3iTkIaj9lYEp2lkZYLR8q3WtDiQIOoblZyEv7FSXMhOj0rIJRvqmkv_UX8gfoS7UTpX4rvZfiRRNRgbA5OBBQkN0GU28bdMdncpEadTV-8DxrWhUAc2Xb88qzhgCLLdTB9xXDiG2GRldubBKh01rjD5YS6U2Eh9MFbK75NJufoSh9HfaEaTK1zCdP9OKW5GaN1jczDs2PkVKi6dT87XCSRPfqkED6mkPhamD5BRN5vmnFViSAwRCAC7A2nETHtQH9RfxTbORKAnCqGG3AFd8M1JBKvuhqRW3xxvzN_4rlOAR8phLMELSAKyZ9zAalvIv8dSR390SzbHOb-MtSLV-IJVMHTA8qzYEvvIubFZvehW4yqv2MgGIcZfKY9jfsk_o0bWpmMs1Dst6i-OD6snEMYS4iQ9WdYznUgoQBi3f0rFsUK8Y3UgKH70MCnpph62gAvpN3fFWfA9G2K0IvTbyaSrVu-wNG0K2SEGi2fl29x7s639qYKwgfj15h1A9qLAE1fe7K6Qj3uH4UkHEZAErQarVkBU8hAaH1ZpTd4KYijKzH98_OMhefisgjLWW4QQH39uT9FUO1fd0Q7uOiVDuqOKzYFvQqLc5U-tFYOYhsrf2Jjq0D2qweFj0w.ofewz4RsQBC-Id5mWXugsA
+                            - generic [ref=e287]: Shop
+                          - link [ref=e288] [cursor=pointer]:
+                            - /url: https://www.walmart.ca/dad/trk/v1/ck?encrypted=eyJraWQiOiJyc2FfdjEiLCJlbmMiOiJBMTI4R0NNIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.SG79h09vCphzhIcPCFfPUiRVoBEbeagekf4wrbWCJLNz7Phda1HTkKFPOXxKxtM1xqCeHfOsjFxS476vCg_KliYyI7jOL3L8hHK08kSBW-GDeZlj-ox_X2TaJCff9lmQUKZMHQSiWi6iUo01uRB5XMUlA5oI17zAOvJWQb_XrmSW3tqsm6Eg9VTK5ooiSKFz-W76jRoWElbBFlwIGx8kv4Afaf3ueFm9vIXlnjpztQagWHMOCEDAsxYWaqI2-e-ufxBtS1pAnPq9XZ-5GAUM59zkwo2KzWEA82kFkC4d33K22oSwMBk9Nw40hhaYYX_qeCuWavE3WIKcEHN4F4ex_A.LUlXiIZ3F9aejb3-.unDvidUceGCPdhAvT3-eGy1nscWqd56kf6eMReze44J3ENa0Rv5oOniXl2qTkYlKX-YA-ZS5-aNQEx6AUPTl54Wn1O3ZQ0ZphsAW26CbsrUFuae6s3iTkIaj9lYEp2lkZYLR8q3WtDiQIOoblZyEv7FSXMhOj0rIJRvqmkv_UX8gfoS7UTpX4rvZfiRRNRgbA5OBBQkN0GU28bdMdncpEadTV-8DxrWhUAc2Xb88qzhgCLLdTB9xXDiG2GRldubBKh01rjD5YS6U2Eh9MFbK75NJufoSh9HfaEaTK1zCdP9OKW5GaN1jczDs2PkVKi6dT87XCSRPfqkED6mkPhamD5BRN5vmnFViSAwRCAC7A2nETHtQH9RfxTbORKAnCqGG3AFd8M1JBKvuhqRW3xxvzN_4rlOAR8phLMELSAKyZ9zAalvIv8dSR390SzbHOb-MtSLV-IJVMHTA8qzYEvvIubFZvehW4yqv2MgGIcZfKY9jfsk_o0bWpmMs1Dst6i-OD6snEMYS4iQ9WdYznUgoQBi3f0rFsUK8Y3UgKH70MCnpph62gAvpN3fFWfA9G2K0IvTbyaSrVu-wNG0K2SEGi2fl29x7s639qYKwgfj15h1A9qLAE1fe7K6Qj3uH4UkHEZAErQarVkBU8hAaH1ZpTd4KYijKzH98_OMhefisgjLWW4QQH39uT9FUO1fd0Q7uOiVDuqOKzYFvQqLc5U-tFYOYhsrf2Jjq0D2qweFj0w.ofewz4RsQBC-Id5mWXugsA
+                            - generic [ref=e289]: Shop
+                    - generic [ref=e292]: Sponsored
+                - listitem [ref=e293]:
+                  - generic [ref=e295]:
+                    - img "-" [ref=e297]
+                    - generic [ref=e298]:
+                      - paragraph [ref=e299]: Ready for spring
+                      - paragraph [ref=e300]: Free shipping on select BBQs & patio*
+                      - generic [ref=e301]:
+                        - link "Shop More meals. More savings!" [ref=e302] [cursor=pointer]:
+                          - /url: https://www.walmart.ca/en/browse/outdoor-living/10009?icid=home_page_outdoor_living_free_shipping_d_178057_3TZ74PS9BI
+                          - generic [ref=e303]: Shop
+                        - link "Learn more More meals. More savings!" [ref=e304] [cursor=pointer]:
+                          - /url: https://www.walmart.ca/en/help/article/shipping-and-delivery/8f0b63c3bf05498fb7a1b7df1d904738?icid=home_page_other_free_shipping_learn_more_d_179027_YWH2PBAJEN
+                          - text: Learn more
+                        - link [ref=e305] [cursor=pointer]:
+                          - /url: https://www.walmart.ca/en/browse/outdoor-living/10009?icid=home_page_outdoor_living_free_shipping_d_178057_3TZ74PS9BI
+                          - generic [ref=e306]: Shop
+                  - paragraph [ref=e309]: Conditions apply.
+              - navigation "carousel controls" [ref=e310]:
+                - button "Pause carousel" [ref=e311]
+                - generic [ref=e313]:
+                  - generic [ref=e316]: Current carousel slide 1 of 4
+                  - button "Previous carousel slide" [disabled] [ref=e317]
+                  - button "Next carousel slide" [ref=e318]
+            - generic [ref=e320]:
+              - generic [ref=e328]:
+                - img "-" [ref=e330]
+                - generic [ref=e331]:
+                  - paragraph [ref=e332]: Patio savings in bloom
+                  - link "Shop Patio savings in bloom" [ref=e333] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/en/shop/rollbacks-and-more/6000205319047?catId=10009&icid=home_page_other_rollbacks_n_more_bbq_d_177534_JOPALLT1L9&athAsset=eyJhdGhjcGlkIjoiOTU4MTY1NGMtYmMwZS00ZmM0LWE3ZmUtODMwMDE3YzRlZjkwIn0=&athena=true
+                    - text: Shop
+                  - link [ref=e334] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/en/shop/rollbacks-and-more/6000205319047?catId=10009&icid=home_page_other_rollbacks_n_more_bbq_d_177534_JOPALLT1L9&athAsset=eyJhdGhjcGlkIjoiOTU4MTY1NGMtYmMwZS00ZmM0LWE3ZmUtODMwMDE3YzRlZjkwIn0=&athena=true
+                    - generic [ref=e335]: Shop
+              - generic [ref=e343]:
+                - img "-" [ref=e345]
+                - generic [ref=e346]:
+                  - paragraph [ref=e347]: Up to 40% off
+                  - link "Shop Up to 40% off" [ref=e348] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/en/shop/flash-deals/1984137688763?facet=special_offers%3AReduced+Price&icid=home_page_other_flash_deals_d_165526_66YMR1B1HK&athAsset=eyJhdGhjcGlkIjoiYTE2ZTViY2MtZjUwZC00ZDU5LWExNjctMjcyMTk4NGRlMTBlIn0=&athena=true
+                    - text: Shop
+                  - link [ref=e349] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/en/shop/flash-deals/1984137688763?facet=special_offers%3AReduced+Price&icid=home_page_other_flash_deals_d_165526_66YMR1B1HK&athAsset=eyJhdGhjcGlkIjoiYTE2ZTViY2MtZjUwZC00ZDU5LWExNjctMjcyMTk4NGRlMTBlIn0=&athena=true
+                    - generic [ref=e350]: Shop
+            - generic [ref=e354]:
+              - img "text" [ref=e355]
+              - generic [ref=e357]:
+                - link [ref=e358] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/dp/landing-page?icid=home_page_other_dp_s2s_active_users_d_174219_FQT1N11T41&athAsset=eyJhdGhjcGlkIjoiYzFiZWE5NDMtZmQwZi00ZjkxLWFhZmEtZTNmMzZkZjE4MWVhIn0=&athena=true
+                  - generic [ref=e359]: Sign up
+                - paragraph [ref=e360]: Get 30 days FREE* of unlimited same-day delivery
+                - paragraph [ref=e361]: Conditions apply.
+                - link "Sign upGet 30 days FREE* of unlimited same-day delivery" [ref=e362] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/dp/landing-page?icid=home_page_other_dp_s2s_active_users_d_174219_FQT1N11T41&athAsset=eyJhdGhjcGlkIjoiYzFiZWE5NDMtZmQwZi00ZjkxLWFhZmEtZTNmMzZkZjE4MWVhIn0=&athena=true
+                  - text: Sign up
+          - generic [ref=e365]:
+            - generic [ref=e368]:
+              - img "-" [ref=e370]
+              - generic [ref=e371]:
+                - paragraph [ref=e372]: Boost your backyard
+                - link "Shop Boost your backyard" [ref=e373] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/browse/outdoor-living/10009?icid=home_page_outdoor_living_outdoor_living_lp_d_177535_TQ11JUX2VE&athAsset=eyJhdGhjcGlkIjoiZTQ0NmVjYzUtNDhkNi00ZWE1LTlhNzMtY2U0ODFkMmU3YWRmIn0=&athena=true
+                  - text: Shop
+                - link [ref=e374] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/browse/outdoor-living/10009?icid=home_page_outdoor_living_outdoor_living_lp_d_177535_TQ11JUX2VE&athAsset=eyJhdGhjcGlkIjoiZTQ0NmVjYzUtNDhkNi00ZWE1LTlhNzMtY2U0ODFkMmU3YWRmIn0=&athena=true
+                  - generic [ref=e375]: Shop
+            - generic [ref=e378]:
+              - img "-" [ref=e380]
+              - generic [ref=e381]:
+                - paragraph [ref=e382]: "Haircare: The mane event"
+                - 'link "Shop Haircare: The mane event" [ref=e383] [cursor=pointer]':
+                  - /url: https://www.walmart.ca/en/shop/the-beauty-event/4386568256875?catId=21021_6000195305334&icid=home_page_beauty_beauty_event_d_177536_9TUHJOK13B&athAsset=eyJhdGhjcGlkIjoiNTJjYWYwYmUtNWJjNy00OTI1LWIxYzItNmU5NDI1NDY5ZGQyIn0=&athena=true
+                  - text: Shop
+                - link [ref=e384] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/shop/the-beauty-event/4386568256875?catId=21021_6000195305334&icid=home_page_beauty_beauty_event_d_177536_9TUHJOK13B&athAsset=eyJhdGhjcGlkIjoiNTJjYWYwYmUtNWJjNy00OTI1LWIxYzItNmU5NDI1NDY5ZGQyIn0=&athena=true
+                  - generic [ref=e385]: Shop
+            - generic [ref=e388]:
+              - img "-" [ref=e390]
+              - generic [ref=e391]:
+                - paragraph [ref=e392]: Baby musts for way less
+                - link "Shop Baby musts for way less" [ref=e393] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/browse/baby/10002?facet=special_offers%3ARollback%7C%7Cspecial_offers%3AClearance%7C%7Cspecial_offers%3AReduced%20Price&icid=home_page_baby_baby_d_177537_QIXQSXWHF9&athAsset=eyJhdGhjcGlkIjoiMjNhNTZkYWUtZjBiMy00YjdjLTk4NjMtMmIwMTc1OWY4NzlmIn0=&athena=true
+                  - text: Shop
+                - link [ref=e394] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/browse/baby/10002?facet=special_offers%3ARollback%7C%7Cspecial_offers%3AClearance%7C%7Cspecial_offers%3AReduced%20Price&icid=home_page_baby_baby_d_177537_QIXQSXWHF9&athAsset=eyJhdGhjcGlkIjoiMjNhNTZkYWUtZjBiMy00YjdjLTk4NjMtMmIwMTc1OWY4NzlmIn0=&athena=true
+                  - generic [ref=e395]: Shop
+        - generic [ref=e403]:
+          - generic [ref=e404]:
+            - heading "More items to explore" [level=2] [ref=e410]
+            - generic [ref=e412]: Sponsored
+          - generic [ref=e413]:
+            - text: 
+            - list [ref=e414]:
+              - listitem [ref=e415]:
+                - group "Product" [ref=e416]:
+                  - link "Blue Buffalo Bits Soft Dog Treats for Training, Chicken Recipe 4-oz bag" [ref=e417] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=1&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBlue-Buffalo-Bits-Soft-Dog-Treats-for-Training-Chicken-Recipe-4-oz-bag%2F6000201190792&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=KRQ5oY1So5OJvANE-PuHVYezoJMnct6lLxYf98CmB0xMiJSKN1Ov7kGUdU2-I4atotXQPYpPh6DOQ9fUwX7AgwhiuHcD5ocFwJAnSkeZtfFM_3hfhrrHauviOHzSaChMftaWKW-iy6cAgcY5y6rrLWVn8g7Mtw8a3woqHMv65rYeRjBy6MBVjqHzyHsoblZl6SoPxjKe5ujMdZCjDaL59A&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Blue-Buffalo-Bits-Soft-Dog-Treats-for-Training-Chicken-Recipe-4-oz-bag/6000201190792
+                    - heading "Blue Buffalo Bits Soft Dog Treats for Training, Chicken Recipe 4-oz bag" [level=3] [ref=e419]
+                  - generic [ref=e422]: 200+ bought in past month
+                  - generic [ref=e423]:
+                    - generic [ref=e424]:
+                      - button "Sign in to add to Favourites list, Blue Buffalo Bits Soft Dog Treats for Training, Chicken Recipe 4-oz bag" [ref=e425]:
+                        - generic [ref=e426]: 
+                      - img "Blue Buffalo Bits Soft Dog Treats for Training, Chicken Recipe 4-oz bag" [ref=e427]
+                    - button "Add to cart - Blue Buffalo Bits Soft Dog Treats for Training, Chicken Recipe 4-oz bag" [ref=e430] [cursor=pointer]:
+                      - generic "add to cart" [ref=e431]: 
+                      - generic [ref=e432]: Add
+                  - generic [ref=e435]:
+                    - generic [ref=e436]: $6.97
+                    - generic [ref=e437]: current price $6.97
+                  - generic [ref=e439]: Blue Buffalo Bits Soft Dog Treats for Training, Chicken Recipe 4-oz bag
+                  - generic [ref=e440]:
+                    - generic [ref=e441]:
+                      - generic [ref=e442]: 
+                      - generic [ref=e443]: 
+                      - generic [ref=e444]: 
+                      - generic [ref=e445]: 
+                      - generic [ref=e446]: 
+                    - generic [ref=e447]: "700"
+                    - generic [ref=e448]: 4.74 out of 5 stars. 700 reviews
+                  - generic [ref=e449]:
+                    - generic [ref=e450]: Save with
+                    - img "Walmart Pass" [ref=e451]
+                  - generic [ref=e452]:
+                    - generic [ref=e454]: Delivery, 7am tomorrow
+                    - generic [ref=e456]: Pickup, 8am tomorrow
+              - listitem [ref=e457]:
+                - group "Product" [ref=e458]:
+                  - link "Blue Buffalo Stix Natural Soft-Moist Dog Treats, Chicken Recipe 6-oz Bag" [ref=e459] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=2&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBlue-Buffalo-Stix-Natural-Soft-Moist-Dog-Treats-Chicken-Recipe-6-oz-Bag%2F6000201190811&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=KRQ5oY1So5OJvANE-PuHVW5SDdBE85SYZA9igGPJkbZMiJSKN1Ov7kGUdU2-I4athnLaR8QAV23abMP-863q7ghiuHcD5ocFwJAnSkeZtfFj2fZ3-0LvsspzT6T0a2TIvGcA-f-ER0h5U_RigWn-RWVn8g7Mtw8a3woqHMv65rYeRjBy6MBVjqHzyHsoblZl6SoPxjKe5ujMdZCjDaL59A&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Blue-Buffalo-Stix-Natural-Soft-Moist-Dog-Treats-Chicken-Recipe-6-oz-Bag/6000201190811
+                    - heading "Blue Buffalo Stix Natural Soft-Moist Dog Treats, Chicken Recipe 6-oz Bag" [level=3] [ref=e461]
+                  - generic [ref=e464]: 100+ bought in past month
+                  - generic [ref=e465]:
+                    - generic [ref=e466]:
+                      - button "Sign in to add to Favourites list, Blue Buffalo Stix Natural Soft-Moist Dog Treats, Chicken Recipe 6-oz Bag" [ref=e467]:
+                        - generic [ref=e468]: 
+                      - img "Blue Buffalo Stix Natural Soft-Moist Dog Treats, Chicken Recipe 6-oz Bag" [ref=e469]
+                    - button "Add to cart - Blue Buffalo Stix Natural Soft-Moist Dog Treats, Chicken Recipe 6-oz Bag" [ref=e472] [cursor=pointer]:
+                      - generic "add to cart" [ref=e473]: 
+                      - generic [ref=e474]: Add
+                  - generic [ref=e477]:
+                    - generic [ref=e478]: $6.97
+                    - generic [ref=e479]: current price $6.97
+                  - generic [ref=e481]: Blue Buffalo Stix Natural Soft-Moist Dog Treats, Chicken Recipe 6-oz Bag
+                  - generic [ref=e482]:
+                    - generic [ref=e483]:
+                      - generic [ref=e484]: 
+                      - generic [ref=e485]: 
+                      - generic [ref=e486]: 
+                      - generic [ref=e487]: 
+                      - generic [ref=e488]: 
+                    - generic [ref=e489]: "479"
+                    - generic [ref=e490]: 4.737 out of 5 stars. 479 reviews
+                  - generic [ref=e491]:
+                    - generic [ref=e492]: Save with
+                    - img "Walmart Pass" [ref=e493]
+                  - generic [ref=e494]:
+                    - generic [ref=e496]: Delivery, 7am tomorrow
+                    - generic [ref=e498]: Pickup, 8am tomorrow
+              - listitem [ref=e499]:
+                - group "Product" [ref=e500]:
+                  - link "Brisk Lemon Iced Tea 12 x 355mL, Cans" [ref=e501] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=3&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBrisk-Lemon-Iced-Tea-12-x-355mL-Cans%2F6000196027108&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=6vksUL9XVkqaA5LqpCmJWT5MWqG27IXqHYhw1LtJXXFVQmOsBxf5QY5UNaWMffbvDngYXJBcYnuIMapNVTOfpQhiuHcD5ocFwJAnSkeZtfEHj6EhJ2ZVD1znXi9SLv5K-Nye9Sa52TP3DO9Q62DZ0UfMenddV6ESYags2q25lgM5d9Q13y2W_H2DsnXx9sMClU9k8uTobp7ugtICFmhImQ&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Brisk-Lemon-Iced-Tea-12-x-355mL-Cans/6000196027108
+                    - heading "Brisk Lemon Iced Tea 12 x 355mL, Cans" [level=3] [ref=e503]
+                  - generic [ref=e506]: 1000+ bought in past month
+                  - generic [ref=e507]:
+                    - generic [ref=e508]:
+                      - button "Sign in to add to Favourites list, Brisk Lemon Iced Tea 12 x 355mL, Cans" [ref=e509]:
+                        - generic [ref=e510]: 
+                      - img "Brisk Lemon Iced Tea 12 x 355mL, Cans" [ref=e511]
+                    - button "Add to cart - Brisk Lemon Iced Tea 12 x 355mL, Cans" [ref=e514] [cursor=pointer]:
+                      - generic "add to cart" [ref=e515]: 
+                      - generic [ref=e516]: Add
+                  - generic [ref=e519]:
+                    - generic [ref=e520]: $8.48
+                    - generic [ref=e521]: current price $8.48
+                  - generic [ref=e523]: Brisk Lemon Iced Tea 12 x 355mL, Cans
+                  - generic [ref=e524]:
+                    - generic [ref=e525]:
+                      - generic [ref=e526]: 
+                      - generic [ref=e527]: 
+                      - generic [ref=e528]: 
+                      - generic [ref=e529]: 
+                      - generic [ref=e530]: 
+                    - generic [ref=e531]: "184"
+                    - generic [ref=e532]: 4.5543 out of 5 stars. 184 reviews
+                  - generic [ref=e533]:
+                    - generic [ref=e534]: Save with
+                    - img "Walmart Pass" [ref=e535]
+                  - generic [ref=e536]:
+                    - generic [ref=e538]: Delivery, 7am tomorrow
+                    - generic [ref=e540]: Pickup, 8am tomorrow
+              - listitem [ref=e541]:
+                - group "Product" [ref=e542]:
+                  - link "Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 2.2kg" [ref=e543] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=4&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBlue-Buffalo-Tastefuls-Dry-Food-Adult-Indoor-Cat-Salmon-and-Brown-Rice-2-2kg%2F6000201190872&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=KRQ5oY1So5OJvANE-PuHVVIWAmYpM5_LXhYG0z42-d4hKiWXwBXOiXsmegEZEio3vCQOO9-PyI9DSJN08xb2qwhiuHcD5ocFwJAnSkeZtfEbeIaWknXvlImMGKkQN-qWx9Xa_JyVHuSiCfo3VESa0QhC_0N-eTyqgBw9vldKVVyn_aMKc8GQtHTcuIVpZf7oEW2AodePeCihxFLzx-k6jg&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Blue-Buffalo-Tastefuls-Dry-Food-Adult-Indoor-Cat-Salmon-and-Brown-Rice-2-2kg/6000201190872
+                    - heading "Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 2.2kg" [level=3] [ref=e545]
+                  - generic [ref=e548]: 200+ bought in past month
+                  - generic [ref=e549]:
+                    - generic [ref=e550]:
+                      - button "Sign in to add to Favourites list, Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 2.2kg" [ref=e551]:
+                        - generic [ref=e552]: 
+                      - img "Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 2.2kg" [ref=e553]
+                    - button "Add to cart - Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 2.2kg" [ref=e556] [cursor=pointer]:
+                      - generic "add to cart" [ref=e557]: 
+                      - generic [ref=e558]: Add
+                  - generic [ref=e561]:
+                    - generic [ref=e562]: $24.93
+                    - generic [ref=e563]: current price $24.93
+                  - generic [ref=e565]: Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 2.2kg
+                  - generic [ref=e566]:
+                    - generic [ref=e567]:
+                      - generic [ref=e568]: 
+                      - generic [ref=e569]: 
+                      - generic [ref=e570]: 
+                      - generic [ref=e571]: 
+                      - generic [ref=e572]: 
+                    - generic [ref=e573]: "1330"
+                    - generic [ref=e574]: 4.7466 out of 5 stars. 1330 reviews
+                  - generic [ref=e575]:
+                    - generic [ref=e576]: Save with
+                    - img "Walmart Pass" [ref=e577]
+                  - generic [ref=e578]:
+                    - generic [ref=e580]: Delivery, 7am tomorrow
+                    - generic [ref=e582]: Pickup, 8am tomorrow
+              - listitem [ref=e583]:
+                - group "Product" [ref=e584]:
+                  - link "Blue Buffalo Tastefuls Natural Dry Cat Food, Weight Control 2.2kg" [ref=e585] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=5&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBlue-Buffalo-Tastefuls-Natural-Dry-Cat-Food-Weight-Control-2-2kg%2F6000201190878&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=KRQ5oY1So5OJvANE-PuHVX3Ex4dYIDUrwd0ITtb2DEMhKiWXwBXOiXsmegEZEio3BYQb6xJidkF6f2cGVFq6QQhiuHcD5ocFwJAnSkeZtfG11Fjlq7gUaUWyZmUVOku2sYu2qZreJ_5j9K7Th50l1AhC_0N-eTyqgBw9vldKVVyn_aMKc8GQtHTcuIVpZf7oEW2AodePeCihxFLzx-k6jg&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Blue-Buffalo-Tastefuls-Natural-Dry-Cat-Food-Weight-Control-2-2kg/6000201190878
+                    - heading "Blue Buffalo Tastefuls Natural Dry Cat Food, Weight Control 2.2kg" [level=3] [ref=e587]
+                  - generic [ref=e590]: 100+ bought in past month
+                  - generic [ref=e591]:
+                    - generic [ref=e592]:
+                      - button "Sign in to add to Favourites list, Blue Buffalo Tastefuls Natural Dry Cat Food, Weight Control 2.2kg" [ref=e593]:
+                        - generic [ref=e594]: 
+                      - img "Blue Buffalo Tastefuls Natural Dry Cat Food, Weight Control 2.2kg" [ref=e595]
+                    - button "Add to cart - Blue Buffalo Tastefuls Natural Dry Cat Food, Weight Control 2.2kg" [ref=e598] [cursor=pointer]:
+                      - generic "add to cart" [ref=e599]: 
+                      - generic [ref=e600]: Add
+                  - generic [ref=e603]:
+                    - generic [ref=e604]: $24.93
+                    - generic [ref=e605]: current price $24.93
+                  - generic [ref=e607]: Blue Buffalo Tastefuls Natural Dry Cat Food, Weight Control 2.2kg
+                  - generic [ref=e608]:
+                    - generic [ref=e609]:
+                      - generic [ref=e610]: 
+                      - generic [ref=e611]: 
+                      - generic [ref=e612]: 
+                      - generic [ref=e613]: 
+                      - generic [ref=e614]: 
+                    - generic [ref=e615]: "268"
+                    - generic [ref=e616]: 4.6231 out of 5 stars. 268 reviews
+                  - generic [ref=e619]: Delivery, tomorrow
+              - listitem [ref=e620]:
+                - group "Product" [ref=e621]:
+                  - link "Blue Buffalo Tastefuls Flaked Wet Cat Food 3-Flavor Variety Pack 12 x 85g" [ref=e622] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=6&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBlue-Buffalo-Tastefuls-Flaked-Wet-Cat-Food-3-Flavor-Variety-Pack-12-x-85g%2F6000204457630&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=8WTWkHGcYkMpIY9KoA37j40Vj8FW1gtQ360h-ZItF1IhKiWXwBXOiXsmegEZEio3yb8LXz4_5kDAJvEIioi__QhiuHcD5ocFwJAnSkeZtfG11Fjlq7gUaUWyZmUVOku2dMUEdP9NNHTX6t40VphRqQhC_0N-eTyqgBw9vldKVVyn_aMKc8GQtHTcuIVpZf7oEW2AodePeCihxFLzx-k6jg&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Blue-Buffalo-Tastefuls-Flaked-Wet-Cat-Food-3-Flavor-Variety-Pack-12-x-85g/6000204457630
+                    - heading "Blue Buffalo Tastefuls Flaked Wet Cat Food 3-Flavor Variety Pack 12 x 85g" [level=3] [ref=e624]
+                  - generic [ref=e627]: 200+ bought in past month
+                  - generic [ref=e628]:
+                    - generic [ref=e629]:
+                      - button "Sign in to add to Favourites list, Blue Buffalo Tastefuls Flaked Wet Cat Food 3-Flavor Variety Pack 12 x 85g" [ref=e630]:
+                        - generic [ref=e631]: 
+                      - img "Blue Buffalo Tastefuls Flaked Wet Cat Food 3-Flavor Variety Pack 12 x 85g" [ref=e632]
+                    - button "Add to cart - Blue Buffalo Tastefuls Flaked Wet Cat Food 3-Flavor Variety Pack 12 x 85g" [ref=e635] [cursor=pointer]:
+                      - generic "add to cart" [ref=e636]: 
+                      - generic [ref=e637]: Add
+                  - generic [ref=e640]:
+                    - generic [ref=e641]: $15.98
+                    - generic [ref=e642]: current price $15.98
+                  - generic [ref=e644]: Blue Buffalo Tastefuls Flaked Wet Cat Food 3-Flavor Variety Pack 12 x 85g
+                  - generic [ref=e645]:
+                    - generic [ref=e646]:
+                      - generic [ref=e647]: 
+                      - generic [ref=e648]: 
+                      - generic [ref=e649]: 
+                      - generic [ref=e650]: 
+                      - generic [ref=e651]: 
+                    - generic [ref=e652]: "730"
+                    - generic [ref=e653]: 4.5616 out of 5 stars. 730 reviews
+                  - generic [ref=e654]:
+                    - generic [ref=e655]: Save with
+                    - img "Walmart Pass" [ref=e656]
+                  - generic [ref=e657]:
+                    - generic [ref=e659]: Delivery, 7am tomorrow
+                    - generic [ref=e661]: Pickup, 8am tomorrow
+              - listitem [ref=e662]:
+                - group "Product" [ref=e663]:
+                  - link "Brisk Lemon Iced Tea 6 x 710mL, Bottles" [ref=e664] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=7&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBrisk-Lemon-Iced-Tea-6-x-710mL-Bottles%2F6000196027230&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=6vksUL9XVkqaA5LqpCmJWbYpyJ31aaxurrAVL-z7piBVQmOsBxf5QY5UNaWMffbvGT4WqDJ2xgrf1V4pA-RR3AhiuHcD5ocFwJAnSkeZtfG11Fjlq7gUaUWyZmUVOku2LcuDRiitBLCDhsWve9j5OEfMenddV6ESYags2q25lgM5d9Q13y2W_H2DsnXx9sMClU9k8uTobp7ugtICFmhImQ&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Brisk-Lemon-Iced-Tea-6-x-710mL-Bottles/6000196027230
+                    - heading "Brisk Lemon Iced Tea 6 x 710mL, Bottles" [level=3] [ref=e666]
+                  - generic [ref=e669]: Rollback
+                  - generic [ref=e670]:
+                    - generic [ref=e671]:
+                      - button "Sign in to add to Favourites list, Brisk Lemon Iced Tea 6 x 710mL, Bottles" [ref=e672]:
+                        - generic [ref=e673]: 
+                      - img "Brisk Lemon Iced Tea 6 x 710mL, Bottles"
+                    - button "Add to cart - Brisk Lemon Iced Tea 6 x 710mL, Bottles" [ref=e676] [cursor=pointer]:
+                      - generic "add to cart" [ref=e677]: 
+                      - generic [ref=e678]: Add
+                  - generic [ref=e681]:
+                    - generic [ref=e682]: Now $3.97
+                    - generic [ref=e683]: current price Now $3.97
+                  - generic [ref=e685]: Brisk Lemon Iced Tea 6 x 710mL, Bottles
+                  - generic [ref=e686]:
+                    - generic [ref=e687]:
+                      - generic [ref=e688]: 
+                      - generic [ref=e689]: 
+                      - generic [ref=e690]: 
+                      - generic [ref=e691]: 
+                      - generic [ref=e692]: 
+                    - generic [ref=e693]: "61"
+                    - generic [ref=e694]: 4.7541 out of 5 stars. 61 reviews
+                  - generic [ref=e695]:
+                    - generic [ref=e696]: Save with
+                    - img "Walmart Pass"
+                  - generic [ref=e697]:
+                    - generic [ref=e699]: Delivery, 7am tomorrow
+                    - generic [ref=e701]: Pickup, 8am tomorrow
+              - listitem [ref=e702]:
+                - group "Product" [ref=e703]:
+                  - link "Brisk Strawberry Iced Tea 710 mL, Can" [ref=e704] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=8&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBrisk-Strawberry-Iced-Tea-710-mL-Can%2F3M25T0LIDOS7&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=kpvXGmamWRwa7qHJF1lE2sc2lpokXtn5wOVFJPLB6wvNNmNBsG4izKbKxBL76vcAe5hX2SUgG7pQgo6AWRhDdozWTuZ9m7WUBMmLjH28KT97BY-nJ5fgmTzzOE057dbRpLrfj05MssMw9-WpJc6lAP8WSlYAhEBAnQxH_o-GvKmgbix15bvxtk6BsE8YWSuJ&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Brisk-Strawberry-Iced-Tea-710-mL-Can/3M25T0LIDOS7
+                    - heading "Brisk Strawberry Iced Tea 710 mL, Can" [level=3] [ref=e706]
+                  - generic [ref=e709]: 200+ bought in past month
+                  - generic [ref=e710]:
+                    - generic [ref=e711]:
+                      - button "Sign in to add to Favourites list, Brisk Strawberry Iced Tea 710 mL, Can" [ref=e712]:
+                        - generic [ref=e713]: 
+                      - img "Brisk Strawberry Iced Tea 710 mL, Can"
+                    - button "Add to cart - Brisk Strawberry Iced Tea 710 mL, Can" [ref=e716] [cursor=pointer]:
+                      - generic "add to cart" [ref=e717]: 
+                      - generic [ref=e718]: Add
+                  - generic [ref=e721]:
+                    - generic [ref=e722]: $1.68
+                    - generic [ref=e723]: current price $1.68
+                  - generic [ref=e725]: Brisk Strawberry Iced Tea 710 mL, Can
+                  - generic [ref=e726]:
+                    - generic [ref=e727]:
+                      - generic [ref=e728]: 
+                      - generic [ref=e729]: 
+                      - generic [ref=e730]: 
+                      - generic [ref=e731]: 
+                      - generic [ref=e732]: 
+                    - generic [ref=e733]: "23"
+                    - generic [ref=e734]: 4.6087 out of 5 stars. 23 reviews
+                  - generic [ref=e735]:
+                    - generic [ref=e736]: Save with
+                    - img "Walmart Pass"
+                  - generic [ref=e737]:
+                    - generic [ref=e739]: Delivery, 7am tomorrow
+                    - generic [ref=e741]: Pickup, 8am tomorrow
+              - listitem [ref=e742]:
+                - group "Product" [ref=e743]:
+                  - link "Brisk Iced Tea Blood Orange 710 mL" [ref=e744] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=9&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBrisk-Iced-Tea-Blood-Orange-710-mL%2F11L9JWH3L3X6&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=nliHA0b4-oAttcVw8Oayy24JYT1LcjPx7RrpIvsjeYnNNmNBsG4izKbKxBL76vcAe5hX2SUgG7pQgo6AWRhDdozWTuZ9m7WUBMmLjH28KT97BY-nJ5fgmTzzOE057dbRpLrfj05MssMw9-WpJc6lAP8WSlYAhEBAnQxH_o-GvKmgbix15bvxtk6BsE8YWSuJ&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Brisk-Iced-Tea-Blood-Orange-710-mL/11L9JWH3L3X6
+                    - heading "Brisk Iced Tea Blood Orange 710 mL" [level=3] [ref=e746]
+                  - generic [ref=e749]: 200+ bought in past month
+                  - generic [ref=e750]:
+                    - generic [ref=e751]:
+                      - button "Sign in to add to Favourites list, Brisk Iced Tea Blood Orange 710 mL" [ref=e752]:
+                        - generic [ref=e753]: 
+                      - img "Brisk Iced Tea Blood Orange 710 mL"
+                    - button "Add to cart - Brisk Iced Tea Blood Orange 710 mL" [ref=e756] [cursor=pointer]:
+                      - generic "add to cart" [ref=e757]: 
+                      - generic [ref=e758]: Add
+                  - generic [ref=e761]:
+                    - generic [ref=e762]: $1.68
+                    - generic [ref=e763]: current price $1.68
+                  - generic [ref=e765]: Brisk Iced Tea Blood Orange 710 mL
+                  - generic [ref=e766]:
+                    - generic [ref=e767]:
+                      - generic [ref=e768]: 
+                      - generic [ref=e769]: 
+                      - generic [ref=e770]: 
+                      - generic [ref=e771]: 
+                      - generic [ref=e772]: 
+                    - generic [ref=e773]: "7"
+                    - generic [ref=e774]: 4 out of 5 stars. 7 reviews
+                  - generic [ref=e775]:
+                    - generic [ref=e776]: Save with
+                    - img "Walmart Pass"
+                  - generic [ref=e777]:
+                    - generic [ref=e779]: Delivery, 7am tomorrow
+                    - generic [ref=e781]: Pickup, 8am tomorrow
+              - listitem [ref=e782]:
+                - group "Product" [ref=e783]:
+                  - link "Brisk Zero Lemon Iced Tea 710 mL, Can" [ref=e784] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=10&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBrisk-Zero-Lemon-Iced-Tea-710-mL-Can%2F4I27TH1ZW2JC&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=tayzV3_QHP851wiwPl7j_nUXwaN8MRipwaY86FASsrPNNmNBsG4izKbKxBL76vcAe5hX2SUgG7pQgo6AWRhDdozWTuZ9m7WUBMmLjH28KT97BY-nJ5fgmTzzOE057dbRpLrfj05MssMw9-WpJc6lAP8WSlYAhEBAnQxH_o-GvKmgbix15bvxtk6BsE8YWSuJ&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Brisk-Zero-Lemon-Iced-Tea-710-mL-Can/4I27TH1ZW2JC
+                    - heading "Brisk Zero Lemon Iced Tea 710 mL, Can" [level=3] [ref=e786]
+                  - generic [ref=e789]: 200+ bought in past month
+                  - generic [ref=e790]:
+                    - generic [ref=e791]:
+                      - button "Sign in to add to Favourites list, Brisk Zero Lemon Iced Tea 710 mL, Can" [ref=e792]:
+                        - generic [ref=e793]: 
+                      - img "Brisk Zero Lemon Iced Tea 710 mL, Can"
+                    - button "Add to cart - Brisk Zero Lemon Iced Tea 710 mL, Can" [ref=e796] [cursor=pointer]:
+                      - generic "add to cart" [ref=e797]: 
+                      - generic [ref=e798]: Add
+                  - generic [ref=e801]:
+                    - generic [ref=e802]: $1.68
+                    - generic [ref=e803]: current price $1.68
+                  - generic [ref=e805]: Brisk Zero Lemon Iced Tea 710 mL, Can
+                  - generic [ref=e806]:
+                    - generic [ref=e807]:
+                      - generic [ref=e808]: 
+                      - generic [ref=e809]: 
+                      - generic [ref=e810]: 
+                      - generic [ref=e811]: 
+                      - generic [ref=e812]: 
+                    - generic [ref=e813]: "38"
+                    - generic [ref=e814]: 4.7895 out of 5 stars. 38 reviews
+                  - generic [ref=e815]:
+                    - generic [ref=e816]: Save with
+                    - img "Walmart Pass"
+                  - generic [ref=e817]:
+                    - generic [ref=e819]: Delivery, 7am tomorrow
+                    - generic [ref=e821]: Pickup, 8am tomorrow
+              - listitem [ref=e822]:
+                - group "Product" [ref=e823]:
+                  - link "Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 0.9kg" [ref=e824] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=11&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBlue-Buffalo-Tastefuls-Dry-Food-Adult-Indoor-Cat-Salmon-and-Brown-Rice-0-9kg%2F6000201190905&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=KRQ5oY1So5OJvANE-PuHVSLD0e1MQ1Hv4X9QnyXnhZshKiWXwBXOiXsmegEZEio3QyP19N0NYifDR34QwE4wDwhiuHcD5ocFwJAnSkeZtfHwvylQsrPot18i7hkgGKkgKPdfTteEugC_YGUWPzEf1ghC_0N-eTyqgBw9vldKVVyn_aMKc8GQtHTcuIVpZf7oEW2AodePeCihxFLzx-k6jg&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Blue-Buffalo-Tastefuls-Dry-Food-Adult-Indoor-Cat-Salmon-and-Brown-Rice-0-9kg/6000201190905
+                    - heading "Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 0.9kg" [level=3] [ref=e826]
+                  - generic [ref=e829]: Rollback
+                  - generic [ref=e830]:
+                    - generic [ref=e831]:
+                      - button "Sign in to add to Favourites list, Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 0.9kg" [ref=e832]:
+                        - generic [ref=e833]: 
+                      - img "Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 0.9kg"
+                    - button "Add to cart - Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 0.9kg" [ref=e836] [cursor=pointer]:
+                      - generic "add to cart" [ref=e837]: 
+                      - generic [ref=e838]: Add
+                  - generic [ref=e841]:
+                    - generic [ref=e842]: Now $11.47
+                    - generic [ref=e843]: current price Now $11.47
+                  - generic [ref=e845]: Blue Buffalo Tastefuls Dry Food, Adult Indoor Cat, Salmon and Brown Rice 0.9kg
+                  - generic [ref=e846]:
+                    - generic [ref=e847]:
+                      - generic [ref=e848]: 
+                      - generic [ref=e849]: 
+                      - generic [ref=e850]: 
+                      - generic [ref=e851]: 
+                      - generic [ref=e852]: 
+                    - generic [ref=e853]: "456"
+                    - generic [ref=e854]: 4.7456 out of 5 stars. 456 reviews
+                  - generic [ref=e855]:
+                    - generic [ref=e856]: Save with
+                    - img "Walmart Pass"
+                  - generic [ref=e857]:
+                    - generic [ref=e859]: Delivery, 7am tomorrow
+                    - generic [ref=e861]: Pickup, 8am tomorrow
+              - listitem [ref=e862]:
+                - group "Product" [ref=e863]:
+                  - link "Blue Buffalo Bursts Chicken Flavor Crunchy Treats for Cats" [ref=e864] [cursor=pointer]:
+                    - /url: https://www.walmart.ca/wapcrs/track?bt=1&eventST=click&plmt=sp-homepage-bottom~desktop~&pos=12&tax=10019_6000194328523&rdf=1&rd=https%3A%2F%2Fwww.walmart.ca%2Fen%2Fip%2FBlue-Buffalo-Bursts-Chicken-Flavor-Crunchy-Treats-for-Cats%2F6000201190850&adUid=89db9385-2c56-41eb-803d-226273669bbc&mloc=sp-homepage-bottom&pltfm=desktop&pgId=&pt=homepage&spQs=KRQ5oY1So5OJvANE-PuHVREf95pzIyx6Kb3Z-WlEzsEhKiWXwBXOiXsmegEZEio3TYw87c628z-Gjv1BDfiajen2fI8bFox4TZgcqOPZsf4STbOUH40OCDTXDT8u9WPC-Vc9h9bjWlTsDo-HFRyAzTCi4aSvcR7JiikBwJVh6aqOFOWe_7zttCI9fvZCptXF&storeId=1139&tn=WMT_CA&wtn=qxjed8&/en/ip/Blue-Buffalo-Bursts-Chicken-Flavor-Crunchy-Treats-for-Cats/6000201190850
+                    - heading "Blue Buffalo Bursts Chicken Flavor Crunchy Treats for Cats" [level=3] [ref=e866]
+                  - generic [ref=e869]: 100+ bought in past month
+                  - generic [ref=e870]:
+                    - generic [ref=e871]:
+                      - button "Sign in to add to Favourites list, Blue Buffalo Bursts Chicken Flavor Crunchy Treats for Cats" [ref=e872]:
+                        - generic [ref=e873]: 
+                      - img "Blue Buffalo Bursts Chicken Flavor Crunchy Treats for Cats"
+                    - button "Add to cart - Blue Buffalo Bursts Chicken Flavor Crunchy Treats for Cats" [ref=e876] [cursor=pointer]:
+                      - generic "add to cart" [ref=e877]: 
+                      - generic [ref=e878]: Add
+                  - generic [ref=e881]:
+                    - generic [ref=e882]: $5.96
+                    - generic [ref=e883]: current price $5.96
+                  - generic [ref=e885]: Blue Buffalo Bursts Chicken Flavor Crunchy Treats for Cats
+                  - generic [ref=e886]:
+                    - generic [ref=e887]:
+                      - generic [ref=e888]: 
+                      - generic [ref=e889]: 
+                      - generic [ref=e890]: 
+                      - generic [ref=e891]: 
+                      - generic [ref=e892]: 
+                    - generic [ref=e893]: "753"
+                    - generic [ref=e894]: 4.7224 out of 5 stars. 753 reviews
+                  - generic [ref=e897]: Delivery, tomorrow
+            - button "Next slide for More items to explore list" [ref=e898]:
+              - generic [ref=e899]: 
+    - banner [ref=e902]:
+      - generic [ref=e903]:
+        - banner [ref=e904]:
+          - heading "Your data, your choice Close dialogue" [level=2] [ref=e905]:
+            - text: Your data, your choice
+            - button "Close dialogue" [ref=e906]:
+              - generic [ref=e907]: 
+        - generic [ref=e908]:
+          - text: "We want your shopping experience with us to be as easy and relevant as possible. For this purpose, we and trusted third parties may use cookies and similar tracking technologies to:"
+          - list [ref=e909]:
+            - listitem [ref=e910]: Measure and improve our site
+            - listitem [ref=e911]: Save your preferences
+            - listitem [ref=e912]: Personalize your shopping experience, and
+            - listitem [ref=e913]: Provide you with relevant marketing on Walmart.ca, other sites and social media platforms.
+          - text: To learn more, check out our
+          - link "Marketing Notice. " [ref=e914] [cursor=pointer]:
+            - /url: https://www.walmartcanada.ca/cookie-notice
+            - text: Marketing Notice.
+            - generic [ref=e915]: 
+          - text: You can change your cookie settings any time.
+      - separator [ref=e916]
+      - contentinfo [ref=e917]:
+        - generic [ref=e918]:
+          - link "Manage cookie settings" [ref=e919] [cursor=pointer]
+          - button "close button" [ref=e920] [cursor=pointer]: Close
+  - alert [ref=e925]

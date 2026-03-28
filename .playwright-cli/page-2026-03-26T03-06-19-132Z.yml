@@ -1,0 +1,417 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - banner [ref=e5]:
+        - link [ref=e723] [cursor=pointer]:
+          - /url: "#maincontent"
+          - text: Skip to Main Content
+        - text:  
+        - link [ref=e724] [cursor=pointer]:
+          - /url: /en
+          - img [ref=e725]
+        - generic [ref=e11]:
+          - button [ref=e726] [cursor=pointer]:
+            - generic [ref=e14]:
+              - generic [ref=e15]:
+                - generic [ref=e17]: How do you want your items?
+                - generic [ref=e18]:
+                  - generic [ref=e22]: Toronto, M3J 9Z0
+                  - generic [ref=e25]:
+                    - generic [ref=e26]: •
+                    - generic [ref=e27]: Toronto Downsview
+              - generic [ref=e29]: 
+          - text:    
+          - generic [ref=e92]:
+            - generic [ref=e94]: Toronto, M3J 9Z0
+            - generic [ref=e96]: •
+        - search [ref=e727]:
+          - generic [ref=e99]:
+            - searchbox [ref=e728]: bananas
+            - button [ref=e101] [cursor=pointer]:
+              - generic [ref=e102]: 
+            - button [ref=e729] [cursor=pointer]:
+              - generic [ref=e104]: 
+        - navigation [ref=e730]:
+          - list [ref=e106]:
+            - listitem [ref=e107]:
+              - button [ref=e731]:
+                - generic [ref=e110]: 
+                - generic [ref=e111]:
+                  - generic [ref=e112]: Language
+                  - generic [ref=e113]: English
+            - listitem [ref=e114]:
+              - button [ref=e732] [cursor=pointer]:
+                - generic [ref=e116]: 
+                - generic [ref=e117]:
+                  - generic [ref=e118]: Reorder
+                  - generic [ref=e119]: My Items
+              - text:  
+            - listitem [ref=e120]:
+              - button [ref=e733] [cursor=pointer]:
+                - generic [ref=e122]: 
+                - generic [ref=e123]:
+                  - generic [ref=e124]: Sign In
+                  - generic [ref=e125]: Account
+              - text:  
+            - listitem [ref=e126]:
+              - button [ref=e734]:
+                - generic [ref=e130]: 
+                - generic [ref=e131]: "0"
+                - generic [ref=e132]: $0.00
+      - generic [ref=e133]:
+        - generic [ref=e134]:
+          - navigation [ref=e735]:
+            - list [ref=e136]:
+              - listitem [ref=e137]:
+                - button [ref=e736]:
+                  - generic [ref=e142]: 
+                  - text: Departments
+                  - generic [ref=e143]: 
+              - listitem [ref=e144]:
+                - button [ref=e737]:
+                  - generic [ref=e149]: 
+                  - text: Services
+                  - generic [ref=e150]: 
+          - generic [ref=e151]: "|"
+          - navigation [ref=e738]:
+            - list [ref=e154]:
+              - listitem [ref=e155]:
+                - link [ref=e739] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/flyer?icid=home_page_other_weekly_flyer_d_128753_7Y5EU5KV4E
+                  - text: Flyer
+              - listitem [ref=e158]:
+                - link [ref=e740] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/grocery/10019?icid=home_page_grocery_grocery_d_128750_UIQ8379D3Q
+                  - text: Grocery
+              - listitem [ref=e161]:
+                - link [ref=e741] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/my-items?icid=home_page_other_easy_reorder_d_128749_3RDAW4LI46
+                  - text: My Items
+              - listitem [ref=e164]:
+                - link [ref=e742] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/rollbacks-and-more/6000205319047?icid=home_page_other_rollbacks_n_more_d_159007_HE2W3WVNZL
+                  - text: Rollbacks & more
+              - listitem [ref=e167]:
+                - link [ref=e743] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/gifts-holidays/easter/6000197172380?icid=home_page_other_easter_d_174928_1K65Y2PIPA
+                  - text: Easter
+              - listitem [ref=e170]:
+                - link [ref=e744] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/shop/inspired-by-social/6000199749624?icid=home_page_clothing_shoes_and_accessories_spring_fashion_d_174929_Q9EEXNZJRO
+                  - text: Spring Fashion
+              - listitem [ref=e173]:
+                - link [ref=e745] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/browse/outdoor-living/10009?icid=home_page_outdoor_living_outdoor_living_d_173123_I3G89BLNOR
+                  - text: Outdoor Living
+              - listitem [ref=e176]:
+                - link [ref=e746] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/electronics/10003?icid=home_page_electronics_electronics_d_128758_G9N9AJG9L2
+                  - text: Electronics
+              - listitem [ref=e179]:
+                - link [ref=e747] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/walmart-rewards-mastercard/6000205202749?icid=home_page_other_credit_card_d_176121_ONU31FWV83
+                  - text: Credit Card
+        - button [ref=e748] [cursor=pointer]:
+          - generic [ref=e186]: More
+          - generic [ref=e187]: 
+    - generic [ref=e188]:
+      - main [ref=e191]:
+        - generic [ref=e192]:
+          - generic [ref=e195]:
+            - region [ref=e749]:
+              - switch [ref=e750]:
+                - generic [ref=e204]: 
+                - generic [ref=e205]: In-store
+              - button [ref=e751]:
+                - generic [ref=e209]: Sold By
+                - generic [ref=e210]: 
+              - button [ref=e752]:
+                - generic [ref=e215]: 
+                - generic [ref=e216]: Price
+                - generic [ref=e217]: 
+              - button [ref=e753]:
+                - generic [ref=e221]: Brand
+                - generic [ref=e222]: 
+              - button [ref=e754]:
+                - generic [ref=e227]: 
+                - generic [ref=e228]: Speed
+                - generic [ref=e229]: 
+              - generic [ref=e230]:
+                - generic [ref=e231]: Sort by
+                - text: "|"
+                - button [ref=e755]:
+                  - text: Best Match
+                  - generic [ref=e234]: 
+            - separator [ref=e235]
+            - generic [ref=e238]:
+              - text: Did you mean
+              - link [ref=e756] [cursor=pointer]:
+                - /url: /en/search?query=banana&method=spelling
+                - text: banana?
+            - separator [ref=e240]
+          - generic [ref=e244]:
+            - generic [ref=e247]:
+              - generic [ref=e248]:
+                - button [ref=e757]:
+                  - generic [ref=e252]: Category
+                  - img [ref=e253]: 
+                - separator [ref=e254]
+              - generic [ref=e255]:
+                - button [ref=e758]:
+                  - generic [ref=e259]: Brand
+                  - img [ref=e260]: 
+                - separator [ref=e261]
+              - generic [ref=e262]:
+                - button [ref=e759]:
+                  - generic [ref=e266]: Best Sellers
+                  - img [ref=e267]: 
+                - separator [ref=e268]
+              - generic [ref=e269]:
+                - button [ref=e760]:
+                  - generic [ref=e273]: Sold By
+                  - img [ref=e274]: 
+                - separator [ref=e275]
+              - generic [ref=e276]:
+                - button [ref=e761]:
+                  - generic [ref=e280]: Speed
+                  - img [ref=e281]: 
+                - separator [ref=e282]
+              - generic [ref=e283]:
+                - button [ref=e762]:
+                  - generic [ref=e287]: Customer Rating
+                  - img [ref=e288]: 
+                - separator [ref=e289]
+              - generic [ref=e290]:
+                - button [ref=e763]:
+                  - generic [ref=e294]: Price
+                  - img [ref=e295]: 
+                - separator [ref=e296]
+            - region [ref=e764]
+      - generic [ref=e578]:
+        - region [ref=e865]:
+          - paragraph [ref=e583]: We’d love to hear what you think!
+          - button [ref=e866] [cursor=pointer]: Give feedback
+        - generic [ref=e585]:
+          - generic [ref=e587]:
+            - generic [ref=e590]:
+              - navigation [ref=e867]:
+                - text: 
+                - heading [level=2] [ref=e868]: Customer Service
+                - list [ref=e594]:
+                  - listitem [ref=e595]:
+                    - link [ref=e869] [cursor=pointer]:
+                      - /url: https://www.walmart.com/orders
+                      - text: Track orders
+                  - listitem [ref=e597]:
+                    - link [ref=e870] [cursor=pointer]:
+                      - /url: https://www.walmart.com/orders
+                      - text: Returns
+                  - listitem [ref=e599]:
+                    - link [ref=e871] [cursor=pointer]:
+                      - /url: https://www.walmart.com/help
+                      - text: Help Center
+                  - listitem [ref=e601]:
+                    - link [ref=e872] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/fulfillment-options/1987240
+                      - text: Pickup & Delivery
+                  - listitem [ref=e603]:
+                    - link [ref=e873] [cursor=pointer]:
+                      - /url: ""
+                      - text: FAQs
+                  - listitem [ref=e605]:
+                    - link [ref=e874] [cursor=pointer]:
+                      - /url: https://corporate.walmart.com/recalls
+                      - text: Product Recalls
+                  - listitem [ref=e607]:
+                    - link [ref=e875] [cursor=pointer]:
+                      - /url: https://www.walmart.com/help/article/responsible-disclosure-and-accessibility-policies/0f173dab8bd942da84b1cd7ab5ffc3cb
+                      - text: Accessibility
+                  - listitem [ref=e609]:
+                    - link [ref=e876] [cursor=pointer]:
+                      - /url: http://msds.walmartstores.com/
+                      - text: Safety Data Sheet
+                  - listitem [ref=e611]:
+                    - link [ref=e877] [cursor=pointer]:
+                      - /url: https://www.walmart.com/store-finder#:~:text=Accessibility-,Tax%20Exempt%20Program,-Get%20the%20Walmart
+                      - text: Tax Exempt Program
+                  - listitem [ref=e613]:
+                    - link [ref=e878]: Manage cookie settings
+              - navigation [ref=e879]:
+                - text: 
+                - heading [level=2] [ref=e880]: Walmart Services
+                - list [ref=e618]:
+                  - listitem [ref=e619]:
+                    - link [ref=e881] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/walmart-moneycenter/5433
+                      - text: Money Center
+                  - listitem [ref=e621]:
+                    - link [ref=e882] [cursor=pointer]:
+                      - /url: https://www.walmarthealth.com/
+                      - text: Walmart Health
+                  - listitem [ref=e623]:
+                    - link [ref=e883] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/auto-services/1087266
+                      - text: Auto Care Center
+                  - listitem [ref=e625]:
+                    - link [ref=e884] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/5431
+                      - text: Pharmacy
+                  - listitem [ref=e627]:
+                    - link [ref=e885] [cursor=pointer]:
+                      - /url: https://www.walmart.com/account/plus/overview
+                      - text: Walmart +
+                  - listitem [ref=e629]:
+                    - link [ref=e886] [cursor=pointer]:
+                      - /url: https://www.walmartpetrx.com/
+                      - text: PetRX
+                  - listitem [ref=e631]:
+                    - link [ref=e887] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/1078944
+                      - text: Vision
+                  - listitem [ref=e633]:
+                    - link [ref=e888] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/gifts-registry/1094765
+                      - text: Registry
+                  - listitem [ref=e635]:
+                    - link [ref=e889] [cursor=pointer]:
+                      - /url: https://photos3.walmart.com/
+                      - text: Photo
+                  - listitem [ref=e637]:
+                    - link [ref=e890] [cursor=pointer]:
+                      - /url: https://www.walmart.com/order-ahead/cake/
+                      - text: Custom Cakes
+                  - listitem [ref=e639]:
+                    - link [ref=e891] [cursor=pointer]:
+                      - /url: https://www.walmart.com/services
+                      - text: Other Services
+              - generic [ref=e641]:
+                - navigation [ref=e892]:
+                  - text: 
+                  - heading [level=2] [ref=e893]: Stores
+                  - list [ref=e644]:
+                    - listitem [ref=e645]:
+                      - link [ref=e894] [cursor=pointer]:
+                        - /url: https://www.walmart.com/store/directory
+                        - text: Store Directory
+                    - listitem [ref=e647]:
+                      - link [ref=e895] [cursor=pointer]:
+                        - /url: http://www.walmart.com/store/finder
+                        - text: Find a Store
+                    - listitem [ref=e649]:
+                      - link [ref=e896] [cursor=pointer]:
+                        - /url: https://www.walmart.com/shop/deals
+                        - text: Flash Picks / Deals
+                    - listitem [ref=e651]:
+                      - link [ref=e897] [cursor=pointer]:
+                        - /url: https://www.walmart.com/all-departments
+                        - text: All Departments
+                - navigation [ref=e898]:
+                  - text: 
+                  - heading [level=2] [ref=e899]: Seasonal
+                  - list [ref=e655]:
+                    - listitem [ref=e656]:
+                      - link [ref=e900] [cursor=pointer]:
+                        - /url: https://www.walmart.com/cp/flu-shots-immunizations/1228302
+                        - text: Immunizations | Flu Shot/COVID
+              - generic [ref=e658]:
+                - navigation [ref=e901]:
+                  - text: 
+                  - heading [level=2] [ref=e902]: Get to Know US
+                  - list [ref=e661]:
+                    - listitem [ref=e662]:
+                      - link [ref=e903] [cursor=pointer]:
+                        - /url: https://corporate.walmart.com/
+                        - text: Our Company
+                    - listitem [ref=e664]:
+                      - link [ref=e904] [cursor=pointer]:
+                        - /url: ""
+                        - text: Digital Museum
+                    - listitem [ref=e666]:
+                      - link [ref=e905] [cursor=pointer]:
+                        - /url: ""
+                        - text: Our Suppliers
+                    - listitem [ref=e668]:
+                      - link [ref=e906] [cursor=pointer]:
+                        - /url: https://corporate.walmart.com/purpose
+                        - text: Corporate Responsibility
+                    - listitem [ref=e670]:
+                      - link [ref=e907] [cursor=pointer]:
+                        - /url: https://careers.walmart.com/
+                        - text: Careers
+                - navigation [ref=e908]:
+                  - text: 
+                  - heading [level=2] [ref=e909]: Partner with US
+                  - list [ref=e674]:
+                    - listitem [ref=e675]:
+                      - link [ref=e910] [cursor=pointer]:
+                        - /url: https://marketplace.walmart.com/?utm_source=Walmart.com&utm_medium=link&utm_campaign=footer
+                        - text: Sell on Walmart.com
+                    - listitem [ref=e677]:
+                      - link [ref=e911] [cursor=pointer]:
+                        - /url: ""
+                        - text: Advertise with Us
+                    - listitem [ref=e679]:
+                      - link [ref=e912] [cursor=pointer]:
+                        - /url: ""
+                        - text: Walmart Creator
+            - region [ref=e913]:
+              - generic [ref=e684]:
+                - heading [level=3] [ref=e914]: Be in the know!
+                - paragraph [ref=e686]: Send me up-to-date information on weekly flyer features, Rollback & clearance items, exclusive products, and personalized recommendations and offers. You may unsubscribe at any time.
+              - generic [ref=e687]:
+                - generic [ref=e688]:
+                  - generic [ref=e689]: Email address
+                  - textbox [ref=e915]
+                  - generic [ref=e693]: name@email.com
+                - button [ref=e916] [cursor=pointer]: Subscribe
+              - generic [ref=e696]:
+                - generic [ref=e697]:
+                  - text: Personal information provided may be collected, used and disclosed in accordance with this
+                  - link [ref=e917] [cursor=pointer]:
+                    - /url: https://www.walmartcanada.ca/privacy-notice?lang=en_ca
+                    - text: Privacy Notice
+                - button [ref=e918] [cursor=pointer]:
+                  - generic [ref=e701]: 
+          - generic [ref=e705]:
+            - generic [ref=e706]:
+              - generic [ref=e707]: © 2026 Walmart. All Rights Reserved.
+              - generic [ref=e708]:
+                - link [ref=e919] [cursor=pointer]:
+                  - /url: https://www.walmart.com/help/article/walmart-com-terms-of-use/3b75080af40340d6bbd596f116fae5a0
+                  - text: Terms of use
+                - link [ref=e920] [cursor=pointer]:
+                  - /url: https://www.walmart.com/cp/electronics/3944#:~:text=Terms%20of%20Use-,Privacy%20%26%20Security,-CA%20Privacy%20Rights
+                  - text: Privacy and security
+                - link [ref=e921] [cursor=pointer]:
+                  - /url: https://corporate.walmart.com/privacy-security/california-privacy-rights
+                  - text: CA Privacy Rights
+                - link [ref=e922] [cursor=pointer]:
+                  - /url: https://corporate.walmart.com/california-transparency
+                  - text: California Supply Chain Act
+                - link [ref=e923] [cursor=pointer]:
+                  - /url: https://www.walmart.com/account/api/ccpa-intake?native=false&app=gm&type=access
+                  - text: Request my personal Information
+                - link [ref=e924] [cursor=pointer]:
+                  - /url: https://corporate.walmart.com/privacy-security/walmart-privacy-notice#what-type-of-information-do-we-collect-and-how-do-we-collect-it
+                  - text: Notice at Collection
+                - link [ref=e925] [cursor=pointer]:
+                  - /url: https://www.walmart.com/account/api/ccpa-intake?native=false&app=gm&type=sod
+                  - text: Your Privacy Choices
+              - link [ref=e926] [cursor=pointer]:
+                - /url: /en/account/delete-account
+                - text: Delete Account
+            - generic [ref=e718]:
+              - generic [ref=e719]: 
+              - button [ref=e927]: Back to top
+  - alert [ref=e576]
+  - generic [ref=e721]: mmmmmmmmmmlli
+  - generic [ref=e722]: mmmmmmmmmmlli
+  - dialog "Robot or human?" [ref=e931]:
+    - generic [ref=e932]:
+      - button "Close dialogue" [active] [ref=e933] [cursor=pointer]:
+        - img [ref=e934]
+      - heading "Robot or human?" [level=2] [ref=e936]
+    - paragraph [ref=e940]: Activate and hold the button to confirm that you’re human. Thank You!
+  - generic:
+    - generic [ref=e943]: mmmmmmmmmmlli
+    - generic [ref=e944]: mmmmmmmmmmlli

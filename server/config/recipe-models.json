@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "models": {
+    "discoverIntentModel": "gpt-4.1-mini",
+    "recipeRewriteBaseModel": "gpt-4.1-mini-2025-04-14",
+    "recipeRewriteActiveModel": "ft:gpt-4.1-mini-2025-04-14:dave:ounje-recipe-style:DNfMYZW3"
+  },
+  "fineTune": {
+    "jobId": "ftjob-rkjvKzLIOUJU5CpohoHIvq30",
+    "status": "succeeded",
+    "fineTunedModel": "ft:gpt-4.1-mini-2025-04-14:dave:ounje-recipe-style:DNfMYZW3",
+    "lastCheckedAt": "2026-03-28T20:02:35.261Z",
+    "completedAt": "2026-03-26T14:01:28.901Z",
+    "error": null,
+    "trainingFile": "file-6ZKF4N7VFZz5h8tft3gz2W",
+    "validationFile": "file-U6dk4wL6hFBjLmjRY63wV8"
+  }
+}

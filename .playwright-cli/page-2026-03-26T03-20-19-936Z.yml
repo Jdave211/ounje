@@ -1,0 +1,797 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - generic [ref=e817]:
+        - region "Limited time offer" [ref=e818]:
+          - img [ref=e819]
+          - generic [ref=e821]:
+            - text: $0 delivery fee on first 3 orders.
+            - link "Terms apply." [ref=e822] [cursor=pointer]:
+              - /url: /help/section/360007996832/10684539136916
+        - button "Dismiss offer banner" [ref=e824] [cursor=pointer]:
+          - generic [ref=e825]:
+            - generic [ref=e826]: Dismiss offer banner
+            - img [ref=e827]
+      - generic [ref=e8]:
+        - link "Skip Navigation" [ref=e9] [cursor=pointer]:
+          - /url: "#store-wrapper"
+        - button "Main Menu" [ref=e829] [cursor=pointer]:
+          - img [ref=e831]
+        - link "Instacart logo" [ref=e15] [cursor=pointer]:
+          - /url: /store/
+          - img "Instacart logo" [ref=e16]
+        - search [ref=e19]:
+          - button "Search":
+            - img
+          - text: Explore popular searches with arrow keys or begin typing in the search field, and the app will offer suggestions. Use the arrow keys to navigate to a suggestion and then use the Enter key to select it. Once you press Enter, navigate to the search results that appear.
+          - paragraph [ref=e20]
+          - generic [ref=e21]:
+            - textbox "Search" [ref=e833]:
+              - /placeholder: Search products, stores, and recipes
+              - text: bananas
+            - button "Clear search bar" [ref=e25] [cursor=pointer]:
+              - img [ref=e27]
+        - generic [ref=e30]:
+          - 'button "current address: 94105. Or select a new address." [ref=e31] [cursor=pointer]':
+            - generic [ref=e32]:
+              - img [ref=e33]
+              - generic [ref=e35]: "94105"
+          - textbox [ref=e36]
+        - button "Log in" [ref=e834] [cursor=pointer]:
+          - generic [ref=e835]: Log in
+        - 'button "View Cart. Items in cart: 0" [disabled]':
+          - generic:
+            - img
+            - generic: "0"
+    - main [ref=e38]:
+      - generic [ref=e40]:
+        - list [ref=e41]:
+          - listitem [ref=e42]:
+            - generic [ref=e44]:
+              - generic [ref=e46]:
+                - group "retailer" [ref=e48]:
+                  - generic [ref=e49]:
+                    - img "Safeway logo" [ref=e52]
+                    - generic [ref=e53]:
+                      - link "Safeway" [ref=e55] [cursor=pointer]:
+                        - /url: /store/safeway/s?k=bananas&xrs_id=8a64bc85-c168-4da9-9a48-92660feb0e5e
+                        - heading "Safeway" [level=3] [ref=e56]
+                      - generic [ref=e57]:
+                        - generic [ref=e58]:
+                          - img [ref=e836]
+                          - generic [ref=e61]: Delivery by 8:40pm
+                        - generic [ref=e838]: •0.9 mi
+                      - generic [ref=e62]:
+                        - generic [ref=e63]:
+                          - img [ref=e64]
+                          - generic [ref=e66]: Pickup available
+                        - generic [ref=e839]: •0.9 mi
+                      - list [ref=e67]:
+                        - listitem [ref=e68]: Groceries•
+                        - listitem [ref=e69]: Bakery•
+                        - listitem [ref=e70]: Deli
+                      - list [ref=e840]:
+                        - listitem [ref=e841]: EBT
+                - generic [ref=e72]:
+                  - button [disabled] [ref=e74]:
+                    - img [ref=e76]
+                  - button [ref=e79] [cursor=pointer]:
+                    - img [ref=e81]
+              - list [ref=e83]:
+                - listitem [ref=e84]:
+                  - heading "product card" [level=3] [ref=e85]:
+                    - group "product card" [ref=e86]:
+                      - 'button "Banana Best seller Current price: $0.33 each (estimated) each (est.) Banana Sold individually $0.99 / lb About 0.33 lb each" [ref=e87] [cursor=pointer]':
+                        - generic [ref=e91]:
+                          - img "Banana" [ref=e92]
+                          - list [ref=e93]:
+                            - listitem [ref=e94]: Best seller
+                        - generic [ref=e95]:
+                          - generic [ref=e97]:
+                            - generic [ref=e98]:
+                              - generic [ref=e99]: "Current price: $0.33 each (estimated)"
+                              - generic [ref=e100]: $033
+                            - paragraph [ref=e104]: each (est.)
+                          - generic [ref=e106]: Banana
+                          - generic [ref=e107]: Sold individually
+                          - generic [ref=e109]:
+                            - generic [ref=e110]: $0.99 / lb
+                            - generic [ref=e111]: About 0.33 lb each
+                      - button "Add 1 banana Banana" [ref=e845] [cursor=pointer]:
+                        - generic [ref=e847]:
+                          - img [ref=e848]
+                          - generic [ref=e850]: Add
+                - listitem [ref=e112]:
+                  - heading "product card" [level=3] [ref=e113]:
+                    - group "product card" [ref=e114]:
+                      - 'button "Organic Banana Current price: $0.46 each (estimated) each (est.) Organic Banana Sold individually $1.39 / lb About 0.33 lb each" [ref=e115] [cursor=pointer]':
+                        - generic [ref=e119]:
+                          - img "Organic Banana" [ref=e120]
+                          - list
+                        - generic [ref=e121]:
+                          - generic [ref=e123]:
+                            - generic [ref=e124]:
+                              - generic [ref=e125]: "Current price: $0.46 each (estimated)"
+                              - generic [ref=e126]: $046
+                            - paragraph [ref=e130]: each (est.)
+                          - generic [ref=e132]: Organic Banana
+                          - generic [ref=e133]: Sold individually
+                          - generic [ref=e135]:
+                            - generic [ref=e136]: $1.39 / lb
+                            - generic [ref=e137]: About 0.33 lb each
+                      - button "Add 1 banana Organic Banana" [ref=e854] [cursor=pointer]:
+                        - generic [ref=e856]:
+                          - img [ref=e857]
+                          - generic [ref=e859]: Add
+                - listitem [ref=e138]:
+                  - heading "product card" [level=3] [ref=e139]:
+                    - group "product card" [ref=e140]:
+                      - 'button "Del Monte Manzano Current price: $0.75 each (estimated) each (est.) Del Monte Manzano Sold individually $2.99 / lb About 0.25 lb each" [ref=e141] [cursor=pointer]':
+                        - generic [ref=e145]:
+                          - img "Del Monte Manzano" [ref=e146]
+                          - list
+                        - generic [ref=e147]:
+                          - generic [ref=e149]:
+                            - generic [ref=e150]:
+                              - generic [ref=e151]: "Current price: $0.75 each (estimated)"
+                              - generic [ref=e152]: $075
+                            - paragraph [ref=e156]: each (est.)
+                          - generic [ref=e158]: Del Monte Manzano
+                          - generic [ref=e159]: Sold individually
+                          - generic [ref=e161]:
+                            - generic [ref=e162]: $2.99 / lb
+                            - generic [ref=e163]: About 0.25 lb each
+                      - button "Add 1 banana Del Monte Manzano" [ref=e863] [cursor=pointer]:
+                        - generic [ref=e865]:
+                          - img [ref=e866]
+                          - generic [ref=e868]: Add
+                - listitem [ref=e164]:
+                  - heading "product card" [level=3] [ref=e165]:
+                    - group "product card" [ref=e166]:
+                      - 'button "Baby Bananas Current price: $0.99 each (estimated) each (est.) Baby Bananas Sold individually $2.99 / lb About 0.33 lb each" [ref=e167] [cursor=pointer]':
+                        - generic [ref=e171]:
+                          - img "Baby Bananas" [ref=e172]
+                          - list
+                        - generic [ref=e173]:
+                          - generic [ref=e175]:
+                            - generic [ref=e176]:
+                              - generic [ref=e177]: "Current price: $0.99 each (estimated)"
+                              - generic [ref=e178]: $099
+                            - paragraph [ref=e182]: each (est.)
+                          - generic [ref=e184]: Baby Bananas
+                          - generic [ref=e185]: Sold individually
+                          - generic [ref=e187]:
+                            - generic [ref=e188]: $2.99 / lb
+                            - generic [ref=e189]: About 0.33 lb each
+                      - button "Add 1 banana Baby Bananas" [ref=e872] [cursor=pointer]:
+                        - generic [ref=e874]:
+                          - img [ref=e875]
+                          - generic [ref=e877]: Add
+                - listitem [ref=e190]:
+                  - heading "product card" [level=3] [ref=e191]:
+                    - group "product card" [ref=e192]:
+                      - 'button "Burro Bananas Current price: $1.00 each (estimated) each (est.) Burro Bananas Sold individually $3.99 / lb About 0.25 lb each" [ref=e193] [cursor=pointer]':
+                        - generic [ref=e197]:
+                          - img "Burro Bananas" [ref=e198]
+                          - list
+                        - generic [ref=e199]:
+                          - generic [ref=e201]:
+                            - generic [ref=e202]:
+                              - generic [ref=e203]: "Current price: $1.00 each (estimated)"
+                              - generic [ref=e204]: $100
+                            - paragraph [ref=e208]: each (est.)
+                          - generic [ref=e210]: Burro Bananas
+                          - generic [ref=e211]: Sold individually
+                          - generic [ref=e213]:
+                            - generic [ref=e214]: $3.99 / lb
+                            - generic [ref=e215]: About 0.25 lb each
+                      - button "Add 1 banana Burro Bananas" [ref=e881] [cursor=pointer]:
+                        - generic [ref=e883]: Request
+                - listitem [ref=e216]:
+                  - heading "product card" [level=3] [ref=e217]:
+                    - group "product card" [ref=e218]:
+                      - 'button "Strawberries Current price: $2.88 Original Price: $6.91 Buy 2 for $5.76 58% off Strawberries 1 lb container" [ref=e219] [cursor=pointer]':
+                        - generic [ref=e223]:
+                          - img "Strawberries" [ref=e224]
+                          - list
+                        - generic [ref=e225]:
+                          - generic [ref=e226]:
+                            - generic [ref=e227]:
+                              - generic [ref=e228]:
+                                - generic [ref=e229]: "Current price: $2.88"
+                                - generic [ref=e230]: $288
+                              - generic [ref=e233]:
+                                - generic [ref=e234]: "Original Price: $6.91"
+                                - paragraph [ref=e235]: $6.91
+                            - generic [ref=e237]: Buy 2 for $5.76
+                            - generic [ref=e238]: 58% off
+                          - generic [ref=e239]: Strawberries
+                          - generic [ref=e242]: 1 lb container
+                      - button "Add 1 ct Strawberries" [ref=e887] [cursor=pointer]:
+                        - generic [ref=e889]:
+                          - img [ref=e890]
+                          - generic [ref=e892]: Add
+                - listitem [ref=e243]:
+                  - heading "product card" [level=3] [ref=e244]:
+                    - group "product card" [ref=e245]:
+                      - 'button "Wonderful Halos Mandarin Oranges Current price: $7.99 Wonderful Halos Mandarin Oranges 2 lb" [ref=e246] [cursor=pointer]':
+                        - generic [ref=e250]:
+                          - img "Wonderful Halos Mandarin Oranges" [ref=e251]
+                          - list
+                        - generic [ref=e252]:
+                          - generic [ref=e255]:
+                            - generic [ref=e256]: "Current price: $7.99"
+                            - generic [ref=e257]: $799
+                          - generic [ref=e258]: Wonderful Halos Mandarin Oranges
+                          - generic [ref=e261]: 2 lb
+                      - button "Add 1 ct Wonderful Halos Mandarin Oranges" [ref=e896] [cursor=pointer]:
+                        - generic [ref=e898]:
+                          - img [ref=e899]
+                          - generic [ref=e901]: Add
+                - listitem [ref=e902]:
+                  - heading "product card" [level=3] [ref=e903]:
+                    - group "product card" [ref=e904]:
+                      - 'button "Strawberries Current price: $11.99 Buy 2, get 1 free Strawberries 16 oz" [ref=e905] [cursor=pointer]':
+                        - generic [ref=e909]:
+                          - img "Strawberries" [ref=e910]
+                          - list
+                        - generic [ref=e911]:
+                          - generic [ref=e912]:
+                            - generic [ref=e914]:
+                              - generic [ref=e915]: "Current price: $11.99"
+                              - generic [ref=e916]: $1199
+                            - generic [ref=e918]: Buy 2, get 1 free
+                          - generic [ref=e919]: Strawberries
+                          - generic [ref=e922]: 16 oz
+                      - button "Add 1 ct Strawberries" [ref=e926] [cursor=pointer]:
+                        - generic [ref=e928]:
+                          - img [ref=e929]
+                          - generic [ref=e931]: Add
+                - listitem [ref=e932]:
+                  - heading "product card" [level=3] [ref=e933]:
+                    - group "product card" [ref=e934]:
+                      - 'button "NatureSweet Cherubs Grape Tomatoes Current price: $6.99 NatureSweet Cherubs Grape Tomatoes 16.5 oz" [ref=e935] [cursor=pointer]':
+                        - generic [ref=e939]:
+                          - img "NatureSweet Cherubs Grape Tomatoes" [ref=e940]
+                          - list
+                        - generic [ref=e941]:
+                          - generic [ref=e944]:
+                            - generic [ref=e945]: "Current price: $6.99"
+                            - generic [ref=e946]: $699
+                          - generic [ref=e947]: NatureSweet Cherubs Grape Tomatoes
+                          - generic [ref=e950]: 16.5 oz
+                      - button "Add 1 ct NatureSweet Cherubs Grape Tomatoes" [ref=e954] [cursor=pointer]:
+                        - generic [ref=e956]:
+                          - img [ref=e957]
+                          - generic [ref=e959]: Add
+            - separator [ref=e276]
+          - listitem [ref=e277]:
+            - generic [ref=e279]:
+              - generic [ref=e281]:
+                - group "retailer" [ref=e283]:
+                  - generic [ref=e284]:
+                    - img "Gus's Community Market logo" [ref=e287]
+                    - generic [ref=e288]:
+                      - link "Gus's Community Market" [ref=e290] [cursor=pointer]:
+                        - /url: /store/gussmarket/s?k=bananas&xrs_id=8a64bc85-c168-4da9-9a48-92660feb0e5e
+                        - heading "Gus's Community Market" [level=3] [ref=e291]
+                      - generic [ref=e292]:
+                        - generic [ref=e293]:
+                          - img [ref=e960]
+                          - generic [ref=e296]: Delivery by 8:40pm
+                        - generic [ref=e962]: •1.1 mi
+                      - list [ref=e297]:
+                        - listitem [ref=e298]: Prepared Meals•
+                        - listitem [ref=e299]: Organic•
+                        - listitem [ref=e300]: Alcohol
+                      - list [ref=e963]:
+                        - listitem [ref=e964]: $10 off on $50+
+                        - listitem [ref=e965]: EBT
+                        - listitem [ref=e966]: Local
+                - generic [ref=e302]:
+                  - button [disabled] [ref=e304]:
+                    - img [ref=e306]
+                  - button [disabled] [ref=e309]:
+                    - img [ref=e311]
+              - list [ref=e313]:
+                - listitem [ref=e314]:
+                  - heading "product card" [level=3] [ref=e315]:
+                    - group "product card" [ref=e316]:
+                      - 'button "Banana Current price: $0.43 each (estimated) each (est.) Original Price: $0.47 each (estimated) Great price 9% off Banana Sold individually $0.99 / lb About 0.43 lb each" [ref=e317] [cursor=pointer]':
+                        - generic [ref=e321]:
+                          - img "Banana" [ref=e322]
+                          - list
+                        - generic [ref=e323]:
+                          - generic [ref=e324]:
+                            - generic [ref=e325]:
+                              - generic [ref=e326]:
+                                - generic [ref=e327]: "Current price: $0.43 each (estimated)"
+                                - generic [ref=e328]: $043
+                              - generic [ref=e329]:
+                                - paragraph [ref=e332]: each (est.)
+                                - generic [ref=e333]:
+                                  - generic [ref=e334]: "Original Price: $0.47 each (estimated)"
+                                  - paragraph [ref=e335]: $0.47
+                            - generic [ref=e338]: Great price
+                            - generic [ref=e339]: 9% off
+                          - generic [ref=e340]: Banana
+                          - generic [ref=e341]: Sold individually
+                          - generic [ref=e343]:
+                            - generic [ref=e344]: $0.99 / lb
+                            - generic [ref=e345]: About 0.43 lb each
+                      - button "Add 1 banana Banana" [ref=e970] [cursor=pointer]:
+                        - generic [ref=e972]:
+                          - img [ref=e973]
+                          - generic [ref=e975]: Add
+                - listitem [ref=e346]:
+                  - heading "product card" [level=3] [ref=e347]:
+                    - group "product card" [ref=e348]:
+                      - 'button "Organic Yellow Bananas Best seller Current price: $1.39 per pound /lb Organic Yellow Bananas" [ref=e349] [cursor=pointer]':
+                        - generic [ref=e353]:
+                          - img "Organic Yellow Bananas" [ref=e354]
+                          - list [ref=e355]:
+                            - listitem [ref=e356]: Best seller
+                        - generic [ref=e357]:
+                          - generic [ref=e359]:
+                            - generic [ref=e360]:
+                              - generic [ref=e361]: "Current price: $1.39 per pound"
+                              - generic [ref=e362]: $139
+                            - paragraph [ref=e366]: /lb
+                          - generic [ref=e368]: Organic Yellow Bananas
+                      - button "Add 1 lb Organic Yellow Bananas" [ref=e979] [cursor=pointer]:
+                        - generic [ref=e981]:
+                          - img [ref=e982]
+                          - generic [ref=e984]: Add
+                - listitem [ref=e369]:
+                  - heading "product card" [level=3] [ref=e370]:
+                    - group "product card" [ref=e371]:
+                      - 'button "California Giant Strawberries Current price: $2.79 Original Price: $6.69 Great price 58% off California Giant Strawberries 1 lb" [ref=e372] [cursor=pointer]':
+                        - generic [ref=e376]:
+                          - img "California Giant Strawberries" [ref=e377]
+                          - list
+                        - generic [ref=e378]:
+                          - generic [ref=e379]:
+                            - generic [ref=e380]:
+                              - generic [ref=e381]:
+                                - generic [ref=e382]: "Current price: $2.79"
+                                - generic [ref=e383]: $279
+                              - generic [ref=e386]:
+                                - generic [ref=e387]: "Original Price: $6.69"
+                                - paragraph [ref=e388]: $6.69
+                            - generic [ref=e391]: Great price
+                            - generic [ref=e392]: 58% off
+                          - generic [ref=e393]: California Giant Strawberries
+                          - generic [ref=e396]: 1 lb
+                      - button "Add 1 ct California Giant Strawberries" [ref=e988] [cursor=pointer]:
+                        - generic [ref=e990]:
+                          - img [ref=e991]
+                          - generic [ref=e993]: Add
+                - listitem [ref=e397]:
+                  - heading "product card" [level=3] [ref=e398]:
+                    - group "product card" [ref=e399]:
+                      - 'button "Driscoll''s Strawberries Current price: $7.79 Driscoll''s Strawberries 1 lb" [ref=e400] [cursor=pointer]':
+                        - generic [ref=e404]:
+                          - img "Driscoll's Strawberries" [ref=e405]
+                          - list
+                        - generic [ref=e406]:
+                          - generic [ref=e409]:
+                            - generic [ref=e410]: "Current price: $7.79"
+                            - generic [ref=e411]: $779
+                          - generic [ref=e412]: Driscoll's Strawberries
+                          - generic [ref=e415]: 1 lb
+                      - button "Add 1 ct Driscoll's Strawberries" [ref=e997] [cursor=pointer]:
+                        - generic [ref=e999]: Request
+                - listitem [ref=e416]:
+                  - heading "product card" [level=3] [ref=e417]:
+                    - group "product card" [ref=e418]:
+                      - 'button "Organic Strawberries Current price: $6.69 Original Price: $8.89 Great price 25% off Organic Strawberries 1 ct" [ref=e419] [cursor=pointer]':
+                        - generic [ref=e423]:
+                          - img "Organic Strawberries" [ref=e424]
+                          - list
+                        - generic [ref=e425]:
+                          - generic [ref=e426]:
+                            - generic [ref=e427]:
+                              - generic [ref=e428]:
+                                - generic [ref=e429]: "Current price: $6.69"
+                                - generic [ref=e430]: $669
+                              - generic [ref=e433]:
+                                - generic [ref=e434]: "Original Price: $8.89"
+                                - paragraph [ref=e435]: $8.89
+                            - generic [ref=e438]: Great price
+                            - generic [ref=e439]: 25% off
+                          - generic [ref=e440]: Organic Strawberries
+                          - generic [ref=e443]: 1 ct
+                      - button "Add 1 ct Organic Strawberries" [ref=e1003] [cursor=pointer]:
+                        - generic [ref=e1005]:
+                          - img [ref=e1006]
+                          - generic [ref=e1008]: Add
+                - listitem [ref=e444]:
+                  - heading "product card" [level=3] [ref=e445]:
+                    - group "product card" [ref=e446]:
+                      - 'button "White Seedless Grapes Current price: $4.52 per package (estimated) /pkg (est.) Original Price: $6.69 per package (estimated) Great price 32% off White Seedless Grapes $2.29 / lb About 1.97 lb / package" [ref=e447] [cursor=pointer]':
+                        - generic [ref=e451]:
+                          - img "White Seedless Grapes" [ref=e452]
+                          - list
+                        - generic [ref=e453]:
+                          - generic [ref=e454]:
+                            - generic [ref=e455]:
+                              - generic [ref=e456]:
+                                - generic [ref=e457]: "Current price: $4.52 per package (estimated)"
+                                - generic [ref=e458]: $452
+                              - generic [ref=e459]:
+                                - paragraph [ref=e462]: /pkg (est.)
+                                - generic [ref=e463]:
+                                  - generic [ref=e464]: "Original Price: $6.69 per package (estimated)"
+                                  - paragraph [ref=e465]: $6.69
+                            - generic [ref=e468]: Great price
+                            - generic [ref=e469]: 32% off
+                          - generic [ref=e470]: White Seedless Grapes
+                          - generic [ref=e472]:
+                            - generic [ref=e473]: $2.29 / lb
+                            - generic [ref=e474]: About 1.97 lb / package
+                      - button "Add 1 pkg White Seedless Grapes" [ref=e1012] [cursor=pointer]:
+                        - generic [ref=e1014]:
+                          - img [ref=e1015]
+                          - generic [ref=e1017]: Add
+            - separator [ref=e475]
+          - listitem [ref=e476]:
+            - generic [ref=e478]:
+              - generic [ref=e480]:
+                - group "retailer" [ref=e482]:
+                  - generic [ref=e483]:
+                    - img "Costco logo" [ref=e486]
+                    - generic [ref=e487]:
+                      - link "Costco" [ref=e489] [cursor=pointer]:
+                        - /url: /store/costco/s?k=bananas&xrs_id=8a64bc85-c168-4da9-9a48-92660feb0e5e
+                        - heading "Costco" [level=3] [ref=e490]
+                      - generic [ref=e491]:
+                        - generic [ref=e492]:
+                          - img [ref=e1018]
+                          - generic [ref=e495]: Delivery by 12:30pm tomorrow
+                        - generic [ref=e1020]: •1.6 mi
+                      - list [ref=e496]:
+                        - listitem [ref=e497]: Groceries•
+                        - listitem [ref=e498]: Wholesale
+                      - list [ref=e1021]:
+                        - listitem [ref=e1022]: EBT
+                - generic [ref=e500]:
+                  - button [disabled] [ref=e502]:
+                    - img [ref=e504]
+                  - button [ref=e507] [cursor=pointer]:
+                    - img [ref=e509]
+              - list [ref=e1023]:
+                - listitem [ref=e1024]:
+                  - heading "product card" [level=3] [ref=e1025]:
+                    - group "product card" [ref=e1026]:
+                      - button "Bananas, 3 lbs Best seller Out of stock Bananas, 3 lbs" [ref=e1027] [cursor=pointer]:
+                        - generic [ref=e1031]:
+                          - img "Bananas, 3 lbs" [ref=e1032]
+                          - list [ref=e1033]:
+                            - listitem [ref=e1034]: Best seller
+                        - generic [ref=e1035]:
+                          - generic [ref=e1036]: Out of stock
+                          - generic [ref=e1037]: Bananas, 3 lbs
+                      - button "Show similar" [ref=e1041] [cursor=pointer]:
+                        - generic [ref=e1043]: Show similar
+                - listitem [ref=e1044]:
+                  - heading "product card" [level=3] [ref=e1045]:
+                    - group "product card" [ref=e1046]:
+                      - button "Organic Bananas, 3 lbs Out of stock Organic Bananas, 3 lbs" [ref=e1047] [cursor=pointer]:
+                        - generic [ref=e1051]:
+                          - img "Organic Bananas, 3 lbs" [ref=e1052]
+                          - list
+                        - generic [ref=e1053]:
+                          - generic [ref=e1054]: Out of stock
+                          - generic [ref=e1055]: Organic Bananas, 3 lbs
+                      - button "Show similar" [ref=e1059] [cursor=pointer]:
+                        - generic [ref=e1061]: Show similar
+                - listitem [ref=e1062]:
+                  - heading "product card" [level=3] [ref=e1063]:
+                    - group "product card" [ref=e1064]:
+                      - 'button "Plantains, 5 lbs Current price: $6.21 Plantains, 5 lbs" [ref=e1065] [cursor=pointer]':
+                        - generic [ref=e1069]:
+                          - img "Plantains, 5 lbs" [ref=e1070]
+                          - list
+                        - generic [ref=e1071]:
+                          - generic [ref=e1074]:
+                            - generic [ref=e1075]: "Current price: $6.21"
+                            - generic [ref=e1076]: $621
+                          - generic [ref=e1077]: Plantains, 5 lbs
+                      - button "Add 1 ct Plantains, 5 lbs" [ref=e1081] [cursor=pointer]:
+                        - generic [ref=e1083]:
+                          - img [ref=e1084]
+                          - generic [ref=e1086]: Add
+                - listitem [ref=e1087]:
+                  - heading "product card" [level=3] [ref=e1088]:
+                    - group "product card" [ref=e1089]:
+                      - 'button "Mandarins, 3 lbs Current price: $6.21 Great price Mandarins, 3 lbs Average rating: 3.4 out of 5 stars, based on 30 reviews 3 lb" [ref=e1090] [cursor=pointer]':
+                        - generic [ref=e1094]:
+                          - img "Mandarins, 3 lbs" [ref=e1095]
+                          - list
+                        - generic [ref=e1096]:
+                          - generic [ref=e1097]:
+                            - generic [ref=e1099]:
+                              - generic [ref=e1100]: "Current price: $6.21"
+                              - generic [ref=e1101]: $621
+                            - generic [ref=e1104]: Great price
+                          - generic [ref=e1105]: Mandarins, 3 lbs
+                          - generic [ref=e1106]:
+                            - 'img "Average rating: 3.4 out of 5 stars, based on 30 reviews" [ref=e1107]':
+                              - generic [ref=e1108]: ★★★★★
+                              - generic [ref=e1109]: ★★★★★
+                            - generic [ref=e1110]: (30)
+                          - generic [ref=e1113]: 3 lb
+                      - button "Add 1 ct Mandarins, 3 lbs" [ref=e1117] [cursor=pointer]:
+                        - generic [ref=e1119]:
+                          - img [ref=e1120]
+                          - generic [ref=e1122]: Add
+                - listitem [ref=e1123]:
+                  - heading "product card" [level=3] [ref=e1124]:
+                    - group "product card" [ref=e1125]:
+                      - button "Strawberries, 2 lbs Out of stock Strawberries, 2 lbs" [ref=e1126] [cursor=pointer]:
+                        - generic [ref=e1130]:
+                          - img "Strawberries, 2 lbs" [ref=e1131]
+                          - list
+                        - generic [ref=e1132]:
+                          - generic [ref=e1133]: Out of stock
+                          - generic [ref=e1134]: Strawberries, 2 lbs
+                      - button "Show similar" [ref=e1138] [cursor=pointer]:
+                        - generic [ref=e1140]: Show similar
+                - listitem [ref=e1141]:
+                  - heading "product card" [level=3] [ref=e1142]:
+                    - group "product card" [ref=e1143]:
+                      - button "Green Seedless Grapes, 3 lbs Out of stock Green Seedless Grapes, 3 lbs" [ref=e1144] [cursor=pointer]:
+                        - generic [ref=e1148]:
+                          - img "Green Seedless Grapes, 3 lbs" [ref=e1149]
+                          - list
+                        - generic [ref=e1150]:
+                          - generic [ref=e1151]: Out of stock
+                          - generic [ref=e1152]: Green Seedless Grapes, 3 lbs
+                      - button "Show similar" [ref=e1156] [cursor=pointer]:
+                        - generic [ref=e1158]: Show similar
+                - listitem [ref=e1159]:
+                  - heading "product card" [level=3] [ref=e1160]:
+                    - group "product card" [ref=e1161]:
+                      - button "Red Seedless Grapes, 3 lbs Out of stock Red Seedless Grapes, 3 lbs" [ref=e1162] [cursor=pointer]:
+                        - generic [ref=e1166]:
+                          - img "Red Seedless Grapes, 3 lbs" [ref=e1167]
+                          - list
+                        - generic [ref=e1168]:
+                          - generic [ref=e1169]: Out of stock
+                          - generic [ref=e1170]: Red Seedless Grapes, 3 lbs
+                      - button "Show similar" [ref=e1174] [cursor=pointer]:
+                        - generic [ref=e1176]: Show similar
+            - separator [ref=e608]
+          - listitem [ref=e609]:
+            - generic [ref=e611]:
+              - generic [ref=e613]:
+                - group "retailer" [ref=e615]:
+                  - generic [ref=e616]:
+                    - img "Smart & Final logo" [ref=e619]
+                    - generic [ref=e620]:
+                      - link "Smart & Final" [ref=e622] [cursor=pointer]:
+                        - /url: /store/smart-final/s?k=bananas&xrs_id=8a64bc85-c168-4da9-9a48-92660feb0e5e
+                        - heading "Smart & Final" [level=3] [ref=e623]
+                      - generic [ref=e624]:
+                        - generic [ref=e625]:
+                          - img [ref=e1177]
+                          - generic [ref=e628]: Delivery by 8:40pm
+                        - generic [ref=e1179]: •3.9 mi
+                      - list [ref=e629]:
+                        - listitem [ref=e630]: Alcohol•
+                        - listitem [ref=e631]: Groceries
+                      - list [ref=e1180]:
+                        - listitem [ref=e1181]: $10 off on $110+
+                        - listitem [ref=e1182]: EBT
+                - generic [ref=e633]:
+                  - button [disabled] [ref=e635]:
+                    - img [ref=e637]
+                  - button [ref=e640] [cursor=pointer]:
+                    - img [ref=e642]
+              - list [ref=e1183]:
+                - listitem [ref=e1184]:
+                  - heading "product card" [level=3] [ref=e1185]:
+                    - group "product card" [ref=e1186]:
+                      - 'button "Banana Best seller Current price: $0.23 each (estimated) each (est.) Original Price: $0.31 each (estimated) Great price 26% off Banana Sold individually $0.59 / lb About 0.4 lb each" [ref=e1187] [cursor=pointer]':
+                        - generic [ref=e1191]:
+                          - img "Banana" [ref=e1192]
+                          - list [ref=e1193]:
+                            - listitem [ref=e1194]: Best seller
+                        - generic [ref=e1195]:
+                          - generic [ref=e1196]:
+                            - generic [ref=e1197]:
+                              - generic [ref=e1198]:
+                                - generic [ref=e1199]: "Current price: $0.23 each (estimated)"
+                                - generic [ref=e1200]: $023
+                              - generic [ref=e1201]:
+                                - paragraph [ref=e1204]: each (est.)
+                                - generic [ref=e1205]:
+                                  - generic [ref=e1206]: "Original Price: $0.31 each (estimated)"
+                                  - paragraph [ref=e1207]: $0.31
+                            - generic [ref=e1210]: Great price
+                            - generic [ref=e1211]: 26% off
+                          - generic [ref=e1212]: Banana
+                          - generic [ref=e1213]: Sold individually
+                          - generic [ref=e1215]:
+                            - generic [ref=e1216]: $0.59 / lb
+                            - generic [ref=e1217]: About 0.4 lb each
+                      - button "Add 1 banana Banana" [ref=e1221] [cursor=pointer]:
+                        - generic [ref=e1223]:
+                          - img [ref=e1224]
+                          - generic [ref=e1226]: Add
+                - listitem [ref=e1227]:
+                  - heading "product card" [level=3] [ref=e1228]:
+                    - group "product card" [ref=e1229]:
+                      - 'button "Organic Bananas Current price: $0.39 each (estimated) each (est.) Great price Organic Bananas Sold individually $0.99 / lb About 0.4 lb each" [ref=e1230] [cursor=pointer]':
+                        - generic [ref=e1234]:
+                          - img "Organic Bananas" [ref=e1235]
+                          - list
+                        - generic [ref=e1236]:
+                          - generic [ref=e1237]:
+                            - generic [ref=e1238]:
+                              - generic [ref=e1239]:
+                                - generic [ref=e1240]: "Current price: $0.39 each (estimated)"
+                                - generic [ref=e1241]: $039
+                              - paragraph [ref=e1245]: each (est.)
+                            - generic [ref=e1249]: Great price
+                          - generic [ref=e1250]: Organic Bananas
+                          - generic [ref=e1251]: Sold individually
+                          - generic [ref=e1253]:
+                            - generic [ref=e1254]: $0.99 / lb
+                            - generic [ref=e1255]: About 0.4 lb each
+                      - button "Add 1 banana Organic Bananas" [ref=e1259] [cursor=pointer]:
+                        - generic [ref=e1261]:
+                          - img [ref=e1262]
+                          - generic [ref=e1264]: Add
+                - listitem [ref=e1265]:
+                  - heading "product card" [level=3] [ref=e1266]:
+                    - group "product card" [ref=e1267]:
+                      - 'button "Baby Bananas Current price: $1.59 per pound /lb Baby Bananas Sold by the bunch" [ref=e1268] [cursor=pointer]':
+                        - generic [ref=e1272]:
+                          - img "Baby Bananas" [ref=e1273]
+                          - list
+                        - generic [ref=e1274]:
+                          - generic [ref=e1276]:
+                            - generic [ref=e1277]:
+                              - generic [ref=e1278]: "Current price: $1.59 per pound"
+                              - generic [ref=e1279]: $159
+                            - paragraph [ref=e1283]: /lb
+                          - generic [ref=e1285]: Baby Bananas
+                          - generic [ref=e1286]: Sold by the bunch
+                      - button "Add 1 bunch Baby Bananas" [ref=e1290] [cursor=pointer]:
+                        - generic [ref=e1292]:
+                          - img [ref=e1293]
+                          - generic [ref=e1295]: Add
+                - listitem [ref=e1296]:
+                  - heading "product card" [level=3] [ref=e1297]:
+                    - group "product card" [ref=e1298]:
+                      - button "Red Banana Out of stock Red Banana Sold individually $0.29 / lb About 0.26 lb each" [ref=e1299] [cursor=pointer]:
+                        - generic [ref=e1303]:
+                          - img "Red Banana" [ref=e1304]
+                          - list
+                        - generic [ref=e1305]:
+                          - generic [ref=e1306]: Out of stock
+                          - generic [ref=e1307]: Red Banana
+                          - generic [ref=e1308]: Sold individually
+                          - generic [ref=e1310]:
+                            - generic [ref=e1311]: $0.29 / lb
+                            - generic [ref=e1312]: About 0.26 lb each
+                      - button "Show similar" [ref=e1316] [cursor=pointer]:
+                        - generic [ref=e1318]: Show similar
+                - listitem [ref=e1319]:
+                  - heading "product card" [level=3] [ref=e1320]:
+                    - group "product card" [ref=e1321]:
+                      - 'button "Strawberries Current price: $3.19 Great price Strawberries 1 lb container" [ref=e1322] [cursor=pointer]':
+                        - generic [ref=e1326]:
+                          - img "Strawberries" [ref=e1327]
+                          - list
+                        - generic [ref=e1328]:
+                          - generic [ref=e1329]:
+                            - generic [ref=e1331]:
+                              - generic [ref=e1332]: "Current price: $3.19"
+                              - generic [ref=e1333]: $319
+                            - generic [ref=e1336]: Great price
+                          - generic [ref=e1337]: Strawberries
+                          - generic [ref=e1340]: 1 lb container
+                      - button "Add 1 ct Strawberries" [ref=e1344] [cursor=pointer]:
+                        - generic [ref=e1346]:
+                          - img [ref=e1347]
+                          - generic [ref=e1349]: Add
+                - listitem [ref=e1350]:
+                  - heading "product card" [level=3] [ref=e1351]:
+                    - group "product card" [ref=e1352]:
+                      - 'button "Lucky Supply Inc. Red Seedless Grapes Current price: $3.19 per pound /lb Lucky Supply Inc. Red Seedless Grapes" [ref=e1353] [cursor=pointer]':
+                        - generic [ref=e1357]:
+                          - img "Lucky Supply Inc. Red Seedless Grapes" [ref=e1358]
+                          - list
+                        - generic [ref=e1359]:
+                          - generic [ref=e1361]:
+                            - generic [ref=e1362]:
+                              - generic [ref=e1363]: "Current price: $3.19 per pound"
+                              - generic [ref=e1364]: $319
+                            - paragraph [ref=e1368]: /lb
+                          - generic [ref=e1370]: Lucky Supply Inc. Red Seedless Grapes
+                      - button "Add 1 lb Lucky Supply Inc. Red Seedless Grapes" [ref=e1374] [cursor=pointer]:
+                        - generic [ref=e1376]:
+                          - img [ref=e1377]
+                          - generic [ref=e1379]: Add
+                - listitem [ref=e1380]:
+                  - heading "product card" [level=3] [ref=e1381]:
+                    - group "product card" [ref=e1382]:
+                      - 'button "White Seedless Grapes Current price: $6.70 per package (estimated) /pkg (est.) Great price White Seedless Grapes Average rating: 5 out of 5 stars, based on 3 reviews $3.19 / lb About 2.1 lb / package" [ref=e1383] [cursor=pointer]':
+                        - generic [ref=e1387]:
+                          - img "White Seedless Grapes" [ref=e1388]
+                          - list
+                        - generic [ref=e1389]:
+                          - generic [ref=e1390]:
+                            - generic [ref=e1391]:
+                              - generic [ref=e1392]:
+                                - generic [ref=e1393]: "Current price: $6.70 per package (estimated)"
+                                - generic [ref=e1394]: $670
+                              - paragraph [ref=e1398]: /pkg (est.)
+                            - generic [ref=e1402]: Great price
+                          - generic [ref=e1403]: White Seedless Grapes
+                          - generic [ref=e1404]:
+                            - 'img "Average rating: 5 out of 5 stars, based on 3 reviews" [ref=e1405]':
+                              - generic [ref=e1406]: ★★★★★
+                              - generic [ref=e1407]: ★★★★★
+                            - generic [ref=e1408]: (3)
+                          - generic [ref=e1410]:
+                            - generic [ref=e1411]: $3.19 / lb
+                            - generic [ref=e1412]: About 2.1 lb / package
+                      - button "Add 1 pkg White Seedless Grapes" [ref=e1416] [cursor=pointer]:
+                        - generic [ref=e1418]:
+                          - img [ref=e1419]
+                          - generic [ref=e1421]: Add
+                - listitem [ref=e1422]:
+                  - heading "product card" [level=3] [ref=e1423]:
+                    - group "product card" [ref=e1424]:
+                      - 'button "Green Seedless Grapes Current price: $6.01 per package (estimated) /pkg (est.) Green Seedless Grapes $3.19 / lb About 1.88 lb / package" [ref=e1425] [cursor=pointer]':
+                        - generic [ref=e1429]:
+                          - img "Green Seedless Grapes" [ref=e1430]
+                          - list
+                        - generic [ref=e1431]:
+                          - generic [ref=e1433]:
+                            - generic [ref=e1434]:
+                              - generic [ref=e1435]: "Current price: $6.01 per package (estimated)"
+                              - generic [ref=e1436]: $601
+                            - paragraph [ref=e1440]: /pkg (est.)
+                          - generic [ref=e1442]: Green Seedless Grapes
+                          - generic [ref=e1444]:
+                            - generic [ref=e1445]: $3.19 / lb
+                            - generic [ref=e1446]: About 1.88 lb / package
+                      - button "Add 1 pkg Green Seedless Grapes" [ref=e1450] [cursor=pointer]:
+                        - generic [ref=e1452]:
+                          - img [ref=e1453]
+                          - generic [ref=e1455]: Add
+        - generic [ref=e1457]:
+          - heading "Common Questions" [level=2] [ref=e1458]
+          - generic [ref=e1459]:
+            - heading "Can I get Bananas products delivered?" [level=3] [ref=e1461]:
+              - button "Can I get Bananas products delivered?" [ref=e1462] [cursor=pointer]:
+                - generic [ref=e1463]: Can I get Bananas products delivered?
+                - img [ref=e1465]
+            - heading "How does Instacart same-day delivery work?" [level=3] [ref=e1468]:
+              - button "How does Instacart same-day delivery work?" [ref=e1469] [cursor=pointer]:
+                - generic [ref=e1470]: How does Instacart same-day delivery work?
+                - img [ref=e1472]
+            - heading "How long does Instacart delivery take?" [level=3] [ref=e1475]:
+              - button "How long does Instacart delivery take?" [ref=e1476] [cursor=pointer]:
+                - generic [ref=e1477]: How long does Instacart delivery take?
+                - img [ref=e1479]
+            - heading "How does Instacart in-store pickup or curbside pickup work?" [level=3] [ref=e1482]:
+              - button "How does Instacart in-store pickup or curbside pickup work?" [ref=e1483] [cursor=pointer]:
+                - generic [ref=e1484]: How does Instacart in-store pickup or curbside pickup work?
+                - img [ref=e1486]
+            - heading "How much does Instacart delivery or pickup cost?" [level=3] [ref=e1489]:
+              - button "How much does Instacart delivery or pickup cost?" [ref=e1490] [cursor=pointer]:
+                - generic [ref=e1491]: How much does Instacart delivery or pickup cost?
+                - img [ref=e1493]
+            - heading "What happens if an item is out of stock and I need to give specific instructions?" [level=3] [ref=e1496]:
+              - button "What happens if an item is out of stock and I need to give specific instructions?" [ref=e1497] [cursor=pointer]:
+                - generic [ref=e1498]: What happens if an item is out of stock and I need to give specific instructions?
+                - img [ref=e1500]
+          - button "Show more" [ref=e1503] [cursor=pointer]:
+            - generic [ref=e1504]: Show more
+  - generic:
+    - list

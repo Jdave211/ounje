@@ -10,6 +10,8 @@
 		07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
+		EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000002 /* Biro_Script_reduced.ttf */; };
+		EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000004 /* Slee_handwritting-Regular.otf */; };
 		C1D2E3F40100000100000001 /* ounje/OunjeAgenticApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000001 /* ounje/OunjeAgenticApp.swift */; };
 		C1D2E3F40100000100000002 /* ounje/MealPlanningAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000002 /* ounje/MealPlanningAppStore.swift */; };
 		C1D2E3F40100000100000003 /* ounje/MealPlanningAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */; };
@@ -26,6 +28,8 @@
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = ounje/Info.plist; sourceTree = "<group>"; };
 		2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = ounje/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = ounje/SplashScreen.storyboard; sourceTree = "<group>"; };
+		EA0100010000000000000002 /* Biro_Script_reduced.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = Biro_Script_reduced.ttf; path = ounje/Supporting/Fonts/Biro_Script_reduced.ttf; sourceTree = "<group>"; };
+		EA0100010000000000000004 /* Slee_handwritting-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; name = Slee_handwritting-Regular.otf; path = ounje/Supporting/Fonts/Slee_handwritting-Regular.otf; sourceTree = "<group>"; };
 		F1A2B3C40100000100000001 /* ounje/OunjeAgenticApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/OunjeAgenticApp.swift; sourceTree = "<group>"; };
 		F1A2B3C40100000100000002 /* ounje/MealPlanningAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAppStore.swift; sourceTree = "<group>"; };
 		F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAgent.swift; sourceTree = "<group>"; };
@@ -62,6 +66,8 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
 				2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */,
+				EA0100010000000000000002 /* Biro_Script_reduced.ttf */,
+				EA0100010000000000000004 /* Slee_handwritting-Regular.otf */,
 			);
 			name = ounje;
 			sourceTree = "<group>";
@@ -145,6 +151,8 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
 				07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */,
+				EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */,
+				EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -190,6 +198,7 @@
 				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

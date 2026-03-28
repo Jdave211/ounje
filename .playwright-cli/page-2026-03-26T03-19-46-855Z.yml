@@ -1,0 +1,782 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - navigation [ref=e5]:
+      - generic [ref=e6]:
+        - button "Open main menu" [ref=e7] [cursor=pointer]:
+          - img [ref=e8]
+        - link "Instacart home" [ref=e11] [cursor=pointer]:
+          - /url: /
+          - img "Instacart home" [ref=e12]
+        - generic [ref=e13]:
+          - search [ref=e15]:
+            - button "Search":
+              - img
+            - text: Explore popular searches with arrow keys or begin typing in the search field, and the app will offer suggestions. Use the arrow keys to navigate to a suggestion and then use the Enter key to select it. Once you press Enter, navigate to the search results that appear.
+            - paragraph [ref=e16]: 10 entries for bananas
+            - generic [ref=e17]:
+              - textbox "Search" [active] [ref=e583]:
+                - /placeholder: Search products and stores
+                - text: bananas
+              - button "Clear search bar" [ref=e586] [cursor=pointer]:
+                - img [ref=e588]
+          - listbox "search" [ref=e591]:
+            - group [ref=e592]:
+              - listbox [ref=e593]:
+                - generic [ref=e594]: 10 results found
+                - option "bananas" [ref=e595] [cursor=pointer]:
+                  - link "bananas" [ref=e596]:
+                    - /url: /store/s?k=bananas&actid=629986f0-dfb2-4ee8-b056-a3c6f6f619f1&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e598]: bananas
+                    - img [ref=e600]
+                - option "bananas organic" [ref=e602] [cursor=pointer]:
+                  - link "bananas organic" [ref=e603]:
+                    - /url: /store/s?k=bananas+organic&actid=44221efe-f2e7-4f7c-b1e8-e79cb1ae6334&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e605]: bananas organic
+                    - img [ref=e607]
+                - option "bananas fresh bunch" [ref=e609] [cursor=pointer]:
+                  - link "bananas fresh bunch" [ref=e610]:
+                    - /url: /store/s?k=bananas+fresh+bunch&actid=6c1b538c-abff-4aeb-bf20-1ab97d077507&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e612]: bananas fresh bunch
+                    - img [ref=e614]
+                - option "bananas bunch" [ref=e616] [cursor=pointer]:
+                  - link "bananas bunch" [ref=e617]:
+                    - /url: /store/s?k=bananas+bunch&actid=e67b4cde-721c-441c-ad65-d170c798c7b5&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e619]: bananas bunch
+                    - img [ref=e621]
+                - option "bananas fresh" [ref=e623] [cursor=pointer]:
+                  - link "bananas fresh" [ref=e624]:
+                    - /url: /store/s?k=bananas+fresh&actid=7135c59d-0c59-4b4b-b95d-be8103d97705&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e626]: bananas fresh
+                    - img [ref=e628]
+                - option "organic bananas fresh" [ref=e630] [cursor=pointer]:
+                  - link "organic bananas fresh" [ref=e631]:
+                    - /url: /store/s?k=organic+bananas+fresh&actid=25cdea4c-ac38-4c5c-adaa-9c49b317cbb6&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e633]: organic bananas fresh
+                    - img [ref=e635]
+                - option "organic bananas fresh bunch" [ref=e637] [cursor=pointer]:
+                  - link "organic bananas fresh bunch" [ref=e638]:
+                    - /url: /store/s?k=organic+bananas+fresh+bunch&actid=69ed1f24-a6d2-4698-b1a4-8517cb16dd94&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e640]: organic bananas fresh bunch
+                    - img [ref=e642]
+                - option "green bananas bunch" [ref=e644] [cursor=pointer]:
+                  - link "green bananas bunch" [ref=e645]:
+                    - /url: /store/s?k=green+bananas+bunch&actid=b146641a-2cbe-437e-99ec-d4654166951c&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e647]: green bananas bunch
+                    - img [ref=e649]
+                - option "frozen strawberries bananas" [ref=e651] [cursor=pointer]:
+                  - link "frozen strawberries bananas" [ref=e652]:
+                    - /url: /store/s?k=frozen+strawberries+bananas&actid=89cc887b-c2ec-44c8-8ce4-47dc7eb33ff5&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e654]: frozen strawberries bananas
+                    - img [ref=e656]
+                - option "banana bread" [ref=e658] [cursor=pointer]:
+                  - link "banana bread" [ref=e659]:
+                    - /url: /store/s?k=banana+bread&actid=b60bccc3-f50c-40df-9912-5f9de9ce577b&search_source=logged_out_home_cross_retailer_search
+                    - generic [ref=e661]: banana bread
+                    - img [ref=e663]
+      - generic [ref=e19]:
+        - button "Log in" [ref=e20] [cursor=pointer]:
+          - generic [ref=e21]: Log in
+        - button "Sign up" [ref=e22] [cursor=pointer]:
+          - generic [ref=e23]: Sign up
+  - main [ref=e24]:
+    - generic [ref=e28]:
+      - heading "Order groceries for delivery or pickup today" [level=1] [ref=e29]
+      - button "Sign up to get $0 delivery fee*" [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]: Sign up to get $0 delivery fee*
+      - link "*Valid for first 3 orders. Service fees and terms apply." [ref=e32] [cursor=pointer]:
+        - /url: help/section/360007996832/10684539136916
+        - generic [ref=e33]: "*Valid for first 3 orders. Service fees and terms apply."
+    - region "Retailer list carousel" [ref=e36]:
+      - generic [ref=e37]:
+        - heading "Stores to help you save" [level=2] [ref=e38]
+        - generic [ref=e39]:
+          - button "Previous Retailers" [disabled] [ref=e40]:
+            - img [ref=e42]
+          - button "Next Retailers" [ref=e44] [cursor=pointer]:
+            - img [ref=e46]
+      - list [ref=e665]:
+        - listitem [ref=e666]:
+          - link "Safeway logo Safeway 20 min" [ref=e669] [cursor=pointer]:
+            - /url: /store/safeway/storefront
+            - generic [ref=e670]:
+              - img "Safeway logo" [ref=e674]
+              - generic [ref=e675]: Safeway
+              - generic [ref=e678]: 20 min
+        - listitem [ref=e679]:
+          - link "Costco logo Costco By 12:30pm" [ref=e682] [cursor=pointer]:
+            - /url: /store/costco/storefront
+            - generic [ref=e683]:
+              - img "Costco logo" [ref=e687]
+              - generic [ref=e688]: Costco
+              - generic [ref=e691]: By 12:30pm
+        - listitem [ref=e692]:
+          - link "Sprouts Farmers Market logo Sprouts Farmers Market No markups" [ref=e695] [cursor=pointer]:
+            - /url: /store/sprouts/storefront
+            - generic [ref=e696]:
+              - img "Sprouts Farmers Market logo" [ref=e700]
+              - generic [ref=e701]: Sprouts Farmers Market
+              - generic [ref=e702]: No markups
+        - listitem [ref=e703]:
+          - link "Costco Business Center logo $15 OFF Costco Business Center By 10:00am" [ref=e706] [cursor=pointer]:
+            - /url: /store/costco-business-center/storefront
+            - generic [ref=e707]:
+              - generic [ref=e708]:
+                - img "Costco Business Center logo" [ref=e711]
+                - generic [ref=e712]:
+                  - img [ref=e713]
+                  - generic [ref=e715]:
+                    - generic [ref=e716]: $15
+                    - generic [ref=e717]: "OFF"
+              - generic [ref=e718]: Costco Business Center
+              - generic [ref=e721]: By 10:00am
+        - listitem [ref=e722]:
+          - link "FoodsCo logo FoodsCo 20 min" [ref=e725] [cursor=pointer]:
+            - /url: /store/foodsco/storefront
+            - generic [ref=e726]:
+              - img "FoodsCo logo" [ref=e730]
+              - generic [ref=e731]: FoodsCo
+              - generic [ref=e734]: 20 min
+        - listitem [ref=e735]:
+          - link "Walmart logo Walmart No markups" [ref=e738] [cursor=pointer]:
+            - /url: /store/walmart/storefront
+            - generic [ref=e739]:
+              - img "Walmart logo" [ref=e743]
+              - generic [ref=e744]: Walmart
+              - generic [ref=e745]: No markups
+        - listitem [ref=e746]:
+          - link "Walgreens logo $10 OFF Walgreens No markups" [ref=e749] [cursor=pointer]:
+            - /url: /store/walgreens/storefront
+            - generic [ref=e750]:
+              - generic [ref=e751]:
+                - img "Walgreens logo" [ref=e754]
+                - generic [ref=e755]:
+                  - img [ref=e756]
+                  - generic [ref=e758]:
+                    - generic [ref=e759]: $10
+                    - generic [ref=e760]: "OFF"
+              - generic [ref=e761]: Walgreens
+              - generic [ref=e762]: No markups
+        - listitem [ref=e763]:
+          - link "Smart & Final logo $10 OFF Smart & Final 20 min" [ref=e766] [cursor=pointer]:
+            - /url: /store/smart-final/storefront
+            - generic [ref=e767]:
+              - generic [ref=e768]:
+                - img "Smart & Final logo" [ref=e771]
+                - generic [ref=e772]:
+                  - img [ref=e773]
+                  - generic [ref=e775]:
+                    - generic [ref=e776]: $10
+                    - generic [ref=e777]: "OFF"
+              - generic [ref=e778]: Smart & Final
+              - generic [ref=e781]: 20 min
+        - listitem [ref=e782]:
+          - link "CVS® logo $5 OFF CVS® No markups" [ref=e785] [cursor=pointer]:
+            - /url: /store/cvs/storefront
+            - generic [ref=e786]:
+              - generic [ref=e787]:
+                - img "CVS® logo" [ref=e790]
+                - generic [ref=e791]:
+                  - img [ref=e792]
+                  - generic [ref=e794]:
+                    - generic [ref=e795]: $5
+                    - generic [ref=e796]: "OFF"
+              - generic [ref=e797]: CVS®
+              - generic [ref=e798]: No markups
+      - generic [ref=e131]: Offers subject to terms and eligibility
+    - generic [ref=e133]:
+      - heading "All stores in San Francisco Bay Area" [level=2] [ref=e134]:
+        - text: All stores in
+        - button "San Francisco Bay Area" [ref=e135] [cursor=pointer]
+      - region "Retailer filters" [ref=e137]:
+        - generic [ref=e138]: Scroll to navigate through the filters
+        - list [ref=e139]:
+          - listitem "filter 1 of 12" [ref=e140]:
+            - button "All" [ref=e142] [cursor=pointer]:
+              - generic [ref=e143]: All
+          - listitem "filter 2 of 12" [ref=e144]:
+            - button "EBT" [ref=e146] [cursor=pointer]:
+              - generic [ref=e147]: EBT
+          - listitem "filter 3 of 12" [ref=e148]:
+            - button "Fastest" [ref=e150] [cursor=pointer]:
+              - generic [ref=e151]: Fastest
+          - listitem "filter 4 of 12" [ref=e152]:
+            - button "Offers" [ref=e154] [cursor=pointer]:
+              - generic [ref=e155]: Offers
+          - listitem "filter 5 of 12" [ref=e156]:
+            - button "Low prices" [ref=e158] [cursor=pointer]:
+              - generic [ref=e159]: Low prices
+          - listitem "filter 6 of 12" [ref=e160]:
+            - button "Grocery" [ref=e162] [cursor=pointer]:
+              - generic [ref=e163]: Grocery
+          - listitem "filter 7 of 12" [ref=e164]:
+            - button "Alcohol" [ref=e166] [cursor=pointer]:
+              - generic [ref=e167]: Alcohol
+          - listitem "filter 8 of 12" [ref=e168]:
+            - button "Pickup" [ref=e170] [cursor=pointer]:
+              - generic [ref=e171]: Pickup
+          - listitem "filter 9 of 12" [ref=e172]:
+            - button "No markups" [ref=e174] [cursor=pointer]:
+              - generic [ref=e175]: No markups
+          - listitem "filter 10 of 12" [ref=e176]:
+            - button "Convenience" [ref=e178] [cursor=pointer]:
+              - generic [ref=e179]: Convenience
+          - listitem "filter 11 of 12" [ref=e180]:
+            - button "Wholesale" [ref=e182] [cursor=pointer]:
+              - generic [ref=e183]: Wholesale
+          - listitem "filter 12 of 12" [ref=e184]:
+            - button "Retail" [ref=e186] [cursor=pointer]:
+              - generic [ref=e187]: Retail
+      - generic [ref=e188]:
+        - list [ref=e799]:
+          - listitem [ref=e800]:
+            - link "Raley's logo Raley's Delivery by 9:00pm $10 off Lots of deals EBT No markups" [ref=e803] [cursor=pointer]:
+              - /url: /store/raleys/storefront
+              - img "Raley's logo" [ref=e807]
+              - generic [ref=e808]:
+                - generic [ref=e809]: Raley's
+                - generic [ref=e812]:
+                  - img [ref=e813]
+                  - generic [ref=e815]: Delivery by 9:00pm
+                - list [ref=e816]:
+                  - listitem [ref=e817]: $10 off
+                  - listitem [ref=e818]: Lots of deals
+                  - listitem [ref=e819]: EBT
+                  - listitem [ref=e820]: No markups
+          - listitem [ref=e821]:
+            - link "Safeway logo Safeway Delivery by 8:40pm Pickup available •2256.6 mi Lots of deals EBT" [ref=e824] [cursor=pointer]:
+              - /url: /store/safeway/storefront
+              - img "Safeway logo" [ref=e828]
+              - generic [ref=e829]:
+                - generic [ref=e830]: Safeway
+                - generic [ref=e833]:
+                  - img [ref=e834]
+                  - generic [ref=e836]: Delivery by 8:40pm
+                - generic [ref=e837]:
+                  - generic [ref=e839]:
+                    - img [ref=e840]
+                    - generic [ref=e842]: Pickup available
+                  - generic [ref=e843]: •2256.6 mi
+                - list [ref=e844]:
+                  - listitem [ref=e845]: Lots of deals
+                  - listitem [ref=e846]: EBT
+          - listitem [ref=e847]:
+            - link "Costco logo Costco Delivery by 12:30pm tomorrow Bulk pricing Loyalty savings EBT" [ref=e850] [cursor=pointer]:
+              - /url: /store/costco/storefront
+              - img "Costco logo" [ref=e854]
+              - generic [ref=e855]:
+                - generic [ref=e856]: Costco
+                - generic [ref=e859]:
+                  - img [ref=e860]
+                  - generic [ref=e862]: Delivery by 12:30pm tomorrow
+                - list [ref=e863]:
+                  - listitem [ref=e864]: Bulk pricing
+                  - listitem [ref=e865]: Loyalty savings
+                  - listitem [ref=e866]: EBT
+          - listitem [ref=e867]:
+            - link "Sprouts Farmers Market logo Sprouts Farmers Market Delivery by 9:00pm Pickup ready in 45 min •2248.9 mi Lots of deals EBT No markups" [ref=e870] [cursor=pointer]:
+              - /url: /store/sprouts/storefront
+              - img "Sprouts Farmers Market logo" [ref=e874]
+              - generic [ref=e875]:
+                - generic [ref=e876]: Sprouts Farmers Market
+                - generic [ref=e879]:
+                  - img [ref=e880]
+                  - generic [ref=e882]: Delivery by 9:00pm
+                - generic [ref=e883]:
+                  - generic [ref=e885]:
+                    - img [ref=e886]
+                    - generic [ref=e888]: Pickup ready in 45 min
+                  - generic [ref=e889]: •2248.9 mi
+                - list [ref=e890]:
+                  - listitem [ref=e891]: Lots of deals
+                  - listitem [ref=e892]: EBT
+                  - listitem [ref=e893]: No markups
+          - listitem [ref=e894]:
+            - link "Target logo Target Delivery by 8:40pm" [ref=e897] [cursor=pointer]:
+              - /url: /store/target/storefront
+              - img "Target logo" [ref=e901]
+              - generic [ref=e902]:
+                - generic [ref=e903]: Target
+                - generic [ref=e906]:
+                  - img [ref=e907]
+                  - generic [ref=e909]: Delivery by 8:40pm
+          - listitem [ref=e910]:
+            - link "Costco Business Center logo Costco Business Center Delivery by 10:00am tomorrow $15 off Bulk pricing Loyalty savings EBT" [ref=e913] [cursor=pointer]:
+              - /url: /store/costco-business-center/storefront
+              - img "Costco Business Center logo" [ref=e917]
+              - generic [ref=e918]:
+                - generic [ref=e919]: Costco Business Center
+                - generic [ref=e922]:
+                  - img [ref=e923]
+                  - generic [ref=e925]: Delivery by 10:00am tomorrow
+                - list [ref=e926]:
+                  - listitem [ref=e927]: $15 off
+                  - listitem [ref=e928]: Bulk pricing
+                  - listitem [ref=e929]: Loyalty savings
+                  - listitem [ref=e930]: EBT
+          - listitem [ref=e931]:
+            - link "Rainbow Grocery logo Rainbow Grocery Delivery by 8:40pm" [ref=e934] [cursor=pointer]:
+              - /url: /store/rainbow-grocery/storefront
+              - img "Rainbow Grocery logo" [ref=e938]
+              - generic [ref=e939]:
+                - generic [ref=e940]: Rainbow Grocery
+                - generic [ref=e943]:
+                  - img [ref=e944]
+                  - generic [ref=e946]: Delivery by 8:40pm
+          - listitem [ref=e947]:
+            - link "Woodlands logo Woodlands Delivery by 8:40pm Pickup available •2257.1 mi" [ref=e950] [cursor=pointer]:
+              - /url: /store/woodlands/storefront
+              - img "Woodlands logo" [ref=e954]
+              - generic [ref=e955]:
+                - generic [ref=e956]: Woodlands
+                - generic [ref=e959]:
+                  - img [ref=e960]
+                  - generic [ref=e962]: Delivery by 8:40pm
+                - generic [ref=e963]:
+                  - generic [ref=e965]:
+                    - img [ref=e966]
+                    - generic [ref=e968]: Pickup available
+                  - generic [ref=e969]: •2257.1 mi
+          - listitem [ref=e970]:
+            - link "Mollie Stone's Markets logo Mollie Stone's Markets Delivery by 8:40pm" [ref=e973] [cursor=pointer]:
+              - /url: /store/mollie-stones/storefront
+              - img "Mollie Stone's Markets logo" [ref=e977]
+              - generic [ref=e978]:
+                - generic [ref=e979]: Mollie Stone's Markets
+                - generic [ref=e982]:
+                  - img [ref=e983]
+                  - generic [ref=e985]: Delivery by 8:40pm
+          - listitem [ref=e986]:
+            - link "Gus's Community Market logo Gus's Community Market Delivery by 8:40pm $10 off EBT" [ref=e989] [cursor=pointer]:
+              - /url: /store/gussmarket/storefront
+              - img "Gus's Community Market logo" [ref=e993]
+              - generic [ref=e994]:
+                - generic [ref=e995]: Gus's Community Market
+                - generic [ref=e998]:
+                  - img [ref=e999]
+                  - generic [ref=e1001]: Delivery by 8:40pm
+                - list [ref=e1002]:
+                  - listitem [ref=e1003]: $10 off
+                  - listitem [ref=e1004]: EBT
+          - listitem [ref=e1005]:
+            - link "FoodsCo logo FoodsCo Delivery by 8:40pm Loyalty savings Low prices EBT" [ref=e1008] [cursor=pointer]:
+              - /url: /store/foodsco/storefront
+              - img "FoodsCo logo" [ref=e1012]
+              - generic [ref=e1013]:
+                - generic [ref=e1014]: FoodsCo
+                - generic [ref=e1017]:
+                  - img [ref=e1018]
+                  - generic [ref=e1020]: Delivery by 8:40pm
+                - list [ref=e1021]:
+                  - listitem [ref=e1022]: Loyalty savings
+                  - listitem [ref=e1023]: Low prices
+                  - listitem [ref=e1024]: EBT
+          - listitem [ref=e1025]:
+            - link "HMart logo HMart Delivery by 9:15pm" [ref=e1028] [cursor=pointer]:
+              - /url: /store/hmart/storefront
+              - img "HMart logo" [ref=e1032]
+              - generic [ref=e1033]:
+                - generic [ref=e1034]: HMart
+                - generic [ref=e1037]:
+                  - img [ref=e1038]
+                  - generic [ref=e1040]: Delivery by 9:15pm
+        - button "Show all" [ref=e1041] [cursor=pointer]:
+          - generic [ref=e1042]: Show all
+    - generic [ref=e200]:
+      - generic [ref=e201]:
+        - link "Get the full Instacart experience" [ref=e202] [cursor=pointer]:
+          - /url: https://instacart.app.link/app_download?utm_term=4160022F-e4e6-40fc-9171-511eb21a3012
+          - heading "Get the full Instacart experience" [level=2] [ref=e204]
+        - generic [ref=e205]: Scan the QR code with your camera. First delivery is free.
+      - img "QR code" [ref=e206]
+    - generic [ref=e208]:
+      - generic [ref=e209]:
+        - heading "Grocery delivery you can count on" [level=2] [ref=e211]
+        - generic [ref=e212]:
+          - generic [ref=e216]:
+            - heading "Choose what you want" [level=3] [ref=e217]
+            - generic [ref=e218]: Select items from your favorite grocery stores at Instacart.com or in the app.
+          - generic [ref=e222]:
+            - heading "See real-time updates" [level=3] [ref=e223]
+            - generic [ref=e224]: Personal shoppers pick items with care. Chat as they shop and manage your order.
+          - generic [ref=e228]:
+            - heading "Get your items same-day" [level=3] [ref=e229]
+            - generic [ref=e230]: Pick a convenient time for you. Enjoy Instacart’s 100% quality guarantee on every order.
+      - generic [ref=e231]:
+        - heading "The largest online grocery marketplace in North America" [level=2] [ref=e232]
+        - generic [ref=e235]:
+          - generic [ref=e237]:
+            - heading "1 billion products" [level=3] [ref=e238]
+            - paragraph [ref=e239]: available to shop across the catalog
+          - generic [ref=e241]:
+            - heading "80,000 stores" [level=3] [ref=e242]
+            - paragraph [ref=e243]: from local grocers to chain stores
+          - generic [ref=e245]:
+            - heading "14,000 cities" [level=3] [ref=e246]
+            - paragraph [ref=e247]: served across the U.S. & Canada
+          - generic [ref=e249]:
+            - heading "Millions of orders" [level=3] [ref=e250]
+            - paragraph [ref=e251]: delivered or picked up yearly
+      - generic [ref=e253]:
+        - heading "Common questions" [level=2] [ref=e254]
+        - generic [ref=e255]:
+          - heading "How does Instacart delivery and curbside pickup work?" [level=3] [ref=e257]:
+            - button "How does Instacart delivery and curbside pickup work?" [ref=e258] [cursor=pointer]:
+              - text: How does Instacart delivery and curbside pickup work?
+              - img [ref=e260]
+          - heading "How much does Instacart cost?" [level=3] [ref=e263]:
+            - button "How much does Instacart cost?" [ref=e264] [cursor=pointer]:
+              - text: How much does Instacart cost?
+              - img [ref=e266]
+          - heading "Will I pay the same price on Instacart as I would in store?" [level=3] [ref=e269]:
+            - button "Will I pay the same price on Instacart as I would in store?" [ref=e270] [cursor=pointer]:
+              - text: Will I pay the same price on Instacart as I would in store?
+              - img [ref=e272]
+          - heading "What happens if something is out of stock and I need to give specific instructions?" [level=3] [ref=e275]:
+            - button "What happens if something is out of stock and I need to give specific instructions?" [ref=e276] [cursor=pointer]:
+              - text: What happens if something is out of stock and I need to give specific instructions?
+              - img [ref=e278]
+          - heading "What happens if there's an issue with my order?" [level=3] [ref=e281]:
+            - button "What happens if there's an issue with my order?" [ref=e282] [cursor=pointer]:
+              - text: What happens if there's an issue with my order?
+              - img [ref=e284]
+          - heading "Can I get contactless delivery with Instacart?" [level=3] [ref=e287]:
+            - button "Can I get contactless delivery with Instacart?" [ref=e288] [cursor=pointer]:
+              - text: Can I get contactless delivery with Instacart?
+              - img [ref=e290]
+  - contentinfo [ref=e292]:
+    - generic [ref=e295]:
+      - generic [ref=e296]:
+        - generic [ref=e298]:
+          - generic [ref=e299]:
+            - img "Instacart app logo" [ref=e301]
+            - heading "Get deliveries with Instacart" [level=2] [ref=e302]
+          - list [ref=e303]:
+            - listitem [ref=e304]:
+              - img "iOS App Store logo" [ref=e306]
+              - link "Instacart iOS App" [ref=e307] [cursor=pointer]:
+                - /url: https://itunes.apple.com/us/app/instacart/id545599256
+                - text: iOS
+            - listitem [ref=e308]:
+              - img "Android Play Store logo" [ref=e310]
+              - link "Instacart Android App" [ref=e311] [cursor=pointer]:
+                - /url: https://play.google.com/store/apps/details?id=com.instacart.client
+                - text: Android
+        - generic [ref=e312]:
+          - generic [ref=e314]:
+            - heading "Top departments" [level=2] [ref=e315]
+            - heading [level=2]
+            - list [ref=e317]:
+              - listitem [ref=e318]:
+                - link "Fresh Produce" [ref=e319] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/317-fresh-produce
+              - listitem [ref=e320]:
+                - link "Dairy Products" [ref=e321] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/1326-dairy
+              - listitem [ref=e322]:
+                - link "Meat" [ref=e323] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/1807-meat
+              - listitem [ref=e324]:
+                - link "Meat Alternatives" [ref=e325] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/831-meat-alternatives
+              - listitem [ref=e326]:
+                - link "Seafood" [ref=e327] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/1974-seafood
+              - listitem [ref=e328]:
+                - link "Pantry Food" [ref=e329] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/844-pantry
+              - listitem [ref=e330]:
+                - link "Baked Goods" [ref=e331] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/1300-baked-goods
+              - listitem [ref=e332]:
+                - link "View all departments" [ref=e333] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories
+              - listitem [ref=e334]:
+                - link "Gift Delivery Near Me" [ref=e335] [cursor=pointer]:
+                  - /url: https://www.instacart.com/gift-delivery
+              - listitem [ref=e336]:
+                - link "Flower Delivery Near Me" [ref=e337] [cursor=pointer]:
+                  - /url: https://www.instacart.com/flower-delivery
+              - listitem [ref=e338]:
+                - link "Asian Groceries" [ref=e339] [cursor=pointer]:
+                  - /url: https://www.instacart.com/asian-grocery-delivery
+              - listitem [ref=e340]:
+                - link "Business Office Food" [ref=e341] [cursor=pointer]:
+                  - /url: https://www.instacart.com/business/office-food
+              - listitem [ref=e342]:
+                - link "Coffee Shop Supplies" [ref=e343] [cursor=pointer]:
+                  - /url: https://www.instacart.com/business/coffee-shop-supplies
+              - listitem [ref=e344]:
+                - link "Sprouts Farmers Market Weekly Ad" [ref=e345] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/sprouts/flyer
+              - listitem [ref=e346]:
+                - link "Giant Eagle Weekly Ad" [ref=e347] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/giant-eagle/flyer
+          - generic [ref=e349]:
+            - heading "More departments" [level=2] [ref=e350]
+            - heading [level=2]
+            - list [ref=e352]:
+              - listitem [ref=e353]:
+                - link "Alcohol" [ref=e354] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/2-alcohol
+              - listitem [ref=e355]:
+                - link "Alcohol by location" [ref=e356] [cursor=pointer]:
+                  - /url: https://www.instacart.com/alcohol-delivery
+              - listitem [ref=e357]:
+                - link "Frozen Food" [ref=e358] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food/627-frozen-food
+              - listitem [ref=e359]:
+                - link "Beverages" [ref=e360] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/243-beverages
+              - listitem [ref=e361]:
+                - link "Organic Grocery" [ref=e362] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/316-food?nutrition=organic
+              - listitem [ref=e363]:
+                - link "Household Essentials" [ref=e364] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/1361-household-essentials
+              - listitem [ref=e365]:
+                - link "Office Supplies" [ref=e366] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/1764-office-supplies
+              - listitem [ref=e367]:
+                - link "Beauty Products" [ref=e368] [cursor=pointer]:
+                  - /url: https://www.instacart.com/categories/1602-personal-care/1484-beauty
+              - listitem [ref=e369]:
+                - link "Late Night Delivery" [ref=e370] [cursor=pointer]:
+                  - /url: https://www.instacart.com/late-night-delivery
+              - listitem [ref=e371]:
+                - link "Grocery Pickup Near Me" [ref=e372] [cursor=pointer]:
+                  - /url: https://www.instacart.com/grocery-pickup
+              - listitem [ref=e373]:
+                - link "Latin Groceries" [ref=e374] [cursor=pointer]:
+                  - /url: https://www.instacart.com/latin-grocery-delivery
+              - listitem [ref=e375]:
+                - link "Business Office snacks" [ref=e376] [cursor=pointer]:
+                  - /url: https://www.instacart.com/business/office-snacks
+              - listitem [ref=e377]:
+                - link "Safeway Weekly Ad" [ref=e378] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/safeway/flyer
+              - listitem [ref=e379]:
+                - link "Ingles Weekly Ad" [ref=e380] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/ingles/flyer
+              - listitem [ref=e381]:
+                - link "Food Lion Weekly Ad" [ref=e382] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/food-lion/flyer
+              - listitem [ref=e383]:
+                - link "Employee Gifting" [ref=e384] [cursor=pointer]:
+                  - /url: https://www.instacart.com/business/employee-gifting
+          - generic [ref=e386]:
+            - heading "Instacart programs" [level=2] [ref=e387]
+            - heading [level=2]
+            - list [ref=e389]:
+              - listitem [ref=e390]:
+                - link "Instacart+" [ref=e391] [cursor=pointer]:
+                  - /url: https://www.instacart.com/instacart-plus
+              - listitem [ref=e392]:
+                - link "Instacart Business" [ref=e393] [cursor=pointer]:
+                  - /url: https://www.instacart.com/business
+              - listitem [ref=e394]:
+                - link "EBT SNAP" [ref=e395] [cursor=pointer]:
+                  - /url: https://www.instacart.com/ebt-snap
+              - listitem [ref=e396]:
+                - link "Fresh Funds" [ref=e397] [cursor=pointer]:
+                  - /url: https://www.instacart.com/freshfunds
+              - listitem [ref=e398]:
+                - link "Promos & Coupons" [ref=e399] [cursor=pointer]:
+                  - /url: https://www.instacart.com/promos-and-coupons
+              - listitem [ref=e400]:
+                - link "Gift Cards" [ref=e401] [cursor=pointer]:
+                  - /url: https://www.instacart.com/p/gift-cards
+              - listitem [ref=e402]:
+                - link "Instacart Ads" [ref=e403] [cursor=pointer]:
+                  - /url: https://www.instacart.com/company/ads
+              - listitem [ref=e404]:
+                - link "Instacart Connect" [ref=e405] [cursor=pointer]:
+                  - /url: https://docs.instacart.com/connect?_gl=1*w131cr*_ga*MjExNTE0MzMzNS4xNjc1OTc2NjY5*_ga_VL5WVTXMWP*MTY4
+              - listitem [ref=e406]:
+                - link "Cookie Delivery Near Me" [ref=e407] [cursor=pointer]:
+                  - /url: https://www.instacart.com/cookie-delivery
+              - listitem [ref=e408]:
+                - link "Business Office Supplies" [ref=e409] [cursor=pointer]:
+                  - /url: https://www.instacart.com/business/office-supplies
+              - listitem [ref=e410]:
+                - link "Schnucks Weekly Ad" [ref=e411] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/schnucks/flyer
+              - listitem [ref=e412]:
+                - link "Instacart Weekly Ad" [ref=e413] [cursor=pointer]:
+                  - /url: https://www.instacart.com/p/how-to-save-money-on-groceries-instacart
+              - listitem [ref=e414]:
+                - link "Target Weekly Ad" [ref=e415] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/target/flyer
+              - listitem [ref=e416]:
+                - link "Costco Weekly Ad" [ref=e417] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/costco/flyer
+          - generic [ref=e419]:
+            - heading "Get to know us" [level=2] [ref=e420]
+            - heading [level=2]
+            - list [ref=e422]:
+              - listitem [ref=e423]:
+                - link "Press" [ref=e424] [cursor=pointer]:
+                  - /url: https://instacart.com/company/newsroom?_gl=1*w131cr*_ga*MjExNTE0MzMzNS4xNjc1OTc2NjY5*_ga_VL5WVTXMWP*
+              - listitem [ref=e425]:
+                - link "Careers" [ref=e426] [cursor=pointer]:
+                  - /url: https://instacart.careers/?_gl=1*w131cr*_ga*MjExNTE0MzMzNS4xNjc1OTc2NjY5*_ga_VL5WVTXMWP*MTY4MjcwNTI4
+              - listitem [ref=e427]:
+                - link "Blog" [ref=e428] [cursor=pointer]:
+                  - /url: https://instacart.com/company/blog?_gl=1*w131cr*_ga*MjExNTE0MzMzNS4xNjc1OTc2NjY5*_ga_VL5WVTXMWP*MTY4
+              - listitem [ref=e429]:
+                - link "Ideas & Guides" [ref=e430] [cursor=pointer]:
+                  - /url: https://instacart.com/company/ideas
+              - listitem [ref=e431]:
+                - link "Help" [ref=e432] [cursor=pointer]:
+                  - /url: https://www.instacart.com/help
+              - listitem [ref=e433]:
+                - link "Shop By Location" [ref=e434] [cursor=pointer]:
+                  - /url: https://www.instacart.com/grocery-delivery
+              - listitem [ref=e435]:
+                - link "Beauty Supplies Near Me" [ref=e436] [cursor=pointer]:
+                  - /url: https://www.instacart.com/beauty-supply-delivery
+              - listitem [ref=e437]:
+                - link "Pet Supplies Near Me" [ref=e438] [cursor=pointer]:
+                  - /url: https://www.instacart.com/pet-supplies-delivery
+              - listitem [ref=e439]:
+                - link "Convenience Store Near Me" [ref=e440] [cursor=pointer]:
+                  - /url: https://www.instacart.com/convenience-store-delivery
+              - listitem [ref=e441]:
+                - link "Cake Delivery Near Me" [ref=e442] [cursor=pointer]:
+                  - /url: https://www.instacart.com/cake-delivery
+              - listitem [ref=e443]:
+                - link "Caper Cart" [ref=e444] [cursor=pointer]:
+                  - /url: https://www.instacart.com/connected-stores/caper-cart
+              - listitem [ref=e445]:
+                - link "How Does Instacart Work" [ref=e446] [cursor=pointer]:
+                  - /url: https://www.instacart.com/p/how-does-instacart-work
+              - listitem [ref=e447]:
+                - link "Giant Weekly Ad" [ref=e448] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/giant/flyer
+              - listitem [ref=e449]:
+                - link "Albertsons Weekly Ad" [ref=e450] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/albertsons/flyer
+              - listitem [ref=e451]:
+                - link "ShopRite Weekly Ad" [ref=e452] [cursor=pointer]:
+                  - /url: https://www.instacart.com/store/shoprite/flyer
+      - generic [ref=e453]:
+        - generic [ref=e455]:
+          - generic [ref=e456]:
+            - img "Instacart Shopper app logo" [ref=e458]
+            - heading "Become a Shopper" [level=2] [ref=e459]
+          - list [ref=e460]:
+            - listitem [ref=e461]:
+              - img "iOS App Store logo" [ref=e463]
+              - link "Shoppers iOS App" [ref=e464] [cursor=pointer]:
+                - /url: https://itunes.apple.com/us/app/instacart-shopper/id1454056744
+                - text: iOS
+            - listitem [ref=e465]:
+              - img "Android Play Store logo" [ref=e467]
+              - link "Shoppers Android App" [ref=e468] [cursor=pointer]:
+                - /url: https://play.google.com/store/apps/details?id=com.instacart.shopper
+                - text: Android
+        - generic [ref=e469]:
+          - generic [ref=e471]:
+            - heading "Make money with us" [level=2] [ref=e472]
+            - heading [level=2]
+            - list [ref=e474]:
+              - listitem [ref=e475]:
+                - link "Shopper Opportunities" [ref=e476] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs
+              - listitem [ref=e477]:
+                - link "Become a Shopper" [ref=e478] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/role/full-service
+              - listitem [ref=e479]:
+                - link "In-Store Employee For Instacart" [ref=e480] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/role/in-store-shopper
+              - listitem [ref=e481]:
+                - link "Earnings" [ref=e482] [cursor=pointer]:
+                  - /url: https://www.instacart.com/company/shoppers/shopper-earnings
+          - generic [ref=e484]:
+            - heading "Top cities" [level=2] [ref=e485]
+            - heading [level=2]
+            - list [ref=e487]:
+              - listitem [ref=e488]:
+                - link "Los Angeles" [ref=e489] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-west-la
+              - listitem [ref=e490]:
+                - link "New York City" [ref=e491] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-lower-manhattan
+              - listitem [ref=e492]:
+                - link "Chicago" [ref=e493] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-chicago-il
+              - listitem [ref=e494]:
+                - link "Washington D.C." [ref=e495] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-dc
+              - listitem [ref=e496]:
+                - link "San Francisco" [ref=e497] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-san-francisco
+          - generic [ref=e499]:
+            - heading "More cities" [level=2] [ref=e500]
+            - heading [level=2]
+            - list [ref=e502]:
+              - listitem [ref=e503]:
+                - link "Miami" [ref=e504] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-miami
+              - listitem [ref=e505]:
+                - link "Las Vegas" [ref=e506] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-las-vegas-nv
+              - listitem [ref=e507]:
+                - link "Atlanta" [ref=e508] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-atlanta
+              - listitem [ref=e509]:
+                - link "Dallas" [ref=e510] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs-in-dallas
+              - listitem [ref=e511]:
+                - link "View all Job Locations" [ref=e512] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/instacart-jobs
+          - generic [ref=e514]:
+            - heading "Shopper help" [level=2] [ref=e515]
+            - heading [level=2]
+            - list [ref=e517]:
+              - listitem [ref=e518]:
+                - link "Help" [ref=e519] [cursor=pointer]:
+                  - /url: https://shoppers.instacart.com/help/help_center/login
+      - generic [ref=e520]:
+        - heading "Accessibility" [level=2] [ref=e522]
+        - generic [ref=e523]:
+          - generic [ref=e524]: Enable high contrast colors
+          - switch "Enable high contrast colors" [ref=e527]
+      - generic [ref=e528]:
+        - generic [ref=e529]:
+          - generic [ref=e531]:
+            - heading "Legal" [level=2] [ref=e533]
+            - list
+          - generic [ref=e534]:
+            - list [ref=e536]:
+              - listitem [ref=e537]:
+                - link "Terms of Use" [ref=e538] [cursor=pointer]:
+                  - /url: https://www.instacart.com/terms
+              - listitem [ref=e539]:
+                - link "Privacy Policy" [ref=e540] [cursor=pointer]:
+                  - /url: https://www.instacart.com/privacy
+              - listitem [ref=e541]:
+                - link "Your Privacy Choices" [ref=e542] [cursor=pointer]:
+                  - /url: /accounts/your-privacy-choices
+                  - img [ref=e543]
+                  - text: Your Privacy Choices
+            - list [ref=e554]:
+              - listitem [ref=e555]:
+                - link "facebook" [ref=e556] [cursor=pointer]:
+                  - /url: https://facebook.com/Instacart
+                  - img [ref=e557]
+              - listitem [ref=e560]:
+                - link "twitter" [ref=e561] [cursor=pointer]:
+                  - /url: https://twitter.com/instacart
+                  - img [ref=e562]
+              - listitem [ref=e564]:
+                - link "instagram" [ref=e565] [cursor=pointer]:
+                  - /url: https://instagram.com/instacart
+                  - img [ref=e566]
+              - listitem [ref=e568]:
+                - link "pinterest" [ref=e569] [cursor=pointer]:
+                  - /url: https://pinterest.com/instacart
+                  - img [ref=e570]
+        - generic [ref=e573]:
+          - text: "Apple and the Apple logo are trademarks of Apple Inc., registered in the U.S. and other countries. App Store is a service mark of Apple Inc. Android, Google Play and the Google Play logo are trademarks of Google LLC. Terms for $0 delivery fee (First Order): Offer valid on first order made through Instacart with a minimum basket size as set forth in the offer promotion. Offer expires on the date indicated in the user’s account settings or displayed in the offer promotion."
+          - link "View more details here." [ref=e574] [cursor=pointer]:
+            - /url: /help/section/360007996832/360040705992

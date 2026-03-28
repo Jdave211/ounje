@@ -65,7 +65,7 @@ private struct RemoteStateBootstrapView: View {
                     .scaleEffect(1.2)
 
                 Text("Loading your setup")
-                    .font(.system(size: 22, weight: .black, design: .rounded))
+                    .biroHeaderFont(22)
                     .foregroundStyle(.white)
 
                 Text("We’re syncing your profile from Supabase so we can drop you into the right place.")
@@ -128,12 +128,12 @@ private struct AuthenticationView: View {
 
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Meals that plan,\nsource, and restock\nthemselves.")
-                            .font(.system(size: 38, weight: .black, design: .rounded))
+                            .biroHeaderFont(38)
                             .foregroundStyle(.white)
                             .fixedSize(horizontal: false, vertical: true)
 
                         Text("meal prepping for gen-z's")
-                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .biroHeaderFont(15)
                             .tracking(0.8)
                             .foregroundStyle(OunjePalette.accent)
                     }
@@ -829,13 +829,13 @@ private struct FirstLoginOnboardingView: View {
                                                 HStack(spacing: 8) {
                                                     ProgressView().tint(.black)
                                                     Text("Entering")
-                                                        .font(.system(size: 15, weight: .black, design: .rounded))
+                                                        .biroHeaderFont(15)
                                                 }
                                                 .frame(minWidth: 140, minHeight: 54)
                                             } else if currentStep == .summary {
                                                 HStack(spacing: 8) {
                                                     Text("Enter app")
-                                                        .font(.system(size: 15, weight: .black, design: .rounded))
+                                                        .biroHeaderFont(15)
                                                     Image(systemName: "checkmark")
                                                         .font(.system(size: 15, weight: .black))
                                                 }
@@ -951,7 +951,7 @@ private struct FirstLoginOnboardingView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Build your prep profile")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .biroHeaderFont(24)
                     .foregroundStyle(.white)
                 Spacer()
             }
@@ -1029,7 +1029,7 @@ private struct FirstLoginOnboardingView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("What's your name?")
-                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .biroHeaderFont(32)
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1309,13 +1309,13 @@ private struct FirstLoginOnboardingView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Target budget")
-                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .biroHeaderFont(11)
                         .tracking(0.8)
                         .foregroundStyle(OunjePalette.secondaryText)
 
                     HStack(alignment: .lastTextBaseline, spacing: 8) {
                         Text(budgetPerCycle.asCurrency)
-                            .font(.system(size: 34, weight: .black, design: .rounded))
+                            .biroHeaderFont(34)
                             .foregroundStyle(.white)
 
                         Text(budgetWindow == .weekly ? "per week" : "per month")
@@ -2010,34 +2010,123 @@ private struct FirstLoginOnboardingView: View {
 private final class SavedRecipesStore: ObservableObject {
     @Published private(set) var savedRecipes: [DiscoverRecipeCardData] = []
 
-    private let key = "ounje-saved-recipes-v1"
+    private let legacyKey = "ounje-saved-recipes-v1"
+    private let keyPrefix = "ounje-saved-recipes-v2"
+    private var activeUserID: String?
 
-    init() { load() }
+    init() {
+        load(for: nil)
+    }
 
     func isSaved(_ recipe: DiscoverRecipeCardData) -> Bool {
         savedRecipes.contains { $0.id == recipe.id }
     }
 
+    func bootstrap(authSession: AuthSession?) async {
+        let resolvedUserID = authSession?.userID
+
+        if activeUserID != resolvedUserID {
+            activeUserID = resolvedUserID
+            load(for: resolvedUserID)
+        }
+
+        guard let authSession else { return }
+
+        do {
+            let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(userID: authSession.userID)
+            let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
+
+            if mergedRecipes != savedRecipes {
+                savedRecipes = mergedRecipes
+                persist()
+            }
+
+            let remoteIDs = Set(remoteRecipes.map(\.id))
+            let unsyncedLocalRecipes = mergedRecipes.filter { !remoteIDs.contains($0.id) }
+            if !unsyncedLocalRecipes.isEmpty {
+                try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
+                    userID: authSession.userID,
+                    recipes: unsyncedLocalRecipes
+                )
+            }
+        } catch {
+            // Keep local saves available even when network sync fails.
+        }
+    }
+
     func toggle(_ recipe: DiscoverRecipeCardData) {
-        if isSaved(recipe) {
+        let shouldSave = !isSaved(recipe)
+
+        if shouldSave {
             savedRecipes.removeAll { $0.id == recipe.id }
-        } else {
             savedRecipes.insert(recipe, at: 0)
+        } else {
+            savedRecipes.removeAll { $0.id == recipe.id }
         }
         persist()
+
+        guard let userID = activeUserID else { return }
+
+        Task(priority: .utility) {
+            do {
+                if shouldSave {
+                    try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
+                        userID: userID,
+                        recipes: [recipe]
+                    )
+                } else {
+                    try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
+                        userID: userID,
+                        recipeID: recipe.id
+                    )
+                }
+            } catch {
+                // Local persistence remains the source of truth when sync fails.
+            }
+        }
     }
 
     private func persist() {
         if let data = try? JSONEncoder().encode(savedRecipes) {
-            UserDefaults.standard.set(data, forKey: key)
+            UserDefaults.standard.set(data, forKey: storageKey(for: activeUserID))
         }
     }
 
-    private func load() {
-        guard let data = UserDefaults.standard.data(forKey: key),
+    private func load(for userID: String?) {
+        let defaults = UserDefaults.standard
+        let primaryKey = storageKey(for: userID)
+        let fallbackKey = userID == nil ? legacyKey : nil
+
+        let data = defaults.data(forKey: primaryKey)
+            ?? fallbackKey.flatMap { defaults.data(forKey: $0) }
+
+        guard let data,
               let decoded = try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: data)
-        else { return }
-        savedRecipes = decoded
+        else {
+            savedRecipes = []
+            return
+        }
+
+        savedRecipes = deduplicated(decoded)
+
+        if defaults.data(forKey: primaryKey) == nil {
+            defaults.set(data, forKey: primaryKey)
+        }
+    }
+
+    private func storageKey(for userID: String?) -> String {
+        "\(keyPrefix)-\(userID ?? "guest")"
+    }
+
+    private func merge(local: [DiscoverRecipeCardData], remote: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
+        deduplicated(local + remote)
+    }
+
+    private func deduplicated(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
+        var seen = Set<String>()
+        return recipes.filter { recipe in
+            seen.insert(recipe.id).inserted
+        }
     }
 }
 
@@ -2048,7 +2137,7 @@ private struct MealPlannerShellView: View {
     @State private var discoverSearchText = ""
     @State private var cookbookSearchText = ""
     @State private var cartSearchText = ""
-    @State private var isCookbookComposerPresented = false
+    @State private var presentedRecipe: PresentedRecipeDetail?
 
     var body: some View {
         GeometryReader { proxy in
@@ -2065,17 +2154,22 @@ private struct MealPlannerShellView: View {
                     selectedTab: $selectedTab,
                     searchText: activeSearchBinding,
                     searchPlaceholder: activeSearchPlaceholder,
-                    showsComposer: selectedTab == .cookbook,
-                    safeAreaBottom: proxy.safeAreaInsets.bottom,
-                    onComposerTap: { isCookbookComposerPresented = true }
+                    safeAreaBottom: proxy.safeAreaInsets.bottom
                 )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .sheet(isPresented: $isCookbookComposerPresented) {
-            DiscoverComposerSheet()
-                .presentationDetents([.fraction(0.5)])
-                .presentationDragIndicator(.hidden)
+        .task(id: store.authSession?.userID ?? "signed-out") {
+            await savedStore.bootstrap(authSession: store.authSession)
+        }
+        .fullScreenCover(item: $presentedRecipe) { presentedRecipe in
+            RecipeDetailExperienceView(
+                presentedRecipe: presentedRecipe,
+                onOpenCart: {
+                    selectedTab = .cart
+                }
+            )
+            .environmentObject(savedStore)
         }
     }
 
@@ -2083,11 +2177,28 @@ private struct MealPlannerShellView: View {
     private var tabContent: some View {
         switch selectedTab {
         case .prep:
-            PrepTabView(selectedTab: $selectedTab)
+            PrepTabView(
+                selectedTab: $selectedTab,
+                onSelectRecipe: { plannedRecipe in
+                    presentedRecipe = PresentedRecipeDetail(plannedRecipe: plannedRecipe)
+                }
+            )
         case .discover:
-            DiscoverTabView(selectedTab: $selectedTab, searchText: $discoverSearchText)
+            DiscoverTabView(
+                selectedTab: $selectedTab,
+                searchText: $discoverSearchText,
+                onSelectRecipe: { recipe in
+                    presentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
+                }
+            )
         case .cookbook:
-            CookbookTabView(searchText: $cookbookSearchText)
+            CookbookTabView(
+                selectedTab: $selectedTab,
+                searchText: $cookbookSearchText,
+                onSelectRecipe: { recipe in
+                    presentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
+                }
+            )
         case .cart:
             CartTabView(searchText: $cartSearchText)
         case .profile:
@@ -2130,7 +2241,9 @@ private struct DiscoverTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @Binding var selectedTab: AppTab
     @Binding var searchText: String
+    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
     @StateObject private var viewModel = DiscoverRecipesViewModel()
+    @StateObject private var environmentModel = DiscoverEnvironmentViewModel()
 
     private let recipeColumns = [
         GridItem(.flexible(), spacing: 16, alignment: .top),
@@ -2138,23 +2251,11 @@ private struct DiscoverTabView: View {
     ]
 
     private var filters: [String] {
-        var values = ["All"]
-        for value in viewModel.recipes.compactMap(\.filterChipLabel) where !values.contains(value) {
-            values.append(value)
-        }
-        return Array(values.prefix(6))
+        viewModel.filters
     }
 
     private var filteredRecipes: [DiscoverRecipeCardData] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return viewModel.recipes.filter { recipe in
-            let matchesFilter = viewModel.selectedFilter == "All" || recipe.filterChipLabel == viewModel.selectedFilter
-            let matchesQuery = query.isEmpty ||
-                recipe.title.lowercased().contains(query) ||
-                recipe.authorLabel.lowercased().contains(query) ||
-                recipe.filterLabel.lowercased().contains(query)
-            return matchesFilter && matchesQuery
-        }
+        viewModel.recipes
     }
 
     private var greetingLine: String {
@@ -2220,18 +2321,33 @@ private struct DiscoverTabView: View {
         Array(filteredRecipes.prefix(12))
     }
 
+    private var normalizedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearching: Bool {
+        !normalizedSearchText.isEmpty
+    }
+
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     // Compact header
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Discover")
-                                .font(.system(size: 32, weight: .black, design: .rounded))
-                            .foregroundStyle(OunjePalette.primaryText)
+                        BiroScriptDisplayText("Discover", size: 31, color: OunjePalette.primaryText)
                         Text("Find your next meal")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(OunjePalette.secondaryText)
+                    }
+
+                    CompactDiscoverSearchField(
+                        text: $searchText,
+                        isLoading: viewModel.isLoading && isSearching
+                    )
+
+                    if viewModel.isLoading && isSearching && !viewModel.recipes.isEmpty {
+                        DiscoverInlineLoadingState()
                     }
 
                     // Category chips
@@ -2256,7 +2372,7 @@ private struct DiscoverTabView: View {
                         BubblySurfaceCard(accent: Color(hex: "FF8E8E")) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Recipe feed unavailable")
-                                    .font(.system(size: 18, weight: .black, design: .rounded))
+                                    .biroHeaderFont(18)
                                     .foregroundStyle(OunjePalette.primaryText)
                                 Text(errorMessage)
                                     .font(.system(size: 14, weight: .medium))
@@ -2281,7 +2397,9 @@ private struct DiscoverTabView: View {
                     } else {
                         LazyVGrid(columns: recipeColumns, spacing: 16) {
                             ForEach(visibleRecipes) { recipe in
-                                DiscoverRemoteRecipeCard(recipe: recipe)
+                                DiscoverRemoteRecipeCard(recipe: recipe) {
+                                    onSelectRecipe(recipe)
+                                }
                             }
                         }
                     }
@@ -2292,16 +2410,265 @@ private struct DiscoverTabView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .task {
-            await viewModel.loadIfNeeded()
+        .task(id: discoverRankingKey) {
+            await viewModel.loadIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
+        }
+        .task(id: environmentRefreshKey) {
+            await environmentModel.refresh(profile: store.profile)
+        }
+    }
+
+    private var discoverRankingKey: String {
+        let cuisines = store.profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
+        let foods = store.profile?.favoriteFoods.joined(separator: ",") ?? ""
+        let flavors = store.profile?.favoriteFlavors.joined(separator: ",") ?? ""
+        let dietary = store.profile?.dietaryPatterns.joined(separator: ",") ?? ""
+        let goals = store.profile?.mealPrepGoals.joined(separator: ",") ?? ""
+        let query = normalizedSearchText
+        return "\(cuisines)|\(foods)|\(flavors)|\(dietary)|\(goals)|\(viewModel.selectedFilter)|\(query)|\(environmentModel.feedContext.cacheKey)"
+    }
+
+    private var environmentRefreshKey: String {
+        let address = store.profile?.deliveryAddress
+        return [
+            address?.city ?? "",
+            address?.region ?? "",
+            address?.postalCode ?? "",
+            Date.now.formatted(.dateTime.year().month().day().hour())
+        ].joined(separator: "|")
+    }
+}
+
+private struct DiscoverInlineLoadingState: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(OunjePalette.softCream)
+
+            Text("Ranking results for your prompt…")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
+private struct CompactDiscoverSearchField: View {
+    @Binding var text: String
+    let isLoading: Bool
+
+    @FocusState private var isFocused: Bool
+    @State private var animatedPlaceholder = ""
+    @State private var animationTask: Task<Void, Never>?
+
+    private let placeholderOptions = [
+        "soups to fix a flu",
+        "summer desserts for a cookout",
+        "spicy food for a Nigerian potluck",
+        "high-protein lunch meal prep",
+        "comfort food under 30 minutes",
+        "easy dinners for a rainy night",
+        "crispy salmon rice bowls",
+        "healthy snacks that actually taste good",
+        "make-ahead brunch for friends",
+        "cheap dinners with a lot of flavor",
+        "something fresh with shrimp",
+        "weeknight pasta that feels fancy"
+    ]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            ZStack(alignment: .leading) {
+                if text.isEmpty && !animatedPlaceholder.isEmpty {
+                    Text(animatedPlaceholder)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
+                TextField("", text: $text)
+                    .textInputAutocapitalization(.sentences)
+                    .disableAutocorrection(true)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .focused($isFocused)
+            }
+
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(OunjePalette.softCream)
+            } else if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.75))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+        .onAppear {
+            startAnimationLoop()
+        }
+        .onDisappear {
+            animationTask?.cancel()
+        }
+        .onChange(of: text) { newValue in
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                startAnimationLoop()
+            } else {
+                animationTask?.cancel()
+            }
+        }
+        .onChange(of: isFocused) { focused in
+            if focused {
+                animationTask?.cancel()
+            } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                startAnimationLoop()
+            }
+        }
+    }
+
+    private func startAnimationLoop() {
+        guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !placeholderOptions.isEmpty else { return }
+
+        animationTask?.cancel()
+        animationTask = Task {
+            var index = 0
+
+            while !Task.isCancelled {
+                let example = placeholderOptions[index % placeholderOptions.count]
+
+                await MainActor.run {
+                    animatedPlaceholder = ""
+                }
+
+                for character in example {
+                    guard !Task.isCancelled else { return }
+                    guard await shouldKeepAnimating else { return }
+
+                    await MainActor.run {
+                        animatedPlaceholder.append(character)
+                    }
+                    try? await Task.sleep(nanoseconds: 65_000_000)
+                }
+
+                try? await Task.sleep(nanoseconds: 900_000_000)
+
+                while !(await MainActor.run { animatedPlaceholder.isEmpty }) {
+                    guard !Task.isCancelled else { return }
+                    guard await shouldKeepAnimating else { return }
+
+                    await MainActor.run {
+                        _ = animatedPlaceholder.popLast()
+                    }
+                    try? await Task.sleep(nanoseconds: 38_000_000)
+                }
+
+                try? await Task.sleep(nanoseconds: 220_000_000)
+                index += 1
+            }
+        }
+    }
+
+    private var shouldKeepAnimating: Bool {
+        get async {
+            await MainActor.run {
+                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isFocused
+            }
+        }
+    }
+}
+
+private enum CookbookSection: String, CaseIterable, Identifiable {
+    case prepped
+    case saved
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .saved: return "Saved"
+        case .prepped: return "Prepped"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .saved:
+            return "Recipes you’ve kept for later."
+        case .prepped:
+            return "Meals you’re cooking next or already ran."
+        }
+    }
+}
+
+private enum CookbookComposerContext {
+    case prepped
+    case saved
+
+    var title: String {
+        switch self {
+        case .prepped: return "Add to prep"
+        case .saved: return "Add to saved"
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .prepped:
+            return "Import a recipe using a link, photo, video, or describe what you want in the next prep cycle."
+        case .saved:
+            return "Import a recipe using a link, photo, video, or describe what you want to save to your cookbook."
+        }
+    }
+
+    var primaryActionTitle: String {
+        switch self {
+        case .prepped: return "Add to next prep"
+        case .saved: return "Save to cookbook"
         }
     }
 }
 
 private struct CookbookTabView: View {
+    @Binding var selectedTab: AppTab
     @Binding var searchText: String
+    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
+
     @EnvironmentObject private var savedStore: SavedRecipesStore
+    @EnvironmentObject private var store: MealPlanningAppStore
+
+    @State private var selectedSection: CookbookSection = .prepped
     @State private var selectedFilter: String = "All"
+    @State private var isComposerPresented = false
+    @State private var composerContext: CookbookComposerContext = .saved
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 14, alignment: .top),
+        GridItem(.flexible(), spacing: 14, alignment: .top)
+    ]
 
     private var filters: [String] {
         var values = ["All"]
@@ -2323,119 +2690,194 @@ private struct CookbookTabView: View {
         }
     }
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 14, alignment: .top),
-        GridItem(.flexible(), spacing: 14, alignment: .top)
-    ]
+    private var upcomingMeals: [CookbookMealEntry] {
+        (store.latestPlan?.recipes ?? []).map {
+            CookbookMealEntry(
+                id: "upcoming-\($0.recipe.id)",
+                title: $0.recipe.title,
+                detail: "\($0.recipe.prepMinutes) mins • Next prep",
+                status: "Next",
+                tint: OunjePalette.accent
+            )
+        }
+    }
+
+    private var previousMeals: [CookbookMealEntry] {
+        let latestID = store.latestPlan?.id
+        let historicalPlans = store.planHistory.filter { $0.id != latestID }
+        let entries = historicalPlans.flatMap { plan in
+            plan.recipes.map {
+                CookbookMealEntry(
+                    id: "\(plan.id.uuidString)-\($0.recipe.id)",
+                    title: $0.recipe.title,
+                    detail: "\(plan.periodStart.formatted(.dateTime.month(.abbreviated).day())) • \($0.recipe.prepMinutes) mins",
+                    status: "Cooked",
+                    tint: OunjePalette.softCream
+                )
+            }
+        }
+        var seen = Set<String>()
+        return entries.filter { seen.insert($0.title).inserted }
+    }
+
+    private var sectionTabs: [CookbookSectionTabItem] {
+        [
+            CookbookSectionTabItem(section: .prepped),
+            CookbookSectionTabItem(section: .saved)
+        ]
+    }
 
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack(alignment: .center) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Cookbook")
-                                .font(.system(size: 32, weight: .black, design: .rounded))
-                                .foregroundStyle(OunjePalette.primaryText)
-                            Text("Your saved recipes")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                        }
-
-                        Spacer(minLength: 16)
-
-                        Button {
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "crown")
-                                    .font(.system(size: 13, weight: .bold))
-                                Text("Try Pro")
-                                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                            }
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 12)
-                        }
-                        .buttonStyle(DiscoverTopActionButtonStyle())
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        BiroScriptDisplayText("Cookbook", size: 30, color: OunjePalette.primaryText)
+                        Text(selectedSection.subtitle)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.92)
                     }
 
-                        HStack(spacing: 14) {
-                            FilterTagButton(
-                                title: "All",
-                                isSelected: selectedFilter == "All",
-                            accent: OunjePalette.accent
-                            ) {
-                                selectedFilter = "All"
-                            }
+                    Spacer(minLength: 16)
 
-                            Button {
-                            } label: {
-                            HStack(spacing: 6) {
-                                    Image(systemName: "plus")
-                                    .font(.system(size: 14, weight: .bold))
-                                Text("Add collection")
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            }
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .stroke(OunjePalette.stroke, lineWidth: 1)
-                            )
-                            }
-                            .buttonStyle(.plain)
+                    Button {
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "crown")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Try Pro")
+                                .biroHeaderFont(15)
                         }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+                    }
+                    .buttonStyle(DiscoverTopActionButtonStyle())
+                }
 
-                        InlineSearchBar(text: $searchText, placeholder: "Search recipes")
+                CookbookSectionTabs(
+                    selection: $selectedSection,
+                    tabs: sectionTabs
+                )
 
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 10) {
-                                ForEach(filters, id: \.self) { filter in
-                                    FilterTagButton(
-                                        title: filter,
-                                        isSelected: selectedFilter == filter,
-                                    accent: OunjePalette.accent
-                                    ) {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
-                                            selectedFilter = filter
-                                        }
-                                    }
+                switch selectedSection {
+                case .prepped:
+                    preppedSection
+                case .saved:
+                    savedSection
+                }
+            }
+            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+            .padding(.top, 14)
+            .padding(.bottom, 24)
+        }
+        .scrollIndicators(.hidden)
+        .background(OunjePalette.background.ignoresSafeArea())
+        .sheet(isPresented: $isComposerPresented) {
+            DiscoverComposerSheet(context: composerContext)
+                .presentationDetents([.fraction(0.5)])
+                .presentationDragIndicator(.hidden)
+        }
+    }
+
+    @ViewBuilder
+    private var savedSection: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Spacer()
+
+                InlineAddButton(title: "Add") {
+                    composerContext = .saved
+                    isComposerPresented = true
+                }
+            }
+
+            InlineSearchBar(text: $searchText, placeholder: "Search saved recipes")
+
+            if filters.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(filters, id: \.self) { filter in
+                            FilterTagButton(
+                                title: filter,
+                                isSelected: selectedFilter == filter,
+                                accent: OunjePalette.accent
+                            ) {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
+                                    selectedFilter = filter
                                 }
                             }
-                            .padding(.trailing, 4)
                         }
+                    }
+                    .padding(.trailing, 4)
+                }
+            }
 
-                    if filteredRecipes.isEmpty {
-                            RecipesEmptyState(
-                            title: savedStore.savedRecipes.isEmpty
-                                ? "No saved recipes yet"
-                                : "No matches found",
-                            detail: savedStore.savedRecipes.isEmpty
-                                ? "Tap the bookmark icon on any recipe in Discover to save it here."
-                                : "Try a different search or category.",
-                            symbolName: "bookmark"
-                            )
-                        } else {
-                            LazyVGrid(columns: columns, spacing: 14) {
-                                ForEach(filteredRecipes) { recipe in
-                                    DiscoverRemoteRecipeCard(recipe: recipe)
-                            }
+            if filteredRecipes.isEmpty {
+                CookbookSavedEmptyState(
+                    hasSavedRecipes: !savedStore.savedRecipes.isEmpty,
+                    onBrowseDiscover: { selectedTab = .discover },
+                    onAddRecipe: {
+                        composerContext = .saved
+                        isComposerPresented = true
+                    }
+                )
+            } else {
+                LazyVGrid(columns: columns, spacing: 14) {
+                    ForEach(filteredRecipes) { recipe in
+                        DiscoverRemoteRecipeCard(recipe: recipe) {
+                            onSelectRecipe(recipe)
                         }
                     }
                 }
-                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
             }
-            .scrollIndicators(.hidden)
         }
-        .background(OunjePalette.background.ignoresSafeArea())
+    }
+
+    @ViewBuilder
+    private var preppedSection: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Spacer()
+
+                InlineAddButton(title: "Add") {
+                    composerContext = .prepped
+                    isComposerPresented = true
+                }
+            }
+
+            if upcomingMeals.isEmpty && previousMeals.isEmpty {
+                RecipesEmptyState(
+                    title: "No prep meals yet",
+                    detail: "Once Ounje builds a cycle, the meals you’re cooking next and the ones you’ve already run will live here.",
+                    symbolName: "fork.knife.circle"
+                )
+            } else {
+                if !upcomingMeals.isEmpty {
+                    CookbookMealsGroup(
+                        title: "Next prep cycle",
+                        detail: store.nextRunDate?.formatted(.dateTime.weekday(.wide).month(.wide).day()) ?? "Coming up next",
+                        entries: upcomingMeals
+                    )
+                }
+
+                if !previousMeals.isEmpty {
+                    CookbookMealsGroup(
+                        title: "Previously prepped",
+                        detail: "Meals you’ve already run through Ounje.",
+                        entries: Array(previousMeals.prefix(8))
+                    )
+                }
+            }
+        }
     }
 }
 
 private struct PrepTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @Binding var selectedTab: AppTab
+    let onSelectRecipe: (PlannedRecipe) -> Void
 
     var body: some View {
         GeometryReader { proxy in
@@ -2443,54 +2885,17 @@ private struct PrepTabView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     PrepTrackerCard(store: store)
 
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         Text("Meals in this prep")
-                                .font(.system(size: 26, weight: .black, design: .rounded))
+                            .biroHeaderFont(26)
                             .foregroundStyle(OunjePalette.primaryText)
 
-                        MealsRecipeSlot(title: "Breakfast", recipe: recipeForSlot(0))
-                        MealsRecipeSlot(title: "Lunch", recipe: recipeForSlot(1))
-                        MealsRecipeSlot(title: "Dinner", recipe: recipeForSlot(2))
+                        MealsPrepCarousel(
+                            plannedRecipes: store.latestPlan?.recipes ?? [],
+                            onSelectRecipe: onSelectRecipe
+                        )
                     }
                     .padding(.top, 4)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Shopping list")
-                            .font(.system(size: 26, weight: .black, design: .rounded))
-                            .foregroundStyle(OunjePalette.primaryText)
-
-                        if (store.latestPlan?.groceryItems.isEmpty ?? true) {
-                            RecipesEmptyState(
-                                title: "No current cart",
-                                detail: "Generate a fresh prep and Ounje will attach a grocery list here.",
-                                symbolName: "cart"
-                            )
-                        } else {
-                            ForEach(Array((store.latestPlan?.groceryItems ?? []).prefix(4))) { item in
-                                ShoppingListRow(item: item)
-                            }
-                        }
-
-                        VStack(spacing: 10) {
-                        AddActionRow(
-                                title: "Open cart",
-                                detail: "See the full ingredient list and provider history.",
-                                symbolName: "cart",
-                            accent: Color(hex: "56D7C8")
-                        ) {
-                                selectedTab = .cart
-                        }
-
-                        AddActionRow(
-                                title: "Open cookbook",
-                                detail: "Browse recipes in your saved feed.",
-                                symbolName: "fork.knife",
-                                accent: Color(hex: "7A7DFF")
-                            ) {
-                                selectedTab = .cookbook
-                            }
-                        }
-                    }
                 }
                 .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
                 .padding(.top, 14)
@@ -2507,73 +2912,176 @@ private struct PrepTabView: View {
     }
 }
 
+private struct MealsPrepCarousel: View {
+    let plannedRecipes: [PlannedRecipe]
+    let onSelectRecipe: (PlannedRecipe) -> Void
+
+    var body: some View {
+        if plannedRecipes.isEmpty {
+            RecipesEmptyState(
+                title: "No meals in this prep yet",
+                detail: "Generate a fresh cycle and your scheduled meals will show up here.",
+                symbolName: "fork.knife.circle"
+            )
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(plannedRecipes) { plannedRecipe in
+                        MealDeckCard(
+                            plannedRecipe: plannedRecipe,
+                            onSelect: { onSelectRecipe(plannedRecipe) }
+                        )
+                            .frame(width: 232)
+                    }
+                }
+                .padding(.trailing, 4)
+            }
+        }
+    }
+}
+
+private struct MealDeckCard: View {
+    let plannedRecipe: PlannedRecipe
+    let onSelect: () -> Void
+
+    var body: some View {
+        DiscoverRemoteRecipeCard(recipe: DiscoverRecipeCardData(preppedRecipe: plannedRecipe), onSelect: onSelect)
+    }
+}
+
 private struct ProfileTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
+    @State private var isAddressSheetPresented = false
+    @State private var isFoodProfilePresented = false
+    @State private var isCadencePickerPresented = false
+    @State private var isAutonomyPickerPresented = false
+    @StateObject private var addressAutocomplete = AddressAutocompleteViewModel()
+
+    @State private var addressLine1 = ""
+    @State private var addressLine2 = ""
+    @State private var city = ""
+    @State private var region = ""
+    @State private var postalCode = ""
+    @State private var deliveryNotes = ""
+
+    private var profile: UserProfile? {
+        store.profile
+    }
+
+    private var addressSummary: String {
+        [addressLine1, city, region, postalCode]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
 
     var body: some View {
         GeometryReader { proxy in
-                    ScrollView {
+            ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack(alignment: .center) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Profile")
-                                .font(.system(size: 32, weight: .black, design: .rounded))
-                                .foregroundStyle(OunjePalette.primaryText)
-                            Text("Your prep identity, defaults, and account details")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                        }
+                    if let profile {
+                        VStack(alignment: .leading, spacing: 16) {
+                            BiroScriptDisplayText("Profile", size: 29, color: OunjePalette.primaryText)
 
-                        Spacer(minLength: 16)
+                            BubblySurfaceCard(accent: OunjePalette.accent) {
+                                VStack(alignment: .leading, spacing: 14) {
+                                    HStack(spacing: 12) {
+                                        ZStack {
+                                            Circle()
+                                                .fill(OunjePalette.accent.opacity(0.18))
+                                            Image(systemName: "person.crop.circle.fill")
+                                                .font(.system(size: 30, weight: .semibold))
+                                                .foregroundStyle(OunjePalette.softCream)
+                                        }
+                                        .frame(width: 54, height: 54)
 
-                        Button {
-                            store.signOutToWelcome()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "rectangle.portrait.and.arrow.right")
-                                    .font(.system(size: 13, weight: .bold))
-                                Text("Sign out")
-                                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                        }
-                        .buttonStyle(DiscoverTopActionButtonStyle())
-                    }
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(profile.trimmedPreferredName ?? "Ounje profile")
+                                                .biroHeaderFont(24)
+                                                .foregroundStyle(.white)
 
-                    if let profile = store.profile {
-                        BubblySurfaceCard(accent: OunjePalette.accent) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(profile.trimmedPreferredName ?? "Ounje profile")
-                                    .font(.system(size: 28, weight: .black, design: .rounded))
-                                    .foregroundStyle(.white)
-                                Text(profile.profileNarrative)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.7))
-                                    .fixedSize(horizontal: false, vertical: true)
+                                            if let email = store.authSession?.email, !email.isEmpty {
+                                                Text(email)
+                                                    .font(.system(size: 14, weight: .medium))
+                                                    .foregroundStyle(.white.opacity(0.68))
+                                            }
+                                        }
 
-                                HStack(spacing: 10) {
-                                    ProfileMetaPill(title: profile.budgetSummary)
-                                    ProfileMetaPill(title: profile.cadence.title)
-                                    ProfileMetaPill(title: profile.orderingAutonomy.title)
-                                }
-                            }
-                        }
+                                        Spacer(minLength: 0)
+                                    }
 
-                        VStack(spacing: 12) {
-                            ForEach(profile.structuredSummarySections) { section in
-                                ThemedCard {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text(section.title)
-                                            .font(.system(size: 16, weight: .black, design: .rounded))
-                                            .foregroundStyle(OunjePalette.primaryText)
-                                        Text(section.detail)
-                                            .font(.system(size: 14, weight: .medium))
-                                            .foregroundStyle(OunjePalette.secondaryText)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text("Manage your defaults, delivery details, and food profile from one place.")
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(.white.opacity(0.7))
+
+                                    HStack(spacing: 10) {
+                                        ProfileMetaPill(title: profile.budgetSummary)
+                                        ProfileMetaPill(title: profile.cadence.title)
+                                        ProfileMetaPill(title: profile.orderingAutonomy.title)
                                     }
                                 }
                             }
+
+                            LazyVGrid(
+                                columns: [
+                                    GridItem(.flexible(), spacing: 14, alignment: .top),
+                                    GridItem(.flexible(), spacing: 14, alignment: .top)
+                                ],
+                                spacing: 14
+                            ) {
+                                ProfileQuickActionCard(
+                                    title: "Food profile",
+                                    subtitle: "Diet, cuisines, goals, and hard limits",
+                                    symbolName: "fork.knife.circle.fill",
+                                    accent: OunjePalette.accent,
+                                    action: { isFoodProfilePresented = true }
+                                )
+
+                                ProfileQuickActionCard(
+                                    title: "Address",
+                                    subtitle: addressSummary.isEmpty ? "Add your home delivery address" : "Update your saved home address",
+                                    symbolName: "house.circle.fill",
+                                    accent: OunjePalette.softCream,
+                                    action: { isAddressSheetPresented = true }
+                                )
+                            }
+
+                            ProfileSettingsCard(
+                                title: "Settings",
+                                rows: [
+                                    .init(
+                                        icon: "calendar",
+                                        title: "Delivery cadence",
+                                        value: profile.cadence.title,
+                                        action: { isCadencePickerPresented = true }
+                                    ),
+                                    .init(
+                                        icon: "slider.horizontal.3",
+                                        title: "Ordering autonomy",
+                                        value: profile.orderingAutonomy.title,
+                                        action: { isAutonomyPickerPresented = true }
+                                    ),
+                                    .init(
+                                        icon: "house",
+                                        title: "Home address",
+                                        value: addressSummary.isEmpty ? "Add address" : addressSummary,
+                                        action: { isAddressSheetPresented = true }
+                                    )
+                                ]
+                            )
+
+                            ProfileSettingsCard(
+                                title: "Account",
+                                rows: [
+                                    .init(
+                                        icon: "rectangle.portrait.and.arrow.right",
+                                        title: "Sign out",
+                                        value: "Log out of this device",
+                                        isDestructive: true,
+                                        action: { store.signOutToWelcome() }
+                                    )
+                                ]
+                            )
                         }
                     } else {
                         RecipesEmptyState(
@@ -2590,6 +3098,89 @@ private struct ProfileTabView: View {
             .scrollIndicators(.hidden)
         }
         .background(OunjePalette.background.ignoresSafeArea())
+        .sheet(isPresented: $isAddressSheetPresented, onDismiss: saveAddressChanges) {
+            AddressSetupSheet(
+                addressLine1: $addressLine1,
+                addressLine2: $addressLine2,
+                city: $city,
+                region: $region,
+                postalCode: $postalCode,
+                deliveryNotes: $deliveryNotes,
+                autocomplete: addressAutocomplete,
+                onSuggestionSelected: selectAddressSuggestion(_:),
+                onClear: clearAddress
+            )
+        }
+        .sheet(isPresented: $isFoodProfilePresented) {
+            if let profile {
+                FoodProfileSheet(profile: profile)
+            }
+        }
+        .confirmationDialog("Delivery cadence", isPresented: $isCadencePickerPresented, titleVisibility: .visible) {
+            if let profile {
+                ForEach(MealCadence.allCases) { cadence in
+                    Button(cadence.title) {
+                        var updated = profile
+                        updated.cadence = cadence
+                        store.updateProfile(updated)
+                    }
+                }
+            }
+        }
+        .confirmationDialog("Ordering autonomy", isPresented: $isAutonomyPickerPresented, titleVisibility: .visible) {
+            if let profile {
+                ForEach(OrderingAutonomyLevel.allCases.filter { $0 != .suggestOnly }) { autonomy in
+                    Button(autonomy.title) {
+                        var updated = profile
+                        updated.orderingAutonomy = autonomy
+                        store.updateProfile(updated)
+                    }
+                }
+            }
+        }
+        .onAppear(perform: syncAddressFields)
+    }
+
+    private func syncAddressFields() {
+        guard let address = store.profile?.deliveryAddress else { return }
+        addressLine1 = address.line1
+        addressLine2 = address.line2
+        city = address.city
+        region = address.region
+        postalCode = address.postalCode
+        deliveryNotes = address.deliveryNotes
+    }
+
+    private func saveAddressChanges() {
+        guard var updated = store.profile else { return }
+        updated.deliveryAddress = DeliveryAddress(
+            line1: addressLine1,
+            line2: addressLine2,
+            city: city,
+            region: region,
+            postalCode: postalCode,
+            deliveryNotes: deliveryNotes
+        )
+        store.updateProfile(updated)
+    }
+
+    private func clearAddress() {
+        addressLine1 = ""
+        addressLine2 = ""
+        city = ""
+        region = ""
+        postalCode = ""
+        deliveryNotes = ""
+    }
+
+    private func selectAddressSuggestion(_ suggestion: AddressSuggestion) async {
+        guard let resolved = await addressAutocomplete.resolve(suggestion) else { return }
+        addressLine1 = resolved.line1
+        addressLine2 = resolved.line2
+        city = resolved.city
+        region = resolved.region
+        postalCode = resolved.postalCode
+        deliveryNotes = resolved.deliveryNotes
     }
 }
 
@@ -2598,7 +3189,7 @@ private struct ProfileMetaPill: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .biroHeaderFont(12)
             .foregroundStyle(.white.opacity(0.82))
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -2606,6 +3197,166 @@ private struct ProfileMetaPill: View {
                 Capsule(style: .continuous)
                     .fill(.white.opacity(0.08))
             )
+    }
+}
+
+private struct ProfileQuickActionCard: View {
+    let title: String
+    let subtitle: String
+    let symbolName: String
+    let accent: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(systemName: symbolName)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(accent)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .biroHeaderFont(20)
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack {
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.55))
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(OunjePalette.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ProfileSettingRowModel: Identifiable {
+    let id = UUID()
+    let icon: String
+    let title: String
+    let value: String
+    var isDestructive = false
+    let action: () -> Void
+}
+
+private struct ProfileSettingsCard: View {
+    let title: String
+    let rows: [ProfileSettingRowModel]
+
+    var body: some View {
+        ThemedCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(title)
+                    .biroHeaderFont(18)
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        Button(action: row.action) {
+                            HStack(spacing: 12) {
+                                Image(systemName: row.icon)
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(row.isDestructive ? Color(hex: "FF8E8E") : OunjePalette.softCream)
+                                    .frame(width: 30, height: 30)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(OunjePalette.elevated)
+                                    )
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(row.title)
+                                        .biroHeaderFont(15)
+                                        .foregroundStyle(row.isDestructive ? Color(hex: "FF8E8E") : OunjePalette.primaryText)
+                                    Text(row.value)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(OunjePalette.secondaryText)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer(minLength: 8)
+
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
+                            }
+                            .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.plain)
+
+                        if index < rows.count - 1 {
+                            Divider()
+                                .overlay(OunjePalette.stroke)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct FoodProfileSheet: View {
+    let profile: UserProfile
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    BubblySurfaceCard(accent: profile.agentSummaryAesthetic.primary) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Food profile")
+                                .biroHeaderFont(28)
+                                .foregroundStyle(.white)
+                            Text(profile.profileNarrative)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.72))
+                        }
+                    }
+
+                    ForEach(profile.structuredSummarySections) { section in
+                        ThemedCard {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(section.title)
+                                    .biroHeaderFont(16)
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                Text(section.detail)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 24)
+            }
+            .background(OunjePalette.background.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .preferredColorScheme(.dark)
+        }
     }
 }
 
@@ -2620,7 +3371,7 @@ private struct CartTabView: View {
                     HStack(alignment: .center) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Cart")
-                                .font(.system(size: 32, weight: .black, design: .rounded))
+                                .biroHeaderFont(32)
                                 .foregroundStyle(OunjePalette.primaryText)
                             Text("Current list, previous orders, and checkout paths")
                                 .font(.system(size: 14, weight: .medium))
@@ -2640,7 +3391,7 @@ private struct CartTabView: View {
                                         .font(.system(size: 13, weight: .bold))
                                 }
                                 Text(store.isGenerating ? "Generating" : "Generate")
-                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    .biroHeaderFont(15)
                             }
                             .padding(.horizontal, 18)
                             .padding(.vertical, 12)
@@ -2658,7 +3409,7 @@ private struct CartTabView: View {
                                     .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(OunjePalette.secondaryText)
                                 Text(best.provider.title)
-                                    .font(.system(size: 24, weight: .black, design: .rounded))
+                                    .biroHeaderFont(24)
                                 Text("\(best.estimatedTotal.asCurrency) total • \(best.etaDays)-day ETA")
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundStyle(OunjePalette.secondaryText)
@@ -2694,7 +3445,7 @@ private struct CartTabView: View {
                             BubblySurfaceCard(accent: OunjePalette.softCream) {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(previousQuote.provider.title)
-                                        .font(.system(size: 20, weight: .black, design: .rounded))
+                                        .biroHeaderFont(20)
                                     Text("Recent total \(previousQuote.estimatedTotal.asCurrency)")
                                         .font(.system(size: 14, weight: .medium))
                                         .foregroundStyle(OunjePalette.secondaryText)
@@ -2739,7 +3490,7 @@ private struct DiscoverHubCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text(shortcut.title)
-                        .font(.system(size: 24, weight: .black, design: .rounded))
+                        .biroHeaderFont(24)
                         .foregroundStyle(OunjePalette.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -2794,41 +3545,70 @@ private struct DiscoverHubCard: View {
     }
 }
 
-private struct CapsuleSegmentControl<Option: Hashable>: View {
-    @Binding var selection: Option
-    let options: [Option]
-    let title: (Option) -> String
+private struct CookbookSectionTabItem: Identifiable {
+    let section: CookbookSection
+
+    var id: CookbookSection { section }
+}
+
+private struct CookbookSectionTabs: View {
+    @Binding var selection: CookbookSection
+    let tabs: [CookbookSectionTabItem]
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(options, id: \.self) { option in
-                Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                        selection = option
+        GeometryReader { proxy in
+            let tabWidth = proxy.size.width / CGFloat(max(tabs.count, 1))
+
+            VStack(spacing: 10) {
+                HStack(spacing: 0) {
+                    ForEach(tabs) { tab in
+                        let isSelected = selection == tab.section
+
+                        Button {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
+                                selection = tab.section
+                            }
+                        } label: {
+                            Text(tab.section.title)
+                                .font(.system(size: 18, weight: isSelected ? .black : .bold, design: .rounded))
+                                .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 28, alignment: .center)
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                } label: {
-                    Text(title(option))
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(selection == option ? OunjePalette.primaryText : OunjePalette.secondaryText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                .fill(selection == option ? OunjePalette.surface : .clear)
-                        )
                 }
-                .buttonStyle(.plain)
+
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.08))
+                        .frame(height: 1.5)
+
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    OunjePalette.softCream.opacity(0.95),
+                                    OunjePalette.accent.opacity(0.72)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(tabWidth - 28, 72), height: 3)
+                        .offset(x: indicatorOffset(tabWidth: tabWidth))
+                        .shadow(color: OunjePalette.accent.opacity(0.18), radius: 8, y: 2)
+                }
             }
         }
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(OunjePalette.elevated.opacity(0.7))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                )
-        )
+        .frame(height: 40)
+    }
+
+    private func indicatorOffset(tabWidth: CGFloat) -> CGFloat {
+        let index = tabs.firstIndex { $0.section == selection } ?? 0
+        return CGFloat(index) * tabWidth + 14
     }
 }
 
@@ -2904,7 +3684,7 @@ private struct RecipesEmptyState: View {
 
             VStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .biroHeaderFont(20)
                     .foregroundStyle(OunjePalette.primaryText)
 
                 Text(detail)
@@ -2923,6 +3703,196 @@ private struct RecipesEmptyState: View {
                 .fill(OunjePalette.surface)
                 .overlay(
                     RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct CookbookSavedEmptyState: View {
+    let hasSavedRecipes: Bool
+    let onBrowseDiscover: () -> Void
+    let onAddRecipe: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center, spacing: 14) {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(OunjePalette.elevated)
+                    .frame(width: 64, height: 64)
+                    .overlay(
+                        Image(systemName: hasSavedRecipes ? "magnifyingglass" : "bookmark")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(OunjePalette.softCream.opacity(0.9))
+                    )
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(hasSavedRecipes ? "No matches in your cookbook" : "Your saved shelf is still empty")
+                        .biroHeaderFont(22)
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text(
+                        hasSavedRecipes
+                            ? "Try a different search or jump back to Discover."
+                            : "Save recipes from Discover or import one directly into Cookbook."
+                    )
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button(action: onBrowseDiscover) {
+                    Text("Browse Discover")
+                        .biroHeaderFont(15)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryPillButtonStyle())
+
+                Button(action: onAddRecipe) {
+                    Text("Add recipe")
+                        .biroHeaderFont(15)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryPillButtonStyle())
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(OunjePalette.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct CookbookInlineActionHeader: View {
+    let title: String
+    let detail: String
+    let buttonTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .biroHeaderFont(24)
+                    .foregroundStyle(OunjePalette.primaryText)
+                Text(detail)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 10)
+
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .bold))
+                    Text(buttonTitle)
+                        .biroHeaderFont(14)
+                }
+                .foregroundStyle(OunjePalette.primaryText)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+private struct CookbookMealEntry: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let status: String
+    let tint: Color
+}
+
+private struct CookbookMealsGroup: View {
+    let title: String
+    let detail: String
+    let entries: [CookbookMealEntry]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .biroHeaderFont(24)
+                    .foregroundStyle(OunjePalette.primaryText)
+                Text(detail)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 12) {
+                ForEach(entries) { entry in
+                    CookbookMealRow(entry: entry)
+                }
+            }
+        }
+    }
+}
+
+private struct CookbookMealRow: View {
+    let entry: CookbookMealEntry
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(entry.tint.opacity(0.14))
+                .frame(width: 52, height: 52)
+                .overlay(
+                    Image(systemName: "fork.knife")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(entry.tint)
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.title)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(entry.detail)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+
+            Spacer(minLength: 10)
+
+            Text(entry.status)
+                .biroHeaderFont(12)
+                .foregroundStyle(entry.tint == OunjePalette.softCream ? OunjePalette.primaryText : OunjePalette.softCream)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(entry.tint.opacity(entry.tint == OunjePalette.softCream ? 0.18 : 0.15))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(entry.tint.opacity(0.28), lineWidth: 1)
+                        )
+                )
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(OunjePalette.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .stroke(OunjePalette.stroke, lineWidth: 1)
                 )
         )
@@ -3039,7 +4009,7 @@ private struct AddActionRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .biroHeaderFont(18)
                         .foregroundStyle(OunjePalette.primaryText)
                         .lineLimit(1)
                     Text(detail)
@@ -3093,7 +4063,7 @@ private struct AskOunjeSheet: View {
 
             HStack {
                 Text("Ask Ounje")
-                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .biroHeaderFont(32)
                     .foregroundStyle(OunjePalette.primaryText)
 
                 Spacer()
@@ -3120,7 +4090,7 @@ private struct AskOunjeSheet: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("Need some inspiration?")
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .biroHeaderFont(20)
                     .foregroundStyle(OunjePalette.primaryText)
 
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -3158,7 +4128,7 @@ private struct AskOunjeSheet: View {
                     )
 
                 Button("Send") {}
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .biroHeaderFont(18)
                     .foregroundStyle(promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? OunjePalette.secondaryText : .white)
                     .frame(width: 116)
                     .padding(.vertical, 16)
@@ -3208,7 +4178,7 @@ private struct MealsRecipeSlot: View {
                     .textCase(.uppercase)
                     .kerning(0.5)
                 Text(recipe?.title ?? "Choose a Recipe")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .biroHeaderFont(17)
                     .foregroundStyle(recipe == nil ? OunjePalette.secondaryText : OunjePalette.primaryText)
                         .lineLimit(2)
                 }
@@ -3264,7 +4234,7 @@ private struct WeekMealRow: View {
             // Day badge
             VStack(spacing: 2) {
                 Text(dayInitial)
-                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .biroHeaderFont(13)
                     .foregroundStyle(recipe == nil ? OunjePalette.secondaryText : OunjePalette.accent)
             }
             .frame(width: 40)
@@ -3275,7 +4245,7 @@ private struct WeekMealRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(recipe?.title ?? "No recipe yet")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .biroHeaderFont(15)
                     .foregroundStyle(recipe == nil ? OunjePalette.secondaryText : OunjePalette.primaryText)
                     .lineLimit(1)
                 if let recipe = recipe {
@@ -3324,7 +4294,7 @@ private struct MealsSummaryCard: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(OunjePalette.secondaryText)
             Text(value)
-                .font(.system(size: 24, weight: .black, design: .rounded))
+                .biroHeaderFont(24)
                 .foregroundStyle(OunjePalette.primaryText)
             Text(detail)
                 .font(.system(size: 14, weight: .medium))
@@ -3357,7 +4327,7 @@ private struct PrepTrackerCard: View {
                     .foregroundStyle(OunjePalette.secondaryText)
 
                 Text(nextDeliveryTitle)
-                    .font(.system(size: 32, weight: .black, design: .rounded))
+                    .biroHeaderFont(32)
                     .foregroundStyle(OunjePalette.primaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 
@@ -3476,7 +4446,7 @@ private struct PrepTrackerCard: View {
                     Image(systemName: "clock")
                         .font(.system(size: 12, weight: .bold))
                     Text(currentDeliveryWindow.shortTitle)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .biroHeaderFont(12)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .bold))
                 }
@@ -3498,7 +4468,7 @@ private struct PrepTrackerCard: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 11, weight: .bold))
                 Text(currentDeliveryWindow.shortTitle)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .biroHeaderFont(12)
             }
             .foregroundStyle(OunjePalette.secondaryText)
             .padding(.horizontal, 12)
@@ -3748,7 +4718,7 @@ private struct PrepMetaPill: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .biroHeaderFont(12)
             .foregroundStyle(OunjePalette.primaryText)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -3787,7 +4757,7 @@ private struct DeliveryTimeSheet: View {
                 Spacer(minLength: 16)
 
                 Button("Save", action: onSave)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .biroHeaderFont(16)
                     .foregroundStyle(OunjePalette.primaryText)
                     .disabled(!canEdit)
                     .opacity(canEdit ? 1 : 0.45)
@@ -3796,7 +4766,7 @@ private struct DeliveryTimeSheet: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Delivery time")
-                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .biroHeaderFont(30)
                     .foregroundStyle(OunjePalette.primaryText)
 
                 Text(subtitle)
@@ -3832,7 +4802,7 @@ private struct DeliveryTimeSheet: View {
 
                     HStack(spacing: 10) {
                         Text("Closest slot")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .biroHeaderFont(12)
                             .foregroundStyle(OunjePalette.secondaryText)
                         PrepMetaPill(title: selectedWindow.shortTitle, accent: OunjePalette.accent)
                         PrepMetaPill(title: selectedWindow.detail, accent: OunjePalette.softCream)
@@ -3842,7 +4812,7 @@ private struct DeliveryTimeSheet: View {
                 ThemedCard {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(selectedWindow.shortTitle)
-                            .font(.system(size: 22, weight: .black, design: .rounded))
+                            .biroHeaderFont(22)
                             .foregroundStyle(OunjePalette.primaryText)
                         Text("This delivery is already within the locked change window.")
                             .font(.system(size: 14, weight: .medium))
@@ -3900,7 +4870,7 @@ private struct PrepRouteOverlay: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Label(providerTitle ?? "Delivery", systemImage: "storefront.fill")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .biroHeaderFont(11)
                     .foregroundStyle(OunjePalette.primaryText)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
@@ -3936,7 +4906,7 @@ private struct PrepRouteOverlay: View {
 
             HStack(spacing: 8) {
                 Text(snapshot.statusLabel)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .biroHeaderFont(12)
                     .foregroundStyle(OunjePalette.primaryText)
 
                 if let etaText {
@@ -4021,10 +4991,10 @@ private enum AppTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .prep: return "calendar.badge.clock"
+        case .prep: return "calendar"
         case .discover: return "safari"
-        case .cookbook: return "fork.knife"
-        case .cart: return "cart"
+        case .cookbook: return "book.closed"
+        case .cart: return "basket"
         case .profile: return "person.crop.circle"
         }
     }
@@ -4050,32 +5020,27 @@ private struct CustomTabBar: View {
                         selectedTab = tab
                     }
                 } label: {
-                    VStack(spacing: 4) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(selectedTab == tab ? OunjePalette.elevated : .clear)
-                                .frame(width: 40, height: 36)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .stroke(selectedTab == tab ? OunjePalette.accent.opacity(0.55) : .clear, lineWidth: 1)
-                                )
+                    VStack(spacing: 3) {
+                        Capsule(style: .continuous)
+                            .fill(selectedTab == tab ? OunjePalette.accent.opacity(0.92) : .clear)
+                            .frame(width: 18, height: 3)
+                            .padding(.bottom, 3)
 
-                            Image(systemName: tab.symbol)
-                                .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(selectedTab == tab ? OunjePalette.softCream : OunjePalette.secondaryText)
-                        }
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 19, weight: selectedTab == tab ? .semibold : .medium))
+                            .foregroundStyle(selectedTab == tab ? OunjePalette.primaryText : OunjePalette.secondaryText)
 
                         Text(tab.title)
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundStyle(selectedTab == tab ? OunjePalette.softCream : OunjePalette.secondaryText)
+                            .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .medium, design: .rounded))
+                            .foregroundStyle(selectedTab == tab ? OunjePalette.primaryText : OunjePalette.secondaryText)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .frame(height: OunjeLayout.tabBarHeight)
     }
 }
@@ -4084,25 +5049,11 @@ private struct BottomNavigationDock: View {
     @Binding var selectedTab: AppTab
     var searchText: Binding<String>?
     var searchPlaceholder: String?
-    var showsComposer: Bool = false
     var safeAreaBottom: CGFloat = 0
-    var onComposerTap: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
-            if showsComposer, let onComposerTap {
-                VStack(spacing: 0) {
-                    DiscoverComposerDockButton(action: onComposerTap)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 14)
-                        .padding(.bottom, 12)
-
-                    Rectangle()
-                        .fill(OunjePalette.stroke)
-                        .frame(height: 1)
-                        .padding(.horizontal, 16)
-                }
-            } else if let searchText, let searchPlaceholder {
+            if let searchText, let searchPlaceholder {
                 VStack(spacing: 0) {
                     FloatingSearchDock(text: searchText, placeholder: searchPlaceholder)
                         .padding(.horizontal, 16)
@@ -4137,54 +5088,9 @@ private struct BottomNavigationDock: View {
     }
 }
 
-private struct DiscoverComposerDockButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(OunjePalette.accentDark)
-                        .frame(width: 38, height: 38)
-
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Add to Ounje")
-                        .font(.system(size: 16, weight: .black, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-                    Text("Import a link, photo, or idea")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                }
-
-                Spacer()
-
-                Image(systemName: "sparkles")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(OunjePalette.softCream)
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(OunjePalette.surface.opacity(0.96))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(OunjePalette.stroke, lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct DiscoverComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    let context: CookbookComposerContext
     @State private var draftText = ""
 
     private let suggestionChips = [
@@ -4223,6 +5129,10 @@ private struct DiscoverComposerSheet: View {
                         .offset(x: 18, y: -8)
 
                     VStack(alignment: .leading, spacing: 18) {
+                        Text(context.title)
+                            .biroHeaderFont(24)
+                            .foregroundStyle(OunjePalette.primaryText)
+
                         TextEditor(text: $draftText)
                             .scrollContentBackground(.hidden)
                             .foregroundStyle(OunjePalette.primaryText)
@@ -4230,7 +5140,7 @@ private struct DiscoverComposerSheet: View {
                             .frame(minHeight: 104)
                             .overlay(alignment: .topLeading) {
                                 if draftText.isEmpty {
-                                    Text("Import a recipe using a link, photo, video, or just describe what you want to make.")
+                                    Text(context.placeholder)
                                         .font(.system(size: 16, weight: .medium, design: .rounded))
                                         .foregroundStyle(OunjePalette.secondaryText)
                                         .padding(.horizontal, 6)
@@ -4255,8 +5165,8 @@ private struct DiscoverComposerSheet: View {
                                 dismiss()
                             } label: {
                                 HStack(spacing: 8) {
-                                    Text("Surprise me")
-                                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    Text(context.primaryActionTitle)
+                                        .biroHeaderFont(15)
                                     Image(systemName: "sparkles")
                                         .font(.system(size: 13, weight: .bold))
                                     Spacer(minLength: 0)
@@ -4350,14 +5260,13 @@ private struct ThemedCard<Content: View>: View {
 
 private struct DiscoverRemoteRecipeCard: View {
     let recipe: DiscoverRecipeCardData
-    @Environment(\.openURL) private var openURL
+    let onSelect: () -> Void
     @EnvironmentObject private var savedStore: SavedRecipesStore
     private let cardHeight: CGFloat = 292
 
     var body: some View {
         Button {
-            guard let url = recipe.destinationURL else { return }
-            openURL(url)
+            onSelect()
         } label: {
             VStack(alignment: .leading, spacing: 14) {
                 DiscoverRemoteRecipeImage(recipe: recipe)
@@ -4367,9 +5276,10 @@ private struct DiscoverRemoteRecipeCard: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(recipe.title)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .recipeCardTitleFont(22)
                         .foregroundStyle(OunjePalette.primaryText)
                         .lineLimit(2)
+                        .minimumScaleFactor(0.84)
                         .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42, alignment: .topLeading)
 
                     HStack(spacing: 5) {
@@ -4468,7 +5378,7 @@ private struct DiscoverRemoteRecipeImage: View {
             Text(recipe.emoji)
                 .font(.system(size: 56))
             Text(recipe.filterLabel)
-                .font(.system(size: 13, weight: .black, design: .rounded))
+                .biroHeaderFont(13)
                 .foregroundStyle(OunjePalette.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -4515,6 +5425,785 @@ private final class DiscoverRecipeImageLoader: ObservableObject {
         }
 
         image = nil
+    }
+}
+
+private struct RecipeDetailExperienceView: View {
+    let presentedRecipe: PresentedRecipeDetail
+    let onOpenCart: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @EnvironmentObject private var savedStore: SavedRecipesStore
+    @StateObject private var viewModel = RecipeDetailViewModel()
+    @State private var servingsCount = 4
+    @State private var shouldScrollToSteps = false
+
+    private let detailBackground = Color(hex: "F5F0E8")
+    private let sectionDivider = Color.black.opacity(0.10)
+
+    private var detail: RecipeDetailData? {
+        viewModel.detail
+    }
+
+    private var imageCandidates: [URL] {
+        detail?.imageCandidates ?? presentedRecipe.recipeCard.imageCandidates
+    }
+
+    private var titleText: String {
+        detail?.title ?? presentedRecipe.recipeCard.title
+    }
+
+    private var descriptionText: String? {
+        if let detailDescription = detail?.description, !detailDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return detailDescription
+        }
+        return presentedRecipe.recipeCard.description
+    }
+
+    private var authorLine: String {
+        detail?.authorLine ?? presentedRecipe.recipeCard.authorLabel
+    }
+
+    private var externalURL: URL? {
+        detail?.originalURL ?? presentedRecipe.recipeCard.destinationURL
+    }
+
+    private var detailMetrics: [RecipeDetailMetric] {
+        if let detail {
+            return detail.detailsGrid
+        }
+
+        let fallbackCookTime = presentedRecipe.recipeCard.compactCookTime ?? "—"
+        let fallbackServings = presentedRecipe.plannedRecipe?.servings ?? 4
+        let fallbackDiet = presentedRecipe.recipeCard.filterLabel
+        return [
+            RecipeDetailMetric(title: "Skill", value: "Any"),
+            RecipeDetailMetric(title: "Cook Time", value: fallbackCookTime),
+            RecipeDetailMetric(title: "Servings", value: "\(fallbackServings)"),
+            RecipeDetailMetric(title: "Calories", value: "—"),
+            RecipeDetailMetric(title: "Carbs", value: "—"),
+            RecipeDetailMetric(title: "Protein", value: "—"),
+            RecipeDetailMetric(title: "Fats", value: "—"),
+            RecipeDetailMetric(title: "Est. Cost", value: "—"),
+            RecipeDetailMetric(title: "Diet", value: fallbackDiet),
+        ]
+    }
+
+    private var ingredientLines: [String] {
+        if let detail, !detail.ingredients.isEmpty {
+            return detail.ingredients
+        }
+        if let plannedRecipe = presentedRecipe.plannedRecipe {
+            return plannedRecipe.recipe.ingredients.map { ingredient in
+                "\(ingredient.amount.roundedString(ingredient.amount < 1 ? 2 : 1)) \(ingredient.unit) \(ingredient.name)"
+            }
+        }
+        return []
+    }
+
+    private var instructionSteps: [RecipeDetailStep] {
+        detail?.steps ?? []
+    }
+
+    private var tagChips: [String] {
+        if let detail {
+            let values = detail.flavorTags + detail.cuisineTags + detail.dietaryTags
+            var seen = Set<String>()
+            return values
+                .map { $0.replacingOccurrences(of: "-", with: " ") }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+                .prefix(20)
+                .map { $0 }
+        }
+        return []
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ZStack(alignment: .bottom) {
+                detailBackground
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        RecipeDetailHeroImage(candidates: imageCandidates)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 388)
+                            .overlay(alignment: .topLeading) {
+                                RecipeDetailTopIconButton(symbolName: "arrow.left") {
+                                    dismiss()
+                                }
+                                .padding(.leading, 20)
+                                .padding(.top, 56)
+                            }
+                            .overlay(alignment: .topTrailing) {
+                                if let externalURL {
+                                    RecipeDetailTopIconButton(symbolName: "arrow.up.right") {
+                                        openURL(externalURL)
+                                    }
+                                    .padding(.trailing, 20)
+                                    .padding(.top, 56)
+                                }
+                            }
+
+                        VStack(alignment: .leading, spacing: 28) {
+                            VStack(alignment: .leading, spacing: 14) {
+                                RecipeModalTitle(text: titleText)
+
+                                HStack(spacing: 8) {
+                                    Text(authorLine)
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(Color.black.opacity(0.48))
+
+                                    if let externalURL {
+                                        Text("•")
+                                            .foregroundStyle(Color.black.opacity(0.32))
+
+                                        Button("See original link") {
+                                            openURL(externalURL)
+                                        }
+                                        .font(.system(size: 15, weight: .medium))
+                                        .foregroundStyle(Color.black.opacity(0.8))
+                                        .buttonStyle(.plain)
+                                        .underline()
+                                    }
+                                }
+
+                                HStack(spacing: 12) {
+                                    RecipeDetailActionButton(
+                                        title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Save",
+                                        systemImage: savedStore.isSaved(presentedRecipe.recipeCard) ? "bookmark.fill" : "bookmark"
+                                    ) {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+                                            savedStore.toggle(presentedRecipe.recipeCard)
+                                        }
+                                    }
+
+                                    RecipeDetailActionButton(title: "Cart", systemImage: "cart") {
+                                        dismiss()
+                                        onOpenCart()
+                                    }
+
+                                    if let externalURL {
+                                        RecipeDetailActionButton(title: "Source", systemImage: "arrow.up.right") {
+                                            openURL(externalURL)
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let descriptionText, !descriptionText.isEmpty {
+                                Text(descriptionText)
+                                    .font(.system(size: 18, weight: .regular))
+                                    .lineSpacing(4)
+                                    .foregroundStyle(Color.black.opacity(0.62))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            VStack(alignment: .leading, spacing: 16) {
+                                Text("Details")
+                                    .font(.system(size: 34, weight: .regular, design: .serif))
+                                    .foregroundStyle(Color.black)
+
+                                RecipeDetailMetricsGrid(metrics: detailMetrics)
+                            }
+
+                            if !ingredientLines.isEmpty {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    Text("Ingredients")
+                                        .font(.system(size: 34, weight: .regular, design: .serif))
+                                        .foregroundStyle(Color.black)
+
+                                    LazyVGrid(
+                                        columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4),
+                                        spacing: 18
+                                    ) {
+                                        ForEach(Array(ingredientLines.enumerated()), id: \.offset) { index, ingredient in
+                                            RecipeIngredientTile(
+                                                line: ingredient,
+                                                badge: recipeIngredientBadge(for: ingredient),
+                                                tint: ingredientTileTint(for: index)
+                                            )
+                                        }
+                                    }
+
+                                    HStack(spacing: 14) {
+                                        Button {
+                                            dismiss()
+                                            onOpenCart()
+                                        } label: {
+                                            HStack(spacing: 10) {
+                                                Text("🥕")
+                                                Text("Get recipe ingredients")
+                                            }
+                                            .font(.system(size: 18, weight: .medium))
+                                            .foregroundStyle(.white)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 18)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                                    .fill(OunjePalette.accentDark)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+
+                                        Button {
+                                            dismiss()
+                                            onOpenCart()
+                                        } label: {
+                                            HStack(spacing: 10) {
+                                                Image(systemName: "cart")
+                                                Text("Add all to shopping list")
+                                            }
+                                            .font(.system(size: 18, weight: .medium))
+                                            .foregroundStyle(Color.black.opacity(0.82))
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 18)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                                    .fill(Color.white.opacity(0.72))
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                                            .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                                                    )
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            if !instructionSteps.isEmpty {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    Text("Cooking Steps")
+                                        .font(.system(size: 34, weight: .regular, design: .serif))
+                                        .foregroundStyle(Color.black)
+                                        .id("steps-anchor")
+
+                                    VStack(spacing: 0) {
+                                        ForEach(instructionSteps, id: \.number) { step in
+                                            RecipeStepBlock(
+                                                step: step,
+                                                ingredientMatches: matchingIngredientChips(for: step.text, ingredients: ingredientLines),
+                                                dividerColor: sectionDivider
+                                            )
+                                        }
+                                    }
+                                    .background(Color.clear)
+                                }
+                            }
+
+                            if !tagChips.isEmpty {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    Text("Flavor cues")
+                                        .font(.system(size: 34, weight: .regular, design: .serif))
+                                        .foregroundStyle(Color.black)
+
+                                    FlexibleTagCloud(tags: tagChips)
+                                }
+                            }
+
+                            if let detailFootnote = detail?.detailFootnote, !detailFootnote.isEmpty {
+                                Text(detailFootnote)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(Color.black.opacity(0.45))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 24)
+                        .padding(.bottom, 160)
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .onChange(of: shouldScrollToSteps) { shouldScroll in
+                    guard shouldScroll else { return }
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                        proxy.scrollTo("steps-anchor", anchor: .top)
+                    }
+                    shouldScrollToSteps = false
+                }
+
+                RecipeCookBottomBar(servingsCount: $servingsCount) {
+                    shouldScrollToSteps = true
+                }
+            }
+            .task(id: presentedRecipe.id) {
+                await viewModel.load(for: presentedRecipe.id)
+                let loadedCount = viewModel.detail?.displayServings ?? presentedRecipe.plannedRecipe?.servings ?? 4
+                servingsCount = max(1, loadedCount)
+            }
+        }
+    }
+
+    private func ingredientTileTint(for index: Int) -> Color {
+        let palette: [Color] = [
+            Color(hex: "ECE6D8"),
+            Color(hex: "F1EDE5"),
+            Color(hex: "EAE2D1"),
+            Color(hex: "F3E9DB")
+        ]
+        return palette[index % palette.count]
+    }
+
+    private func recipeIngredientBadge(for ingredient: String) -> String {
+        let normalized = ingredient.lowercased()
+        if normalized.contains("chicken") { return "🍗" }
+        if normalized.contains("turkey") { return "🦃" }
+        if normalized.contains("beef") || normalized.contains("steak") || normalized.contains("pork") { return "🥩" }
+        if normalized.contains("salmon") || normalized.contains("fish") || normalized.contains("shrimp") || normalized.contains("tilapia") { return "🐟" }
+        if normalized.contains("egg") { return "🥚" }
+        if normalized.contains("broccoli") { return "🥦" }
+        if normalized.contains("spinach") || normalized.contains("lettuce") || normalized.contains("kale") { return "🥬" }
+        if normalized.contains("carrot") { return "🥕" }
+        if normalized.contains("potato") { return "🥔" }
+        if normalized.contains("rice") { return "🍚" }
+        if normalized.contains("pasta") || normalized.contains("noodle") { return "🍝" }
+        if normalized.contains("cheese") || normalized.contains("cheddar") || normalized.contains("parmesan") { return "🧀" }
+        if normalized.contains("milk") || normalized.contains("cream") { return "🥛" }
+        if normalized.contains("bread") || normalized.contains("bun") { return "🍞" }
+        if normalized.contains("tomato") { return "🍅" }
+        if normalized.contains("pepper") { return "🫑" }
+        if normalized.contains("garlic") { return "🧄" }
+        if normalized.contains("onion") { return "🧅" }
+        if normalized.contains("lemon") || normalized.contains("lime") { return "🍋" }
+        if normalized.contains("bean") { return "🫘" }
+        if normalized.contains("mushroom") { return "🍄" }
+        if normalized.contains("oil") { return "🫒" }
+        if normalized.contains("salt") { return "🧂" }
+        if normalized.contains("water") || normalized.contains("broth") { return "🥣" }
+        return "＋"
+    }
+
+    private func matchingIngredientChips(for stepText: String, ingredients: [String]) -> [String] {
+        guard !ingredients.isEmpty else { return [] }
+        let tokens = Set(
+            stepText
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count > 2 }
+        )
+
+        return ingredients.filter { ingredient in
+            let ingredientTokens = Set(
+                ingredient
+                    .lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { $0.count > 2 }
+            )
+            return !tokens.isDisjoint(with: ingredientTokens)
+        }
+        .prefix(3)
+        .map { $0 }
+    }
+}
+
+private struct RecipeModalTitle: View {
+    let text: String
+
+    private var shouldUseDisplayFont: Bool {
+        text.count <= 24 && text.components(separatedBy: " ").count <= 4
+    }
+
+    var body: some View {
+        Group {
+            if shouldUseDisplayFont {
+                BiroScriptDisplayText(text, size: 31, color: .black)
+            } else {
+                Text(text)
+                    .font(.system(size: 34, weight: .regular, design: .serif))
+                    .foregroundStyle(Color.black)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct RecipeDetailHeroImage: View {
+    let candidates: [URL]
+    @StateObject private var loader = DiscoverRecipeImageLoader()
+
+    var body: some View {
+        ZStack {
+            Color(hex: "EEE8DE")
+
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if loader.isLoading {
+                ProgressView()
+                    .tint(OunjePalette.accentDark)
+            } else {
+                VStack(spacing: 18) {
+                    Image(systemName: "fork.knife")
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.35))
+                    Text("Recipe preview")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.42))
+                }
+            }
+        }
+        .task(id: candidates.map(\.absoluteString).joined(separator: "|")) {
+            await loader.load(from: candidates)
+        }
+    }
+}
+
+private struct RecipeDetailTopIconButton: View {
+    let symbolName: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbolName)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color.black)
+                .frame(width: 52, height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.white.opacity(0.92))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct RecipeDetailActionButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 16, weight: .medium))
+            }
+            .foregroundStyle(Color.black.opacity(0.84))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.white.opacity(0.72))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct RecipeDetailMetricsGrid: View {
+    let metrics: [RecipeDetailMetric]
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 0) {
+            ForEach(Array(metrics.enumerated()), id: \.offset) { index, metric in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(metric.title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.42))
+                    Text(metric.value)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.black.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 94, alignment: .topLeading)
+                .padding(16)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(Color.black.opacity(index >= 3 ? 0.10 : 0))
+                        .frame(height: index >= 3 ? 1 : 0)
+                }
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.black.opacity(index % 3 == 0 ? 0 : 0.10))
+                        .frame(width: index % 3 == 0 ? 0 : 1)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 0, style: .continuous)
+                .fill(Color.white.opacity(0.45))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 0, style: .continuous)
+                        .stroke(Color.black.opacity(0.10), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct RecipeIngredientTile: View {
+    let line: String
+    let badge: String
+    let tint: Color
+
+    private var splitLine: (name: String, amount: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let measureMatch = trimmed.range(of: #"^([\d\/\.\-\s]+(?:cup|cups|tbsp|tsp|oz|lb|lbs|g|kg|ml|l|cloves|pieces|piece|sprigs|pinch|cans?|slices?)?)"#, options: .regularExpression)
+        if let measureMatch {
+            let amount = String(trimmed[measureMatch]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = String(trimmed[measureMatch.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                return (name, amount)
+            }
+        }
+        return (trimmed, "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [tint, Color.white.opacity(0.85)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(height: 84)
+                    .overlay(
+                        Text(badge)
+                            .font(.system(size: 34))
+                    )
+
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.94))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Text("+")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(Color.black)
+                    )
+                    .offset(x: 8, y: -8)
+            }
+
+            Text(splitLine.name)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.black.opacity(0.9))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !splitLine.amount.isEmpty {
+                Text(splitLine.amount)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.black.opacity(0.46))
+            }
+        }
+    }
+}
+
+private struct RecipeStepBlock: View {
+    let step: RecipeDetailStep
+    let ingredientMatches: [String]
+    let dividerColor: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 24) {
+                Text(String(format: "%02d", step.number))
+                    .font(.system(size: 30, weight: .regular, design: .serif))
+                    .foregroundStyle(Color.black)
+                    .frame(width: 44, alignment: .leading)
+
+                Text(step.text)
+                    .font(.system(size: 21, weight: .regular))
+                    .lineSpacing(4)
+                    .foregroundStyle(Color.black.opacity(0.86))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !ingredientMatches.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(ingredientMatches, id: \.self) { match in
+                            Text(match)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(Color.black.opacity(0.82))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(Color(hex: "E8E6D8"))
+                                )
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 26)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(dividerColor)
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct FlexibleTagCloud: View {
+    let tags: [String]
+
+    var body: some View {
+        WrappingHStack(tags, id: \.self, spacing: 10, lineSpacing: 12) { tag in
+            Text(tag)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.black.opacity(0.82))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color(hex: "ECE7DB"))
+                )
+        }
+    }
+}
+
+private struct RecipeCookBottomBar: View {
+    @Binding var servingsCount: Int
+    let onCook: () -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 18) {
+                Button {
+                    servingsCount = max(1, servingsCount - 1)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(Color.black)
+                }
+                .buttonStyle(.plain)
+
+                Text("Cooking for \(servingsCount)")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(Color.black)
+
+                Button {
+                    servingsCount += 1
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(Color.black)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 16)
+
+            Button(action: onCook) {
+                Text("Cook")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 190, height: 76)
+                    .background(
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(Color(hex: "DE8858"))
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 18)
+        .padding(.bottom, 24)
+        .background(
+            Rectangle()
+                .fill(detailBarBackground)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(Color.black.opacity(0.08))
+                        .frame(height: 1)
+                }
+                .ignoresSafeArea(edges: .bottom)
+        )
+    }
+
+    private var detailBarBackground: Color {
+        Color(hex: "F7F1E6")
+    }
+}
+
+private struct WrappingHStack<Data: RandomAccessCollection, ID: Hashable, Content: View>: View where Data.Element: Hashable {
+    let data: Data
+    let id: KeyPath<Data.Element, ID>
+    let spacing: CGFloat
+    let lineSpacing: CGFloat
+    let content: (Data.Element) -> Content
+
+    @State private var totalHeight: CGFloat = .zero
+
+    init(_ data: Data, id: KeyPath<Data.Element, ID>, spacing: CGFloat, lineSpacing: CGFloat, @ViewBuilder content: @escaping (Data.Element) -> Content) {
+        self.data = data
+        self.id = id
+        self.spacing = spacing
+        self.lineSpacing = lineSpacing
+        self.content = content
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            generateContent(in: geometry)
+        }
+        .frame(height: totalHeight)
+    }
+
+    private func generateContent(in geometry: GeometryProxy) -> some View {
+        var width = CGFloat.zero
+        var height = CGFloat.zero
+
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(data), id: id) { item in
+                content(item)
+                    .padding(.trailing, spacing)
+                    .padding(.bottom, lineSpacing)
+                    .alignmentGuide(.leading) { dimension in
+                        if abs(width - dimension.width) > geometry.size.width {
+                            width = 0
+                            height -= dimension.height + lineSpacing
+                        }
+                        let result = width
+                        if item[keyPath: id] == data.last?[keyPath: id] {
+                            width = 0
+                        } else {
+                            width -= dimension.width + spacing
+                        }
+                        return result
+                    }
+                    .alignmentGuide(.top) { _ in
+                        let result = height
+                        if item[keyPath: id] == data.last?[keyPath: id] {
+                            height = 0
+                        }
+                        return result
+                    }
+            }
+        }
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear {
+                        totalHeight = proxy.size.height
+                    }
+                    .onChange(of: proxy.size.height) { newValue in
+                        totalHeight = newValue
+                    }
+            }
+        )
     }
 }
 
@@ -4613,12 +6302,12 @@ private struct MainAppHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(eyebrow.uppercased())
-                .font(.system(size: 12, weight: .black, design: .rounded))
+                .biroHeaderFont(12)
                 .tracking(1.2)
                 .foregroundStyle(OunjePalette.accent)
 
             Text(title)
-                .font(.system(size: 31, weight: .black, design: .rounded))
+                .biroHeaderFont(31)
                 .foregroundStyle(OunjePalette.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -4637,11 +6326,11 @@ private struct MainAppSectionHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(eyebrow.uppercased())
-                .font(.system(size: 11, weight: .black, design: .rounded))
+                .biroHeaderFont(11)
                 .tracking(1)
                 .foregroundStyle(OunjePalette.softCream.opacity(0.72))
             Text(title)
-                .font(.system(size: 18, weight: .black, design: .rounded))
+                .biroHeaderFont(18)
                 .foregroundStyle(OunjePalette.primaryText)
         }
     }
@@ -4670,7 +6359,7 @@ private struct SignedInHeroCard<Content: View>: View {
                         .background(.white.opacity(0.88), in: Capsule())
 
                     Text(title)
-                        .font(.system(size: 24, weight: .black, design: .rounded))
+                        .biroHeaderFont(24)
                         .foregroundStyle(OunjePalette.primaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -4762,7 +6451,7 @@ private struct DashboardBubbleStat: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
-                .font(.system(size: 10, weight: .black, design: .rounded))
+                .biroHeaderFont(10)
                 .tracking(0.9)
                 .foregroundStyle(OunjePalette.secondaryText)
 
@@ -4975,7 +6664,7 @@ private struct BudgetFlexibilityCalibrationCard: View {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(score)")
-                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .biroHeaderFont(34)
                         .foregroundStyle(OunjePalette.primaryText)
                     Text(selection.title)
                         .font(.system(size: 13, weight: .bold))
@@ -4985,7 +6674,7 @@ private struct BudgetFlexibilityCalibrationCard: View {
                 Spacer(minLength: 0)
 
                 Text(modeLabel)
-                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .biroHeaderFont(11)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -5010,7 +6699,7 @@ private struct BudgetFlexibilityCalibrationCard: View {
                 Picker("Budget flexibility", selection: $score) {
                     ForEach(0...100, id: \.self) { value in
                         Text("\(value)")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .biroHeaderFont(20)
                             .foregroundStyle(OunjePalette.primaryText)
                             .tag(value)
                     }
@@ -5471,7 +7160,7 @@ private struct OnboardingPromptCard: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(step.prompt)
-                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .biroHeaderFont(20)
                         .foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -5551,7 +7240,7 @@ private struct AuthenticationPreviewDeck: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Text("Your meal agent")
-                        .font(.system(size: 12, weight: .black, design: .rounded))
+                        .biroHeaderFont(12)
                         .tracking(1.3)
                         .foregroundStyle(OunjePalette.accent)
                     Spacer()
@@ -6059,7 +7748,7 @@ private struct AnimatedSelectionBubble: View {
                 }
 
                 Text(title)
-                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .biroHeaderFont(12)
                     .multilineTextAlignment(.leading)
                     .lineLimit(title.contains(" ") ? 2 : 1)
                     .minimumScaleFactor(title.contains(" ") ? 1 : 0.84)
@@ -6396,7 +8085,7 @@ private struct AgentSummaryExperienceCard: View {
                     }
 
                     Text(displayedBrief.headline)
-                        .font(.system(size: 30, weight: .black, design: .rounded))
+                        .biroHeaderFont(30)
                         .foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
                         .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 8)
@@ -6829,7 +8518,7 @@ private struct AgentBriefMetricCard: View {
                 Spacer(minLength: 8)
 
                 Text("\(metric.value)")
-                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .biroHeaderFont(20)
                     .foregroundStyle(.white)
             }
 
@@ -7154,6 +8843,23 @@ private enum SupabaseProfileStateError: LocalizedError {
     }
 }
 
+private enum SupabaseSavedRecipesError: LocalizedError {
+    case invalidRequest
+    case invalidResponse
+    case requestFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRequest:
+            return "Could not construct saved recipes request."
+        case .invalidResponse:
+            return "Unexpected response from saved recipes API."
+        case .requestFailed(let message):
+            return message
+        }
+    }
+}
+
 final class SupabaseProfileStateService {
     static let shared = SupabaseProfileStateService()
 
@@ -7346,6 +9052,96 @@ final class SupabaseProfileStateService {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseProfileStateError.invalidResponse
+        }
+        return (data, httpResponse)
+    }
+}
+
+private final class SupabaseSavedRecipesService {
+    static let shared = SupabaseSavedRecipesService()
+
+    private init() {}
+
+    func fetchSavedRecipes(userID: String) async throws -> [DiscoverRecipeCardData] {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source&user_id=eq.\(encodedUserID)&order=saved_at.desc"
+              ) else {
+            throw SupabaseSavedRecipesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to read saved recipes (\(httpResponse.statusCode))."
+            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode([SupabaseSavedRecipeRow].self, from: data).map(\.recipe)
+    }
+
+    func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData]) async throws {
+        guard !recipes.isEmpty,
+              let url = URL(string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?on_conflict=user_id,recipe_id") else {
+            throw SupabaseSavedRecipesError.invalidRequest
+        }
+
+        let formatter = ISO8601DateFormatter()
+        let payload = recipes.map {
+            SupabaseSavedRecipeUpsertPayload(
+                userID: userID,
+                recipe: $0,
+                savedAt: formatter.string(from: Date())
+            )
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to save recipe bookmark (\(httpResponse.statusCode))."
+            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+    }
+
+    func deleteSavedRecipe(userID: String, recipeID: String) async throws {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let encodedRecipeID = recipeID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?user_id=eq.\(encodedUserID)&recipe_id=eq.\(encodedRecipeID)"
+              ) else {
+            throw SupabaseSavedRecipesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to remove saved recipe (\(httpResponse.statusCode))."
+            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseSavedRecipesError.invalidResponse
         }
         return (data, httpResponse)
     }
@@ -7578,35 +9374,340 @@ private struct SupabaseProfileRow: Codable {
 @MainActor
 private final class DiscoverRecipesViewModel: ObservableObject {
     @Published private(set) var recipes: [DiscoverRecipeCardData] = []
+    @Published private(set) var filters: [String] = ["All"]
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published var selectedFilter = "All"
 
-    private var hasLoaded = false
+    private var lastLoadKey: String?
+    private var activeRequestID: UUID?
+    private let sessionSeed = String(UUID().uuidString.prefix(8))
 
-    func loadIfNeeded() async {
-        guard !hasLoaded else { return }
-        hasLoaded = true
-        await refresh()
+    func loadIfNeeded(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
+        let loadKey = cacheKey(profile: profile, filter: selectedFilter, query: query, feedContext: feedContext)
+        guard lastLoadKey != loadKey else { return }
+        await refresh(profile: profile, query: query, feedContext: feedContext)
     }
 
-    func refresh() async {
+    func refresh(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
+        let requestID = UUID()
+        activeRequestID = requestID
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hadExistingRecipes = !recipes.isEmpty
+        errorMessage = nil
         isLoading = true
-        defer { isLoading = false }
+        if !normalizedQuery.isEmpty {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled, activeRequestID == requestID else { return }
+        }
+        defer {
+            if activeRequestID == requestID {
+                isLoading = false
+            }
+        }
 
         do {
-            recipes = try await SupabaseDiscoverRecipeService.shared.fetchRecipes()
+            let response = try await SupabaseDiscoverRecipeService.shared.fetchRankedRecipes(
+                profile: profile,
+                filter: selectedFilter,
+                query: normalizedQuery,
+                sessionSeed: sessionSeed,
+                feedContext: feedContext,
+                limit: 30
+            )
+            guard activeRequestID == requestID else { return }
+            recipes = response.recipes
+            filters = response.filters.isEmpty ? ["All"] : response.filters
             errorMessage = nil
-            if !availableFilters.contains(selectedFilter) {
+            lastLoadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
+            if !filters.contains(selectedFilter) {
                 selectedFilter = "All"
             }
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? "We couldn’t load the live recipe feed."
+            guard activeRequestID == requestID else { return }
+
+            // If we already have a ranked feed on screen, keep it instead of
+            // dropping the user back to the stale latest-recipes fallback.
+            if hadExistingRecipes {
+                errorMessage = nil
+                return
+            }
+
+            do {
+                let fallbackRecipes = try await SupabaseDiscoverRecipeService.shared.fetchRecipes()
+                guard activeRequestID == requestID else { return }
+                recipes = fallbackRecipes
+                filters = ["All"] + Array(Set(fallbackRecipes.compactMap(\.filterChipLabel))).sorted()
+                errorMessage = nil
+                lastLoadKey = cacheKey(profile: profile, filter: "All", query: "", feedContext: feedContext)
+                if !filters.contains(selectedFilter) {
+                    selectedFilter = "All"
+                }
+            } catch {
+                guard activeRequestID == requestID else { return }
+                errorMessage = (error as? LocalizedError)?.errorDescription ?? "We couldn’t load the live recipe feed."
+            }
         }
     }
 
-    private var availableFilters: Set<String> {
-        Set(recipes.compactMap(\.filterChipLabel))
+    private func cacheKey(profile: UserProfile?, filter: String, query: String, feedContext: DiscoverFeedContext) -> String {
+        let cuisines = profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
+        let dietary = profile?.dietaryPatterns.joined(separator: ",") ?? ""
+        let foods = profile?.favoriteFoods.joined(separator: ",") ?? ""
+        let flavors = profile?.favoriteFlavors.joined(separator: ",") ?? ""
+        let goals = profile?.mealPrepGoals.joined(separator: ",") ?? ""
+        return "\(sessionSeed)|\(feedContext.cacheKey)|\(filter)|\(cuisines)|\(dietary)|\(foods)|\(flavors)|\(goals)|\(query)"
+    }
+}
+
+private struct PresentedRecipeDetail: Identifiable {
+    let recipeCard: DiscoverRecipeCardData
+    let plannedRecipe: PlannedRecipe?
+
+    init(recipeCard: DiscoverRecipeCardData, plannedRecipe: PlannedRecipe? = nil) {
+        self.recipeCard = recipeCard
+        self.plannedRecipe = plannedRecipe
+    }
+
+    init(plannedRecipe: PlannedRecipe) {
+        self.recipeCard = DiscoverRecipeCardData(preppedRecipe: plannedRecipe)
+        self.plannedRecipe = plannedRecipe
+    }
+
+    var id: String { recipeCard.id }
+}
+
+private struct RecipeDetailStep: Decodable, Hashable {
+    let number: Int
+    let text: String
+}
+
+private struct RecipeDetailData: Identifiable, Decodable, Hashable {
+    let id: String
+    let title: String
+    let description: String
+    let authorName: String?
+    let authorHandle: String?
+    let source: String?
+    let sourcePlatform: String?
+    let category: String?
+    let subcategory: String?
+    let recipeType: String?
+    let skillLevel: String?
+    let cookTimeText: String?
+    let servingsText: String?
+    let servingSizeText: String?
+    let dailyDietText: String?
+    let estCostText: String?
+    let estCaloriesText: String?
+    let carbsText: String?
+    let proteinText: String?
+    let fatsText: String?
+    let caloriesKcal: Double?
+    let proteinG: Double?
+    let carbsG: Double?
+    let fatG: Double?
+    let prepTimeMinutes: Int?
+    let cookTimeMinutes: Int?
+    let heroImageURLString: String?
+    let discoverCardImageURLString: String?
+    let recipeURLString: String?
+    let originalRecipeURLString: String?
+    let detailFootnote: String?
+    let imageCaption: String?
+    let dietaryTags: [String]
+    let flavorTags: [String]
+    let cuisineTags: [String]
+    let occasionTags: [String]
+    let mainProtein: String?
+    let cookMethod: String?
+    let ingredients: [String]
+    let steps: [RecipeDetailStep]
+    let servingsCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case description
+        case authorName = "author_name"
+        case authorHandle = "author_handle"
+        case source
+        case sourcePlatform = "source_platform"
+        case category
+        case subcategory
+        case recipeType = "recipe_type"
+        case skillLevel = "skill_level"
+        case cookTimeText = "cook_time_text"
+        case servingsText = "servings_text"
+        case servingSizeText = "serving_size_text"
+        case dailyDietText = "daily_diet_text"
+        case estCostText = "est_cost_text"
+        case estCaloriesText = "est_calories_text"
+        case carbsText = "carbs_text"
+        case proteinText = "protein_text"
+        case fatsText = "fats_text"
+        case caloriesKcal = "calories_kcal"
+        case proteinG = "protein_g"
+        case carbsG = "carbs_g"
+        case fatG = "fat_g"
+        case prepTimeMinutes = "prep_time_minutes"
+        case cookTimeMinutes = "cook_time_minutes"
+        case heroImageURLString = "hero_image_url"
+        case discoverCardImageURLString = "discover_card_image_url"
+        case recipeURLString = "recipe_url"
+        case originalRecipeURLString = "original_recipe_url"
+        case detailFootnote = "detail_footnote"
+        case imageCaption = "image_caption"
+        case dietaryTags = "dietary_tags"
+        case flavorTags = "flavor_tags"
+        case cuisineTags = "cuisine_tags"
+        case occasionTags = "occasion_tags"
+        case mainProtein = "main_protein"
+        case cookMethod = "cook_method"
+        case ingredients
+        case steps
+        case servingsCount = "servings_count"
+    }
+
+    var imageCandidates: [URL] {
+        [heroImageURLString, discoverCardImageURLString].compactMap(Self.normalizedImageURL(from:))
+    }
+
+    var imageURL: URL? {
+        imageCandidates.first
+    }
+
+    var originalURL: URL? {
+        let raw = originalRecipeURLString ?? recipeURLString
+        guard let raw, !raw.isEmpty else { return nil }
+        return URL(string: raw)
+    }
+
+    var authorLine: String {
+        if let authorName, !authorName.isEmpty {
+            return "By \(authorName)"
+        }
+        if let authorHandle, !authorHandle.isEmpty {
+            return authorHandle
+        }
+        if let source, !source.isEmpty {
+            return source.capitalized
+        }
+        return "Ounje source"
+    }
+
+    var displayServings: Int {
+        if let servingsCount, servingsCount > 0 { return servingsCount }
+        if let parsed = RecipeDetailData.extractLeadingInteger(from: servingsText), parsed > 0 { return parsed }
+        return 4
+    }
+
+    var detailsGrid: [RecipeDetailMetric] {
+        [
+            RecipeDetailMetric(title: "Skill", value: skillLevel ?? recipeType ?? "Any"),
+            RecipeDetailMetric(title: "Cook Time", value: cookTimeText ?? combinedCookTimeText ?? "—"),
+            RecipeDetailMetric(title: "Servings", value: servingsText ?? "\(displayServings)"),
+            RecipeDetailMetric(title: "Calories", value: estCaloriesText ?? caloriesKcal.map { "\($0.roundedString(0)) kcal" } ?? "—"),
+            RecipeDetailMetric(title: "Carbs", value: carbsText ?? carbsG.map { "\($0.roundedString(0))g" } ?? "—"),
+            RecipeDetailMetric(title: "Protein", value: proteinText ?? proteinG.map { "\($0.roundedString(0))g" } ?? "—"),
+            RecipeDetailMetric(title: "Fats", value: fatsText ?? fatG.map { "\($0.roundedString(0))g" } ?? "—"),
+            RecipeDetailMetric(title: "Est. Cost", value: estCostText ?? "—"),
+            RecipeDetailMetric(title: "Diet", value: dailyDietText ?? compactTagSummary)
+        ]
+    }
+
+    var compactTagSummary: String {
+        let values = (dietaryTags + cuisineTags).prefix(2)
+        return values.isEmpty ? "—" : values.joined(separator: " • ")
+    }
+
+    var combinedCookTimeText: String? {
+        if let prep = prepTimeMinutes, let cook = cookTimeMinutes, prep > 0 || cook > 0 {
+            let total = prep + cook
+            return total > 0 ? "\(total) mins" : nil
+        }
+        return nil
+    }
+
+    private static func normalizedImageURL(from rawValue: String?) -> URL? {
+        guard let rawValue, !rawValue.isEmpty else { return nil }
+        let normalized = rawValue
+            .replacingOccurrences(of: "https://firebasestorage.googleapis.com:443/", with: "https://firebasestorage.googleapis.com/")
+            .replacingOccurrences(of: " ", with: "%20")
+        return URL(string: normalized)
+    }
+
+    private static func extractLeadingInteger(from value: String?) -> Int? {
+        guard let match = value?.range(of: #"\d{1,3}"#, options: .regularExpression) else { return nil }
+        return Int(value?[match] ?? "")
+    }
+}
+
+private struct RecipeDetailMetric: Hashable {
+    let title: String
+    let value: String
+}
+
+private struct RecipeDetailResponse: Decodable {
+    let recipe: RecipeDetailData
+}
+
+@MainActor
+private final class RecipeDetailViewModel: ObservableObject {
+    @Published private(set) var detail: RecipeDetailData?
+    @Published private(set) var isLoading = false
+    @Published private(set) var errorMessage: String?
+
+    func load(for recipeID: String) async {
+        if detail?.id == recipeID { return }
+
+        isLoading = true
+        errorMessage = nil
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
+        } catch {
+            detail = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private actor RecipeDetailService {
+    static let shared = RecipeDetailService()
+
+    private var cache: [String: RecipeDetailData] = [:]
+
+    func fetchRecipeDetail(id: String) async throws -> RecipeDetailData {
+        if let cached = cache[id] {
+            return cached
+        }
+
+        guard let url = URL(string: "\(DiscoverAPIConfig.baseURL)/v1/recipe/detail/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to load recipe detail (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        let decoded = try JSONDecoder().decode(RecipeDetailResponse.self, from: data)
+        cache[id] = decoded.recipe
+        return decoded.recipe
     }
 }
 
@@ -7781,6 +9882,253 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
             return OunjePalette.accent
         }
     }
+
+    init(
+        id: String,
+        title: String,
+        description: String?,
+        authorName: String?,
+        authorHandle: String?,
+        category: String?,
+        recipeType: String?,
+        cookTimeText: String?,
+        publishedDate: String?,
+        imageURLString: String?,
+        heroImageURLString: String?,
+        recipeURLString: String?,
+        source: String?
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.authorName = authorName
+        self.authorHandle = authorHandle
+        self.category = category
+        self.recipeType = recipeType
+        self.cookTimeText = cookTimeText
+        self.publishedDate = publishedDate
+        self.imageURLString = imageURLString
+        self.heroImageURLString = heroImageURLString
+        self.recipeURLString = recipeURLString
+        self.source = source
+    }
+
+    init(preppedRecipe: PlannedRecipe) {
+        let tags = preppedRecipe.recipe.tags.map { $0.lowercased() }
+        let mealType = tags.first { ["breakfast", "lunch", "dinner", "dessert"].contains($0) }
+
+        self.init(
+            id: preppedRecipe.recipe.id,
+            title: preppedRecipe.recipe.title,
+            description: preppedRecipe.carriedFromPreviousPlan ? "Carried over from your last cycle." : "Scheduled for this prep cycle.",
+            authorName: nil,
+            authorHandle: nil,
+            category: mealType,
+            recipeType: mealType,
+            cookTimeText: "\(preppedRecipe.recipe.prepMinutes) mins",
+            publishedDate: nil,
+            imageURLString: nil,
+            heroImageURLString: nil,
+            recipeURLString: nil,
+            source: preppedRecipe.recipe.cuisine.title
+        )
+    }
+}
+
+private struct DiscoverRankedRecipesResponse: Decodable {
+    let recipes: [DiscoverRecipeCardData]
+    let filters: [String]
+    let rankingMode: String?
+}
+
+private struct DiscoverRankedRecipesRequest: Encodable {
+    let profile: UserProfile?
+    let filter: String
+    let query: String?
+    let limit: Int
+    let feedContext: DiscoverFeedContext
+}
+
+private struct DiscoverFeedContext: Encodable {
+    let sessionSeed: String
+    let windowKey: String
+    let weekday: String
+    let daypart: String
+    let isWeekend: Bool
+    let locationLabel: String?
+    let regionCode: String?
+    let weatherSummary: String?
+    let weatherMood: String?
+    let temperatureBand: String?
+    let seasonCue: String?
+    let sweetTreatBias: Double
+
+    static var current: DiscoverFeedContext {
+        let calendar = Calendar.current
+        let now = Date()
+        let hour = calendar.component(.hour, from: now)
+        let minute = calendar.component(.minute, from: now)
+        let halfHourBucket = (minute / 30) * 30
+        let weekdayIndex = calendar.component(.weekday, from: now)
+        let weekdaySymbols = calendar.weekdaySymbols
+        let weekday = weekdaySymbols[max(0, min(weekdaySymbols.count - 1, weekdayIndex - 1))].lowercased()
+
+        let daypart: String
+        switch hour {
+        case 5..<11:
+            daypart = "morning"
+        case 11..<15:
+            daypart = "midday"
+        case 15..<18:
+            daypart = "afternoon"
+        case 18..<22:
+            daypart = "evening"
+        default:
+            daypart = "late-night"
+        }
+
+        return DiscoverFeedContext(
+            sessionSeed: "",
+            windowKey: "\(calendar.component(.year, from: now))-\(calendar.ordinality(of: .day, in: .year, for: now) ?? 0)-\(hour)-\(halfHourBucket)",
+            weekday: weekday,
+            daypart: daypart,
+            isWeekend: calendar.isDateInWeekend(now),
+            locationLabel: nil,
+            regionCode: Locale.current.region?.identifier,
+            weatherSummary: nil,
+            weatherMood: nil,
+            temperatureBand: nil,
+            seasonCue: Self.seasonCue(for: now),
+            sweetTreatBias: Self.baseSweetTreatBias(daypart: daypart, isWeekend: calendar.isDateInWeekend(now))
+        )
+    }
+
+    func withSessionSeed(_ seed: String) -> DiscoverFeedContext {
+        DiscoverFeedContext(
+            sessionSeed: seed,
+            windowKey: windowKey,
+            weekday: weekday,
+            daypart: daypart,
+            isWeekend: isWeekend,
+            locationLabel: locationLabel,
+            regionCode: regionCode,
+            weatherSummary: weatherSummary,
+            weatherMood: weatherMood,
+            temperatureBand: temperatureBand,
+            seasonCue: seasonCue,
+            sweetTreatBias: sweetTreatBias
+        )
+    }
+
+    func withLocation(locationLabel: String?, regionCode: String?) -> DiscoverFeedContext {
+        DiscoverFeedContext(
+            sessionSeed: sessionSeed,
+            windowKey: windowKey,
+            weekday: weekday,
+            daypart: daypart,
+            isWeekend: isWeekend,
+            locationLabel: locationLabel,
+            regionCode: regionCode,
+            weatherSummary: weatherSummary,
+            weatherMood: weatherMood,
+            temperatureBand: temperatureBand,
+            seasonCue: seasonCue,
+            sweetTreatBias: sweetTreatBias
+        )
+    }
+
+    func withWeather(summary: String?, mood: String?, temperatureBand: String?, sweetTreatBias: Double) -> DiscoverFeedContext {
+        DiscoverFeedContext(
+            sessionSeed: sessionSeed,
+            windowKey: windowKey,
+            weekday: weekday,
+            daypart: daypart,
+            isWeekend: isWeekend,
+            locationLabel: locationLabel,
+            regionCode: regionCode,
+            weatherSummary: summary,
+            weatherMood: mood,
+            temperatureBand: temperatureBand,
+            seasonCue: seasonCue,
+            sweetTreatBias: sweetTreatBias
+        )
+    }
+
+    var cacheKey: String {
+        [
+            windowKey,
+            weekday,
+            daypart,
+            isWeekend ? "weekend" : "weekday",
+            locationLabel ?? "",
+            regionCode ?? "",
+            weatherSummary ?? "",
+            weatherMood ?? "",
+            temperatureBand ?? "",
+            seasonCue ?? "",
+            String(format: "%.2f", sweetTreatBias)
+        ].joined(separator: "|")
+    }
+
+    private static func seasonCue(for date: Date) -> String {
+        switch Calendar.current.component(.month, from: date) {
+        case 12, 1, 2:
+            return "winter"
+        case 3, 4, 5:
+            return "spring"
+        case 6, 7, 8:
+            return "summer"
+        default:
+            return "autumn"
+        }
+    }
+
+    private static func baseSweetTreatBias(daypart: String, isWeekend: Bool) -> Double {
+        var bias = 0.18
+        if daypart == "evening" { bias += 0.12 }
+        if daypart == "late-night" { bias += 0.18 }
+        if isWeekend { bias += 0.1 }
+        return min(max(bias, 0), 1)
+    }
+}
+
+private struct DiscoverWeatherSnapshot {
+    let summary: String
+    let mood: String
+    let temperatureBand: String
+    let sweetTreatBias: Double
+}
+
+@MainActor
+private final class DiscoverEnvironmentViewModel: ObservableObject {
+    @Published private(set) var feedContext = DiscoverFeedContext.current
+    private var lastKey: String?
+
+    func refresh(profile: UserProfile?) async {
+        let address = profile?.deliveryAddress
+        let city = address?.city.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let region = address?.region.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let locationLabel = [city, region].filter { !$0.isEmpty }.joined(separator: ", ")
+        let key = "\(DiscoverFeedContext.current.windowKey)|\(locationLabel)"
+        if lastKey == key { return }
+
+        var context = DiscoverFeedContext.current.withLocation(
+            locationLabel: locationLabel.isEmpty ? nil : locationLabel,
+            regionCode: region.isEmpty ? Locale.current.region?.identifier : region
+        )
+
+        if !city.isEmpty, let snapshot = try? await DiscoverWeatherService.shared.fetchWeather(city: city, region: region) {
+            context = context.withWeather(
+                summary: snapshot.summary,
+                mood: snapshot.mood,
+                temperatureBand: snapshot.temperatureBand,
+                sweetTreatBias: snapshot.sweetTreatBias
+            )
+        }
+
+        feedContext = context
+        lastKey = key
+    }
 }
 
 private final class SupabaseDiscoverRecipeService {
@@ -7825,6 +10173,139 @@ private final class SupabaseDiscoverRecipeService {
         }
 
         return try JSONDecoder().decode([DiscoverRecipeCardData].self, from: data)
+    }
+
+    func fetchRankedRecipes(
+        profile: UserProfile?,
+        filter: String,
+        query: String,
+        sessionSeed: String,
+        feedContext: DiscoverFeedContext,
+        limit: Int = 30
+    ) async throws -> DiscoverRankedRecipesResponse {
+        guard let url = URL(string: "\(DiscoverAPIConfig.baseURL)/v1/recipe/discover") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            DiscoverRankedRecipesRequest(
+                profile: profile,
+                filter: filter,
+                query: query.isEmpty ? nil : query,
+                limit: limit,
+                feedContext: feedContext.withSessionSeed(sessionSeed)
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to load ranked recipes (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(DiscoverRankedRecipesResponse.self, from: data)
+    }
+}
+
+private actor DiscoverWeatherService {
+    static let shared = DiscoverWeatherService()
+    private var cache: [String: (timestamp: Date, snapshot: DiscoverWeatherSnapshot)] = [:]
+
+    func fetchWeather(city: String, region: String) async throws -> DiscoverWeatherSnapshot {
+        let key = "\(city.lowercased())|\(region.lowercased())"
+        if let cached = cache[key], Date().timeIntervalSince(cached.timestamp) < 3600 {
+            return cached.snapshot
+        }
+
+        let query = [city, region].filter { !$0.isEmpty }.joined(separator: ", ")
+        guard let geocodeURL = URL(string: "https://geocoding-api.open-meteo.com/v1/search?name=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query)&count=1&language=en&format=json") else {
+            throw URLError(.badURL)
+        }
+
+        let (geoData, _) = try await URLSession.shared.data(from: geocodeURL)
+        let geocode = try JSONDecoder().decode(DiscoverWeatherGeocodeResponse.self, from: geoData)
+        guard let result = geocode.results?.first else {
+            throw URLError(.resourceUnavailable)
+        }
+
+        guard let weatherURL = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(result.latitude)&longitude=\(result.longitude)&current=temperature_2m,weather_code,cloud_cover,precipitation&temperature_unit=celsius") else {
+            throw URLError(.badURL)
+        }
+
+        let (weatherData, _) = try await URLSession.shared.data(from: weatherURL)
+        let weather = try JSONDecoder().decode(DiscoverWeatherForecastResponse.self, from: weatherData)
+
+        let temperatureBand: String
+        switch weather.current.temperature2m {
+        case ..<4:
+            temperatureBand = "cold"
+        case 4..<14:
+            temperatureBand = "cool"
+        case 14..<24:
+            temperatureBand = "mild"
+        default:
+            temperatureBand = "hot"
+        }
+
+        let mood: String
+        switch weather.current.weatherCode {
+        case 51...67, 80...99:
+            mood = "rainy"
+        case 71...77, 85...86:
+            mood = "snowy"
+        case 0, 1:
+            mood = "sunny"
+        case 2, 3, 45, 48:
+            mood = "cloudy"
+        default:
+            mood = "mild"
+        }
+
+        var sweetTreatBias = DiscoverFeedContext.current.sweetTreatBias
+        if mood == "sunny" && temperatureBand == "hot" { sweetTreatBias += 0.14 }
+        if mood == "rainy" || mood == "snowy" { sweetTreatBias += 0.06 }
+        if temperatureBand == "cold" { sweetTreatBias -= 0.04 }
+        sweetTreatBias = min(max(sweetTreatBias, 0.05), 0.8)
+
+        let snapshot = DiscoverWeatherSnapshot(
+            summary: "\(temperatureBand)-\(mood)",
+            mood: mood,
+            temperatureBand: temperatureBand,
+            sweetTreatBias: sweetTreatBias
+        )
+        cache[key] = (Date(), snapshot)
+        return snapshot
+    }
+}
+
+private struct DiscoverWeatherGeocodeResponse: Decodable {
+    let results: [DiscoverWeatherGeocodeResult]?
+}
+
+private struct DiscoverWeatherGeocodeResult: Decodable {
+    let latitude: Double
+    let longitude: Double
+}
+
+private struct DiscoverWeatherForecastResponse: Decodable {
+    let current: DiscoverWeatherCurrent
+}
+
+private struct DiscoverWeatherCurrent: Decodable {
+    let temperature2m: Double
+    let weatherCode: Int
+
+    enum CodingKeys: String, CodingKey {
+        case temperature2m = "temperature_2m"
+        case weatherCode = "weather_code"
     }
 }
 
@@ -7871,12 +10352,223 @@ private struct SupabaseRestErrorResponse: Codable {
     let error: String?
 }
 
+private struct SupabaseSavedRecipeRow: Codable {
+    let recipeID: String
+    let title: String
+    let description: String?
+    let authorName: String?
+    let authorHandle: String?
+    let category: String?
+    let recipeType: String?
+    let cookTimeText: String?
+    let publishedDate: String?
+    let discoverCardImageURL: String?
+    let heroImageURL: String?
+    let recipeURL: String?
+    let source: String?
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+        case title
+        case description
+        case authorName = "author_name"
+        case authorHandle = "author_handle"
+        case category
+        case recipeType = "recipe_type"
+        case cookTimeText = "cook_time_text"
+        case publishedDate = "published_date"
+        case discoverCardImageURL = "discover_card_image_url"
+        case heroImageURL = "hero_image_url"
+        case recipeURL = "recipe_url"
+        case source
+    }
+
+    var recipe: DiscoverRecipeCardData {
+        DiscoverRecipeCardData(
+            id: recipeID,
+            title: title,
+            description: description,
+            authorName: authorName,
+            authorHandle: authorHandle,
+            category: category,
+            recipeType: recipeType,
+            cookTimeText: cookTimeText,
+            publishedDate: publishedDate,
+            imageURLString: discoverCardImageURL,
+            heroImageURLString: heroImageURL,
+            recipeURLString: recipeURL,
+            source: source
+        )
+    }
+}
+
+private struct SupabaseSavedRecipeUpsertPayload: Codable {
+    let userID: String
+    let recipeID: String
+    let title: String
+    let description: String?
+    let authorName: String?
+    let authorHandle: String?
+    let category: String?
+    let recipeType: String?
+    let cookTimeText: String?
+    let publishedDate: String?
+    let discoverCardImageURL: String?
+    let heroImageURL: String?
+    let recipeURL: String?
+    let source: String?
+    let savedAt: String
+
+    init(userID: String, recipe: DiscoverRecipeCardData, savedAt: String) {
+        self.userID = userID
+        self.recipeID = recipe.id
+        self.title = recipe.title
+        self.description = recipe.description
+        self.authorName = recipe.authorName
+        self.authorHandle = recipe.authorHandle
+        self.category = recipe.category
+        self.recipeType = recipe.recipeType
+        self.cookTimeText = recipe.cookTimeText
+        self.publishedDate = recipe.publishedDate
+        self.discoverCardImageURL = recipe.imageURLString
+        self.heroImageURL = recipe.heroImageURLString
+        self.recipeURL = recipe.recipeURLString
+        self.source = recipe.source
+        self.savedAt = savedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case recipeID = "recipe_id"
+        case title
+        case description
+        case authorName = "author_name"
+        case authorHandle = "author_handle"
+        case category
+        case recipeType = "recipe_type"
+        case cookTimeText = "cook_time_text"
+        case publishedDate = "published_date"
+        case discoverCardImageURL = "discover_card_image_url"
+        case heroImageURL = "hero_image_url"
+        case recipeURL = "recipe_url"
+        case source
+        case savedAt = "saved_at"
+    }
+}
+
 private enum OunjeLayout {
     static let screenHorizontalPadding: CGFloat = 16
     static let authButtonHeight: CGFloat = 52
-    static let tabBarHeight: CGFloat = 54
+    static let tabBarHeight: CGFloat = 50
     static let setupActionBarReservedHeight: CGFloat = 112
     static let welcomeActionBarHeight: CGFloat = 182
+}
+
+private enum DiscoverAPIConfig {
+    static let baseURL: String = {
+        #if targetEnvironment(simulator)
+        return "http://127.0.0.1:8080"
+        #elseif DEBUG
+        return "http://127.0.0.1:8080"
+        #else
+        return "https://api.ounje.app"
+        #endif
+    }()
+}
+
+private struct BiroScriptDisplayText: View {
+    let text: String
+    let size: CGFloat
+    let color: Color
+
+    init(_ text: String, size: CGFloat, color: Color = OunjePalette.primaryText) {
+        self.text = text
+        self.size = size
+        self.color = color
+    }
+
+    var body: some View {
+        ZStack {
+            Text(text)
+                .font(.custom("BiroScriptreduced", size: size))
+                .tracking(0.2)
+                .foregroundStyle(color.opacity(0.88))
+                .offset(x: 0.55)
+
+            Text(text)
+                .font(.custom("BiroScriptreduced", size: size))
+                .tracking(0.2)
+                .foregroundStyle(color)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+    }
+}
+
+private extension View {
+    func biroHeaderFont(_ size: CGFloat) -> some View {
+        Group {
+            if size >= 28 {
+                self
+                    .font(.custom("BiroScriptreduced", size: size))
+                    .tracking(0.2)
+            } else {
+                self
+                    .font(.system(size: size, weight: .bold, design: .rounded))
+            }
+        }
+    }
+
+    func recipeCardTitleFont(_ size: CGFloat) -> some View {
+        self.modifier(RecipeCardTitleModifier(size: size))
+    }
+}
+
+private struct RecipeCardTitleModifier: ViewModifier {
+    let size: CGFloat
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: .topLeading) {
+            content
+                .font(.custom("Slee_handwritting-Regular", size: size))
+                .tracking(0.1)
+                .foregroundStyle(OunjePalette.primaryText.opacity(0.78))
+                .offset(x: 0.45, y: 0.35)
+
+            content
+                .font(.custom("Slee_handwritting-Regular", size: size))
+                .tracking(0.1)
+        }
+    }
+}
+
+private struct InlineAddButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .bold))
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(OunjePalette.primaryText)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(OunjePalette.panel.opacity(0.88))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 private enum OunjePalette {
@@ -7884,7 +10576,7 @@ private enum OunjePalette {
     static let panel = Color(hex: "1E1E1E")
     static let surface = Color(hex: "2E2E2E")
     static let elevated = Color(hex: "383838")
-    static let navBar = Color(hex: "282C35")
+    static let navBar = Color(hex: "1B1D20")
     static let accent = Color(hex: "1E5A3E")
     static let accentDark = Color(hex: "123828")
     static let softCream = Color(hex: "E9E0D2")

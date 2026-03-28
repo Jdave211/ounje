@@ -1,0 +1,29 @@
+- generic [ref=e3]:
+  - link "Instacart logo" [ref=e5] [cursor=pointer]:
+    - /url: /
+    - img "Instacart logo" [ref=e6]
+  - generic [ref=e7]:
+    - button "Sign up" [ref=e10] [cursor=pointer]:
+      - generic [ref=e11]: Sign up
+    - generic [ref=e13]:
+      - heading "Log in" [level=2] [ref=e15]
+      - generic [ref=e16]:
+        - generic [ref=e20]:
+          - textbox "Enter your email address" [ref=e21]
+          - generic: Enter your email address
+        - button "Continue" [ref=e23] [cursor=pointer]:
+          - generic [ref=e24]: Continue
+      - generic [ref=e27]: Or continue with
+      - generic [ref=e28]:
+        - button "Google" [ref=e29] [cursor=pointer]:
+          - generic [ref=e31]:
+            - img [ref=e32]
+            - text: Google
+        - button "Facebook" [ref=e37] [cursor=pointer]:
+          - generic [ref=e39]:
+            - img [ref=e40]
+            - text: Facebook
+        - button "Phone" [ref=e43] [cursor=pointer]:
+          - generic [ref=e45]:
+            - img [ref=e46]
+            - text: Phone

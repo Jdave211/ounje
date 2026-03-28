@@ -1,0 +1,430 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - banner [ref=e5]:
+        - link "Skip to Main Content" [ref=e6] [cursor=pointer]:
+          - /url: "#maincontent"
+        - text:  
+        - link "Walmart Homepage" [ref=e7] [cursor=pointer]:
+          - /url: /en
+          - img "Walmart" [ref=e8]
+        - generic [ref=e11]:
+          - button "How do you want your items? Toronto, M3J 9Z0 • Toronto Downsview" [expanded] [ref=e13] [cursor=pointer]:
+            - generic [ref=e14]:
+              - generic [ref=e15]:
+                - generic [ref=e17]: How do you want your items?
+                - generic [ref=e18]:
+                  - generic [ref=e22]: Toronto, M3J 9Z0
+                  - generic [ref=e25]:
+                    - generic [ref=e26]: •
+                    - generic [ref=e27]: Toronto Downsview
+              - generic [ref=e29]: 
+          - generic [ref=e30]:
+            - paragraph [ref=e32]: "Screen Reader Instructions: In this dialogue box, you will find toggle buttons to select how you want to shop. After selecting, this option saves to customize your shopping experience throughout Walmart to show you relevant products. If you would like to change your preference, you can trigger this dialogue box on any page. The button to trigger the dialogue box appears after the \"Cart\" button in the reading and keyboard order. The button will be labelled according to the last option you chose. To exit this dialogue box, activate the \"Close\" button or press the \"Escape\" key."
+            - dialog "How do you want your items?" [ref=e34]:
+              - generic [ref=e36]:
+                - list [ref=e37]:
+                  - listitem [ref=e38]:
+                    - button "Pickup" [ref=e39]:
+                      - img [ref=e41]
+                      - generic [ref=e42]: Pickup
+                  - listitem [ref=e43]:
+                    - button "Delivery" [ref=e44]:
+                      - img [ref=e46]
+                      - generic [ref=e47]: Delivery
+                - generic [ref=e49]:
+                  - generic [ref=e54]:
+                    - generic [ref=e58]:
+                      - generic [ref=e60]: Add an address for shopping and delivery
+                      - generic [ref=e62]: Toronto, ON M3J 9Z0
+                    - button "Add address" [active] [ref=e64] [cursor=pointer]
+                  - separator [ref=e66]
+                  - button "Toronto Downsview 3757 KEELE ST, Toronto, ON M3J 1N4 Curbside pickup In-store pickup" [ref=e70]:
+                    - generic [ref=e71]:
+                      - generic [ref=e75]:
+                        - generic [ref=e77]: Toronto Downsview
+                        - generic [ref=e79]: 3757 KEELE ST, Toronto, ON M3J 1N4
+                      - generic [ref=e81]:
+                        - generic [ref=e82]:
+                          - generic [ref=e84]: 
+                          - text: Curbside pickup
+                        - generic [ref=e85]:
+                          - generic [ref=e87]: 
+                          - text: In-store pickup
+                    - generic [ref=e89]: 
+                - button "Close, how do you want your items?" [ref=e90]:
+                  - generic [ref=e91]: 
+          - generic [ref=e92]:
+            - generic [ref=e94]: Toronto, M3J 9Z0
+            - generic [ref=e96]: •
+        - search "Walmart Site-Wide" [ref=e98]:
+          - generic [ref=e99]:
+            - searchbox "Search" [ref=e100]: bananas
+            - button [ref=e101] [cursor=pointer]:
+              - generic [ref=e102]: 
+            - button "Search" [ref=e103] [cursor=pointer]:
+              - generic [ref=e104]: 
+        - navigation "Account and Cart" [ref=e105]:
+          - list [ref=e106]:
+            - listitem [ref=e107]:
+              - button "Language English" [ref=e109]:
+                - generic [ref=e110]: 
+                - generic [ref=e111]:
+                  - generic [ref=e112]: Language
+                  - generic [ref=e113]: English
+            - listitem [ref=e114]:
+              - button "Reorder My Items" [ref=e115] [cursor=pointer]:
+                - generic [ref=e116]: 
+                - generic [ref=e117]:
+                  - generic [ref=e118]: Reorder
+                  - generic [ref=e119]: My Items
+              - text:  
+            - listitem [ref=e120]:
+              - button "Sign In Account" [ref=e121] [cursor=pointer]:
+                - generic [ref=e122]: 
+                - generic [ref=e123]:
+                  - generic [ref=e124]: Sign In
+                  - generic [ref=e125]: Account
+              - text:  
+            - listitem [ref=e126]:
+              - button "Cart contains 0 items Total Amount $0.00" [ref=e129]:
+                - generic [ref=e130]: 
+                - generic [ref=e131]: "0"
+                - generic [ref=e132]: $0.00
+      - generic [ref=e133]:
+        - generic [ref=e134]:
+          - navigation "Primary" [ref=e135]:
+            - list [ref=e136]:
+              - listitem [ref=e137]:
+                - button "Departments " [ref=e141]:
+                  - generic [ref=e142]: 
+                  - text: Departments
+                  - generic [ref=e143]: 
+              - listitem [ref=e144]:
+                - button "Services " [ref=e148]:
+                  - generic [ref=e149]: 
+                  - text: Services
+                  - generic [ref=e150]: 
+          - generic [ref=e151]: "|"
+          - navigation "Secondary" [ref=e153]:
+            - list [ref=e154]:
+              - listitem [ref=e155]:
+                - link "Flyer" [ref=e157] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/flyer?icid=home_page_other_weekly_flyer_d_128753_7Y5EU5KV4E
+              - listitem [ref=e158]:
+                - link "Grocery" [ref=e160] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/grocery/10019?icid=home_page_grocery_grocery_d_128750_UIQ8379D3Q
+              - listitem [ref=e161]:
+                - link "My Items" [ref=e163] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/my-items?icid=home_page_other_easy_reorder_d_128749_3RDAW4LI46
+              - listitem [ref=e164]:
+                - link "Rollbacks & more" [ref=e166] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/rollbacks-and-more/6000205319047?icid=home_page_other_rollbacks_n_more_d_159007_HE2W3WVNZL
+              - listitem [ref=e167]:
+                - link "Easter" [ref=e169] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/gifts-holidays/easter/6000197172380?icid=home_page_other_easter_d_174928_1K65Y2PIPA
+              - listitem [ref=e170]:
+                - link "Spring Fashion" [ref=e172] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/shop/inspired-by-social/6000199749624?icid=home_page_clothing_shoes_and_accessories_spring_fashion_d_174929_Q9EEXNZJRO
+              - listitem [ref=e173]:
+                - link "Outdoor Living" [ref=e175] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/browse/outdoor-living/10009?icid=home_page_outdoor_living_outdoor_living_d_173123_I3G89BLNOR
+              - listitem [ref=e176]:
+                - link "Electronics" [ref=e178] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/electronics/10003?icid=home_page_electronics_electronics_d_128758_G9N9AJG9L2
+              - listitem [ref=e179]:
+                - link "Credit Card" [ref=e181] [cursor=pointer]:
+                  - /url: https://www.walmart.ca/en/cp/walmart-rewards-mastercard/6000205202749?icid=home_page_other_credit_card_d_176121_ONU31FWV83
+        - button "More " [ref=e184] [cursor=pointer]:
+          - generic [ref=e186]: More
+          - generic [ref=e187]: 
+    - main [ref=e191]:
+      - generic [ref=e192]:
+        - generic [ref=e195]:
+          - region "Sort and Filter section" [ref=e199]:
+            - switch "In-store" [ref=e202]:
+              - generic [ref=e204]: 
+              - generic [ref=e205]: In-store
+            - button "Sold By" [ref=e208]:
+              - generic [ref=e209]: Sold By
+              - generic [ref=e210]: 
+            - button "Price" [ref=e213]:
+              - generic [ref=e215]: 
+              - generic [ref=e216]: Price
+              - generic [ref=e217]: 
+            - button "Brand" [ref=e220]:
+              - generic [ref=e221]: Brand
+              - generic [ref=e222]: 
+            - button "Speed" [ref=e225]:
+              - generic [ref=e227]: 
+              - generic [ref=e228]: Speed
+              - generic [ref=e229]: 
+            - generic [ref=e230]:
+              - generic [ref=e231]: Sort by
+              - text: "|"
+              - button "Sort by Best Match" [ref=e233]:
+                - text: Best Match
+                - generic [ref=e234]: 
+          - separator [ref=e235]
+          - generic [ref=e238]:
+            - text: Did you mean
+            - link "banana?" [ref=e239] [cursor=pointer]:
+              - /url: /en/search?query=banana&method=spelling
+          - separator [ref=e240]
+        - generic [ref=e244]:
+          - generic [ref=e247]:
+            - generic [ref=e248]:
+              - button "Category" [ref=e251]:
+                - generic [ref=e252]: Category
+                - img [ref=e253]: 
+              - separator [ref=e254]
+            - generic [ref=e255]:
+              - button "Brand" [ref=e258]:
+                - generic [ref=e259]: Brand
+                - img [ref=e260]: 
+              - separator [ref=e261]
+            - generic [ref=e262]:
+              - button "Best Sellers" [ref=e265]:
+                - generic [ref=e266]: Best Sellers
+                - img [ref=e267]: 
+              - separator [ref=e268]
+            - generic [ref=e269]:
+              - button "Sold By" [ref=e272]:
+                - generic [ref=e273]: Sold By
+                - img [ref=e274]: 
+              - separator [ref=e275]
+            - generic [ref=e276]:
+              - button "Speed" [ref=e279]:
+                - generic [ref=e280]: Speed
+                - img [ref=e281]: 
+              - separator [ref=e282]
+            - generic [ref=e283]:
+              - button "Customer Rating" [ref=e286]:
+                - generic [ref=e287]: Customer Rating
+                - img [ref=e288]: 
+              - separator [ref=e289]
+            - generic [ref=e290]:
+              - button "Price" [ref=e293]:
+                - generic [ref=e294]: Price
+                - img [ref=e295]: 
+              - separator [ref=e296]
+          - generic [ref=e299]:
+            - heading "Results for \"bananas\" (5)" [level=2] [ref=e307]: Results for "bananas"(5)
+            - generic [ref=e308]:
+              - group [ref=e311]:
+                - link "Banana, Sold in singles, 0.15 - 0.23 KG" [ref=e312] [cursor=pointer]:
+                  - /url: /en/ip/banana/875806?classType=REGULAR&athbdg=L1200&from=/search
+                  - generic [ref=e313]: Banana, Sold in singles, 0.15 - 0.23 KG
+                - generic [ref=e315]:
+                  - generic [ref=e316]:
+                    - generic [ref=e318]: Overall pick
+                    - generic [ref=e319]:
+                      - generic [ref=e320]:
+                        - button "Sign in to add to Favourites list, Banana, Sold in singles, 0.15 - 0.23 KG" [ref=e321]:
+                          - generic [ref=e322]: 
+                        - img "Banana, Sold in singles, 0.15 - 0.23 KG" [ref=e323]
+                      - button "Add to cart - Banana, Sold in singles, 0.15 - 0.23 KG" [ref=e326] [cursor=pointer]:
+                        - generic "add to cart" [ref=e327]: 
+                        - generic [ref=e328]: Add
+                  - generic [ref=e330]:
+                    - generic [ref=e332]:
+                      - generic [ref=e333]: 35¢
+                      - generic [ref=e334]: current price 35¢
+                      - generic [ref=e336]: avg price
+                      - generic [ref=e337]: 15¢/100g
+                      - generic [ref=e338]: Final cost by weight
+                    - generic [ref=e339]: Banana, Sold in singles, 0.15 - 0.23 KG
+                    - generic [ref=e340]:
+                      - generic [ref=e341]:
+                        - generic [ref=e342]: 
+                        - generic [ref=e343]: 
+                        - generic [ref=e344]: 
+                        - generic [ref=e345]: 
+                        - generic [ref=e346]: 
+                      - generic [ref=e347]: "3649"
+                      - generic [ref=e348]: 4.4185 out of 5 stars. 3649 reviews
+                    - generic [ref=e349]:
+                      - generic [ref=e350]: Save with
+                      - img "Walmart Pass" [ref=e351]
+                    - generic [ref=e352]:
+                      - generic [ref=e354]: Delivery, 7am tomorrow
+                      - generic [ref=e356]: Pickup, 8am tomorrow
+              - group [ref=e359]:
+                - link "Fairtrade Organic Banana, Sold in singles, 0.15 - 0.24 KG" [ref=e360] [cursor=pointer]:
+                  - /url: /en/ip/fairtrade-organic-banana/6000191272016?classType=REGULAR&athbdg=L1600&from=/search
+                  - generic [ref=e361]: Fairtrade Organic Banana, Sold in singles, 0.15 - 0.24 KG
+                - generic [ref=e363]:
+                  - generic [ref=e364]:
+                    - generic [ref=e366]: Best seller
+                    - generic [ref=e367]:
+                      - generic [ref=e368]:
+                        - button "Sign in to add to Favourites list, Fairtrade Organic Banana, Sold in singles, 0.15 - 0.24 KG" [ref=e369]:
+                          - generic [ref=e370]: 
+                        - img "Fairtrade Organic Banana, Sold in singles, 0.15 - 0.24 KG" [ref=e371]
+                      - button "Add to cart - Fairtrade Organic Banana, Sold in singles, 0.15 - 0.24 KG" [ref=e374] [cursor=pointer]:
+                        - generic "add to cart" [ref=e375]: 
+                        - generic [ref=e376]: Add
+                  - generic [ref=e378]:
+                    - generic [ref=e380]:
+                      - generic [ref=e381]: 57¢
+                      - generic [ref=e382]: current price 57¢
+                      - generic [ref=e384]: avg price
+                      - generic [ref=e385]: 24¢/100g
+                      - generic [ref=e386]: Final cost by weight
+                    - generic [ref=e387]: Fairtrade Organic Banana, Sold in singles, 0.15 - 0.24 KG
+                    - generic [ref=e388]:
+                      - generic [ref=e389]:
+                        - generic [ref=e390]: 
+                        - generic [ref=e391]: 
+                        - generic [ref=e392]: 
+                        - generic [ref=e393]: 
+                        - generic [ref=e394]: 
+                      - generic [ref=e395]: "426"
+                      - generic [ref=e396]: 3.8545 out of 5 stars. 426 reviews
+                    - generic [ref=e397]:
+                      - generic [ref=e398]: Save with
+                      - img "Walmart Pass" [ref=e399]
+                    - generic [ref=e400]:
+                      - generic [ref=e402]: Delivery, 7am tomorrow
+                      - generic [ref=e404]: Pickup, 8am tomorrow
+              - group [ref=e407]:
+                - link "Plantain, Sold in Singles, 0.25 - 0.35 KG" [ref=e408] [cursor=pointer]:
+                  - /url: /en/ip/plantain/6000196180853?classType=REGULAR&athbdg=L1600&from=/search
+                  - generic [ref=e409]: Plantain, Sold in Singles, 0.25 - 0.35 KG
+                - generic [ref=e411]:
+                  - generic [ref=e412]:
+                    - generic [ref=e414]: Best seller
+                    - generic [ref=e415]:
+                      - generic [ref=e416]:
+                        - button "Sign in to add to Favourites list, Plantain, Sold in Singles, 0.25 - 0.35 KG" [ref=e417]:
+                          - generic [ref=e418]: 
+                        - img "Plantain, Sold in Singles, 0.25 - 0.35 KG" [ref=e419]
+                      - button "Add to cart - Plantain, Sold in Singles, 0.25 - 0.35 KG" [ref=e422] [cursor=pointer]:
+                        - generic "add to cart" [ref=e423]: 
+                        - generic [ref=e424]: Add
+                  - generic [ref=e426]:
+                    - generic [ref=e428]:
+                      - generic [ref=e429]: $1.54
+                      - generic [ref=e430]: current price $1.54
+                      - generic [ref=e432]: avg price
+                      - generic [ref=e433]: 44¢/100g
+                      - generic [ref=e434]: Final cost by weight
+                    - generic [ref=e435]: Plantain, Sold in Singles, 0.25 - 0.35 KG
+                    - generic [ref=e436]:
+                      - generic [ref=e437]:
+                        - generic [ref=e438]: 
+                        - generic [ref=e439]: 
+                        - generic [ref=e440]: 
+                        - generic [ref=e441]: 
+                        - generic [ref=e442]: 
+                      - generic [ref=e443]: "248"
+                      - generic [ref=e444]: 3.8992 out of 5 stars. 248 reviews
+                    - generic [ref=e445]:
+                      - generic [ref=e446]: Save with
+                      - img "Walmart Pass" [ref=e447]
+                    - generic [ref=e448]:
+                      - generic [ref=e450]: Delivery, 7am tomorrow
+                      - generic [ref=e452]: Pickup, 8am tomorrow
+              - group [ref=e455]:
+                - link "Great Value Frozen Sliced Bananas, 600 g" [ref=e456] [cursor=pointer]:
+                  - /url: /en/ip/Great-Value-Frozen-Sliced-Bananas/51I6EEF27EHL?classType=REGULAR&athbdg=L1300&from=/search
+                  - generic [ref=e457]: Great Value Frozen Sliced Bananas, 600 g
+                - generic [ref=e459]:
+                  - generic [ref=e460]:
+                    - generic [ref=e462]: Rollback
+                    - generic [ref=e463]:
+                      - generic [ref=e464]:
+                        - button "Sign in to add to Favourites list, Great Value Frozen Sliced Bananas, 600 g" [ref=e465]:
+                          - generic [ref=e466]: 
+                        - img "Great Value Frozen Sliced Bananas, 600 g" [ref=e467]
+                      - button "Add to cart - Great Value Frozen Sliced Bananas, 600 g" [ref=e470] [cursor=pointer]:
+                        - generic "add to cart" [ref=e471]: 
+                        - generic [ref=e472]: Add
+                  - generic [ref=e474]:
+                    - generic [ref=e476]:
+                      - generic [ref=e477]: Now $3.97
+                      - generic [ref=e478]: current price Now $3.97, Was $4.66
+                      - generic [ref=e479]: $4.66
+                      - generic [ref=e480]: 66¢/100g
+                    - generic [ref=e481]: You save $0.69
+                    - generic [ref=e483]: You save$0.69
+                    - generic [ref=e484]: Great Value
+                    - generic [ref=e485]: Great Value Frozen Sliced Bananas, 600 g
+                    - generic [ref=e486]:
+                      - generic [ref=e487]:
+                        - generic [ref=e488]: 
+                        - generic [ref=e489]: 
+                        - generic [ref=e490]: 
+                        - generic [ref=e491]: 
+                        - generic [ref=e492]: 
+                      - generic [ref=e493]: "45"
+                      - generic [ref=e494]: 4.1778 out of 5 stars. 45 reviews
+                    - generic [ref=e495]:
+                      - generic [ref=e496]: Save with
+                      - img "Walmart Pass" [ref=e497]
+                    - generic [ref=e498]:
+                      - generic [ref=e500]: Delivery, 7am tomorrow
+                      - generic [ref=e502]: Pickup, 8am tomorrow
+              - group [ref=e505]:
+                - link "Paradise Frozen Steamed Golden Saba Banana Whole, 454g" [ref=e506] [cursor=pointer]:
+                  - /url: /en/ip/Paradise-Frozen-Steamed-Golden-Saba-Banana-Whole/6000196533891?classType=REGULAR&athbdg=L1102&from=/search
+                  - generic [ref=e507]: Paradise Frozen Steamed Golden Saba Banana Whole, 454g
+                - generic [ref=e509]:
+                  - generic [ref=e510]:
+                    - generic [ref=e512]: 500+ bought in past month
+                    - generic [ref=e513]:
+                      - generic [ref=e514]:
+                        - button "Sign in to add to Favourites list, Paradise Frozen Steamed Golden Saba Banana Whole, 454g" [ref=e515]:
+                          - generic [ref=e516]: 
+                        - img "Paradise Frozen Steamed Golden Saba Banana Whole, 454g" [ref=e517]
+                      - button "Add to cart - Paradise Frozen Steamed Golden Saba Banana Whole, 454g" [ref=e520] [cursor=pointer]:
+                        - generic "add to cart" [ref=e521]: 
+                        - generic [ref=e522]: Add
+                  - generic [ref=e524]:
+                    - generic [ref=e526]:
+                      - generic [ref=e527]: $3.97
+                      - generic [ref=e528]: current price $3.97
+                      - generic [ref=e529]: 87¢/100g
+                    - generic [ref=e530]: Paradise
+                    - generic [ref=e531]: Paradise Frozen Steamed Golden Saba Banana Whole, 454g
+                    - generic [ref=e532]:
+                      - generic [ref=e533]:
+                        - generic [ref=e534]: 
+                        - generic [ref=e535]: 
+                        - generic [ref=e536]: 
+                        - generic [ref=e537]: 
+                        - generic [ref=e538]: 
+                      - generic [ref=e539]: "37"
+                      - generic [ref=e540]: 4.7297 out of 5 stars. 37 reviews
+                    - generic [ref=e541]:
+                      - generic [ref=e542]: Save with
+                      - img "Walmart Pass" [ref=e543]
+                    - generic [ref=e544]:
+                      - generic [ref=e546]: Delivery, 7am tomorrow
+                      - generic [ref=e548]: Pickup, 8am tomorrow
+    - banner [ref=e553]:
+      - generic [ref=e554]:
+        - banner [ref=e555]:
+          - heading "Your data, your choice Close dialogue" [level=2] [ref=e556]:
+            - text: Your data, your choice
+            - button "Close dialogue" [ref=e557]:
+              - generic [ref=e558]: 
+        - generic [ref=e559]:
+          - text: "We want your shopping experience with us to be as easy and relevant as possible. For this purpose, we and trusted third parties may use cookies and similar tracking technologies to:"
+          - list [ref=e560]:
+            - listitem [ref=e561]: Measure and improve our site
+            - listitem [ref=e562]: Save your preferences
+            - listitem [ref=e563]: Personalize your shopping experience, and
+            - listitem [ref=e564]: Provide you with relevant marketing on Walmart.ca, other sites and social media platforms.
+          - text: To learn more, check out our
+          - link "Marketing Notice. " [ref=e565] [cursor=pointer]:
+            - /url: https://www.walmartcanada.ca/cookie-notice
+            - text: Marketing Notice.
+            - generic [ref=e566]: 
+          - text: You can change your cookie settings any time.
+      - separator [ref=e567]
+      - contentinfo [ref=e568]:
+        - generic [ref=e569]:
+          - link "Manage cookie settings" [ref=e570] [cursor=pointer]
+          - button "close button" [ref=e571] [cursor=pointer]: Close
+  - alert [ref=e576]

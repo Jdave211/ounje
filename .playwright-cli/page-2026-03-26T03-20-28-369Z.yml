@@ -1,0 +1,248 @@
+- generic [ref=e1]:
+  - textbox [ref=e3]
+  - generic [ref=e5]:
+    - banner [ref=e6]:
+      - generic [ref=e8]:
+        - link [ref=e9] [cursor=pointer]:
+          - /url: "#store-wrapper"
+          - text: Skip Navigation
+        - button [ref=e11] [cursor=pointer]:
+          - img [ref=e13]
+        - link [ref=e15] [cursor=pointer]:
+          - /url: /store/
+          - img [ref=e16]
+        - group [ref=e18]:
+          - button [ref=e19] [cursor=pointer]:
+            - generic [ref=e21]: Delivery
+          - button [ref=e22] [cursor=pointer]:
+            - generic [ref=e24]: Pickup
+        - generic [ref=e32]:
+          - button [ref=e33] [cursor=pointer]:
+            - img [ref=e35]
+          - textbox [ref=e37]
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e41]:
+          - link [ref=e43] [cursor=pointer]:
+            - /url: /store/safeway/storefront
+            - img [ref=e48]
+            - heading [level=2] [ref=e49]: Safeway
+          - button [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]:
+              - generic [ref=e52]: Pricing & fees
+              - img [ref=e53]
+          - button [ref=e56] [cursor=pointer]:
+            - img [ref=e57]
+            - text: Add loyalty
+        - list [ref=e59]:
+          - listitem [ref=e60]:
+            - link [ref=e61] [cursor=pointer]:
+              - /url: /store/safeway/storefront
+              - img [ref=e63]
+              - generic [ref=e65]: Shop
+          - listitem [ref=e66]:
+            - link [ref=e67] [cursor=pointer]:
+              - /url: /store/safeway/flyer
+              - img [ref=e69]
+              - generic [ref=e72]: Flyers
+          - listitem [ref=e73]:
+            - link [ref=e74] [cursor=pointer]:
+              - /url: /store/safeway/recipes?source_type=tab_recipes
+              - img [ref=e76]
+              - generic [ref=e78]: Recipes
+          - listitem [ref=e79]:
+            - link [ref=e80] [cursor=pointer]:
+              - /url: /store/safeway/your-lists?source_type=storefront
+              - img [ref=e82]
+              - generic [ref=e84]: Lists
+        - navigation [ref=e85]:
+          - heading [level=2] [ref=e87]: Browse aisles
+          - list [ref=e89]:
+            - listitem [ref=e90]:
+              - link [ref=e91] [cursor=pointer]:
+                - /url: /store/safeway/collections/produce
+                - generic [ref=e92]: Produce
+            - listitem [ref=e93]:
+              - link [ref=e94] [cursor=pointer]:
+                - /url: /store/safeway/collections/meat-and-seafood
+                - generic [ref=e95]: Meat & Seafood
+            - listitem [ref=e96]:
+              - link [ref=e97] [cursor=pointer]:
+                - /url: /store/safeway/collections/dairy
+                - generic [ref=e98]: Dairy & Eggs
+            - listitem [ref=e99]:
+              - link [ref=e100] [cursor=pointer]:
+                - /url: /store/safeway/collections/3095-prepared-foods
+                - generic [ref=e101]: Prepared Foods
+            - listitem [ref=e102]:
+              - link [ref=e103] [cursor=pointer]:
+                - /url: /store/safeway/collections/snacks-and-candy
+                - generic [ref=e104]: Snacks & Candy
+            - listitem [ref=e105]:
+              - link [ref=e106] [cursor=pointer]:
+                - /url: /store/safeway/collections/frozen
+                - generic [ref=e107]: Frozen
+            - listitem [ref=e108]:
+              - link [ref=e109] [cursor=pointer]:
+                - /url: /store/safeway/collections/baked-goods
+                - generic [ref=e110]: Bakery
+            - listitem [ref=e111]:
+              - link [ref=e112] [cursor=pointer]:
+                - /url: /store/safeway/collections/beverages
+                - generic [ref=e113]: Beverages
+            - listitem [ref=e114]:
+              - link [ref=e115] [cursor=pointer]:
+                - /url: /store/safeway/collections/3089-deli
+                - generic [ref=e116]: Deli
+            - listitem [ref=e117]:
+              - link [ref=e118] [cursor=pointer]:
+                - /url: /store/safeway/collections/household
+                - generic [ref=e119]: Household
+            - listitem [ref=e120]:
+              - link [ref=e121] [cursor=pointer]:
+                - /url: /store/safeway/collections/canned-goods
+                - generic [ref=e122]: Canned Goods & Soups
+            - listitem [ref=e123]:
+              - link [ref=e124] [cursor=pointer]:
+                - /url: /store/safeway/collections/breakfast-foods
+                - generic [ref=e125]: Breakfast
+            - listitem [ref=e126]:
+              - link [ref=e127] [cursor=pointer]:
+                - /url: /store/safeway/collections/35548-paper-goods-and-laundry
+                - generic [ref=e128]: Paper Goods & Laundry
+            - listitem [ref=e129]:
+              - link [ref=e130] [cursor=pointer]:
+                - /url: /store/safeway/collections/pets
+                - generic [ref=e131]: Pets
+            - listitem [ref=e132]:
+              - link [ref=e133] [cursor=pointer]:
+                - /url: /store/safeway/collections/condiments-sauces
+                - generic [ref=e134]: Condiments & Sauces
+            - listitem [ref=e135]:
+              - link [ref=e136] [cursor=pointer]:
+                - /url: /store/safeway/collections/oils-vinegars-spices
+                - generic [ref=e137]: Oils, Vinegars, & Spices
+            - listitem [ref=e138]:
+              - link [ref=e139] [cursor=pointer]:
+                - /url: /store/safeway/collections/dry-goods-pasta
+                - generic [ref=e140]: Dry Goods & Pasta
+            - listitem [ref=e141]:
+              - link [ref=e142] [cursor=pointer]:
+                - /url: /store/safeway/collections/personal-care
+                - generic [ref=e143]: Personal Care
+            - listitem [ref=e144]:
+              - link [ref=e145] [cursor=pointer]:
+                - /url: /store/safeway/collections/health-care
+                - generic [ref=e146]: Health Care
+            - listitem [ref=e147]:
+              - link [ref=e148] [cursor=pointer]:
+                - /url: /store/safeway/collections/baking-essentials
+                - generic [ref=e149]: Baking Essentials
+            - listitem [ref=e150]:
+              - link [ref=e151] [cursor=pointer]:
+                - /url: /store/safeway/collections/37861-alcohol
+                - generic [ref=e152]: Alcohol
+            - listitem [ref=e153]:
+              - link [ref=e154] [cursor=pointer]:
+                - /url: /store/safeway/collections/kitchen-supplies
+                - generic [ref=e155]: Kitchen Supplies
+            - listitem [ref=e156]:
+              - link [ref=e157] [cursor=pointer]:
+                - /url: /store/safeway/collections/857-miscellaneous-grocery
+                - generic [ref=e158]: Miscellaneous
+            - listitem [ref=e159]:
+              - link [ref=e160] [cursor=pointer]:
+                - /url: /store/safeway/collections/baby
+                - generic [ref=e161]: Baby
+            - listitem [ref=e162]:
+              - link [ref=e163] [cursor=pointer]:
+                - /url: /store/safeway/collections/office-craft
+                - generic [ref=e164]: Office & Craft
+            - listitem [ref=e165]:
+              - link [ref=e166] [cursor=pointer]:
+                - /url: /store/safeway/collections/party-gifts
+                - generic [ref=e167]: Party & Gift Supplies
+            - listitem [ref=e168]:
+              - link [ref=e169] [cursor=pointer]:
+                - /url: /store/safeway/collections/41358-spring-holiday-hosting
+                - generic [ref=e170]: Spring Holiday Hosting
+            - listitem [ref=e171]:
+              - link [ref=e172] [cursor=pointer]:
+                - /url: /store/safeway/collections/41367-floral
+                - generic [ref=e173]: Floral
+            - listitem [ref=e174]:
+              - link [ref=e175] [cursor=pointer]:
+                - /url: /store/safeway/collections/dynamic_collection-sales
+                - generic [ref=e176]: Sales
+            - listitem [ref=e177]:
+              - link [ref=e178] [cursor=pointer]:
+                - /url: /store/safeway/collections/n-ready-made-meals-60303
+                - generic [ref=e179]: Ready Made Meals
+            - listitem [ref=e180]:
+              - link [ref=e181] [cursor=pointer]:
+                - /url: /store/safeway/collections/n-organics-86817
+                - generic [ref=e182]: 𝘖 Organics ®
+            - listitem [ref=e183]:
+              - link [ref=e184] [cursor=pointer]:
+                - /url: /store/safeway/collections/n-open-nature-7389
+                - generic [ref=e185]: Open Nature ®
+            - listitem [ref=e186]:
+              - link [ref=e187] [cursor=pointer]:
+                - /url: /store/safeway/collections/n-exclusively-at-safeway-63934
+                - generic [ref=e188]: Exclusively At Safeway
+            - listitem [ref=e189]:
+              - link [ref=e190] [cursor=pointer]:
+                - /url: /store/safeway/collections/n-national-sales-event-90376
+                - generic [ref=e191]: National Sales Event
+      - main [ref=e193]:
+        - generic [ref=e194]:
+          - generic [ref=e195]:
+            - region [ref=e197]:
+              - generic [ref=e198]: This is a carousel with one large image and a track of thumbnails. Select any of the image buttons to change the main image. The large image can be enlarged further using the zoom button by the main image.
+              - generic [ref=e199]:
+                - generic [ref=e200]: Item images, which may include product information when available. When available, product details, ingredients, or nutritional information will be provided in screen reader compatible form below.
+                - generic [ref=e201]:
+                  - img [ref=e203]
+                  - button [ref=e204] [cursor=pointer]:
+                    - img [ref=e205]
+            - generic [ref=e208]:
+              - generic [ref=e209]:
+                - heading [level=1] [ref=e210]:
+                  - generic [ref=e211]: Banana
+                  - generic [ref=e212]: Sold individually
+                - generic [ref=e213]:
+                  - generic [ref=e214]:
+                    - generic [ref=e215]: About 0.33 lb each
+                    - generic [ref=e216]: • $0.99 / lb
+                  - generic [ref=e217]: Final cost by weight
+                - button [ref=e221]:
+                  - generic [ref=e222]: Details
+                  - img [ref=e223]
+              - generic [ref=e226]:
+                - generic [ref=e231]:
+                  - generic [ref=e232]: "Current price: $0.33 each (est.)"
+                  - text: $0.33 each (est.)
+                - progressbar [ref=e237]:
+                  - generic [ref=e238]:
+                    - img [ref=e239]
+                    - img [ref=e241]
+                    - img [ref=e243]
+                    - img [ref=e245]
+          - separator [ref=e508]
+          - generic [ref=e511]:
+            - heading [level=2] [ref=e512]: Details
+            - paragraph [ref=e514]: BANANAS YELLOW REGULAR
+          - generic [ref=e539]:
+            - text: Product information or packaging displayed may not be current or complete. Always refer to the physical product for the most accurate information and warnings. For additional information, contact the retailer or manufacturer.
+            - link [ref=e540] [cursor=pointer]:
+              - /url: /help/section/4524023334676/15304624268436
+              - generic [ref=e541]: Learn more
+            - text: "*Actual weight may vary based on seasonality and other factors. Estimated price is approximate and provided only for reference."
+  - generic [ref=e542]:
+    - dialog [active]:
+      - progressbar "loading" [ref=e546]:
+        - generic [ref=e547]:
+          - img [ref=e548]
+          - img [ref=e550]
+          - img [ref=e552]
+          - img [ref=e554]

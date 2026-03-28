@@ -1,0 +1,483 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - banner [ref=e5]:
+        - link [ref=e6] [cursor=pointer]:
+          - /url: "#maincontent"
+          - text: Skip to Main Content
+        - text:  
+        - link [ref=e7] [cursor=pointer]:
+          - /url: /
+          - img [ref=e8]
+        - generic [ref=e12]:
+          - img [ref=e13]
+          - generic [ref=e14]: Pickup or delivery?
+        - search [ref=e15]:
+          - generic [ref=e16]:
+            - searchbox [ref=e17]
+            - button [ref=e18] [cursor=pointer]:
+              - generic [ref=e19]: 
+            - button [ref=e20] [cursor=pointer]:
+              - generic [ref=e21]: 
+        - navigation [ref=e22]:
+          - list [ref=e23]:
+            - listitem [ref=e24]:
+              - button [ref=e25] [cursor=pointer]:
+                - generic [ref=e26]: 
+                - generic [ref=e27]:
+                  - generic [ref=e28]: Reorder
+                  - generic [ref=e29]: My Items
+              - text:   
+            - listitem [ref=e30]:
+              - generic [ref=e31]:
+                - button [ref=e32] [cursor=pointer]:
+                  - generic [ref=e33]: 
+                  - generic [ref=e34]:
+                    - generic [ref=e35]: Sign In
+                    - generic [ref=e36]: Account
+                - text:   
+            - listitem [ref=e37]:
+              - button [ref=e40]:
+                - generic [ref=e41]: 
+                - generic [ref=e42]: $0.00
+      - navigation [ref=e45]:
+        - list [ref=e46]:
+          - listitem [ref=e47]:
+            - button [ref=e51]:
+              - text: Departments
+              - generic [ref=e52]: 
+          - listitem [ref=e53]:
+            - button [ref=e57]:
+              - text: Services
+              - generic [ref=e58]: 
+    - generic [ref=e59]:
+      - main [ref=e62]:
+        - heading [level=1] [ref=e64]: Walmart | Save Money. Live better.
+        - generic [ref=e65]:
+          - generic [ref=e68]:
+            - generic [ref=e71]:
+              - generic [ref=e72]:
+                - button [ref=e74]:
+                  - generic [ref=e75]: 
+                - navigation [ref=e77]:
+                  - button [ref=e78]
+                - button [ref=e81]:
+                  - generic [ref=e82]: 
+              - list [ref=e83]:
+                - listitem [ref=e84]:
+                  - generic [ref=e86]:
+                    - img [ref=e88]
+                    - generic [ref=e89]:
+                      - paragraph [ref=e90]: Home, furniture & more
+                      - paragraph [ref=e91]: Hurry & save big for spring!
+                      - generic [ref=e92]:
+                        - link [ref=e93] [cursor=pointer]:
+                          - /url: https://walmart.com/shop/savings?athAsset=eyJhdGhjcGlkIjoiZGNkMjdhOWEtZjlkOS00ZDhlLTk2YjktNThiNTlhMTVhNGUzIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiQ1RSIn0=&athena=true
+                          - generic [ref=e94]: Shop now
+                        - link [ref=e95] [cursor=pointer]:
+                          - /url: https://walmart.com/shop/savings?athAsset=eyJhdGhjcGlkIjoiZGNkMjdhOWEtZjlkOS00ZDhlLTk2YjktNThiNTlhMTVhNGUzIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiQ1RSIn0=&athena=true
+                          - generic [ref=e96]: Shop now
+                - listitem [ref=e97]
+                - listitem [ref=e101]
+                - listitem [ref=e105]:
+                  - generic [ref=e107]:
+                    - img [ref=e109]
+                    - generic [ref=e110]:
+                      - paragraph [ref=e111]: Hurry for Top 100+ savings
+                      - paragraph [ref=e112]: Don’t miss major Rollbacks & more!
+                      - generic [ref=e113]:
+                        - link [ref=e114] [cursor=pointer]:
+                          - /url: https://walmart.com/shop/savings/top-100?athAsset=eyJhdGhjcGlkIjoiNjYwODdiNDktOGIwYi00MjE3LTkzZTMtZWI5YzM5NjY4OTc4IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiQ1RSIn0=&athena=true
+                          - generic [ref=e115]: Shop now
+                        - link [ref=e116] [cursor=pointer]:
+                          - /url: https://walmart.com/shop/savings/top-100?athAsset=eyJhdGhjcGlkIjoiNjYwODdiNDktOGIwYi00MjE3LTkzZTMtZWI5YzM5NjY4OTc4IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiQ1RSIn0=&athena=true
+                          - generic [ref=e117]: Shop now
+                - listitem [ref=e118]:
+                  - generic [ref=e120]:
+                    - img [ref=e122]
+                    - generic [ref=e123]:
+                      - paragraph [ref=e124]: It’s so on—don’t miss out!
+                      - paragraph [ref=e125]: Big savings for spring break are here
+                      - generic [ref=e126]:
+                        - link [ref=e127] [cursor=pointer]:
+                          - /url: https://www.walmart.com/shop/savings/spring-break-ready?athAsset=eyJhdGhjcGlkIjoiYzhiNmU5YWMtMmM4MS00MzZkLWEwZTQtNDMxYjk3M2IxMjU2IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiQ1RSIn0=&athena=true
+                          - generic [ref=e128]: Shop now
+                        - link [ref=e129] [cursor=pointer]:
+                          - /url: https://www.walmart.com/shop/savings/spring-break-ready?athAsset=eyJhdGhjcGlkIjoiYzhiNmU5YWMtMmM4MS00MzZkLWEwZTQtNDMxYjk3M2IxMjU2IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiQ1RSIn0=&athena=true
+                          - generic [ref=e130]: Shop now
+            - generic [ref=e133]:
+              - generic [ref=e134]:
+                - generic [ref=e138]:
+                  - heading [level=2] [ref=e140]: Flash Deals
+                  - heading [level=3] [ref=e141]: Up to 65% off
+                - link [ref=e142] [cursor=pointer]:
+                  - /url: /shop/deals/flash-deals?athAsset=eyJhdGhjcGlkIjoiNTUyNDZkNDYtMWJmYi00ZDQ0LWIzNWQtYzk0NmUxNmMyNjA2IiwiYXRoem5pZCI6Ikl0ZW1DYXJvdXNlbF81NTI0NmQ0Ni0xYmZiLTRkNDQtYjM1ZC1jOTQ2ZTE2YzI2MDZfaXRlbXMiLCJhdGhtdGlkIjoiQXRoZW5hSXRlbUNhcm91c2VsIiwiYXRodHZpZCI6IjEifQ==&athena=true
+                  - text: View all
+              - generic [ref=e143]:
+                - text: 
+                - list [ref=e144]:
+                  - listitem [ref=e145]:
+                    - group [ref=e146]:
+                      - link [ref=e147] [cursor=pointer]:
+                        - /url: /ip/FRABE-Beach-Bathroom-Rugs-Soft-Absorbent-Non-Slip-Bath-Mat-for-Bathroom-Kitchen-Entryway-Decor-with-Starfish-Shell-Design-22x34/18936803200?athAsset=eyJhdGhjcGlkIjoiMTg5MzY4MDMyMDAiLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true&athbdg=L1400
+                        - heading [level=3] [ref=e149]: Clearance FRABE Beach Bathroom Rugs, Non Slip Soft Washable,Absorbent,with Starfish Shell,Ocean Sea Theme Bath Mat,for Shower Floor Decor, Kids Room, 22"x34" $35.99 Was $45.00
+                      - generic [ref=e150]:
+                        - generic [ref=e151]:
+                          - group [ref=e154]:
+                            - generic [ref=e155]: Clearance
+                          - img [ref=e157]
+                        - link [ref=e161] [cursor=pointer]:
+                          - /url: /ip/FRABE-Beach-Bathroom-Rugs-Soft-Absorbent-Non-Slip-Bath-Mat-for-Bathroom-Kitchen-Entryway-Decor-with-Starfish-Shell-Design-22x34/18936803200?athAsset=eyJhdGhjcGlkIjoiMTg5MzY4MDMyMDAiLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true&athbdg=L1400
+                          - generic [ref=e162]: Options
+                        - generic [ref=e163]:
+                          - generic [ref=e165]:
+                            - generic [ref=e166]: Now$3599
+                            - generic [ref=e167]: current price Now $35.99, Was $45.00
+                            - generic [ref=e168]: $45.00
+                            - generic [ref=e169]: Options from $35.99 – $42.99
+                          - heading [level=3] [ref=e171]: FRABE Beach Bathroom Rugs, Non Slip Soft Washable,Absorbent,with Starfish Shell,Ocean Sea Theme Bath Mat,for Shower Floor Decor, Kids Room, 22"x34"
+                  - listitem [ref=e172]:
+                    - group [ref=e173]:
+                      - link [ref=e174] [cursor=pointer]:
+                        - /url: /ip/Best-Choice-Products-4x2x1ft-Outdoor-Raised-Metal-Oval-Garden-Bed-Planter-Box-for-Vegetables-Flowers-Black/19568163437?athAsset=eyJhdGhjcGlkIjoiMTk1NjgxNjM0MzciLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true&athbdg=L1300
+                        - heading [level=3] [ref=e176]: Rollback Best Choice Products 4x2x1ft Outdoor Raised Metal Oval Garden Bed, Planter Box for Vegetables, Flowers - Black $37.99 Was $44.99
+                      - generic [ref=e177]:
+                        - generic [ref=e178]:
+                          - group [ref=e181]:
+                            - generic [ref=e182]:
+                              - img [ref=e183]: 
+                              - generic [ref=e184]: Rollback
+                          - img [ref=e186]
+                        - link [ref=e190] [cursor=pointer]:
+                          - /url: /ip/Best-Choice-Products-4x2x1ft-Outdoor-Raised-Metal-Oval-Garden-Bed-Planter-Box-for-Vegetables-Flowers-Black/19568163437?athAsset=eyJhdGhjcGlkIjoiMTk1NjgxNjM0MzciLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true&athbdg=L1300
+                          - generic [ref=e191]: Options
+                        - generic [ref=e192]:
+                          - generic [ref=e194]:
+                            - generic [ref=e195]: Now$3799
+                            - generic [ref=e196]: current price Now $37.99, Was $44.99
+                            - generic [ref=e197]: $44.99
+                            - generic [ref=e198]: Options from $37.99 – $49.99
+                          - heading [level=3] [ref=e200]: Best Choice Products 4x2x1ft Outdoor Raised Metal Oval Garden Bed, Planter Box for Vegetables, Flowers - Black
+                  - listitem [ref=e201]:
+                    - group [ref=e202]:
+                      - link [ref=e203] [cursor=pointer]:
+                        - /url: /ip/Lux-Decor-Collection-Queen-Comforter-Box-Stitched-Down-Alternative-Quilted-Duvet-Insert-with-Corner-Tabs-Beige/5234392628?athAsset=eyJhdGhjcGlkIjoiNTIzNDM5MjYyOCIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true&athbdg=L1700
+                        - heading [level=3] [ref=e205]: Reduced price Lux Decor Collection Queen Comforter - Box Stitched Down Alternative Quilted Duvet Insert with Corner Tabs - Beige $23.59 Was $44.99
+                      - generic [ref=e206]:
+                        - generic [ref=e207]:
+                          - group [ref=e210]:
+                            - generic [ref=e211]: Reduced price
+                          - img [ref=e213]
+                        - link [ref=e217] [cursor=pointer]:
+                          - /url: /ip/Lux-Decor-Collection-Queen-Comforter-Box-Stitched-Down-Alternative-Quilted-Duvet-Insert-with-Corner-Tabs-Beige/5234392628?athAsset=eyJhdGhjcGlkIjoiNTIzNDM5MjYyOCIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true&athbdg=L1700
+                          - generic [ref=e218]: Options
+                        - generic [ref=e219]:
+                          - generic [ref=e221]:
+                            - generic [ref=e222]: Now$2359
+                            - generic [ref=e223]: current price Now $23.59, Was $44.99
+                            - generic [ref=e224]: $44.99
+                            - generic [ref=e225]: More options from $19.95
+                          - heading [level=3] [ref=e227]: Lux Decor Collection Queen Comforter - Box Stitched Down Alternative Quilted Duvet Insert with Corner Tabs - Beige
+                  - listitem [ref=e228]:
+                    - group [ref=e229]:
+                      - link [ref=e230] [cursor=pointer]:
+                        - /url: /ip/Rollplay-Nighthawk-12-Volt-Ride-On-Toy-Battery-Powered-White/234440748?athAsset=eyJhdGhjcGlkIjoiMjM0NDQwNzQ4IiwiYXRoc3RpZCI6IkNTMDIwIiwiYXRoYW5jaWQiOiJJdGVtQ2Fyb3VzZWwiLCJhdGhyayI6MC4wfQ==&athena=true
+                        - heading [level=3] [ref=e232]: Rollplay Nighthawk 12V Battery-Powered Ride-On Toy, White $149.90 Was $199.99
+                      - generic [ref=e233]:
+                        - img [ref=e237]
+                        - link [ref=e241] [cursor=pointer]:
+                          - /url: /ip/Rollplay-Nighthawk-12-Volt-Ride-On-Toy-Battery-Powered-White/234440748?athAsset=eyJhdGhjcGlkIjoiMjM0NDQwNzQ4IiwiYXRoc3RpZCI6IkNTMDIwIiwiYXRoYW5jaWQiOiJJdGVtQ2Fyb3VzZWwiLCJhdGhyayI6MC4wfQ==&athena=true
+                          - generic [ref=e242]: Options
+                        - generic [ref=e243]:
+                          - generic [ref=e245]:
+                            - generic [ref=e246]: Now$14990
+                            - generic [ref=e247]: current price Now $149.90, Was $199.99
+                            - generic [ref=e248]: $199.99
+                            - generic [ref=e249]: Options from $149.90 – $299.99
+                          - heading [level=3] [ref=e251]: Rollplay Nighthawk 12V Battery-Powered Ride-On Toy, White
+                  - listitem [ref=e252]:
+                    - group [ref=e253]:
+                      - link [ref=e254] [cursor=pointer]:
+                        - /url: /ip/Garvee-Heated-Blanket-King-Size-90-100-Electric-Blanket-Dual-Control-Fast-Heating-with-10-Heat-Levels-Soft-Sherpa-Machine-Washable-Pink/9700423365?athAsset=eyJhdGhjcGlkIjoiOTcwMDQyMzM2NSIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                        - heading [level=3] [ref=e256]: Garvee Heated Blanket King Size 90"× 100", Electric Blanket Dual Control, Fast Heating with 10 Heat Levels, Soft Sherpa, Machine Washable, Pink $45.99 Was $65.90
+                      - generic [ref=e257]:
+                        - img [ref=e261]
+                        - link [ref=e265] [cursor=pointer]:
+                          - /url: /ip/Garvee-Heated-Blanket-King-Size-90-100-Electric-Blanket-Dual-Control-Fast-Heating-with-10-Heat-Levels-Soft-Sherpa-Machine-Washable-Pink/9700423365?athAsset=eyJhdGhjcGlkIjoiOTcwMDQyMzM2NSIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                          - generic [ref=e266]: Options
+                        - generic [ref=e267]:
+                          - generic [ref=e269]:
+                            - generic [ref=e270]: Now$4599
+                            - generic [ref=e271]: current price Now $45.99, Was $65.90
+                            - generic [ref=e272]: $65.90
+                          - heading [level=3] [ref=e274]: Garvee Heated Blanket King Size 90"× 100", Electric Blanket Dual Control, Fast Heating with 10 Heat Levels, Soft Sherpa, Machine Washable, Pink
+                  - listitem [ref=e275]:
+                    - group [ref=e276]:
+                      - link [ref=e277] [cursor=pointer]:
+                        - /url: /ip/Skytech-King-95-Gaming-PC-Desktop-AMD-Ryzen-7-9800X3D-NVIDIA-Geforce-RTX-5070-2TB-Gen4-NVMe-SSD-32GB-DDR5-RAM-AIO-Liquid-Cooling-Windows-11/15610605925?athAsset=eyJhdGhjcGlkIjoiMTU2MTA2MDU5MjUiLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true
+                        - heading [level=3] [ref=e279]: Skytech King 95 Gaming PC Desktop AMD Ryzen 7 9800X3D NVIDIA GeForce RTX 5070 2TB Gen4 NVMe SSD 32GB DDR5 RAM, AIO Liquid Cooling Windows 11 $2,249.99
+                      - generic [ref=e280]:
+                        - img [ref=e284]
+                        - link [ref=e288] [cursor=pointer]:
+                          - /url: /ip/Skytech-King-95-Gaming-PC-Desktop-AMD-Ryzen-7-9800X3D-NVIDIA-Geforce-RTX-5070-2TB-Gen4-NVMe-SSD-32GB-DDR5-RAM-AIO-Liquid-Cooling-Windows-11/15610605925?athAsset=eyJhdGhjcGlkIjoiMTU2MTA2MDU5MjUiLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true
+                          - generic [ref=e289]: Options
+                        - generic [ref=e290]:
+                          - generic [ref=e292]:
+                            - generic [ref=e293]: $2,24999
+                            - generic [ref=e294]: current price $2,249.99
+                          - heading [level=3] [ref=e296]: Skytech King 95 Gaming PC Desktop AMD Ryzen 7 9800X3D NVIDIA GeForce RTX 5070 2TB Gen4 NVMe SSD 32GB DDR5 RAM, AIO Liquid Cooling Windows 11
+                  - listitem [ref=e297]:
+                    - group [ref=e298]:
+                      - link [ref=e299] [cursor=pointer]:
+                        - /url: /ip/HP-OMEN-15-6-FHD-144Hz-RTX-5060-Gaming-Laptop-AMD-Ryzen-AI-7-350-32GB-RAM-1TB-SSD-Black/18649955463?athAsset=eyJhdGhjcGlkIjoiMTg2NDk5NTU0NjMiLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true
+                        - heading [level=3] [ref=e301]: HP Victus 15.6" FHD 144Hz RTX 5060 Gaming Laptop, AMD Ryzen AI 7 350, 32GB RAM, 1TB SSD, Black $1,299.94 Was $1,399.01
+                      - generic [ref=e302]:
+                        - img [ref=e306]
+                        - link [ref=e310] [cursor=pointer]:
+                          - /url: /ip/HP-OMEN-15-6-FHD-144Hz-RTX-5060-Gaming-Laptop-AMD-Ryzen-AI-7-350-32GB-RAM-1TB-SSD-Black/18649955463?athAsset=eyJhdGhjcGlkIjoiMTg2NDk5NTU0NjMiLCJhdGhzdGlkIjoiQ1MwMjAiLCJhdGhhbmNpZCI6Ikl0ZW1DYXJvdXNlbCIsImF0aHJrIjowLjB9&athena=true
+                          - generic [ref=e311]: Options
+                        - generic [ref=e312]:
+                          - generic [ref=e314]:
+                            - generic [ref=e315]: Now$1,29994
+                            - generic [ref=e316]: current price Now $1,299.94, Was $1,399.01
+                            - generic [ref=e317]: $1,399.01
+                          - heading [level=3] [ref=e319]: HP Victus 15.6" FHD 144Hz RTX 5060 Gaming Laptop, AMD Ryzen AI 7 350, 32GB RAM, 1TB SSD, Black
+                  - listitem [ref=e320]:
+                    - group [ref=e321]:
+                      - link [ref=e322] [cursor=pointer]:
+                        - /url: /ip/UBesGoo-Modern-Arm-Chair-Linen-Fabric-Upholstered-Comfy-Reading-Accent-Chair-with-Solid-Wood-Frame-Beige/1037605715?athAsset=eyJhdGhjcGlkIjoiMTAzNzYwNTcxNSIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true&athbdg=L1700
+                        - heading [level=3] [ref=e324]: Reduced price UBesGoo Modern Arm Chair Linen Fabric Upholstered Comfy Reading Accent Chair with Solid Wood Frame Beige $107.99 Was $191.99
+                      - generic [ref=e325]:
+                        - group [ref=e329]:
+                          - generic [ref=e330]: Reduced price
+                        - link [ref=e335] [cursor=pointer]:
+                          - /url: /ip/UBesGoo-Modern-Arm-Chair-Linen-Fabric-Upholstered-Comfy-Reading-Accent-Chair-with-Solid-Wood-Frame-Beige/1037605715?athAsset=eyJhdGhjcGlkIjoiMTAzNzYwNTcxNSIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true&athbdg=L1700
+                          - generic [ref=e336]: Options
+                        - generic [ref=e337]:
+                          - generic [ref=e339]:
+                            - generic [ref=e340]: Now$10799
+                            - generic [ref=e341]: current price Now $107.99, Was $191.99
+                            - generic [ref=e342]: $191.99
+                            - generic [ref=e343]: Options from $107.99 – $239.99
+                          - heading [level=3] [ref=e345]: UBesGoo Modern Arm Chair Linen Fabric Upholstered Comfy Reading Accent Chair with Solid Wood Frame Beige
+                  - listitem [ref=e346]:
+                    - group [ref=e347]:
+                      - link [ref=e348] [cursor=pointer]:
+                        - /url: /ip/SYNCFUN-30-Pcs-Rubber-Ducks-Random-Assortment-Mini-Rubber-Duckie-Toys-Kids-Baby-Bath-Pool-Toys-Christmas-Birthday-Gifts-Party-Favors-Halloween-Easter/5450766658?athAsset=eyJhdGhjcGlkIjoiNTQ1MDc2NjY1OCIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                        - heading [level=3] [ref=e350]: Joyfy 30 Pcs Rubber Ducks, Random Assortment Mini Rubber Duckie Toys for Kids Baby Bath Pool Toys, Christmas & Birthday Gifts, Party Favors for Halloween, Easter Egg Fillers $14.09 Was $26.99
+                      - generic [ref=e351]:
+                        - link [ref=e358] [cursor=pointer]:
+                          - /url: /ip/SYNCFUN-30-Pcs-Rubber-Ducks-Random-Assortment-Mini-Rubber-Duckie-Toys-Kids-Baby-Bath-Pool-Toys-Christmas-Birthday-Gifts-Party-Favors-Halloween-Easter/5450766658?athAsset=eyJhdGhjcGlkIjoiNTQ1MDc2NjY1OCIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                          - generic [ref=e359]: Options
+                        - generic [ref=e360]:
+                          - generic [ref=e362]:
+                            - generic [ref=e363]: Now$1409
+                            - generic [ref=e364]: current price Now $14.09, Was $26.99
+                            - generic [ref=e365]: $26.99
+                            - generic [ref=e366]: More options from $10.99
+                          - heading [level=3] [ref=e368]: Joyfy 30 Pcs Rubber Ducks, Random Assortment Mini Rubber Duckie Toys for Kids Baby Bath Pool Toys, Christmas & Birthday Gifts, Party Favors for Halloween, Easter Egg Fillers
+                  - listitem [ref=e369]:
+                    - group [ref=e370]:
+                      - link [ref=e371] [cursor=pointer]:
+                        - /url: /ip/Best-Choice-Products-110-Piece-Kids-Magnetic-Tiles-Set-Educational-Building-STEM-Toy-w-Case-Pink/5152678945?athAsset=eyJhdGhjcGlkIjoiNTE1MjY3ODk0NSIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                        - heading [level=3] [ref=e373]: Best Choice Products 110-Piece Kids Magnetic Tiles Set, Educational Building STEM Toy w/ Case - Pink $29.98 Was $66.99
+                      - generic [ref=e374]:
+                        - link [ref=e381] [cursor=pointer]:
+                          - /url: /ip/Best-Choice-Products-110-Piece-Kids-Magnetic-Tiles-Set-Educational-Building-STEM-Toy-w-Case-Pink/5152678945?athAsset=eyJhdGhjcGlkIjoiNTE1MjY3ODk0NSIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                          - generic [ref=e382]: Options
+                        - generic [ref=e383]:
+                          - generic [ref=e385]:
+                            - generic [ref=e386]: Now$2998
+                            - generic [ref=e387]: current price Now $29.98, Was $66.99
+                            - generic [ref=e388]: $66.99
+                          - heading [level=3] [ref=e390]: Best Choice Products 110-Piece Kids Magnetic Tiles Set, Educational Building STEM Toy w/ Case - Pink
+                  - listitem [ref=e391]:
+                    - group [ref=e392]:
+                      - link [ref=e393] [cursor=pointer]:
+                        - /url: /ip/HIG-8-PCS-Modern-Comforter-Set-with-Sheets-All-Season-Bed-in-a-Bag-Dark-Gray-Queen-Size/5223773098?athAsset=eyJhdGhjcGlkIjoiNTIyMzc3MzA5OCIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                        - heading [level=3] [ref=e395]: HIG 8 PCS Modern Comforter Set with Sheets All Season Bed in a Bag, Dark Gray, Queen Size $49.99 Was $99.99
+                      - generic [ref=e396]:
+                        - link [ref=e403] [cursor=pointer]:
+                          - /url: /ip/HIG-8-PCS-Modern-Comforter-Set-with-Sheets-All-Season-Bed-in-a-Bag-Dark-Gray-Queen-Size/5223773098?athAsset=eyJhdGhjcGlkIjoiNTIyMzc3MzA5OCIsImF0aHN0aWQiOiJDUzAyMCIsImF0aGFuY2lkIjoiSXRlbUNhcm91c2VsIiwiYXRocmsiOjAuMH0=&athena=true
+                          - generic [ref=e404]: Options
+                        - generic [ref=e405]:
+                          - generic [ref=e407]:
+                            - generic [ref=e408]: Now$4999
+                            - generic [ref=e409]: current price Now $49.99, Was $99.99
+                            - generic [ref=e410]: $99.99
+                            - generic [ref=e411]: More options from $36.99
+                          - heading [level=3] [ref=e413]: HIG 8 PCS Modern Comforter Set with Sheets All Season Bed in a Bag, Dark Gray, Queen Size
+                - button [ref=e414]:
+                  - generic [ref=e415]: 
+          - generic [ref=e420]:
+            - generic [ref=e423]:
+              - img [ref=e425]
+              - generic [ref=e426]:
+                - paragraph [ref=e427]: Walmart+ members earn
+                - paragraph [ref=e428]: 5% cash back at Walmart
+                - link [ref=e429] [cursor=pointer]:
+                  - /url: https://www.walmart.com/cp/9435689?utm_content=WMD-CRD-HPPO&athAsset=eyJhdGhjcGlkIjoiYzUwNjQwZjEtNDdkZS00NjEzLWEwNjQtODVlODYzNGE0NDBhIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                  - generic [ref=e430]: Learn more
+                - link [ref=e431] [cursor=pointer]:
+                  - /url: https://www.walmart.com/cp/9435689?utm_content=WMD-CRD-HPPO&athAsset=eyJhdGhjcGlkIjoiYzUwNjQwZjEtNDdkZS00NjEzLWEwNjQtODVlODYzNGE0NDBhIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                  - generic [ref=e432]: Learn more
+            - generic [ref=e434]:
+              - generic [ref=e436]:
+                - img [ref=e438]
+                - generic [ref=e439]:
+                  - paragraph [ref=e440]: Ray-Ban, Oakley, Costa & more
+                  - paragraph [ref=e441]: Prescription sunglasses for spring break
+                  - link [ref=e442] [cursor=pointer]:
+                    - /url: https://www.walmart.com/browse/health-and-medicine/prescription-sunglasses/976760_1078944_9523960?athAsset=eyJhdGhjcGlkIjoiZmRjZDQwZWMtZWY1Ny00NmNhLTg1Y2UtYTVjYTBiMzA5MTk3IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                    - text: Shop now
+                  - link [ref=e443] [cursor=pointer]:
+                    - /url: https://www.walmart.com/browse/health-and-medicine/prescription-sunglasses/976760_1078944_9523960?athAsset=eyJhdGhjcGlkIjoiZmRjZDQwZWMtZWY1Ny00NmNhLTg1Y2UtYTVjYTBiMzA5MTk3IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                    - generic [ref=e444]: Shop now
+              - generic [ref=e445]:
+                - generic [ref=e448]:
+                  - img [ref=e450]
+                  - generic [ref=e451]:
+                    - paragraph [ref=e452]: Travel musts in as fast as 1 hour*
+                    - link [ref=e453] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/6545138?athAsset=eyJhdGhjcGlkIjoiZjEwOWQ3MDQtY2UwZS00ZDJmLTljNjEtMTg1ZTg3Zjg3MzJlIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                      - text: Shop now
+                    - link [ref=e454] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/6545138?athAsset=eyJhdGhjcGlkIjoiZjEwOWQ3MDQtY2UwZS00ZDJmLTljNjEtMTg1ZTg3Zjg3MzJlIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                      - generic [ref=e455]: Shop now
+                - generic [ref=e458]:
+                  - img [ref=e460]
+                  - generic [ref=e461]:
+                    - paragraph [ref=e462]: Easy trip prep with Rx delivery
+                    - link [ref=e463] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/pharmacy/5431?athAsset=eyJhdGhjcGlkIjoiN2VlMGNiYWYtZTliMS00ZDI4LTkyZmYtMTI0ZmRmNjQxZGM1IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                      - text: Get started
+                    - link [ref=e464] [cursor=pointer]:
+                      - /url: https://www.walmart.com/cp/pharmacy/5431?athAsset=eyJhdGhjcGlkIjoiN2VlMGNiYWYtZTliMS00ZDI4LTkyZmYtMTI0ZmRmNjQxZGM1IiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                      - generic [ref=e465]: Get started
+            - generic [ref=e468]:
+              - img [ref=e470]
+              - generic [ref=e471]:
+                - paragraph [ref=e472]: New clients. Fed returns only.
+                - paragraph [ref=e473]: Tax filing from $49*
+                - link [ref=e474] [cursor=pointer]:
+                  - /url: https://www.walmart.com/cp/tax-prep-services/1091305?athAsset=eyJhdGhjcGlkIjoiNjU4YjU4ZDctYmFhNS00MjFlLWE5MzMtMWNiZDIzZDA5NmJkIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                  - text: Learn more
+                - link [ref=e475] [cursor=pointer]:
+                  - /url: https://www.walmart.com/cp/tax-prep-services/1091305?athAsset=eyJhdGhjcGlkIjoiNjU4YjU4ZDctYmFhNS00MjFlLWE5MzMtMWNiZDIzZDA5NmJkIiwiYWVjdSI6eyJzIjoxLjAsInN0IjoiMCJ9LCJhZXdyIjoiTVBfQ1RSIn0=&athena=true
+                  - generic [ref=e476]: Learn more
+      - contentinfo [ref=e478]:
+        - region [ref=e482]:
+          - paragraph [ref=e483]: We’d love to hear what you think!
+          - button [ref=e484] [cursor=pointer]: Give feedback
+        - generic [ref=e485]:
+          - list [ref=e486]:
+            - listitem [ref=e487]:
+              - link [ref=e488] [cursor=pointer]:
+                - /url: /all-departments
+                - text: All Departments
+            - listitem [ref=e489]:
+              - link [ref=e490] [cursor=pointer]:
+                - /url: /store/directory
+                - text: Store Directory
+            - listitem [ref=e491]:
+              - link [ref=e492] [cursor=pointer]:
+                - /url: https://careers.walmart.com/
+                - text: Careers
+            - listitem [ref=e493]:
+              - link [ref=e494] [cursor=pointer]:
+                - /url: https://corporate.walmart.com/
+                - text: Our Company
+            - listitem [ref=e495]:
+              - link [ref=e496] [cursor=pointer]:
+                - /url: https://marketplace.walmart.com/?utm_source=Walmart.com&utm_medium=link&utm_campaign=footer
+                - text: Sell on Walmart.com
+            - listitem [ref=e497]:
+              - link [ref=e498] [cursor=pointer]:
+                - /url: /help
+                - text: Help
+            - listitem [ref=e499]:
+              - link [ref=e500] [cursor=pointer]:
+                - /url: https://corporate.walmart.com/recalls
+                - text: Product Recalls
+            - listitem [ref=e501]:
+              - link [ref=e502] [cursor=pointer]:
+                - /url: https://www.walmart.com/help/article/responsible-disclosure-and-accessibility-policies/0f173dab8bd942da84b1cd7ab5ffc3cb
+                - text: Accessibility
+            - listitem [ref=e503]:
+              - link [ref=e504] [cursor=pointer]:
+                - /url: https://www.walmart.com/cp/tax-exemption-program/8480422
+                - text: Tax Exempt Program
+            - listitem [ref=e505]:
+              - link [ref=e506] [cursor=pointer]:
+                - /url: https://walmart.onelink.me/UIev?pid=walmart.com&af_web_dp=https%3A%2F%2Fwww.walmart.com%2Fcp%2Fwalmart-mobile-app%2F1087865&c=Walmart.com%20Site%20Footer&af_dp=walmart%3A%2F%2F
+                - text: Get the Walmart App
+            - listitem [ref=e507]:
+              - link [ref=e508] [cursor=pointer]:
+                - /url: http://msds.walmartstores.com/
+                - text: Safety Data Sheet
+            - listitem [ref=e509]:
+              - link [ref=e510] [cursor=pointer]:
+                - /url: /help/article/walmart-com-terms-of-use/3b75080af40340d6bbd596f116fae5a0
+                - text: Terms of Use
+            - listitem [ref=e511]:
+              - link [ref=e512] [cursor=pointer]:
+                - /url: https://corporate.walmart.com/privacy-security/walmart-privacy-notice
+                - text: Privacy Notice
+            - listitem [ref=e513]:
+              - link [ref=e514] [cursor=pointer]:
+                - /url: https://corporate.walmart.com/california-transparency
+                - text: California Supply Chain Act
+            - listitem [ref=e515]:
+              - link [ref=e516] [cursor=pointer]:
+                - /url: https://cpa-ui.walmart.com/dc/privacy/en-US/affirmation?brandCode=WMT&languageCode=en-US&market=US
+                - img [ref=e517]
+                - text: Your Privacy Choices
+            - listitem [ref=e518]:
+              - link [ref=e519] [cursor=pointer]:
+                - /url: https://www.walmart.com/privacy-center
+                - text: Customer Privacy Center
+            - listitem [ref=e520]:
+              - link [ref=e521] [cursor=pointer]:
+                - /url: https://corporate.walmart.com/privacy-security/california-privacy-rights#what-are-the-categories-of-personal-information-collected
+                - text: Notice at Collection
+            - listitem [ref=e522]:
+              - link [ref=e523] [cursor=pointer]:
+                - /url: https://corporate.walmart.com/privacy-security/walmart-privacy-notice#interest-based-advertising
+                - text: AdChoices
+            - listitem [ref=e524]:
+              - link [ref=e525] [cursor=pointer]:
+                - /url: https://corporate.walmart.com/privacy-security/walmart-consumer-health-data-privacy-notices
+                - text: Consumer Health Data Privacy Notices
+            - listitem [ref=e526]:
+              - link [ref=e527] [cursor=pointer]:
+                - /url: https://www.walmart.com/brand/branddirectory
+                - text: Brand Shop Directory
+            - listitem [ref=e528]:
+              - link [ref=e529] [cursor=pointer]:
+                - /url: https://www.walmart.com/cp/pharmacy/5431?povid=HWS_GlobalFooter_Pharmacy
+                - text: Pharmacy
+            - listitem [ref=e530]:
+              - link [ref=e531] [cursor=pointer]:
+                - /url: https://www.walmart.com/cp/walmart-business/7810722?povid=7810722_POV_WMTfooter
+                - text: Walmart Business
+            - listitem [ref=e532]:
+              - link [ref=e533] [cursor=pointer]:
+                - /url: https://www.walmart.com/cp/walmart-in-the-know/7781927
+                - text: "#IYWYK"
+            - listitem [ref=e534]:
+              - link [ref=e535] [cursor=pointer]:
+                - /url: https://www.walmart.com/account/login?vid=oaoh&tid=0&returnUrl=%2Faccount%2Fdelete-account
+                - text: Delete Account
+          - generic [ref=e536]: © 2026 Walmart. The trademarks Walmart and the Walmart Spark design are registered with the US Patent and Trademark Office. All Rights Reserved.
+  - alert [ref=e541]
+  - dialog [ref=e545]:
+    - generic [ref=e546]:
+      - heading [level=2]
+    - generic [ref=e549]:
+      - heading "Choose where to shop" [level=2] [ref=e550]
+      - generic [ref=e551]: Shop the Canada site for local experience or shop the U.S. site for items shipped to Canada.
+      - generic [ref=e552]:
+        - link "Walmart.ca" [active] [ref=e553] [cursor=pointer]: Walmart.ca
+        - button "Walmart.com" [ref=e555] [cursor=pointer]: Walmart.com
+      - separator [ref=e557]
+      - generic [ref=e558]: Location is based on your internet connection, not a precise geolocation.
