@@ -110,8 +110,8 @@ private struct AuthenticationView: View {
 
             LinearGradient(
                 colors: [
-                    .black.opacity(0.14),
-                    .black.opacity(0.36),
+                    .black.opacity(0.2),
+                    .black.opacity(0.5),
                     OunjePalette.background.opacity(0.92),
                     OunjePalette.background
                 ],
@@ -121,25 +121,28 @@ private struct AuthenticationView: View {
             .ignoresSafeArea()
 
             GeometryReader { proxy in
-                let authButtonWidth = min(320, proxy.size.width - 56)
+                let authButtonWidth = min(420, proxy.size.width - 68)
 
-                VStack(alignment: .leading, spacing: 22) {
-                    Spacer(minLength: max(120, proxy.safeAreaInsets.top + 120))
-
+                VStack(alignment: .leading, spacing: 0) {
                     VStack(alignment: .leading, spacing: 12) {
+                        Text("OUNJE")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .tracking(1.6)
+                            .foregroundStyle(OunjePalette.accent)
+
                         Text("Meals that plan,\nsource, and restock\nthemselves.")
                             .biroHeaderFont(38)
                             .foregroundStyle(.white)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text("meal prepping for gen-z's")
-                            .biroHeaderFont(15)
-                            .tracking(0.8)
-                            .foregroundStyle(OunjePalette.accent)
+                        Text("Set your food style once and get weekly plans that actually match your life.")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.84))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.top, 40)
+                    .padding(.top, max(26, proxy.safeAreaInsets.top + 6))
 
-                    Spacer()
+                    Spacer(minLength: 28)
 
                     VStack(alignment: .center, spacing: 16) {
                         if let authStatusMessage {
@@ -160,6 +163,7 @@ private struct AuthenticationView: View {
                             }
                             .signInWithAppleButtonStyle(.white)
                             .frame(width: authButtonWidth, height: OunjeLayout.authButtonHeight)
+                            .frame(maxWidth: .infinity)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .disabled(isGoogleSigningIn)
 
@@ -190,20 +194,29 @@ private struct AuthenticationView: View {
                                 .padding(.horizontal, 16)
                             }
                             .frame(width: authButtonWidth, alignment: .leading)
+                            .frame(maxWidth: .infinity)
                             .buttonStyle(WelcomeAuthButtonStyle())
                             .disabled(isGoogleSigningIn)
                         }
 
-                        Text("After sign-in: setup -> plan generation -> recipes and groceries.")
+                        Text("After sign in: setup, weekly plan generation, recipes, and groceries.")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(OunjePalette.secondaryText)
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
-
-                    Spacer()
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(.black.opacity(0.36))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                            )
+                    )
                 }
                 .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.bottom, max(36, proxy.safeAreaInsets.bottom + 24))
+                .padding(.bottom, max(22, proxy.safeAreaInsets.bottom + 12))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
             .opacity(revealContent ? 1 : 0)
