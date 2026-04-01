@@ -175,11 +175,38 @@ function normalizeIngredientObject(value) {
   const imageHint = normalizeRecipeLine(value.image_hint ?? value.imageHint ?? name).toLowerCase() || name.toLowerCase();
 
   return {
+    id: null,
+    ingredient_id: null,
+    display_name: name,
+    quantity_text: [quantity != null ? String(quantity) : null, unit].filter(Boolean).join(" ").trim() || null,
+    image_url: null,
+    sort_order: null,
     name,
     quantity: quantity != null && Number.isFinite(quantity) ? quantity : null,
     unit,
     note,
     image_hint: imageHint,
+  };
+}
+
+function normalizeRecipeIngredientRow(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const displayName = normalizeRecipeLine(value.display_name ?? value.name ?? value.ingredient_name ?? "");
+  if (!displayName) return null;
+
+  return {
+    id: value.id ?? null,
+    ingredient_id: value.ingredient_id ?? null,
+    display_name: displayName,
+    quantity_text: normalizeRecipeLine(value.quantity_text ?? value.amount_text ?? "") || null,
+    image_url: value.image_url ?? null,
+    sort_order: Number.isFinite(value.sort_order) ? Number(value.sort_order) : null,
+    name: displayName,
+    quantity: null,
+    unit: null,
+    note: null,
+    image_hint: displayName.toLowerCase(),
   };
 }
 
@@ -237,7 +264,9 @@ function normalizeStepObject(value, ingredients = []) {
   return {
     number,
     text,
+    tip_text: normalizeStepText(value.tip_text ?? value.tip ?? value.note ?? "") || null,
     ingredient_refs: providedRefs.length ? providedRefs : buildIngredientRefs(text, ingredients),
+    ingredients: [],
   };
 }
 
@@ -275,13 +304,74 @@ function parseInstructionSteps(value, ingredients = []) {
   return lines.map((line, index) => ({
     number: index + 1,
     text: line,
+    tip_text: null,
     ingredient_refs: buildIngredientRefs(line, ingredients),
+    ingredients: ingredients
+      .filter((ingredient) => buildIngredientRefs(line, [ingredient]).length > 0)
+      .slice(0, 4),
   }));
 }
 
-export function normalizeRecipeDetail(recipe) {
-  const ingredients = parseIngredientObjects(recipe.ingredients_json ?? recipe.ingredients_text);
-  const steps = parseInstructionSteps(recipe.steps_json ?? recipe.instructions_text, ingredients);
+function buildStructuredSteps(stepRows, stepIngredientRows, ingredients) {
+  if (!Array.isArray(stepRows) || !stepRows.length) return [];
+
+  const ingredientById = new Map(
+    (ingredients ?? [])
+      .filter(Boolean)
+      .map((ingredient) => [String(ingredient.ingredient_id ?? ingredient.id ?? ingredient.display_name ?? ""), ingredient])
+  );
+
+  const stepIngredientsByStepID = new Map();
+  for (const row of stepIngredientRows ?? []) {
+    if (!row?.recipe_step_id) continue;
+    const normalizedRow = normalizeRecipeIngredientRow({
+      ...row,
+      image_url: ingredientById.get(String(row.ingredient_id ?? ""))?.image_url ?? null,
+    });
+    if (!normalizedRow) continue;
+    const key = String(row.recipe_step_id);
+    const current = stepIngredientsByStepID.get(key) ?? [];
+    current.push(normalizedRow);
+    stepIngredientsByStepID.set(key, current);
+  }
+
+  return stepRows
+    .map((row, index) => {
+      const text = normalizeStepText(row.instruction_text ?? row.text ?? "");
+      if (!text) return null;
+
+      const stepIngredients = (stepIngredientsByStepID.get(String(row.id)) ?? [])
+        .sort((a, b) => (a.sort_order ?? 9999) - (b.sort_order ?? 9999));
+
+      return {
+        number: Number.isFinite(row.step_number) ? Number(row.step_number) : index + 1,
+        text,
+        tip_text: normalizeStepText(row.tip_text ?? "") || null,
+        ingredient_refs: stepIngredients.map((ingredient) => ingredient.display_name),
+        ingredients: stepIngredients,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.number - b.number);
+}
+
+export function normalizeRecipeDetail(recipe, related = {}) {
+  const structuredIngredients = Array.isArray(related.recipeIngredients)
+    ? related.recipeIngredients.map(normalizeRecipeIngredientRow).filter(Boolean)
+    : Array.isArray(recipe.recipe_ingredients)
+      ? recipe.recipe_ingredients.map(normalizeRecipeIngredientRow).filter(Boolean)
+      : [];
+
+  const fallbackIngredients = parseIngredientObjects(recipe.ingredients_json ?? recipe.ingredients_text);
+  const ingredients = structuredIngredients.length ? structuredIngredients : fallbackIngredients;
+
+  const structuredSteps = buildStructuredSteps(
+    related.recipeSteps ?? recipe.recipe_steps ?? [],
+    related.stepIngredients ?? recipe.recipe_step_ingredients ?? [],
+    ingredients
+  );
+
+  const steps = structuredSteps.length ? structuredSteps : parseInstructionSteps(recipe.steps_json ?? recipe.instructions_text, ingredients);
   const servingsCount = Number.isFinite(recipe.servings_count)
     ? Number(recipe.servings_count)
     : parseFirstInteger(recipe.servings_text);

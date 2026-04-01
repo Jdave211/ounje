@@ -1,18 +1,113 @@
 import Foundation
 
 protocol RecipeCatalog {
-    func recipes(matching cuisines: [CuisinePreference]) async -> [Recipe]
+    func recipes(for profile: UserProfile) async -> [Recipe]
 }
 
 actor LocalRecipeCatalog: RecipeCatalog {
     private let allRecipes: [Recipe] = RecipeSeedData.all
 
-    func recipes(matching cuisines: [CuisinePreference]) async -> [Recipe] {
-        guard !cuisines.isEmpty else { return allRecipes }
-        let allowed = Set(cuisines)
-        let matched = allRecipes.filter { allowed.contains($0.cuisine) }
-        return matched.isEmpty ? allRecipes : matched
+    func recipes(for profile: UserProfile) async -> [Recipe] {
+        let preferred = Set(profile.preferredCuisines)
+        guard !preferred.isEmpty else { return allRecipes }
+
+        return allRecipes.sorted { lhs, rhs in
+            localPreferenceScore(for: lhs, profile: profile) > localPreferenceScore(for: rhs, profile: profile)
+        }
     }
+
+    private func localPreferenceScore(for recipe: Recipe, profile: UserProfile) -> Int {
+        var score = 0
+        let loweredTitle = recipe.title.lowercased()
+        let loweredTags = recipe.tags.map { $0.lowercased() }
+
+        if profile.preferredCuisines.contains(recipe.cuisine) {
+            score += 14
+        }
+
+        for food in profile.favoriteFoods.map({ $0.lowercased() }) where !food.isEmpty {
+            if loweredTitle.contains(food) {
+                score += 8
+            }
+        }
+
+        for flavor in profile.favoriteFlavors.map({ $0.lowercased() }) where !flavor.isEmpty {
+            if loweredTitle.contains(flavor) || loweredTags.contains(flavor) {
+                score += 5
+            }
+        }
+
+        if profile.mealPrepGoals.map({ $0.lowercased() }).contains("speed"), recipe.prepMinutes <= 30 {
+            score += 6
+        }
+
+        return score
+    }
+}
+
+actor RemoteRecipeCatalog: RecipeCatalog {
+    private let fallbackCatalog: RecipeCatalog
+    private let session: URLSession
+
+    init(fallbackCatalog: RecipeCatalog = LocalRecipeCatalog(), session: URLSession = .shared) {
+        self.fallbackCatalog = fallbackCatalog
+        self.session = session
+    }
+
+    func recipes(for profile: UserProfile) async -> [Recipe] {
+        do {
+            let response = try await fetchRemoteRecipes(profile: profile, limit: max(48, profile.cadence.baseRecipeCount * 12))
+            if !response.recipes.isEmpty {
+                return response.recipes
+            }
+        } catch {
+            // Fall back to the local seed catalog if the live ranking service is unavailable.
+        }
+
+        return await fallbackCatalog.recipes(for: profile)
+    }
+
+    private func fetchRemoteRecipes(profile: UserProfile, limit: Int) async throws -> PrepCandidateRecipesResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/prep-candidates") else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            PrepCandidateRecipesRequest(
+                profile: profile,
+                limit: limit
+            )
+        )
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return try JSONDecoder().decode(PrepCandidateRecipesResponse.self, from: data)
+    }
+
+    private var baseURL: String {
+        OunjeDevelopmentServer.baseURL
+    }
+}
+
+private struct PrepCandidateRecipesRequest: Encodable {
+    let profile: UserProfile
+    let limit: Int
+}
+
+private struct PrepCandidateRecipesResponse: Decodable {
+    let recipes: [Recipe]
+    let rankingMode: String?
 }
 
 enum RecipeSeedData {

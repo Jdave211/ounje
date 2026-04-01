@@ -110,17 +110,27 @@ def get_embeddings(texts: list[str], model: str) -> list[list[float]] | None:
 # ── Supabase write ────────────────────────────────────────────────────────────
 def patch_embeddings(recipe_id: str, emb_basic: list[float], emb_rich: list[float]) -> bool:
     now = datetime.now(timezone.utc).isoformat()
-    resp = requests.patch(
-        f"{SUPABASE_URL}/rest/v1/recipes?id=eq.{recipe_id}",
-        headers=HEADERS_SB,
-        json={
-            "embedding_basic":          emb_basic,
-            "embedding_rich":           emb_rich,
-            "embeddings_generated_at":  now,
-        },
-        timeout=15
-    )
-    return resp.status_code in (200, 204)
+    payload = {
+        "embedding_basic":          emb_basic,
+        "embedding_rich":           emb_rich,
+        "embeddings_generated_at":  now,
+    }
+
+    for attempt in range(RETRY_LIMIT):
+        try:
+            resp = requests.patch(
+                f"{SUPABASE_URL}/rest/v1/recipes?id=eq.{recipe_id}",
+                headers=HEADERS_SB,
+                json=payload,
+                timeout=30
+            )
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            if attempt < RETRY_LIMIT - 1:
+                time.sleep(2 ** attempt)
+            else:
+                print(f"  ❌ Supabase write failed for {recipe_id}: {e}")
+                return False
 
 # ── Fetch helpers ─────────────────────────────────────────────────────────────
 FETCH_COLS = (
@@ -134,7 +144,7 @@ FETCH_COLS = (
     "source_platform,enriched_at,embeddings_generated_at"
 )
 
-def fetch_page(offset: int) -> list[dict]:
+def fetch_page() -> list[dict]:
     """Fetch recipes that need (re-)embedding:
        enriched_at IS NOT NULL AND
        (embeddings_generated_at IS NULL OR embeddings_generated_at < enriched_at)
@@ -148,8 +158,22 @@ def fetch_page(offset: int) -> list[dict]:
             "enriched_at":      "not.is.null",
             "embedding_basic":  "is.null",   # not yet embedded
             "limit":            PAGE_SIZE,
-            "offset":           offset,
             "order":            "created_at.asc",
+        },
+        headers={"apikey": ANON_KEY, "Authorization": f"Bearer {ANON_KEY}"},
+        timeout=30
+    )
+    return r.json() if r.ok else []
+
+def fetch_stale_page() -> list[dict]:
+    r = requests.get(
+        f"{SUPABASE_URL}/rest/v1/recipes",
+        params={
+            "select":          FETCH_COLS,
+            "enriched_at":     "not.is.null",
+            "embedding_basic": "not.is.null",
+            "limit":           PAGE_SIZE,
+            "order":           "enriched_at.desc",
         },
         headers={"apikey": ANON_KEY, "Authorization": f"Bearer {ANON_KEY}"},
         timeout=30
@@ -164,14 +188,12 @@ def main():
 
     total_done = 0
     total_failed = 0
-    offset = 0
-
     while True:
-        page = fetch_page(offset)
+        page = fetch_page()
         if not page:
             break
 
-        print(f"\n📦 offset={offset}, {len(page)} recipes to embed...")
+        print(f"\n📦 Embedding batch, {len(page)} recipes...")
 
         # Chunk into EMBED_BATCH-sized groups for OpenAI batch call
         for chunk_start in range(0, len(page), EMBED_BATCH):
@@ -204,28 +226,10 @@ def main():
             total_failed += len(chunk) - done
             print(f"  ✅ {done}/{len(chunk)} written (running total: {total_done})")
 
-        if len(page) < PAGE_SIZE:
-            break
-        offset += PAGE_SIZE
-
     # ── Also handle stale embeddings (enriched AFTER last embedding) ──────────
     print(f"\n🔄 Checking for stale embeddings (enriched_at > embeddings_generated_at)...")
-    stale_offset = 0
     while True:
-        r = requests.get(
-            f"{SUPABASE_URL}/rest/v1/recipes",
-            params={
-                "select":          FETCH_COLS,
-                "enriched_at":     "not.is.null",
-                "embedding_basic": "not.is.null",
-                "limit":           PAGE_SIZE,
-                "offset":          stale_offset,
-                "order":           "enriched_at.desc",
-            },
-            headers={"apikey": ANON_KEY, "Authorization": f"Bearer {ANON_KEY}"},
-            timeout=30
-        )
-        stale_page = r.json() if r.ok else []
+        stale_page = fetch_stale_page()
         stale = [
             row for row in stale_page
             if row.get("enriched_at") and row.get("embeddings_generated_at")
@@ -244,9 +248,10 @@ def main():
                     patch_embeddings(row["id"], basics[i], riches[i])
                 total_done += len(chunk)
 
-        if len(stale_page) < PAGE_SIZE:
+        if len(stale_page) < PAGE_SIZE and not stale:
             break
-        stale_offset += PAGE_SIZE
+        if not stale:
+            break
 
     print(f"\n{'=' * 60}")
     print(f"✅ Embedding complete: {total_done} succeeded, {total_failed} failed")
