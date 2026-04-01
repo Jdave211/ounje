@@ -26,7 +26,7 @@ final class MealPlanningAgent {
     private let recipeCatalog: RecipeCatalog
     private let inventoryProvider: InventoryProvider
 
-    init(recipeCatalog: RecipeCatalog = LocalRecipeCatalog(), inventoryProvider: InventoryProvider = PantryInventoryProvider()) {
+    init(recipeCatalog: RecipeCatalog = RemoteRecipeCatalog(), inventoryProvider: InventoryProvider = PantryInventoryProvider()) {
         self.recipeCatalog = recipeCatalog
         self.inventoryProvider = inventoryProvider
     }
@@ -46,17 +46,17 @@ final class MealPlanningAgent {
         pipeline.append(
             PipelineDecision(
                 stage: .interpretProfile,
-                summary: "Targeting \(profile.cadence.title.lowercased()) with \(profile.userFacingCuisineTitles.joined(separator: ", "))\(profile.cuisineCountries.isEmpty ? "" : " plus country signals for \(profile.cuisineCountries.joined(separator: ", "))"), \(profile.budgetSummary), goals around \(profile.mealPrepGoals.isEmpty ? "balanced prep" : profile.mealPrepGoals.joined(separator: ", ")), and \(profile.orderingAutonomy.title.lowercased())."
+                summary: "Planning for \(profile.cadence.title.lowercased()) with allergies treated as hard exclusions, while cuisines, tastes, and goals stay as weighted guidance. Current signals emphasize \(profile.userFacingCuisineTitles.joined(separator: ", "))\(profile.favoriteFoods.isEmpty ? "" : ", plus \(profile.favoriteFoods.prefix(3).joined(separator: ", "))"), \(profile.budgetSummary), and \(profile.orderingAutonomy.title.lowercased())."
             )
         )
 
-        let candidates = await recipeCatalog.recipes(matching: profile.preferredCuisines)
+        let candidates = await recipeCatalog.recipes(for: profile)
         let scored = rank(candidates: candidates, profile: profile)
 
         pipeline.append(
             PipelineDecision(
                 stage: .curateRecipes,
-                summary: "Scored \(scored.count) recipes by restrictions, prep time, storage fit, and the selected meal-prep goals."
+                summary: "Scored \(scored.count) live recipe candidates by allergy safety, prep time, storage fit, taste signals, cuisine preferences, and the selected meal-prep goals."
             )
         )
 
@@ -132,8 +132,33 @@ final class MealPlanningAgent {
     private func score(for recipe: Recipe, profile: UserProfile) -> Double {
         var score = 100.0
 
-        if containsRestrictedIngredient(recipe, restrictions: profile.absoluteRestrictions) {
+        if containsRestrictedIngredient(recipe, restrictions: profile.allergies) {
             return -1000
+        }
+
+        if profile.preferredCuisines.contains(recipe.cuisine) {
+            score += 14
+        } else if profile.explorationLevel == .adventurous {
+            score += 4
+        }
+
+        if recipe.isImagePoor {
+            score -= 18
+        } else {
+            score += 4
+        }
+
+        let descriptor = ([recipe.title] + recipe.ingredients.map(\.name) + recipe.tags).joined(separator: " ").lowercased()
+        for favoriteFood in profile.favoriteFoods.map({ $0.lowercased() }) where !favoriteFood.isEmpty {
+            if descriptor.contains(favoriteFood) {
+                score += 8
+            }
+        }
+
+        for favoriteFlavor in profile.favoriteFlavors.map({ $0.lowercased() }) where !favoriteFlavor.isEmpty {
+            if descriptor.contains(favoriteFlavor) {
+                score += 5
+            }
         }
 
         score -= Double(recipe.prepMinutes) * 0.7
@@ -242,13 +267,22 @@ final class MealPlanningAgent {
         }
 
         var selected: [Recipe] = []
+        var cuisineCounts: [CuisinePreference: Int] = [:]
+        let maxCuisineRepeats = max(2, Int(ceil(Double(targetCount) * 0.4)))
+
         for recipe in primaryPool where selected.count < targetCount {
+            let repeats = cuisineCounts[recipe.cuisine, default: 0]
+            if repeats >= maxCuisineRepeats {
+                continue
+            }
             selected.append(recipe)
+            cuisineCounts[recipe.cuisine, default: 0] += 1
         }
 
         if selected.count < targetCount {
             for recipe in fallbackPool where selected.count < targetCount && !selected.contains(recipe) {
                 selected.append(recipe)
+                cuisineCounts[recipe.cuisine, default: 0] += 1
             }
         }
 

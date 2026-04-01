@@ -18,7 +18,8 @@ app.get("/", (req, res) => {
   res.json({ message: "Hello from server" });
 });
 const PORT = process.env.PORT || 8080;
+const HOST = process.env.HOST || "0.0.0.0";
 startRecipeFineTunePolling();
-app.listen(PORT, function () {
-  console.log(`Server listening at http://localhost:${PORT}`);
+app.listen(PORT, HOST, function () {
+  console.log(`Server listening at http://${HOST}:${PORT}`);
 });

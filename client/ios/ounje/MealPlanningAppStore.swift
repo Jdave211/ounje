@@ -20,6 +20,8 @@ final class MealPlanningAppStore: ObservableObject {
     private let profileKey = "agentic-meal-profile-v1"
     private let historyKey = "agentic-meal-history-v1"
     private let onboardingStepKey = "agentic-onboarding-step-v1"
+    static let googleDevUserIDKey = "agentic-google-dev-user-id-v1"
+    static let googleDevEmailKey = "agentic-google-dev-email-v1"
 
     init() {
         loadState()
@@ -194,6 +196,28 @@ final class MealPlanningAppStore: ObservableObject {
         isGenerating = false
     }
 
+    func ensureFreshPlanIfNeeded() async {
+        guard let profile, isOnboarded, profile.isAutomationReady, !isGenerating else { return }
+
+        let shouldRegenerate: Bool
+        if let latestPlan {
+            let hasLegacySeedRecipes = latestPlan.recipes.contains(where: { $0.recipe.isLegacySeedRecipe })
+            let missingImageCount = latestPlan.recipes.reduce(into: 0) { partialResult, plannedRecipe in
+                if plannedRecipe.recipe.isImagePoor {
+                    partialResult += 1
+                }
+            }
+            let planIsImagePoor = missingImageCount >= max(2, Int(ceil(Double(latestPlan.recipes.count) * 0.5)))
+            let planIsExpired = latestPlan.periodEnd < Date.now
+            shouldRegenerate = hasLegacySeedRecipes || planIsImagePoor || planIsExpired
+        } else {
+            shouldRegenerate = true
+        }
+
+        guard shouldRegenerate else { return }
+        await generatePlan()
+    }
+
     func resetAll() {
         activeGenerationToken = UUID()
         authSession = nil
@@ -207,6 +231,8 @@ final class MealPlanningAppStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: profileKey)
         UserDefaults.standard.removeObject(forKey: historyKey)
         UserDefaults.standard.removeObject(forKey: onboardingStepKey)
+        UserDefaults.standard.removeObject(forKey: Self.googleDevUserIDKey)
+        UserDefaults.standard.removeObject(forKey: Self.googleDevEmailKey)
         lastOnboardingStep = 0
         hasResolvedInitialState = false
         isHydratingRemoteState = false
@@ -236,6 +262,12 @@ final class MealPlanningAppStore: ObservableObject {
            let decodedHistory = try? decoder.decode([MealPlan].self, from: historyData) {
             planHistory = decodedHistory
             latestPlan = decodedHistory.first
+        }
+
+        if shouldPurgePersistedPlan(latestPlan) {
+            latestPlan = nil
+            planHistory = []
+            saveHistory()
         }
 
         if authSession != nil, profile == nil {
@@ -272,5 +304,11 @@ final class MealPlanningAppStore: ObservableObject {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(planHistory) else { return }
         UserDefaults.standard.set(data, forKey: historyKey)
+    }
+
+    private func shouldPurgePersistedPlan(_ plan: MealPlan?) -> Bool {
+        guard let plan else { return false }
+
+        return plan.recipes.contains(where: { $0.recipe.isLegacySeedRecipe })
     }
 }

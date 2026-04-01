@@ -189,7 +189,7 @@ def process_recipe(recipe: dict) -> tuple[str, bool]:
     ok = patch_recipe(recipe["id"], enriched)
     return recipe["id"], ok
 
-def fetch_unenriched_page(offset: int) -> list[dict]:
+def fetch_unenriched_page() -> list[dict]:
     cols = "id,title,description,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,est_calories_text,carbs_text,protein_text,fats_text,source_platform,hero_image_url"
     r = requests.get(
         f"{SUPABASE_URL}/rest/v1/recipes",
@@ -197,7 +197,6 @@ def fetch_unenriched_page(offset: int) -> list[dict]:
             "select": cols,
             "enriched_at": "is.null",
             "limit": PAGE_SIZE,
-            "offset": offset,
             "order": "created_at.asc"
         },
         headers={"apikey": ANON_KEY, "Authorization": f"Bearer {ANON_KEY}"},
@@ -212,14 +211,12 @@ def main():
 
     total_done = 0
     total_failed = 0
-    offset = 0
-
     while True:
-        page = fetch_unenriched_page(offset)
+        page = fetch_unenriched_page()
         if not page:
             break
 
-        print(f"\n📦 Batch offset={offset}, {len(page)} recipes...")
+        print(f"\n📦 Enrichment batch, {len(page)} recipes...")
 
         with ThreadPoolExecutor(max_workers=BATCH_SIZE) as pool:
             futures = {pool.submit(process_recipe, r): r["id"] for r in page}
@@ -232,9 +229,6 @@ def main():
                 else:
                     total_failed += 1
 
-        if len(page) < PAGE_SIZE:
-            break
-        offset += PAGE_SIZE
         time.sleep(1.5)  # pause between pages to respect rate limits
 
     print(f"\n{'=' * 60}")
