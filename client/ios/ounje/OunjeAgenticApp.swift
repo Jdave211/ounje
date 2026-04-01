@@ -8,17 +8,20 @@ import MapKit
 @main
 struct OunjeAgenticApp: App {
     @StateObject private var store = MealPlanningAppStore()
+    @StateObject private var toastCenter = AppToastCenter()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environmentObject(toastCenter)
         }
     }
 }
 
 private struct RootView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var toastCenter: AppToastCenter
 
     var body: some View {
         Group {
@@ -32,7 +35,7 @@ private struct RootView: View {
                 FirstLoginOnboardingView()
                     .id("first-login-onboarding")
             } else {
-                MealPlannerShellView()
+                MealPlannerShellView(toastCenter: toastCenter)
                     .id("planner-shell")
             }
         }
@@ -42,6 +45,100 @@ private struct RootView: View {
         .task(id: store.authSession?.userID ?? "signed-out") {
             await store.bootstrapFromSupabaseIfNeeded()
         }
+    }
+}
+
+private struct AppToast: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+}
+
+@MainActor
+private final class AppToastCenter: ObservableObject {
+    @Published var toast: AppToast?
+
+    private var dismissTask: Task<Void, Never>?
+
+    func showSavedRecipe(title: String) {
+        show(
+            title: "Saved",
+            subtitle: title,
+            systemImage: "bookmark.fill"
+        )
+    }
+
+    func show(title: String, subtitle: String? = nil, systemImage: String = "checkmark.circle.fill") {
+        dismissTask?.cancel()
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
+            toast = AppToast(title: title, subtitle: subtitle, systemImage: systemImage)
+        }
+
+        dismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_700_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.92)) {
+                    self.toast = nil
+                }
+            }
+        }
+    }
+}
+
+private struct AppToastBanner: View {
+    let toast: AppToast
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(OunjePalette.accent.opacity(0.18))
+                    .frame(width: 34, height: 34)
+
+                Image(systemName: toast.systemImage)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(OunjePalette.accentDark)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(toast.title)
+                    .font(.custom("Slee_handwritting-Regular", size: 18))
+                    .tracking(0.1)
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                if let subtitle = toast.subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            OunjePalette.panel.opacity(0.98),
+                            OunjePalette.surface.opacity(0.94)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.16), radius: 16, y: 10)
     }
 }
 
@@ -2025,9 +2122,11 @@ private final class SavedRecipesStore: ObservableObject {
 
     private let legacyKey = "ounje-saved-recipes-v1"
     private let keyPrefix = "ounje-saved-recipes-v2"
+    private let toastCenter: AppToastCenter
     private var activeUserID: String?
 
-    init() {
+    init(toastCenter: AppToastCenter) {
+        self.toastCenter = toastCenter
         load(for: nil)
     }
 
@@ -2073,6 +2172,7 @@ private final class SavedRecipesStore: ObservableObject {
         if shouldSave {
             savedRecipes.removeAll { $0.id == recipe.id }
             savedRecipes.insert(recipe, at: 0)
+            toastCenter.showSavedRecipe(title: recipe.title)
         } else {
             savedRecipes.removeAll { $0.id == recipe.id }
         }
@@ -2145,12 +2245,18 @@ private final class SavedRecipesStore: ObservableObject {
 
 private struct MealPlannerShellView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
-    @StateObject private var savedStore = SavedRecipesStore()
+    @ObservedObject private var toastCenter: AppToastCenter
+    @StateObject private var savedStore: SavedRecipesStore
     @State private var selectedTab: AppTab = .prep
     @State private var discoverSearchText = ""
     @State private var cookbookSearchText = ""
     @State private var cartSearchText = ""
     @State private var presentedRecipe: PresentedRecipeDetail?
+
+    init(toastCenter: AppToastCenter) {
+        _toastCenter = ObservedObject(wrappedValue: toastCenter)
+        _savedStore = StateObject(wrappedValue: SavedRecipesStore(toastCenter: toastCenter))
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -2162,6 +2268,15 @@ private struct MealPlannerShellView: View {
                     .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity))
             }
             .background(OunjePalette.background.ignoresSafeArea())
+            .overlay(alignment: .top) {
+                if let toast = toastCenter.toast {
+                    AppToastBanner(toast: toast)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 BottomNavigationDock(
                     selectedTab: $selectedTab,
@@ -2180,7 +2295,8 @@ private struct MealPlannerShellView: View {
                 presentedRecipe: presentedRecipe,
                 onOpenCart: {
                     selectedTab = .cart
-                }
+                },
+                toastCenter: toastCenter
             )
             .environmentObject(savedStore)
         }
@@ -5444,6 +5560,7 @@ private final class DiscoverRecipeImageLoader: ObservableObject {
 private struct RecipeDetailExperienceView: View {
     let presentedRecipe: PresentedRecipeDetail
     let onOpenCart: () -> Void
+    @ObservedObject private var toastCenter: AppToastCenter
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -5454,6 +5571,12 @@ private struct RecipeDetailExperienceView: View {
 
     private let detailBackground = Color(hex: "F5F0E8")
     private let sectionDivider = Color.black.opacity(0.10)
+
+    init(presentedRecipe: PresentedRecipeDetail, onOpenCart: @escaping () -> Void, toastCenter: AppToastCenter) {
+        self.presentedRecipe = presentedRecipe
+        self.onOpenCart = onOpenCart
+        _toastCenter = ObservedObject(wrappedValue: toastCenter)
+    }
 
     private var detail: RecipeDetailData? {
         viewModel.detail
@@ -5741,6 +5864,15 @@ private struct RecipeDetailExperienceView: View {
 
                 RecipeCookBottomBar(servingsCount: $servingsCount) {
                     shouldScrollToSteps = true
+                }
+            }
+            .overlay(alignment: .top) {
+                if let toast = toastCenter.toast {
+                    AppToastBanner(toast: toast)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .allowsHitTesting(false)
                 }
             }
             .task(id: presentedRecipe.id) {
