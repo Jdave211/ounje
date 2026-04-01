@@ -97,12 +97,21 @@ private struct AppToastBanner: View {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(OunjePalette.accent.opacity(0.18))
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                OunjePalette.softCream.opacity(0.96),
+                                OunjePalette.accent.opacity(0.30)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
                     .frame(width: 34, height: 34)
 
                 Image(systemName: toast.systemImage)
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(OunjePalette.accentDark)
+                    .foregroundStyle(OunjePalette.background)
             }
 
             VStack(alignment: .leading, spacing: 1) {
@@ -128,8 +137,9 @@ private struct AppToastBanner: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            OunjePalette.panel.opacity(0.98),
-                            OunjePalette.surface.opacity(0.94)
+                            OunjePalette.surface.opacity(0.98),
+                            OunjePalette.panel.opacity(0.92),
+                            Color.white.opacity(0.03)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -137,10 +147,11 @@ private struct AppToastBanner: View {
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
                 )
         )
-        .shadow(color: .black.opacity(0.16), radius: 16, y: 10)
+        .shadow(color: OunjePalette.softCream.opacity(0.08), radius: 18, y: 10)
+        .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
     }
 }
 
@@ -3965,10 +3976,8 @@ private struct CartTabView: View {
 
     private var displayGroceryItems: [CartGroceryDisplayItem] {
         guard let latestPlan = store.latestPlan else { return [] }
+        let recipeLookup = cartRecipeIngredientImageLookup
         let canonicalLookup = CanonicalIngredientImageIndex(records: canonicalIngredientRecords)
-        let recipeLookup = Dictionary(uniqueKeysWithValues: allIngredientCards.compactMap { ingredient in
-            ingredient.imageURL.map { (Self.normalizedIngredientKey(ingredient.displayName), $0) }
-        })
 
         return latestPlan.groceryItems.map { item in
             let key = Self.normalizedIngredientKey(item.name)
@@ -3976,9 +3985,22 @@ private struct CartTabView: View {
                 name: item.name,
                 quantityText: CartQuantityFormatter.format(amount: item.amount, unit: item.unit),
                 estimatedPriceText: item.estimatedPrice.asCurrency,
-                imageURL: canonicalLookup.imageURL(forName: item.name) ?? recipeLookup[key]
+                imageURL: recipeLookup[key] ?? canonicalLookup.imageURL(forName: item.name)
             )
         }
+    }
+
+    private var cartRecipeIngredientImageLookup: [String: URL] {
+        var lookup: [String: URL] = [:]
+
+        for ingredient in ingredientRows {
+            guard let imageURL = ingredient.imageURL else { continue }
+            let key = Self.normalizedIngredientKey(ingredient.displayName)
+            guard !key.isEmpty, lookup[key] == nil else { continue }
+            lookup[key] = imageURL
+        }
+
+        return lookup
     }
 
     private var allIngredientCards: [SupabaseRecipeIngredientRow] {
@@ -6329,9 +6351,11 @@ private struct RecipeDetailExperienceView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var savedStore: SavedRecipesStore
     @StateObject private var viewModel = RecipeDetailViewModel()
     @State private var servingsCount = 4
+    @State private var baseServingsCount = 4
     @State private var shouldScrollToSteps = false
     @State private var showShareSheet = false
     @State private var showInlineVideo = false
@@ -6353,6 +6377,32 @@ private struct RecipeDetailExperienceView: View {
 
     private var detail: RecipeDetailData? {
         viewModel.detail
+    }
+
+    private var recipeID: String {
+        detail?.id ?? presentedRecipe.id
+    }
+
+    private var isInCurrentPrep: Bool {
+        store.latestPlan?.recipes.contains(where: { $0.recipe.id == recipeID }) ?? (presentedRecipe.plannedRecipe != nil)
+    }
+
+    private var hasPendingPrepChanges: Bool {
+        servingsCount != max(1, baseServingsCount)
+    }
+
+    private var primaryBottomActionTitle: String {
+        if !isInCurrentPrep { return "Prep" }
+        if hasPendingPrepChanges { return "Save" }
+        return "Cook"
+    }
+
+    private var ingredientSecondaryActionTitle: String {
+        isInCurrentPrep ? "Add all to grocery list" : "Add to next prep"
+    }
+
+    private var servingsScale: Double {
+        Double(max(1, servingsCount)) / Double(max(1, baseServingsCount))
     }
 
     private var imageCandidates: [URL] {
@@ -6425,13 +6475,17 @@ private struct RecipeDetailExperienceView: View {
     }
 
     private var detailMetrics: [RecipeDetailMetric] {
-        detail?.detailsGrid ?? []
+        guard let detail else { return [] }
+        return detail.detailsGrid.map { metric in
+            guard metric.title == "Servings" else { return metric }
+            return RecipeDetailMetric(title: metric.title, value: "\(max(1, servingsCount))")
+        }
     }
 
     private var ingredientItems: [RecipeDetailIngredient] {
         guard let detail else { return [] }
         if !detail.ingredients.isEmpty {
-            return detail.ingredients
+            return detail.ingredients.map { $0.scaled(by: servingsScale) }
         }
 
         var seen = Set<String>()
@@ -6442,10 +6496,14 @@ private struct RecipeDetailExperienceView: View {
                 guard !key.isEmpty else { return false }
                 return seen.insert(key).inserted
             }
+            .map { $0.scaled(by: servingsScale) }
     }
 
     private var instructionSteps: [RecipeDetailStep] {
-        detail?.steps ?? []
+        guard let detail else { return [] }
+        return detail.steps.map { step in
+            step.replacingIngredients(step.ingredients.map { $0.scaled(by: servingsScale) })
+        }
     }
 
     private var isLoadingResolvedDetail: Bool {
@@ -6602,14 +6660,6 @@ private struct RecipeDetailExperienceView: View {
                                             .offset(x: heroSize * 0.04, y: -(heroTopCrop + heroTopBleed))
                                             .allowsHitTesting(false)
                                     }
-                                    .overlay(alignment: .topTrailing) {
-                                        if hasVideoSource {
-                                            RecipeDetailTopVideoButton(isActive: showInlineVideo) {
-                                                toggleInlineVideo()
-                                            }
-                                            .offset(x: -12, y: max(68, safeTop + 74))
-                                        }
-                                    }
                             }
                             .frame(maxWidth: .infinity, alignment: .topLeading)
 
@@ -6761,9 +6811,9 @@ private struct RecipeDetailExperienceView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             }
-                            .frame(maxWidth: 560, alignment: .leading)
+                            .frame(maxWidth: 820, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 24)
+                            .padding(.horizontal, 14)
                             .padding(.top, 0)
                             .padding(.bottom, 160)
                         }
@@ -6778,8 +6828,11 @@ private struct RecipeDetailExperienceView: View {
                         shouldScrollToSteps = false
                     }
 
-                    RecipeCookBottomBar(servingsCount: $servingsCount) {
-                        shouldScrollToSteps = true
+                    RecipeCookBottomBar(
+                        servingsCount: $servingsCount,
+                        actionTitle: primaryBottomActionTitle
+                    ) {
+                        handlePrimaryBottomAction()
                     }
                 }
                 .overlay(alignment: .top) {
@@ -6807,7 +6860,7 @@ private struct RecipeDetailExperienceView: View {
                         }
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, safeTop + 6)
+                    .padding(.top, max(safeTop - 2, 0))
                 }
                 .overlay(alignment: .topTrailing) {
                     if showInlineVideo, let resolvedVideo, let resolvedURL = resolvedVideo.url {
@@ -6854,6 +6907,15 @@ private struct RecipeDetailExperienceView: View {
                 .frame(width: pageWidth, alignment: .topLeading)
                 .clipped()
             }
+            .overlay(alignment: .topTrailing) {
+                if hasVideoSource {
+                    RecipeDetailTopVideoButton(isActive: showInlineVideo) {
+                        toggleInlineVideo()
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.top, max(safeTop - 2, 0) + 52 + 10)
+                }
+            }
             .overlay(alignment: .top) {
                 if let toast = toastCenter.toast {
                     AppToastBanner(toast: toast)
@@ -6865,7 +6927,8 @@ private struct RecipeDetailExperienceView: View {
             }
             .task(id: presentedRecipe.id) {
                 await viewModel.load(for: presentedRecipe.id)
-                let loadedCount = viewModel.detail?.displayServings ?? presentedRecipe.plannedRecipe?.servings ?? 4
+                let loadedCount = presentedRecipe.plannedRecipe?.servings ?? viewModel.detail?.displayServings ?? 4
+                baseServingsCount = max(1, loadedCount)
                 servingsCount = max(1, loadedCount)
             }
         }
@@ -6927,12 +6990,16 @@ private struct RecipeDetailExperienceView: View {
 
     private var ingredientSecondaryButton: some View {
         Button {
-            dismiss()
-            onOpenCart()
+            if isInCurrentPrep {
+                dismiss()
+                onOpenCart()
+            } else {
+                Task { await addCurrentRecipeToPrep() }
+            }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: "cart")
-                Text("Add all to grocery list")
+                Image(systemName: isInCurrentPrep ? "cart" : "wand.and.stars")
+                Text(ingredientSecondaryActionTitle)
             }
             .font(.system(size: 18, weight: .medium))
             .foregroundStyle(OunjePalette.primaryText)
@@ -6948,6 +7015,155 @@ private struct RecipeDetailExperienceView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    @MainActor
+    private func handlePrimaryBottomAction() {
+        if !isInCurrentPrep {
+            Task { await addCurrentRecipeToPrep() }
+            return
+        }
+
+        if hasPendingPrepChanges {
+            Task { await saveCurrentRecipeChanges() }
+            return
+        }
+
+        shouldScrollToSteps = true
+    }
+
+    @MainActor
+    private func addCurrentRecipeToPrep() async {
+        guard let detail else { return }
+        let recipe = recipeFromDetail(detail)
+        await store.updateLatestPlan(with: recipe, servings: servingsCount)
+        toastCenter.show(
+            title: "Added to next prep",
+            subtitle: titleText,
+            systemImage: "wand.and.stars"
+        )
+    }
+
+    @MainActor
+    private func saveCurrentRecipeChanges() async {
+        guard let detail else { return }
+        let recipe = recipeFromDetail(detail)
+        await store.updateLatestPlan(with: recipe, servings: servingsCount)
+        toastCenter.show(
+            title: "Saved prep changes",
+            subtitle: titleText,
+            systemImage: "checkmark.circle.fill"
+        )
+    }
+
+    private func recipeFromDetail(_ detail: RecipeDetailData) -> Recipe {
+        let ingredientSource = detail.ingredients.isEmpty ? detail.steps.flatMap(\.ingredients) : detail.ingredients
+        let ingredients = ingredientSource.map { ingredient in
+            let measurement = Self.parsedIngredientMeasurement(from: ingredient.quantityText)
+            return RecipeIngredient(
+                name: ingredient.displayTitle,
+                amount: measurement?.amount ?? 1,
+                unit: measurement?.unit ?? "ct",
+                estimatedUnitPrice: 0
+            )
+        }
+
+        return Recipe(
+            id: detail.id,
+            title: detail.title,
+            cuisine: Self.cuisinePreference(from: detail),
+            prepMinutes: detail.prepTimeMinutes ?? detail.cookTimeMinutes ?? 0,
+            servings: max(1, servingsCount),
+            storageFootprint: .medium,
+            tags: Self.recipeTags(from: detail),
+            ingredients: ingredients,
+            cardImageURLString: detail.discoverCardImageURLString ?? detail.imageURL?.absoluteString,
+            heroImageURLString: detail.heroImageURLString ?? detail.imageURL?.absoluteString,
+            source: detail.source ?? detail.sourcePlatform ?? detail.authorLine
+        )
+    }
+
+    private static func recipeTags(from detail: RecipeDetailData) -> [String] {
+        let rawTags = detail.dietaryTags + detail.flavorTags + detail.cuisineTags + detail.occasionTags
+        let contextualTags = [
+            detail.recipeType,
+            detail.category,
+            detail.subcategory,
+            detail.cookMethod,
+            detail.mainProtein
+        ].compactMap { $0 }
+
+        var seen = Set<String>()
+        return (rawTags + contextualTags)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0).inserted }
+    }
+
+    private static func parsedIngredientMeasurement(from raw: String?) -> (amount: Double, unit: String)? {
+        guard let raw else { return nil }
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        let pattern = #"^\s*((?:\d+\s+)?\d+/\d+|\d+(?:\.\d+)?)\s*(.*)$"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+            let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+            let amountRange = Range(match.range(at: 1), in: normalized)
+        else {
+            return nil
+        }
+
+        let amountText = String(normalized[amountRange])
+        let amount = Self.parseIngredientAmount(amountText)
+        let remainderRange = Range(match.range(at: 2), in: normalized)
+        let unit = remainderRange.map { String(normalized[$0]).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        guard amount > 0 else { return nil }
+        return (amount: amount, unit: unit.isEmpty ? "ct" : unit)
+    }
+
+    private static func parseIngredientAmount(_ text: String) -> Double {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains(" ") {
+            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
+            if parts.count == 2, let whole = Double(parts[0]), let fraction = parseSimpleFraction(String(parts[1])) {
+                return whole + fraction
+            }
+        }
+
+        if let fraction = parseSimpleFraction(trimmed) {
+            return fraction
+        }
+
+        return Double(trimmed) ?? 0
+    }
+
+    private static func parseSimpleFraction(_ text: String) -> Double? {
+        let parts = text.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count == 2,
+              let numerator = Double(parts[0]),
+              let denominator = Double(parts[1]),
+              denominator != 0 else {
+            return nil
+        }
+        return numerator / denominator
+    }
+
+    private static func cuisinePreference(from detail: RecipeDetailData) -> CuisinePreference {
+        let candidates = detail.cuisineTags + [detail.category, detail.subcategory, detail.cookMethod, detail.mainProtein].compactMap { $0 }
+        for candidate in candidates {
+            let normalized = candidate
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "-", with: "")
+                .lowercased()
+
+            if let match = CuisinePreference.allCases.first(where: { $0.rawValue.lowercased() == normalized }) {
+                return match
+            }
+        }
+
+        return .american
     }
 
     private func ingredientTileTint(for index: Int) -> Color {
@@ -7100,19 +7316,53 @@ private struct RecipeDetailTopVideoButton: View {
     let action: () -> Void
 
     var body: some View {
+        let baseFill: AnyShapeStyle = isActive
+            ? AnyShapeStyle(OunjePalette.softCream.opacity(0.96))
+            : AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.20),
+                        OunjePalette.accent.opacity(0.20),
+                        OunjePalette.panel.opacity(0.58)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+
         Button(action: action) {
             Image(systemName: "play.fill")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(isActive ? Color.black.opacity(0.88) : OunjePalette.primaryText)
-                .frame(width: 56, height: 56)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(isActive ? Color.black.opacity(0.88) : OunjePalette.softCream)
+                .frame(width: 52, height: 52)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(isActive ? OunjePalette.softCream : OunjePalette.panel)
+                        .fill(baseFill)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .opacity(isActive ? 0 : 1)
+                        )
                         .overlay(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(isActive ? 0.10 : 0.20),
+                                            Color.white.opacity(0.02)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .blendMode(.screen)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(isActive ? 0.24 : 0.18), lineWidth: 1)
                         )
                 )
+                .shadow(color: isActive ? OunjePalette.softCream.opacity(0.16) : .black.opacity(0.16), radius: 10, y: 6)
         }
         .buttonStyle(.plain)
     }
@@ -7902,19 +8152,6 @@ private struct RecipeIngredientTile: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
 
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(OunjePalette.background)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                        )
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(OunjePalette.softCream)
-                }
-                .frame(width: 32, height: 32)
-                .offset(x: 6, y: -6)
             }
             .frame(height: 78)
             .task(id: ingredient.stableID) {
@@ -7960,50 +8197,62 @@ private struct RecipeStepBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 24) {
+            HStack(alignment: .top, spacing: 20) {
                 Text(String(format: "%02d", step.number))
-                    .font(.system(size: 30, weight: .regular, design: .serif))
+                    .biroHeaderFont(32)
                     .foregroundStyle(OunjePalette.softCream)
-                    .frame(width: 44, alignment: .leading)
+                    .frame(width: 48, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text(step.text)
                         .font(.system(size: 18, weight: .regular))
                         .lineSpacing(4)
                         .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let tipText = step.tipText, !tipText.isEmpty {
                         Text(tipText)
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(OunjePalette.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if !ingredientMatches.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(ingredientMatches, id: \.self) { match in
-                            Text(match)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(
-                                    Capsule(style: .continuous)
-                                        .fill(OunjePalette.panel)
-                                        .overlay(
-                                            Capsule(style: .continuous)
-                                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                                        )
-                                )
+                GeometryReader { geometry in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(ingredientMatches, id: \.self) { match in
+                                Text(match)
+                                    .sleeDisplayFont(14)
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(OunjePalette.panel.opacity(0.92))
+                                            .overlay(
+                                                Capsule(style: .continuous)
+                                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                                            )
+                                    )
                             }
+                        }
+                        .padding(.leading, 68)
+                        .padding(.trailing, 18)
+                        .frame(minWidth: geometry.size.width + 92, alignment: .leading)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 52)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 24)
         .overlay(alignment: .top) {
             Rectangle()
@@ -8065,27 +8314,28 @@ private struct FlexibleTagCloud: View {
 
 private struct RecipeCookBottomBar: View {
     @Binding var servingsCount: Int
-    let onCook: () -> Void
+    let actionTitle: String
+    let onPrimaryAction: () -> Void
 
     var body: some View {
         GeometryReader { proxy in
             let availableWidth = proxy.size.width - 48
             let cookButtonWidth = min(max(136, availableWidth * 0.42), 184)
 
-            HStack(spacing: 14) {
-                HStack(spacing: 14) {
+            HStack(spacing: 12) {
+                HStack(spacing: 12) {
                     Button {
                         servingsCount = max(1, servingsCount - 1)
                     } label: {
                         Image(systemName: "minus")
-                            .font(.system(size: 22, weight: .medium))
+                            .font(.system(size: 20, weight: .medium))
                             .foregroundStyle(OunjePalette.primaryText)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
 
                     Text("Cooking for \(servingsCount)")
-                        .font(.system(size: 17, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(OunjePalette.primaryText)
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
@@ -8095,46 +8345,75 @@ private struct RecipeCookBottomBar: View {
                         servingsCount += 1
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 22, weight: .medium))
+                            .font(.system(size: 20, weight: .medium))
                             .foregroundStyle(OunjePalette.primaryText)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
                 }
-                .frame(maxWidth: .infinity, minHeight: 76)
-
-                Button(action: onCook) {
-                    Text("Cook")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(OunjePalette.primaryText)
-                        .frame(maxWidth: .infinity, minHeight: 76)
-                        .background(
-                            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                .fill(OunjePalette.accent)
+                .frame(maxWidth: .infinity, minHeight: 64)
+                .padding(.horizontal, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
                         )
+                )
+
+                Button(action: onPrimaryAction) {
+                    Text(actionTitle)
+                        .font(.system(size: 21, weight: .medium))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .background(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            OunjePalette.accent.opacity(0.90),
+                                            OunjePalette.accentDark.opacity(0.80)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                        .fill(Color.white.opacity(0.06))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                                )
+                        )
+                        .shadow(color: OunjePalette.accent.opacity(0.14), radius: 10, x: 0, y: 6)
                 }
                 .frame(width: cookButtonWidth)
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 14)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
         }
-        .frame(height: 114)
+        .frame(height: 96)
         .background(
-            Rectangle()
-                .fill(detailBarBackground)
-                .overlay(alignment: .top) {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(OunjePalette.background)
+                .overlay(
                     Rectangle()
                         .fill(OunjePalette.stroke)
                         .frame(height: 1)
-                }
+                        .padding(.horizontal, 12),
+                    alignment: .top
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
                 .ignoresSafeArea(edges: .bottom)
         )
-    }
-
-    private var detailBarBackground: Color {
-        OunjePalette.background
     }
 }
 
@@ -11224,6 +11503,135 @@ private final class SupabaseSavedRecipesService {
     }
 }
 
+private enum SupabasePrepRecipeOverridesError: LocalizedError {
+    case invalidRequest
+    case invalidResponse
+    case requestFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRequest:
+            return "Could not build the prep override request."
+        case .invalidResponse:
+            return "Unexpected prep override response."
+        case .requestFailed(let message):
+            return message
+        }
+    }
+}
+
+private struct SupabasePrepRecipeOverrideRow: Decodable, Identifiable, Hashable {
+    let userID: String
+    let recipeID: String
+    let recipe: Recipe
+    let servings: Int
+    let isIncludedInPrep: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case recipeID = "recipe_id"
+        case recipe
+        case servings
+        case isIncludedInPrep = "is_included_in_prep"
+    }
+
+    var id: String {
+        recipeID
+    }
+
+    var override: PrepRecipeOverride {
+        var normalizedRecipe = recipe
+        normalizedRecipe.id = recipeID
+        return PrepRecipeOverride(
+            recipe: normalizedRecipe,
+            servings: servings,
+            isIncludedInPrep: isIncludedInPrep
+        )
+    }
+}
+
+private struct SupabasePrepRecipeOverrideUpsertPayload: Encodable {
+    let userID: String
+    let recipeID: String
+    let recipe: Recipe
+    let servings: Int
+    let isIncludedInPrep: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case recipeID = "recipe_id"
+        case recipe
+        case servings
+        case isIncludedInPrep = "is_included_in_prep"
+    }
+}
+
+final class SupabasePrepRecipeOverridesService {
+    static let shared = SupabasePrepRecipeOverridesService()
+
+    private init() {}
+
+    func fetchPrepRecipeOverrides(userID: String) async throws -> [PrepRecipeOverride] {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/prep_recipe_overrides?select=user_id,recipe_id,recipe,servings,is_included_in_prep&user_id=eq.\(encodedUserID)&order=updated_at.desc"
+              ) else {
+            throw SupabasePrepRecipeOverridesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to read prep overrides (\(httpResponse.statusCode))."
+            throw SupabasePrepRecipeOverridesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode([SupabasePrepRecipeOverrideRow].self, from: data).map(\.override)
+    }
+
+    func upsertPrepRecipeOverride(userID: String, override: PrepRecipeOverride) async throws {
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/prep_recipe_overrides?on_conflict=user_id,recipe_id") else {
+            throw SupabasePrepRecipeOverridesError.invalidRequest
+        }
+
+        let payload = SupabasePrepRecipeOverrideUpsertPayload(
+            userID: userID,
+            recipeID: override.recipe.id,
+            recipe: override.recipe,
+            servings: max(1, override.servings),
+            isIncludedInPrep: override.isIncludedInPrep
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = try JSONEncoder().encode([payload])
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to save prep override (\(httpResponse.statusCode))."
+            throw SupabasePrepRecipeOverridesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabasePrepRecipeOverridesError.invalidResponse
+        }
+        return (data, httpResponse)
+    }
+}
+
 private enum SupabaseRecipeIngredientsError: LocalizedError {
     case invalidRequest
     case invalidResponse
@@ -11329,6 +11737,11 @@ private struct CanonicalIngredientImageIndex {
     }
 
     func enrich(_ ingredient: RecipeDetailIngredient) -> RecipeDetailIngredient {
+        if let existing = ingredient.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !existing.isEmpty {
+            return ingredient
+        }
+
         guard let imageURLString = imageURLString(
             ingredientID: ingredient.ingredientID,
             displayName: ingredient.displayTitle
@@ -11340,6 +11753,11 @@ private struct CanonicalIngredientImageIndex {
     }
 
     func enrich(_ ingredient: SupabaseRecipeIngredientRow) -> SupabaseRecipeIngredientRow {
+        if let existing = ingredient.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !existing.isEmpty {
+            return ingredient
+        }
+
         guard let imageURLString = imageURLString(
             ingredientID: ingredient.ingredientID,
             displayName: ingredient.displayName
@@ -12028,6 +12446,18 @@ private struct RecipeDetailIngredient: Decodable, Hashable, Identifiable {
         return trimmed.rangeOfCharacter(from: .letters) != nil
     }
 
+    func scaled(by factor: Double) -> RecipeDetailIngredient {
+        guard factor > 0, abs(factor - 1) > 0.001 else { return self }
+        return RecipeDetailIngredient(
+            id: id,
+            ingredientID: ingredientID,
+            displayName: displayName,
+            quantityText: RecipeQuantityFormatter.scaled(quantityText, by: factor),
+            imageURLString: imageURLString,
+            sortOrder: sortOrder
+        )
+    }
+
     func replacingImageURLString(_ value: String?) -> RecipeDetailIngredient {
         RecipeDetailIngredient(
             id: id,
@@ -12035,6 +12465,17 @@ private struct RecipeDetailIngredient: Decodable, Hashable, Identifiable {
             displayName: displayName,
             quantityText: quantityText,
             imageURLString: value,
+            sortOrder: sortOrder
+        )
+    }
+
+    func replacingQuantityText(_ value: String?) -> RecipeDetailIngredient {
+        RecipeDetailIngredient(
+            id: id,
+            ingredientID: ingredientID,
+            displayName: displayName,
+            quantityText: value,
+            imageURLString: imageURLString,
             sortOrder: sortOrder
         )
     }
@@ -12052,6 +12493,109 @@ private enum RecipeQuantityFormatter {
 
         return trimmed
             .replacingOccurrences(of: "  ", with: " ")
+    }
+
+    static func scaled(_ raw: String?, by factor: Double) -> String? {
+        guard let normalized = normalize(raw) else { return nil }
+        guard factor > 0, abs(factor - 1) > 0.001 else { return normalized }
+
+        guard let measurement = parsedMeasurement(from: normalized) else {
+            return normalized
+        }
+
+        let scaledAmount = measurement.amount * factor
+        let amountText = formatAmount(scaledAmount)
+        if measurement.unit.isEmpty {
+            return amountText
+        }
+        return "\(amountText) \(measurement.unit)"
+    }
+
+    static func parsedMeasurement(from raw: String?) -> (amount: Double, unit: String)? {
+        guard let normalized = normalize(raw) else { return nil }
+        let pattern = #"^\s*((?:\d+\s+)?\d+/\d+|\d+(?:\.\d+)?)\s*(.*)$"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+            let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+            let amountRange = Range(match.range(at: 1), in: normalized)
+        else {
+            return nil
+        }
+
+        let amountText = String(normalized[amountRange])
+        let amount = parseAmount(amountText)
+        guard amount > 0 else { return nil }
+
+        let unitRange = Range(match.range(at: 2), in: normalized)
+        let unit = unitRange.map { String(normalized[$0]).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        return (amount: amount, unit: unit)
+    }
+
+    private static func parseAmount(_ text: String) -> Double {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains(" ") {
+            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
+            if parts.count == 2,
+               let whole = Double(parts[0]),
+               let fraction = parseFraction(String(parts[1])) {
+                return whole + fraction
+            }
+        }
+
+        if let fraction = parseFraction(trimmed) {
+            return fraction
+        }
+
+        return Double(trimmed) ?? 0
+    }
+
+    private static func parseFraction(_ text: String) -> Double? {
+        let parts = text.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count == 2,
+              let numerator = Double(parts[0]),
+              let denominator = Double(parts[1]),
+              denominator != 0 else {
+            return nil
+        }
+        return numerator / denominator
+    }
+
+    private static func formatAmount(_ amount: Double) -> String {
+        let rounded = amount.rounded()
+        if abs(amount - rounded) < 0.01 {
+            return String(Int(rounded))
+        }
+
+        let whole = Int(floor(amount))
+        let fraction = amount - Double(whole)
+        let candidates = [2, 3, 4, 8, 16]
+        var bestNumerator = 0
+        var bestDenominator = 1
+        var bestError = Double.greatestFiniteMagnitude
+
+        for denominator in candidates {
+            let numerator = Int((fraction * Double(denominator)).rounded())
+            let candidate = Double(numerator) / Double(denominator)
+            let error = abs(fraction - candidate)
+            if error < bestError {
+                bestError = error
+                bestNumerator = numerator
+                bestDenominator = denominator
+            }
+        }
+
+        if bestNumerator > 0, bestError < 0.03 {
+            if whole > 0 {
+                return "\(whole) \(bestNumerator)/\(bestDenominator)"
+            }
+            return "\(bestNumerator)/\(bestDenominator)"
+        }
+
+        let formatter = NumberFormatter()
+        formatter.maximumFractionDigits = 2
+        formatter.minimumFractionDigits = 0
+        formatter.minimumIntegerDigits = 1
+        return formatter.string(from: NSNumber(value: amount)) ?? String(format: "%.2f", amount)
     }
 
     private static func normalizedPounds(from raw: String) -> String? {
@@ -12665,25 +13209,107 @@ private actor RecipeDetailService {
         let rawStepIngredients = detail.steps.flatMap(\.ingredients)
         let ingredientIDs = (rawIngredients + rawStepIngredients).compactMap(\.ingredientID)
         let names = (rawIngredients + rawStepIngredients).map(\.displayTitle)
+        let quantityResolved = resolvedIngredientQuantities(
+            ingredients: rawIngredients,
+            steps: detail.steps
+        )
 
         guard !ingredientIDs.isEmpty || !names.isEmpty else {
-            return detail
+            return detail.replacing(
+                ingredients: quantityResolved.ingredients,
+                steps: quantityResolved.steps
+            )
         }
 
         guard let canonicalRecords = try? await SupabaseIngredientsCatalogService.shared.fetchIngredients(
             ingredientIDs: ingredientIDs,
             normalizedNames: names
         ) else {
-            return detail
+            return detail.replacing(
+                ingredients: quantityResolved.ingredients,
+                steps: quantityResolved.steps
+            )
         }
 
         let canonicalIndex = CanonicalIngredientImageIndex(records: canonicalRecords)
-        let ingredients = rawIngredients.map(canonicalIndex.enrich(_:))
-        let steps = detail.steps.map { step in
+        let ingredients = quantityResolved.ingredients.map(canonicalIndex.enrich(_:))
+        let steps = quantityResolved.steps.map { step in
             step.replacingIngredients(step.ingredients.map(canonicalIndex.enrich(_:)))
         }
 
         return detail.replacing(ingredients: ingredients, steps: steps)
+    }
+
+    private func resolvedIngredientQuantities(
+        ingredients: [RecipeDetailIngredient],
+        steps: [RecipeDetailStep]
+    ) -> (ingredients: [RecipeDetailIngredient], steps: [RecipeDetailStep]) {
+        let candidates = ingredients + steps.flatMap(\.ingredients)
+        var quantityByID: [String: String] = [:]
+        var quantityByName: [String: String] = [:]
+
+        for ingredient in candidates {
+            guard let quantity = ingredient.displayQuantityText?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !quantity.isEmpty else {
+                continue
+            }
+
+            if let ingredientID = ingredient.ingredientID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !ingredientID.isEmpty,
+               quantityByID[ingredientID.lowercased()] == nil {
+                quantityByID[ingredientID.lowercased()] = quantity
+            }
+
+            let key = Self.normalizedIngredientKey(ingredient.displayTitle)
+            if !key.isEmpty, quantityByName[key] == nil {
+                quantityByName[key] = quantity
+            }
+        }
+
+        let resolvedIngredients = ingredients.map { ingredient in
+            resolveIngredientQuantity(for: ingredient, quantityByID: quantityByID, quantityByName: quantityByName)
+        }
+
+        let resolvedSteps = steps.map { step in
+            step.replacingIngredients(
+                step.ingredients.map { ingredient in
+                    resolveIngredientQuantity(for: ingredient, quantityByID: quantityByID, quantityByName: quantityByName)
+                }
+            )
+        }
+
+        return (resolvedIngredients, resolvedSteps)
+    }
+
+    private func resolveIngredientQuantity(
+        for ingredient: RecipeDetailIngredient,
+        quantityByID: [String: String],
+        quantityByName: [String: String]
+    ) -> RecipeDetailIngredient {
+        let existingQuantity = ingredient.displayQuantityText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard existingQuantity?.isEmpty ?? true else {
+            return ingredient
+        }
+
+        if let ingredientID = ingredient.ingredientID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !ingredientID.isEmpty,
+           let quantity = quantityByID[ingredientID.lowercased()] {
+            return ingredient.replacingQuantityText(quantity)
+        }
+
+        let key = Self.normalizedIngredientKey(ingredient.displayTitle)
+        if let quantity = quantityByName[key] {
+            return ingredient.replacingQuantityText(quantity)
+        }
+
+        return ingredient
+    }
+
+    private static func normalizedIngredientKey(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func performSupabaseGET<T: Decodable>(url: URL, as type: T.Type) async throws -> T {

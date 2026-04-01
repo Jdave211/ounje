@@ -14,6 +14,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     private let planner = MealPlanningAgent()
     private var activeGenerationToken = UUID()
+    private var prepRecipeOverrides: [PrepRecipeOverride] = []
 
     private let authSessionKey = "agentic-auth-session-v1"
     private let onboardedKey = "agentic-onboarded-v1"
@@ -156,6 +157,9 @@ final class MealPlanningAppStore: ObservableObject {
                 saveProfile()
             }
 
+            await loadPrepRecipeOverrides()
+            await reconcileLatestPlanWithPrepOverrides()
+
             if resolvedOnboarded != remoteState.onboarded ||
                 recoveredProfile != nil && remoteState.profile == nil ||
                 recoveredStep != remoteState.lastOnboardingStep ||
@@ -185,15 +189,71 @@ final class MealPlanningAppStore: ObservableObject {
         isGenerating = true
         let plan = await planner.generatePlan(profile: profile, history: planHistory)
         guard activeGenerationToken == generationToken, self.profile == profile else { return }
-        latestPlan = plan
-        planHistory.insert(plan, at: 0)
+        updateCurrentPlanCache(with: plan)
+        await reconcileLatestPlanWithPrepOverrides()
+        isGenerating = false
+    }
 
-        if planHistory.count > 12 {
-            planHistory = Array(planHistory.prefix(12))
+    func updateLatestPlan(with recipe: Recipe, servings: Int) async {
+        guard let profile, profile.isAutomationReady else { return }
+
+        let generationToken = UUID()
+        activeGenerationToken = generationToken
+        isGenerating = true
+        defer {
+            isGenerating = false
         }
 
-        saveHistory()
-        isGenerating = false
+        let sanitizedServings = max(1, servings)
+        let override = PrepRecipeOverride(recipe: recipe, servings: sanitizedServings, isIncludedInPrep: true)
+        cachePrepRecipeOverride(override)
+        await persistPrepRecipeOverrideIfPossible(override)
+
+        let updatedRecipes: [PlannedRecipe]
+        if let latestPlan {
+            var recipes = latestPlan.recipes
+            if let index = recipes.firstIndex(where: { $0.recipe.id == recipe.id }) {
+                recipes[index].recipe = recipe
+                recipes[index].servings = sanitizedServings
+            } else {
+                recipes.append(
+                    PlannedRecipe(
+                        recipe: recipe,
+                        servings: sanitizedServings,
+                        carriedFromPreviousPlan: false
+                    )
+                )
+            }
+            updatedRecipes = recipes
+        } else {
+            updatedRecipes = [
+                PlannedRecipe(
+                    recipe: recipe,
+                    servings: sanitizedServings,
+                    carriedFromPreviousPlan: false
+                )
+            ]
+        }
+
+        let plan: MealPlan
+        if let latestPlan {
+            plan = await planner.rebuildPlan(
+                profile: profile,
+                basePlan: latestPlan,
+                recipes: updatedRecipes,
+                history: planHistory
+            )
+        } else {
+            plan = await planner.buildPlan(
+                profile: profile,
+                recipes: updatedRecipes,
+                history: planHistory
+            )
+        }
+
+        guard activeGenerationToken == generationToken, self.profile == profile else { return }
+
+        updateCurrentPlanCache(with: plan)
     }
 
     func ensureFreshPlanIfNeeded() async {
@@ -226,6 +286,7 @@ final class MealPlanningAppStore: ObservableObject {
         latestPlan = nil
         planHistory = []
         isGenerating = false
+        prepRecipeOverrides = []
         UserDefaults.standard.removeObject(forKey: authSessionKey)
         UserDefaults.standard.removeObject(forKey: onboardedKey)
         UserDefaults.standard.removeObject(forKey: profileKey)
@@ -276,6 +337,103 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         hasResolvedInitialState = authSession == nil
+    }
+
+    private func updateCurrentPlanCache(with plan: MealPlan) {
+        latestPlan = plan
+        planHistory.removeAll { $0.id == plan.id }
+        planHistory.insert(plan, at: 0)
+        if planHistory.count > 12 {
+            planHistory = Array(planHistory.prefix(12))
+        }
+        saveHistory()
+    }
+
+    private func cachePrepRecipeOverride(_ override: PrepRecipeOverride) {
+        if let index = prepRecipeOverrides.firstIndex(where: { $0.recipe.id == override.recipe.id }) {
+            prepRecipeOverrides[index] = override
+        } else {
+            prepRecipeOverrides.append(override)
+        }
+    }
+
+    private func prepRecipeOverrideLookup() -> [String: PrepRecipeOverride] {
+        Dictionary(uniqueKeysWithValues: prepRecipeOverrides.map { ($0.recipe.id, $0) })
+    }
+
+    private func applyPrepOverridesIfNeeded(to plan: MealPlan) async -> MealPlan {
+        guard let profile, !prepRecipeOverrides.isEmpty else { return plan }
+
+        let overrideLookup = prepRecipeOverrideLookup()
+        var updatedRecipes: [PlannedRecipe] = []
+        var seenRecipeIDs = Set<String>()
+
+        for plannedRecipe in plan.recipes {
+            let recipeID = plannedRecipe.recipe.id
+            guard let override = overrideLookup[recipeID] else {
+                updatedRecipes.append(plannedRecipe)
+                continue
+            }
+
+            seenRecipeIDs.insert(recipeID)
+            guard override.isIncludedInPrep else { continue }
+            updatedRecipes.append(
+                PlannedRecipe(
+                    recipe: override.recipe,
+                    servings: override.servings,
+                    carriedFromPreviousPlan: plannedRecipe.carriedFromPreviousPlan
+                )
+            )
+        }
+
+        for override in prepRecipeOverrides where override.isIncludedInPrep && !seenRecipeIDs.contains(override.recipe.id) {
+            updatedRecipes.append(
+                PlannedRecipe(
+                    recipe: override.recipe,
+                    servings: override.servings,
+                    carriedFromPreviousPlan: false
+                )
+            )
+        }
+
+        guard updatedRecipes != plan.recipes else { return plan }
+        return await planner.rebuildPlan(
+            profile: profile,
+            basePlan: plan,
+            recipes: updatedRecipes,
+            history: planHistory
+        )
+    }
+
+    private func reconcileLatestPlanWithPrepOverrides() async {
+        guard let latestPlan else { return }
+        let reconciledPlan = await applyPrepOverridesIfNeeded(to: latestPlan)
+        guard reconciledPlan != latestPlan else { return }
+        updateCurrentPlanCache(with: reconciledPlan)
+    }
+
+    private func loadPrepRecipeOverrides() async {
+        guard let session = authSession else {
+            prepRecipeOverrides = []
+            return
+        }
+
+        do {
+            prepRecipeOverrides = try await SupabasePrepRecipeOverridesService.shared.fetchPrepRecipeOverrides(userID: session.userID)
+        } catch {
+            // Keep the local cache if remote sync fails.
+        }
+    }
+
+    private func persistPrepRecipeOverrideIfPossible(_ override: PrepRecipeOverride) async {
+        guard let session = authSession else { return }
+
+        Task(priority: .utility) {
+            try? await SupabasePrepRecipeOverridesService.shared.upsertPrepRecipeOverride(
+                userID: session.userID,
+                override: override
+            )
+        }
     }
 
     private func saveProfile() {

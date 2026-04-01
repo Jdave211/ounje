@@ -110,17 +110,188 @@ final class MealPlanningAgent {
             )
         }
 
+        return composePlan(
+            profile: profile,
+            selectedRecipes: selected,
+            now: now,
+            pipeline: pipeline,
+            groceries: groceries,
+            quotes: quotes
+        )
+    }
+
+    func buildPlan(
+        profile: UserProfile,
+        recipes: [PlannedRecipe],
+        history: [MealPlan] = [],
+        now: Date = Date()
+    ) async -> MealPlan {
+        let pipeline: [PipelineDecision] = [
+            PipelineDecision(
+                stage: .interpretProfile,
+                summary: "Rebuilt the next prep from your manual recipe edits while keeping the same pantry and budget guardrails."
+            ),
+            PipelineDecision(
+                stage: .curateRecipes,
+                summary: "Kept \(recipes.count) recipe(s) in the next prep."
+            ),
+            PipelineDecision(
+                stage: .handleRotation,
+                summary: "Applied direct prep changes instead of generating a fresh rotation."
+            )
+        ]
+
+        let inventory = inventoryProvider.currentInventory(for: profile)
+        let groceries = buildGroceryList(from: recipes, profile: profile, inventory: inventory)
+        let quotes = await resolvedQuotes(
+            for: groceries,
+            profile: profile,
+            recipeTitle: nil,
+            recipeImageURL: nil,
+            recipeID: nil
+        )
+
+        var composedPipeline = pipeline
+        composedPipeline.append(
+            PipelineDecision(
+                stage: .composeGroceries,
+                summary: "Generated \(groceries.count) grocery lines after subtracting pantry staples."
+            )
+        )
+
+        if let top = quotes.first {
+            let budgetState = top.estimatedTotal <= profile.budgetPerCycle
+                ? "within budget"
+                : "over budget by \((top.estimatedTotal - profile.budgetPerCycle).asCurrency)"
+            let statusLabel = top.providerStatus == .live ? "live cart" : "deep link"
+            composedPipeline.append(
+                PipelineDecision(
+                    stage: .optimizeProvider,
+                    summary: "Best provider: \(top.provider.title) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
+                )
+            )
+        }
+
+        return composePlan(
+            profile: profile,
+            selectedRecipes: recipes,
+            now: now,
+            pipeline: composedPipeline,
+            groceries: groceries,
+            quotes: quotes,
+            history: history
+        )
+    }
+
+    func rebuildPlan(
+        profile: UserProfile,
+        basePlan: MealPlan,
+        recipes: [PlannedRecipe],
+        history: [MealPlan] = [],
+        now: Date = Date()
+    ) async -> MealPlan {
+        let pipeline: [PipelineDecision] = [
+            PipelineDecision(
+                stage: .interpretProfile,
+                summary: "Applied your saved prep overrides on top of the base meal while keeping the same pantry and budget guardrails."
+            ),
+            PipelineDecision(
+                stage: .curateRecipes,
+                summary: "Kept \(recipes.count) recipe(s) in the current prep after merging user-specific edits."
+            ),
+            PipelineDecision(
+                stage: .handleRotation,
+                summary: "Preserved the existing prep cycle and layered in your changes."
+            )
+        ]
+
+        let inventory = inventoryProvider.currentInventory(for: profile)
+        let groceries = buildGroceryList(from: recipes, profile: profile, inventory: inventory)
+        let quotes = await resolvedQuotes(
+            for: groceries,
+            profile: profile,
+            recipeTitle: nil,
+            recipeImageURL: nil,
+            recipeID: nil
+        )
+
+        var composedPipeline = pipeline
+        composedPipeline.append(
+            PipelineDecision(
+                stage: .composeGroceries,
+                summary: "Generated \(groceries.count) grocery lines after subtracting pantry staples."
+            )
+        )
+
+        if let top = quotes.first {
+            let budgetState = top.estimatedTotal <= profile.budgetPerCycle
+                ? "within budget"
+                : "over budget by \((top.estimatedTotal - profile.budgetPerCycle).asCurrency)"
+            let statusLabel = top.providerStatus == .live ? "live cart" : "deep link"
+            composedPipeline.append(
+                PipelineDecision(
+                    stage: .optimizeProvider,
+                    summary: "Best provider: \(top.provider.title) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
+                )
+            )
+        }
+
         return MealPlan(
+            id: basePlan.id,
+            generatedAt: basePlan.generatedAt,
+            periodStart: basePlan.periodStart,
+            periodEnd: basePlan.periodEnd,
+            cadence: basePlan.cadence,
+            recipes: recipes,
+            groceryItems: groceries,
+            providerQuotes: quotes,
+            pipeline: composedPipeline
+        )
+    }
+
+    private func composePlan(
+        profile: UserProfile,
+        selectedRecipes: [PlannedRecipe],
+        now: Date,
+        pipeline: [PipelineDecision],
+        groceries: [GroceryItem],
+        quotes: [ProviderQuote],
+        history: [MealPlan] = [],
+        recipeTitle: String? = nil,
+        recipeImageURL: String? = nil,
+        recipeID: String? = nil
+    ) -> MealPlan {
+        MealPlan(
             id: UUID(),
             generatedAt: now,
             periodStart: now,
             periodEnd: now.adding(days: profile.cadence.dayInterval),
             cadence: profile.cadence,
-            recipes: selected,
+            recipes: selectedRecipes,
             groceryItems: groceries,
             providerQuotes: quotes,
             pipeline: pipeline
         )
+    }
+
+    private func resolvedQuotes(
+        for groceries: [GroceryItem],
+        profile: UserProfile,
+        recipeTitle: String?,
+        recipeImageURL: String?,
+        recipeID: String?
+    ) async -> [ProviderQuote] {
+        let apiQuotes = await GroceryService.shared.buildQuotes(
+            for: groceries,
+            profile: profile,
+            recipeTitle: recipeTitle,
+            recipeImageURL: recipeImageURL,
+            recipeID: recipeID
+        )
+        if !apiQuotes.isEmpty {
+            return apiQuotes
+        }
+        return optimizeProviders(for: groceries, profile: profile)
     }
 
     private func rank(candidates: [Recipe], profile: UserProfile) -> [Recipe] {

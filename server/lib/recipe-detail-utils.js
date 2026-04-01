@@ -210,6 +210,59 @@ function normalizeRecipeIngredientRow(value) {
   };
 }
 
+function normalizedIngredientKey(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function quantityTextForIngredient(ingredient) {
+  return normalizeRecipeLine(ingredient?.quantity_text ?? ingredient?.amount_text ?? "") || null;
+}
+
+function enrichIngredientQuantities(ingredients, stepIngredients) {
+  const candidates = [...(ingredients ?? []), ...(stepIngredients ?? [])];
+  const quantityByID = new Map();
+  const quantityByName = new Map();
+
+  for (const ingredient of candidates) {
+    const quantityText = quantityTextForIngredient(ingredient);
+    if (!quantityText) continue;
+
+    const ingredientID = normalizeRecipeLine(ingredient.ingredient_id ?? ingredient.ingredientID ?? "");
+    if (ingredientID && !quantityByID.has(ingredientID.toLowerCase())) {
+      quantityByID.set(ingredientID.toLowerCase(), quantityText);
+    }
+
+    const displayName = normalizeRecipeLine(ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? "");
+    const nameKey = normalizedIngredientKey(displayName);
+    if (nameKey && !quantityByName.has(nameKey)) {
+      quantityByName.set(nameKey, quantityText);
+    }
+  }
+
+  return (ingredients ?? []).map((ingredient) => {
+    const existingQuantity = quantityTextForIngredient(ingredient);
+    if (existingQuantity) {
+      return ingredient;
+    }
+
+    const ingredientID = normalizeRecipeLine(ingredient.ingredient_id ?? ingredient.ingredientID ?? "").toLowerCase();
+    if (ingredientID && quantityByID.has(ingredientID)) {
+      return { ...ingredient, quantity_text: quantityByID.get(ingredientID) };
+    }
+
+    const displayName = normalizeRecipeLine(ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? "");
+    const nameKey = normalizedIngredientKey(displayName);
+    if (nameKey && quantityByName.has(nameKey)) {
+      return { ...ingredient, quantity_text: quantityByName.get(nameKey) };
+    }
+
+    return ingredient;
+  });
+}
+
 function parseIngredientObjects(value) {
   if (Array.isArray(value)) {
     return value.map(normalizeIngredientObject).filter(Boolean);
@@ -363,15 +416,19 @@ export function normalizeRecipeDetail(recipe, related = {}) {
       : [];
 
   const fallbackIngredients = parseIngredientObjects(recipe.ingredients_json ?? recipe.ingredients_text);
-  const ingredients = structuredIngredients.length ? structuredIngredients : fallbackIngredients;
+  const ingredientSources = structuredIngredients.length ? structuredIngredients : fallbackIngredients;
 
   const structuredSteps = buildStructuredSteps(
     related.recipeSteps ?? recipe.recipe_steps ?? [],
     related.stepIngredients ?? recipe.recipe_step_ingredients ?? [],
-    ingredients
+    ingredientSources
   );
 
-  const steps = structuredSteps.length ? structuredSteps : parseInstructionSteps(recipe.steps_json ?? recipe.instructions_text, ingredients);
+  const steps = structuredSteps.length ? structuredSteps : parseInstructionSteps(recipe.steps_json ?? recipe.instructions_text, ingredientSources);
+  const ingredients = enrichIngredientQuantities(
+    ingredientSources,
+    steps.flatMap((step) => Array.isArray(step.ingredients) ? step.ingredients : [])
+  );
   const servingsCount = Number.isFinite(recipe.servings_count)
     ? Number(recipe.servings_count)
     : parseFirstInteger(recipe.servings_text);

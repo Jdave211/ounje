@@ -1251,6 +1251,19 @@ struct MealPlan: Identifiable, Codable, Hashable {
     }
 }
 
+struct PrepRecipeOverride: Identifiable, Codable, Hashable {
+    var id: String { recipe.id }
+    var recipe: Recipe
+    var servings: Int
+    var isIncludedInPrep: Bool
+
+    init(recipe: Recipe, servings: Int, isIncludedInPrep: Bool = true) {
+        self.recipe = recipe
+        self.servings = max(1, servings)
+        self.isIncludedInPrep = isIncludedInPrep
+    }
+}
+
 extension Date {
     func adding(days: Int) -> Date {
         Calendar.current.date(byAdding: .day, value: days, to: self) ?? self
