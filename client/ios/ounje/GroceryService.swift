@@ -69,13 +69,7 @@ final class GroceryService {
 
     static let shared = GroceryService()
 
-    private let baseURL: String = {
-        #if DEBUG
-        return "http://localhost:3000"
-        #else
-        return "https://api.ounje.app"
-        #endif
-    }()
+    private let baseURL = OunjeDevelopmentServer.baseURL
 
     private let session = URLSession.shared
     private let decoder: JSONDecoder = {

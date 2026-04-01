@@ -23,6 +23,45 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
 
     var id: String { rawValue }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+
+        switch normalized {
+        case "italian": self = .italian
+        case "mexican": self = .mexican
+        case "mediterranean": self = .mediterranean
+        case "asian": self = .asian
+        case "indian": self = .indian
+        case "american": self = .american
+        case "middleeastern", "levantine": self = .middleEastern
+        case "japanese": self = .japanese
+        case "thai": self = .thai
+        case "korean": self = .korean
+        case "chinese": self = .chinese
+        case "greek": self = .greek
+        case "french": self = .french
+        case "spanish": self = .spanish
+        case "caribbean": self = .caribbean
+        case "westafrican", "nigerian": self = .westAfrican
+        case "ethiopian": self = .ethiopian
+        case "brazilian": self = .brazilian
+        case "vegan": self = .vegan
+        default:
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported cuisine value: \(rawValue)")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     var title: String {
         switch self {
         case .italian: return "Italian"
@@ -1085,6 +1124,22 @@ struct Recipe: Identifiable, Codable, Hashable {
     var storageFootprint: StorageFootprint
     var tags: [String]
     var ingredients: [RecipeIngredient]
+    var cardImageURLString: String? = nil
+    var heroImageURLString: String? = nil
+    var source: String? = nil
+}
+
+extension Recipe {
+    var isLegacySeedRecipe: Bool {
+        let looksLikeSeedID = id.range(of: #"^[a-z]{2}-\d{3}$"#, options: .regularExpression) != nil
+        return looksLikeSeedID && cardImageURLString == nil && heroImageURLString == nil
+    }
+
+    var isImagePoor: Bool {
+        let card = cardImageURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hero = heroImageURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return card.isEmpty && hero.isEmpty
+    }
 }
 
 struct InventoryItem: Identifiable, Codable, Hashable {

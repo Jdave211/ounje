@@ -43,14 +43,20 @@
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<false/>
+		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Allow Ounje to connect to your local development server while testing on your iPhone.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Let Oúnje access your camera so we can generate recipes.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your microphone</string>
+	<key>OunjeDevServerHost</key>
+	<string>10.100.58.12</string>
+	<key>OunjeDevServerPort</key>
+	<string>8080</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Let Oúnje access your photos to generate recipes.</string>
 	<key>UILaunchStoryboardName</key>

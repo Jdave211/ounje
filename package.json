@@ -1,7 +1,7 @@
 {
   "name": "ounje",
   "version": "1.0.0",
-  "description": "Ounje \u2014 Nigerian food app. Swift iOS client + Node.js API server.",
+  "description": "Ounje — Nigerian food app. Swift iOS client + Node.js API server.",
   "type": "module",
   "scripts": {
     "server": "nodemon server/server.js",
@@ -9,7 +9,8 @@
     "flavorgraph:index": "python3 server/scripts/build_flavorgraph_index.py",
     "recipes:export-corpus": "python3 server/scripts/export_recipe_training_corpus.py",
     "recipes:create-finetune": "node server/scripts/create_recipe_finetune_job.mjs",
-    "recipes:status": "node -e \"import('./server/lib/recipe-model-registry.js').then(async (m) => { const r = await m.refreshRecipeFineTuneStatus(); console.log(JSON.stringify(r, null, 2)); process.exit(0); })\""
+    "recipes:status": "node -e \"import('./server/lib/recipe-model-registry.js').then(async (m) => { const r = await m.refreshRecipeFineTuneStatus(); console.log(JSON.stringify(r, null, 2)); process.exit(0); })\"",
+    "recipes:classify-discover": "node server/scripts/classify_discover_brackets.mjs"
   },
   "dependencies": {
     "axios": "^1.6.4",
@@ -19,7 +20,8 @@
     "mongodb": "^7.1.1",
     "mongoose": "^9.3.2",
     "nanoid": "^5.0.7",
-    "openai": "^4.24.1"
+    "openai": "^4.24.1",
+    "youtube-dl-exec": "^3.1.4"
   },
   "nodemonConfig": {
     "watch": [
