@@ -1,0 +1,386 @@
+{
+  "cookies": [
+    {
+      "name": "X-AB",
+      "value": "73d5d2c9b3eb4512b5a7ceff2d9cd7aa",
+      "domain": "sc-static.net",
+      "path": "/scevent.min.js",
+      "expires": 1775271767.950323,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_GRECAPTCHA",
+      "value": "09AKhCRwhsDu5myvuLLdfufOI2Oye-mRRqHSTK4L8Dd_o_psL1yuBx4zpHq7T5poRMjHOef8d4mHtb9mDQkeEUGuo",
+      "domain": "www.google.com",
+      "path": "/recaptcha",
+      "expires": 1790737364.719187,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "device_uuid",
+      "value": "9e4aa3b7-19cd-4c6e-a393-66e30ffd1f45",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1809745302.704787,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ahoy_visit",
+      "value": "E11C923C-fbd2-4f9c-ac02-48f0aa93774a",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1775199768.95111,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ahoy_visitor",
+      "value": "A9964376-7d0b-4783-9242-2d8f6b5e4c7f",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1809745368.951132,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "build_sha",
+      "value": "3950f3141195d117cfacf80301218288f2f09e29",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "g_state",
+      "value": "{\"i_l\":0,\"i_ll\":1775185303301,\"i_b\":\"IRcyNViPifCjCjq81ke47aFRssLka+masKqGboz5gEM\",\"i_e\":{\"enable_itp_optimization\":0}}",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1790737303,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Host-instacart_sid",
+      "value": "v2.26502d43.gtsdX2uYUWlM2E5AA_wuaIO7VDsrR4dfqKP2GZrj1v8",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1806742316.580172,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "known_visitor",
+      "value": "%7Cjagadave21%40gmail.com%7Cemail_code",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1809745364.580202,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "bradius",
+      "value": "rate_limit_on",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1775185487.951032,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "X-IC-bcx",
+      "value": "1",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "privacy_opt_out",
+      "value": "false",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1809745365.768324,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_gcl_au",
+      "value": "1.1.563567697.1775185368",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1782961367,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_scid",
+      "value": "4XqkRrPQWa1CTuusuDNvPe6PYMsRWb-p",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1809313367,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_scid_r",
+      "value": "4XqkRrPQWa1CTuusuDNvPe6PYMsRWb-p",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1809313367,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ttp",
+      "value": "3BpUBEwUEgjqRSKoCES6AUD73WJ",
+      "domain": ".tiktok.com",
+      "path": "/",
+      "expires": 1808881367.980749,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_uetsid",
+      "value": "983ff4e02f0911f18758cd673730cfcd",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1775271768,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_uetvid",
+      "value": "984001c02f0911f1a2d78134553dca37",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1808881368,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_tt_enable_cookie",
+      "value": "1",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1808881368,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ttp",
+      "value": "01KN8MP510SVJTCPB9MGJMVQAT_.tt.1",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1808881368,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ttcsid_D23SJ1JC77U5781IKE5G",
+      "value": "1775185368097::IqKJcBhDXhF7PlNcMiX0.1.1775185368100.0",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1808881368,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ttcsid",
+      "value": "1775185368097::nqKrUcLcu8htMJqqzXlU.1.1775185368100.0::1.-2703.0::0.0.0.0::0.0.0",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1808881368,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "MUID",
+      "value": "07BCB64D24386A721CE0A17D25D56BD9",
+      "domain": ".bing.com",
+      "path": "/",
+      "expires": 1808881369.107269,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "MR",
+      "value": "0",
+      "domain": ".bat.bing.com",
+      "path": "/",
+      "expires": 1775790169.107286,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_s",
+      "value": "OR8pc%2FUMIL%2BfMGnP38L%2BtnzX4aZUCyVlCaRXmli6X5EEUeviq8S%2B5Q74D8Yv7lRF",
+      "domain": ".app.link",
+      "path": "/",
+      "expires": 1806721368.127581,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "forterToken",
+      "value": "1f71e5577e5c49a5904fc7d1695f559f_1775185365830__UDF43-m4_24ck_",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1809745368,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "sc_at",
+      "value": "v2|H4sIAAAAAAAA/03GwREAIQgEsIqYARdkvW48KMPi/ZpXuHwTKCF2iWtDmH/IGAkns7vWMdfPMsMYmDxP9QIqVlJGQAAAAA==",
+      "domain": ".snapchat.com",
+      "path": "/",
+      "expires": 1808881368.554194,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "thx_guid",
+      "value": "04d609e90c2688c90f91645e3c312d23",
+      "domain": "content2.instacart.com",
+      "path": "/",
+      "expires": 1809745368.356557,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "tmx_guid",
+      "value": "AAxaPg3AvJC__3lIoCTQbELv_upfOOwnN9Qst_hGTnOr-8USl2wi39ue26k-Dvp4Wi99edpfN8g2cy1-4Z5QOqgY6vJ3Wg",
+      "domain": "content2.instacart.com",
+      "path": "/",
+      "expires": 1809745368.35658,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "TapAd_TS",
+      "value": "1775185368417",
+      "domain": ".tapad.com",
+      "path": "/",
+      "expires": 1780369368.477066,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "TapAd_DID",
+      "value": "b0de876a-1b76-4358-bbdb-3fc0f7ce0c54",
+      "domain": ".tapad.com",
+      "path": "/",
+      "expires": 1780369368.477096,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "TapAd_3WAY_SYNCS",
+      "value": "",
+      "domain": ".tapad.com",
+      "path": "/",
+      "expires": 1780369368.47711,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_sctr",
+      "value": "1%7C1775102400000",
+      "domain": ".instacart.ca",
+      "path": "/",
+      "expires": 1809313368,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "m",
+      "value": "10a3c349-e2e6-4ac6-a85a-b7c007f3c565eba259",
+      "domain": "m.stripe.com",
+      "path": "/",
+      "expires": 1809745368.866815,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "__stripe_mid",
+      "value": "7153743e-803c-4509-919e-e6737c512b57cb3c22",
+      "domain": ".www.instacart.ca",
+      "path": "/",
+      "expires": 1806721368,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "__stripe_sid",
+      "value": "abbe74c5-c2a6-4085-81da-70c436785a2be5e661",
+      "domain": ".www.instacart.ca",
+      "path": "/",
+      "expires": 1775187168,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "thx_global_guid",
+      "value": "20e42a92fe834dc98555252f14488ef3",
+      "domain": "h.online-metrix.net",
+      "path": "/",
+      "expires": 1809745369.288997,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_dd_s",
+      "value": "aid=c3d32b49-c9f2-47e2-9946-51338b6f7df6&logs=0&expire=1775186269713",
+      "domain": "www.instacart.ca",
+      "path": "/",
+      "expires": 1806721369,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Strict"
+    }
+  ],
+  "savedAt": "2026-04-03T03:02:50.025Z",
+  "lastUrl": "https://www.instacart.ca/store"
+}

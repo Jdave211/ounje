@@ -1,0 +1,1065 @@
+{
+  "runId": "2026-04-06T01-21-45-327Z__anon__instacart",
+  "startedAt": "2026-04-06T01:21:45.328Z",
+  "userId": null,
+  "preferredStore": null,
+  "strictStore": false,
+  "selectedStore": "Metro",
+  "storeOptions": [
+    {
+      "storeName": "Metro",
+      "score": 1790.3,
+      "matchedCount": 7,
+      "totalProbes": 7,
+      "exactMatches": 2,
+      "coverageRatio": 0.875,
+      "distanceKm": 4.9
+    },
+    {
+      "storeName": "No Frills",
+      "score": 1554.3,
+      "matchedCount": 6,
+      "totalProbes": 6,
+      "exactMatches": 2,
+      "coverageRatio": 0.75,
+      "distanceKm": 1.9
+    },
+    {
+      "storeName": "Food Basics",
+      "score": 1253.8,
+      "matchedCount": 5,
+      "totalProbes": 5,
+      "exactMatches": 1,
+      "coverageRatio": 0.625,
+      "distanceKm": 5.4
+    },
+    {
+      "storeName": "Adonis",
+      "score": 682.5,
+      "matchedCount": 3,
+      "totalProbes": 3,
+      "exactMatches": 0,
+      "coverageRatio": 0.375,
+      "distanceKm": 17.5
+    },
+    {
+      "storeName": "Real Canadian Superstore",
+      "score": 526.3,
+      "matchedCount": 2,
+      "totalProbes": 2,
+      "exactMatches": 1,
+      "coverageRatio": 0.25,
+      "distanceKm": 2.9
+    }
+  ],
+  "items": [
+    {
+      "requested": "chicken",
+      "canonicalName": "chicken",
+      "normalizedQuery": "chicken",
+      "quantityRequested": 2,
+      "shoppingContext": {
+        "role": "protein",
+        "exactness": "preferred_exact",
+        "substitutionPolicy": "strict",
+        "preferredForms": [
+          "chicken",
+          "boneless skinless chicken breasts",
+          "boneless skinless chicken thighs",
+          "chicken breast"
+        ],
+        "avoidForms": [
+          "whole chicken",
+          "rotisserie chicken",
+          "wings",
+          "nuggets",
+          "breaded chicken",
+          "fried chicken"
+        ],
+        "requiredDescriptors": [],
+        "alternateQueries": []
+      },
+      "attempts": [
+        {
+          "at": "2026-04-06T01:22:38.400Z",
+          "store": "Metro",
+          "query": "chicken",
+          "searchUrl": "https://www.instacart.ca/store/metro/s?k=chicken&xrs_id=afdfffc8-9b02-4353-a2b8-e818553079ff",
+          "success": true,
+          "matchedLabel": "Current price: $22.68 per kilogram$2268/kgBoneless Skinless Chicken Breast",
+          "decision": "exact_match",
+          "matchType": "exact",
+          "refinedQuery": null,
+          "reason": "Boneless Skinless Chicken Breast is the preferred form for plain chicken as per the shopping context, matching the recipe's protein requirement exactly. It is not flavored, breaded, or prepared, making it the best match.",
+          "selectionTrace": {
+            "totalCandidates": 40,
+            "windows": [
+              {
+                "window": 1,
+                "candidates": [
+                  {
+                    "index": 0,
+                    "title": "Current price: $13.99$1399St Hubert Chicken Breast Strip600 g",
+                    "rawLabel": "Add 1 ct St Hubert Chicken Breast Strip",
+                    "score": 264.7,
+                    "cardText": "Current price: $13.99 $1399 St Hubert Chicken Breast Strip 600 g Add"
+                  },
+                  {
+                    "index": 1,
+                    "title": "Current price: $17.99$1799Pinty's Teriyaki Chicken Thighs1 each",
+                    "rawLabel": "Add 1 ct Pinty's Teriyaki Chicken Thighs",
+                    "score": 264.7,
+                    "cardText": "Current price: $17.99 $1799 Pinty's Teriyaki Chicken Thighs 1 each Add"
+                  },
+                  {
+                    "index": 2,
+                    "title": "Current price: $17.99$1799Pintys Lemon Herb Chicken Breast600 g",
+                    "rawLabel": "Add 1 ct Pintys Lemon Herb Chicken Breast",
+                    "score": 264.7,
+                    "cardText": "Current price: $17.99 $1799 Pintys Lemon Herb Chicken Breast 600 g Add"
+                  },
+                  {
+                    "index": 3,
+                    "title": "Current price: $22.68 per kilogram$2268/kgBoneless Skinless Chicken Breast",
+                    "rawLabel": "Add 1 kg Boneless Skinless Chicken Breast",
+                    "score": 262.6,
+                    "cardText": "Current price: $22.68 per kilogram $2268 /kg Boneless Skinless Chicken Breast Add"
+                  },
+                  {
+                    "index": 4,
+                    "title": "Current price: $22.68 per kilogram$2268/kgBoneless Skinless Chicken Breasts",
+                    "rawLabel": "Add 1 kg Boneless Skinless Chicken Breasts",
+                    "score": 262.6,
+                    "cardText": "Current price: $22.68 per kilogram $2268 /kg Boneless Skinless Chicken Breasts Add"
+                  },
+                  {
+                    "index": 5,
+                    "title": "Current price: $22.68 per kilogram$2268/kgBoneless Skinless Chicken Thighs",
+                    "rawLabel": "Add 1 kg Boneless Skinless Chicken Thighs",
+                    "score": 262.6,
+                    "cardText": "Current price: $22.68 per kilogram $2268 /kg Boneless Skinless Chicken Thighs Add"
+                  },
+                  {
+                    "index": 6,
+                    "title": "Current price: $24.23 per kilogram$2423/kgBacon Wrapped Chicken Breast Medallions",
+                    "rawLabel": "Add 1 kg Bacon Wrapped Chicken Breast Medallions",
+                    "score": 260.5,
+                    "cardText": "Current price: $24.23 per kilogram $2423 /kg Bacon Wrapped Chicken Breast Medallions Add"
+                  },
+                  {
+                    "index": 7,
+                    "title": "Current price: $15.41 per kilogram$1541/kgPrime Raised Without Antibiotics Chicken Thighs",
+                    "rawLabel": "Add 1 kg Prime Raised Without Antibiotics Chicken Thighs",
+                    "score": 258.4,
+                    "cardText": "Current price: $15.41 per kilogram $1541 /kg Prime Raised Without Antibiotics Chicken Thighs Add"
+                  },
+                  {
+                    "index": 8,
+                    "title": "Current price: $34.15 per kilogram$3415/kgPrime Raised Without Antibiotics Chicken Breast",
+                    "rawLabel": "Add 1 kg Prime Raised Without Antibiotics Chicken Breast",
+                    "score": 258.4,
+                    "cardText": "Current price: $34.15 per kilogram $3415 /kg Prime Raised Without Antibiotics Chicken Breast Add"
+                  },
+                  {
+                    "index": 9,
+                    "title": "Current price: $17.99$1799Janes Ultimates Frozen Boneless Chicken Bites With Classic BBQ Sauce710 g",
+                    "rawLabel": "Add 1 ct Janes Ultimates Frozen Boneless Chicken Bites With Classic BBQ Sauce",
+                    "score": 256.3,
+                    "cardText": "Current price: $17.99 $1799 Janes Ultimates Frozen Boneless Chicken Bites With Classic BBQ Sauce 710 g Add"
+                  }
+                ],
+                "selectedIndex": 3,
+                "selectedCandidate": {
+                  "title": "Current price: $22.68 per kilogram$2268/kgBoneless Skinless Chicken Breast",
+                  "rawLabel": "Add 1 kg Boneless Skinless Chicken Breast",
+                  "score": 262.6,
+                  "actionType": "add",
+                  "actionLabel": "Add 1 kg Boneless Skinless Chicken Breast",
+                  "productHref": "https://www.instacart.ca/products/32619113-boneless-skinless-chicken-breast-each?retailerSlug=metro",
+                  "cardText": "Current price: $22.68 per kilogram $2268 /kg Boneless Skinless Chicken Breast Add"
+                },
+                "decision": "exact_match",
+                "matchType": "exact",
+                "confidence": 0.95,
+                "reason": "Boneless Skinless Chicken Breast is the preferred form for plain chicken as per the shopping context, matching the recipe's protein requirement exactly. It is not flavored, breaded, or prepared, making it the best match.",
+                "refinedQuery": null
+              }
+            ],
+            "click": {
+              "clicked": true,
+              "method": "visible_action",
+              "liveCandidate": {
+                "title": "Current price: $22.68 per kilogram$2268/kgBoneless Skinless Chicken Breast",
+                "rawLabel": "Add 1 kg Boneless Skinless Chicken Breast",
+                "score": 262.6,
+                "actionType": "add",
+                "actionLabel": "Add 1 kg Boneless Skinless Chicken Breast",
+                "productHref": "https://www.instacart.ca/products/32619113-boneless-skinless-chicken-breast-each?retailerSlug=metro",
+                "cardText": "Current price: $22.68 per kilogram $2268 /kg Boneless Skinless Chicken Breast Add"
+              }
+            },
+            "choiceFlow": null,
+            "cartVerification": {
+              "beforeCount": 0,
+              "afterCount": 1,
+              "changed": true
+            }
+          }
+        }
+      ],
+      "quantityEvents": [
+        {
+          "at": "2026-04-06T01:22:53.036Z",
+          "attempt": 1,
+          "success": false,
+          "matchedLabel": null,
+          "beforeCount": null,
+          "afterCount": null,
+          "verified": false,
+          "verificationMode": null
+        },
+        {
+          "at": "2026-04-06T01:23:03.941Z",
+          "attempt": 2,
+          "success": false,
+          "matchedLabel": null,
+          "beforeCount": null,
+          "afterCount": null,
+          "verified": false,
+          "verificationMode": null
+        },
+        {
+          "at": "2026-04-06T01:23:14.873Z",
+          "attempt": 3,
+          "success": false,
+          "matchedLabel": null,
+          "beforeCount": null,
+          "afterCount": null,
+          "verified": false,
+          "verificationMode": null
+        }
+      ],
+      "finalStatus": {
+        "status": "exact",
+        "matchedStore": "Metro",
+        "decision": "exact_match",
+        "matchType": "exact",
+        "quantityAdded": 1,
+        "shortfall": 1
+      }
+    },
+    {
+      "requested": "egg",
+      "canonicalName": "egg",
+      "normalizedQuery": "dozen eggs",
+      "quantityRequested": 1,
+      "shoppingContext": {
+        "role": "ingredient",
+        "exactness": "preferred_exact",
+        "substitutionPolicy": "strict",
+        "preferredForms": [
+          "dozen eggs",
+          "large eggs",
+          "large white eggs"
+        ],
+        "avoidForms": [
+          "hard boiled eggs",
+          "liquid eggs",
+          "egg bites"
+        ],
+        "requiredDescriptors": [
+          "large"
+        ],
+        "alternateQueries": []
+      },
+      "attempts": [
+        {
+          "at": "2026-04-06T01:23:23.270Z",
+          "store": "Metro",
+          "query": "dozen eggs",
+          "searchUrl": "https://www.instacart.ca/store/metro/s?k=dozen+eggs&xrs_id=afdfffc8-9b02-4353-a2b8-e818553079ff",
+          "success": true,
+          "matchedLabel": "Current price: $8.59$859GoldEgg Organic Large Eggs12 ct",
+          "decision": "exact_match",
+          "matchType": "exact",
+          "refinedQuery": null,
+          "reason": "This product is a carton of 12 large eggs, which exactly matches the requested ingredient of a dozen large eggs. It is not flavored, prepared, or a different form, and matches the preferred descriptors and package size.",
+          "selectionTrace": {
+            "totalCandidates": 40,
+            "windows": [
+              {
+                "window": 1,
+                "candidates": [
+                  {
+                    "index": 0,
+                    "title": "Current price: $3.89$389Selection Medium Eggs12 ct",
+                    "rawLabel": "Add 1 ct Selection Medium Eggs",
+                    "score": 85.7,
+                    "cardText": "Current price: $3.89 $389 Selection Medium Eggs 12 ct Add"
+                  },
+                  {
+                    "index": 1,
+                    "title": "Current price: $8.59$859GoldEgg Organic Large Eggs12 ct",
+                    "rawLabel": "Add 1 ct GoldEgg Organic Large Eggs",
+                    "score": 85.7,
+                    "cardText": "Current price: $8.59 $859 GoldEgg Organic Large Eggs 12 ct Add"
+                  },
+                  {
+                    "index": 2,
+                    "title": "Current price: $7.79$779Life Smart Large Organic Brown Eggs12 ct",
+                    "rawLabel": "Add 1 ct Life Smart Large Organic Brown Eggs",
+                    "score": 81.5,
+                    "cardText": "Current price: $7.79 $779 Life Smart Large Organic Brown Eggs 12 ct Add"
+                  },
+                  {
+                    "index": 3,
+                    "title": "Current price: $8.89$889Gold Egg Organic Extra Large Eggs12 ct",
+                    "rawLabel": "Add 1 ct Gold Egg Organic Extra Large Eggs",
+                    "score": 81.5,
+                    "cardText": "Current price: $8.89 $889 Gold Egg Organic Extra Large Eggs 12 ct Add"
+                  },
+                  {
+                    "index": 4,
+                    "title": "Current price: $3.39$339Gray Ridge Egg Farms Large White Eggs6 ct",
+                    "rawLabel": "Add 1 ct Gray Ridge Egg Farms Large White Eggs",
+                    "score": 79.4,
+                    "cardText": "Current price: $3.39 $339 Gray Ridge Egg Farms Large White Eggs 6 ct Add"
+                  },
+                  {
+                    "index": 5,
+                    "title": "Current price: $5.19$519Conestoga Farms Organic Free Run Brown Eggs6 ct",
+                    "rawLabel": "Add 1 ct Conestoga Farms Organic Free Run Brown Eggs",
+                    "score": 79.4,
+                    "cardText": "Current price: $5.19 $519 Conestoga Farms Organic Free Run Brown Eggs 6 ct Add"
+                  },
+                  {
+                    "index": 6,
+                    "title": "Current price: $5.49$549Spring Creek Quail Farms Fresh Duck Eggs6 each",
+                    "rawLabel": "Add 1 ct Spring Creek Quail Farms Fresh Duck Eggs",
+                    "score": 79.4,
+                    "cardText": "Current price: $5.49 $549 Spring Creek Quail Farms Fresh Duck Eggs 6 each Add"
+                  },
+                  {
+                    "index": 7,
+                    "title": "Current price: $7.49$749Goldegg Omega 3 XL White Eggs12 ct",
+                    "rawLabel": "Add 1 ct Goldegg Omega 3 XL White Eggs",
+                    "score": 79.4,
+                    "cardText": "Current price: $7.49 $749 Goldegg Omega 3 XL White Eggs 12 ct Add"
+                  },
+                  {
+                    "index": 8,
+                    "title": "Current price: $7.69$769Conestoga Farms Large Free Range Eggs12 ct",
+                    "rawLabel": "Add 1 ct Conestoga Farms Large Free Range Eggs",
+                    "score": 79.4,
+                    "cardText": "Current price: $7.69 $769 Conestoga Farms Large Free Range Eggs 12 ct Add"
+                  },
+                  {
+                    "index": 9,
+                    "title": "Current price: $9.99$999Selection Large Eggs30 ctMany in stock",
+                    "rawLabel": "Add 1 ct Selection Large Eggs",
+                    "score": 79.4,
+                    "cardText": "Current price: $9.99 $999 Selection Large Eggs 30 ct Many in stock Add"
+                  }
+                ],
+                "selectedIndex": 1,
+                "selectedCandidate": {
+                  "title": "Current price: $8.59$859GoldEgg Organic Large Eggs12 ct",
+                  "rawLabel": "Add 1 ct GoldEgg Organic Large Eggs",
+                  "score": 85.7,
+                  "actionType": "add",
+                  "actionLabel": "Add 1 ct GoldEgg Organic Large Eggs",
+                  "productHref": "https://www.instacart.ca/products/19069341-goldegg-organic-large-eggs-12-ct?retailerSlug=metro",
+                  "cardText": "Current price: $8.59 $859 GoldEgg Organic Large Eggs 12 ct Add"
+                },
+                "decision": "exact_match",
+                "matchType": "exact",
+                "confidence": 0.95,
+                "reason": "This product is a carton of 12 large eggs, which exactly matches the requested ingredient of a dozen large eggs. It is not flavored, prepared, or a different form, and matches the preferred descriptors and package size.",
+                "refinedQuery": null
+              }
+            ],
+            "click": {
+              "clicked": true,
+              "method": "visible_action",
+              "liveCandidate": {
+                "title": "Current price: $8.59$859GoldEgg Organic Large Eggs12 ct",
+                "rawLabel": "Add 1 ct GoldEgg Organic Large Eggs",
+                "score": 85.7,
+                "actionType": "add",
+                "actionLabel": "Add 1 ct GoldEgg Organic Large Eggs",
+                "productHref": "https://www.instacart.ca/products/19069341-goldegg-organic-large-eggs-12-ct?retailerSlug=metro",
+                "cardText": "Current price: $8.59 $859 GoldEgg Organic Large Eggs 12 ct Add"
+              }
+            },
+            "choiceFlow": null,
+            "cartVerification": {
+              "beforeCount": 1,
+              "afterCount": 2,
+              "changed": true
+            }
+          }
+        }
+      ],
+      "quantityEvents": [],
+      "finalStatus": {
+        "status": "exact",
+        "matchedStore": "Metro",
+        "decision": "exact_match",
+        "matchType": "exact",
+        "quantityAdded": 1,
+        "shortfall": 0
+      }
+    },
+    {
+      "requested": "or shrimp",
+      "canonicalName": "shrimp",
+      "normalizedQuery": "shrimp",
+      "quantityRequested": 1,
+      "shoppingContext": {
+        "role": "ingredient",
+        "exactness": "preferred_exact",
+        "substitutionPolicy": "strict",
+        "preferredForms": [
+          "shrimp"
+        ],
+        "avoidForms": [],
+        "requiredDescriptors": [],
+        "alternateQueries": []
+      },
+      "attempts": [
+        {
+          "at": "2026-04-06T01:23:31.119Z",
+          "store": "Metro",
+          "query": "shrimp",
+          "searchUrl": "https://www.instacart.ca/store/metro/s?k=shrimp&xrs_id=afdfffc8-9b02-4353-a2b8-e818553079ff",
+          "success": true,
+          "matchedLabel": "Current price: $9.99$999Irresistibles Easy to Peel Raw pacific White Shrimp340 g",
+          "decision": "exact_match",
+          "matchType": "exact",
+          "refinedQuery": null,
+          "reason": "Irresistibles Easy to Peel Raw pacific White Shrimp is a plain, raw shrimp product that matches the requested ingredient 'shrimp' exactly, suitable for the recipe context.",
+          "selectionTrace": {
+            "totalCandidates": 40,
+            "windows": [
+              {
+                "window": 1,
+                "candidates": [
+                  {
+                    "index": 0,
+                    "title": "Current price: $8.99$899Irresistibles Raw Shrimp300 g",
+                    "rawLabel": "Add 1 ct Irresistibles Raw Shrimp",
+                    "score": 252.10000000000002,
+                    "cardText": "Current price: $8.99 $899 Irresistibles Raw Shrimp 300 g Add"
+                  },
+                  {
+                    "index": 1,
+                    "title": "Current price: $9.99$999Irresistibles Easy to Peel Raw pacific White Shrimp340 g",
+                    "rawLabel": "Add 1 ct Irresistibles Easy to Peel Raw pacific White Shrimp",
+                    "score": 241.60000000000002,
+                    "cardText": "Current price: $9.99 $999 Irresistibles Easy to Peel Raw pacific White Shrimp 340 g Add"
+                  },
+                  {
+                    "index": 2,
+                    "title": "Best sellerCurrent price: $9.99$999Irresistibles 51-60 Frozen Deveined Uncooked Easy Peel Pacific White Shrimp340 g",
+                    "rawLabel": "Add 1 ct Irresistibles 51-60 Frozen Deveined Uncooked Easy Peel Pacific White Shrimp",
+                    "score": 235.3,
+                    "cardText": "Best seller Current price: $9.99 $999 Irresistibles 51-60 Frozen Deveined Uncooked Easy Peel Pacific White Shrimp 340 g Add"
+                  },
+                  {
+                    "index": 3,
+                    "title": "Current price: $19.99$1999Original Price: $23.99$23.9917% offAqua Star Raw Quick Peel Shrimp800 g",
+                    "rawLabel": "Add 1 ct Aqua Star Raw Quick Peel Shrimp",
+                    "score": 233.2,
+                    "cardText": "Current price: $19.99 $1999 Original Price: $23.99 $23.99 17% off Aqua Star Raw Quick Peel Shrimp 800 g Add"
+                  },
+                  {
+                    "index": 4,
+                    "title": "Store choiceCurrent price: $9.99$999Irresistibles 31-40 Count Frozen Deveined Uncooked Easy Peel Pacific White Shrimp340 g",
+                    "rawLabel": "Add 1 ct Irresistibles 31-40 Count Frozen Deveined Uncooked Easy Peel Pacific White Shrimp",
+                    "score": 233.2,
+                    "cardText": "Store choice Current price: $9.99 $999 Irresistibles 31-40 Count Frozen Deveined Uncooked Easy Peel Pacific White Shrimp 340 g Add"
+                  },
+                  {
+                    "index": 5,
+                    "title": "Current price: $4.99$499Ferma Frozen Shrimp Patties420 g",
+                    "rawLabel": "Add 1 ct Ferma Frozen Shrimp Patties",
+                    "score": 232.5,
+                    "cardText": "Current price: $4.99 $499 Ferma Frozen Shrimp Patties 420 g Add"
+                  },
+                  {
+                    "index": 6,
+                    "title": "Current price: $10.99$1099Irresistibles the Fish Market 31-40 Count Frozen, Cooked, Peeled, Deveined, Tail-on Pacific White Shrimp340 g",
+                    "rawLabel": "Add 1 ct Irresistibles the Fish Market 31-40 Count Frozen, Cooked, Peeled, Deveined, Tail-on Pacific White Shrimp",
+                    "score": 231.1,
+                    "cardText": "Current price: $10.99 $1099 Irresistibles the Fish Market 31-40 Count Frozen, Cooked, Peeled, Deveined, Tail-on Pacific White Shrimp 340 g Add"
+                  },
+                  {
+                    "index": 7,
+                    "title": "Current price: $10.99$1099Irresistibles Chili, Lime & Frozen Shrimp Skewers400 g",
+                    "rawLabel": "Add 1 ct Irresistibles Chili, Lime & Frozen Shrimp Skewers",
+                    "score": 228.3,
+                    "cardText": "Current price: $10.99 $1099 Irresistibles Chili, Lime & Frozen Shrimp Skewers 400 g Add"
+                  },
+                  {
+                    "index": 8,
+                    "title": "Current price: $10.99$1099Irresistibles Frozen Uncooked Shrimp & Bay Scallops340 g",
+                    "rawLabel": "Add 1 ct Irresistibles Frozen Uncooked Shrimp & Bay Scallops",
+                    "score": 228.3,
+                    "cardText": "Current price: $10.99 $1099 Irresistibles Frozen Uncooked Shrimp & Bay Scallops 340 g Add"
+                  },
+                  {
+                    "index": 9,
+                    "title": "Current price: $10.99$1099Irresistibles Herbs & Garlic Frozen Shrimp Skewers400 g",
+                    "rawLabel": "Add 1 ct Irresistibles Herbs & Garlic Frozen Shrimp Skewers",
+                    "score": 228.3,
+                    "cardText": "Current price: $10.99 $1099 Irresistibles Herbs & Garlic Frozen Shrimp Skewers 400 g Add"
+                  }
+                ],
+                "selectedIndex": 1,
+                "selectedCandidate": {
+                  "title": "Current price: $9.99$999Irresistibles Easy to Peel Raw pacific White Shrimp340 g",
+                  "rawLabel": "Add 1 ct Irresistibles Easy to Peel Raw pacific White Shrimp",
+                  "score": 241.6,
+                  "actionType": "add",
+                  "actionLabel": "Add 1 ct Irresistibles Easy to Peel Raw pacific White Shrimp",
+                  "productHref": "https://www.instacart.ca/products/51092225-irresistibles-easy-to-peel-raw-pacific-white-shrimp-340-g?retailerSlug=metro",
+                  "cardText": "Current price: $9.99 $999 Irresistibles Easy to Peel Raw pacific White Shrimp 340 g Add"
+                },
+                "decision": "exact_match",
+                "matchType": "exact",
+                "confidence": 0.95,
+                "reason": "Irresistibles Easy to Peel Raw pacific White Shrimp is a plain, raw shrimp product that matches the requested ingredient 'shrimp' exactly, suitable for the recipe context.",
+                "refinedQuery": null
+              }
+            ],
+            "click": {
+              "clicked": true,
+              "method": "visible_action",
+              "liveCandidate": {
+                "title": "Current price: $9.99$999Irresistibles Easy to Peel Raw pacific White Shrimp340 g",
+                "rawLabel": "Add 1 ct Irresistibles Easy to Peel Raw pacific White Shrimp",
+                "score": 241.6,
+                "actionType": "add",
+                "actionLabel": "Add 1 ct Irresistibles Easy to Peel Raw pacific White Shrimp",
+                "productHref": "https://www.instacart.ca/products/51092225-irresistibles-easy-to-peel-raw-pacific-white-shrimp-340-g?retailerSlug=metro",
+                "cardText": "Current price: $9.99 $999 Irresistibles Easy to Peel Raw pacific White Shrimp 340 g Add"
+              }
+            },
+            "choiceFlow": null,
+            "cartVerification": {
+              "beforeCount": 2,
+              "afterCount": 3,
+              "changed": true
+            }
+          }
+        }
+      ],
+      "quantityEvents": [],
+      "finalStatus": {
+        "status": "exact",
+        "matchedStore": "Metro",
+        "decision": "exact_match",
+        "matchType": "exact",
+        "quantityAdded": 1,
+        "shortfall": 0
+      }
+    },
+    {
+      "requested": "additional protein steak",
+      "canonicalName": "steak",
+      "normalizedQuery": "steak",
+      "quantityRequested": 1,
+      "shoppingContext": {
+        "role": "ingredient",
+        "exactness": "preferred_exact",
+        "substitutionPolicy": "strict",
+        "preferredForms": [
+          "steak"
+        ],
+        "avoidForms": [],
+        "requiredDescriptors": [],
+        "alternateQueries": []
+      },
+      "attempts": [
+        {
+          "at": "2026-04-06T01:23:38.310Z",
+          "store": "Metro",
+          "query": "steak",
+          "searchUrl": "https://www.instacart.ca/store/metro/s?k=steak&xrs_id=afdfffc8-9b02-4353-a2b8-e818553079ff",
+          "success": true,
+          "matchedLabel": "Current price: $52.89 per kilogram$5289/kgRib Steak",
+          "decision": "exact_match",
+          "matchType": "exact",
+          "refinedQuery": null,
+          "reason": "Rib Steak is a common and appropriate type of steak matching the requested ingredient 'additional protein steak' for the recipe. It is a plain steak product without added flavors or bundling, fitting the preferred form.",
+          "selectionTrace": {
+            "totalCandidates": 40,
+            "windows": [
+              {
+                "window": 1,
+                "candidates": [
+                  {
+                    "index": 0,
+                    "title": "Current price: $4.29$429Campbell's Chunky Chili Steak Bifteck425 g",
+                    "rawLabel": "Add 1 ct Campbell's Chunky Chili Steak Bifteck",
+                    "score": 227.9,
+                    "cardText": "Current price: $4.29 $429 Campbell's Chunky Chili Steak Bifteck 425 g Add"
+                  },
+                  {
+                    "index": 1,
+                    "title": "Current price: $49.80 per kilogram$4980/kgHalibut Steak",
+                    "rawLabel": "Add 1 kg Halibut Steak",
+                    "score": 227.5,
+                    "cardText": "Current price: $49.80 per kilogram $4980 /kg Halibut Steak Add"
+                  },
+                  {
+                    "index": 2,
+                    "title": "Current price: $52.89 per kilogram$5289/kgRib Steak",
+                    "rawLabel": "Add 1 kg Rib Steak",
+                    "score": 227.5,
+                    "cardText": "Current price: $52.89 per kilogram $5289 /kg Rib Steak Add"
+                  },
+                  {
+                    "index": 3,
+                    "title": "Current price: $78.59 per kilogram$7859/kgFresh Halibut Steak Fillets",
+                    "rawLabel": "Add 1 kg Fresh Halibut Steak Fillets",
+                    "score": 225.8,
+                    "cardText": "Current price: $78.59 per kilogram $7859 /kg Fresh Halibut Steak Fillets Add"
+                  },
+                  {
+                    "index": 4,
+                    "title": "Current price: $52.88 per kilogram$5288/kgBoneless Swordfish Steak",
+                    "rawLabel": "Add 1 kg Boneless Swordfish Steak",
+                    "score": 225.4,
+                    "cardText": "Current price: $52.88 per kilogram $5288 /kg Boneless Swordfish Steak Add"
+                  },
+                  {
+                    "index": 5,
+                    "title": "Current price: $52.88 per kilogram$5288/kgFresh Swordfish Steak",
+                    "rawLabel": "Add 1 kg Fresh Swordfish Steak",
+                    "score": 225.4,
+                    "cardText": "Current price: $52.88 per kilogram $5288 /kg Fresh Swordfish Steak Add"
+                  },
+                  {
+                    "index": 6,
+                    "title": "Current price: $12.10 per kilogram$1210/kgPork Shoulder Blade Steak",
+                    "rawLabel": "Add 1 kg Pork Shoulder Blade Steak",
+                    "score": 223.3,
+                    "cardText": "Current price: $12.10 per kilogram $1210 /kg Pork Shoulder Blade Steak Add"
+                  },
+                  {
+                    "index": 7,
+                    "title": "Current price: $30.84 per kilogram$3084/kgBoneless Atlantic Salmon Steak",
+                    "rawLabel": "Add 1 kg Boneless Atlantic Salmon Steak",
+                    "score": 223.3,
+                    "cardText": "Current price: $30.84 per kilogram $3084 /kg Boneless Atlantic Salmon Steak Add"
+                  },
+                  {
+                    "index": 8,
+                    "title": "Current price: $30.84 per kilogram$3084/kgFresh Atlantic Salmon Steak",
+                    "rawLabel": "Add 1 kg Fresh Atlantic Salmon Steak",
+                    "score": 223.3,
+                    "cardText": "Current price: $30.84 per kilogram $3084 /kg Fresh Atlantic Salmon Steak Add"
+                  },
+                  {
+                    "index": 9,
+                    "title": "Current price: $35.25 per kilogram$3525/kgRed Grill Triangle Steak",
+                    "rawLabel": "Add 1 kg Red Grill Triangle Steak",
+                    "score": 223.3,
+                    "cardText": "Current price: $35.25 per kilogram $3525 /kg Red Grill Triangle Steak Add"
+                  }
+                ],
+                "selectedIndex": 2,
+                "selectedCandidate": {
+                  "title": "Current price: $52.89 per kilogram$5289/kgRib Steak",
+                  "rawLabel": "Add 1 kg Rib Steak",
+                  "score": 227.5,
+                  "actionType": "add",
+                  "actionLabel": "Add 1 kg Rib Steak",
+                  "productHref": "https://www.instacart.ca/products/27265180-rib-steak-per-kg?retailerSlug=metro",
+                  "cardText": "Current price: $52.89 per kilogram $5289 /kg Rib Steak Add"
+                },
+                "decision": "exact_match",
+                "matchType": "exact",
+                "confidence": 0.95,
+                "reason": "Rib Steak is a common and appropriate type of steak matching the requested ingredient 'additional protein steak' for the recipe. It is a plain steak product without added flavors or bundling, fitting the preferred form.",
+                "refinedQuery": null
+              }
+            ],
+            "click": {
+              "clicked": true,
+              "method": "visible_action",
+              "liveCandidate": {
+                "title": "Current price: $52.89 per kilogram$5289/kgRib Steak",
+                "rawLabel": "Add 1 kg Rib Steak",
+                "score": 227.5,
+                "actionType": "add",
+                "actionLabel": "Add 1 kg Rib Steak",
+                "productHref": "https://www.instacart.ca/products/27265180-rib-steak-per-kg?retailerSlug=metro",
+                "cardText": "Current price: $52.89 per kilogram $5289 /kg Rib Steak Add"
+              }
+            },
+            "choiceFlow": null,
+            "cartVerification": {
+              "beforeCount": 3,
+              "afterCount": 4,
+              "changed": true
+            }
+          }
+        }
+      ],
+      "quantityEvents": [],
+      "finalStatus": {
+        "status": "exact",
+        "matchedStore": "Metro",
+        "decision": "exact_match",
+        "matchType": "exact",
+        "quantityAdded": 1,
+        "shortfall": 0
+      }
+    },
+    {
+      "requested": "salmon",
+      "canonicalName": "salmon",
+      "normalizedQuery": "salmon",
+      "quantityRequested": 1,
+      "shoppingContext": {
+        "role": "protein",
+        "exactness": "preferred_exact",
+        "substitutionPolicy": "strict",
+        "preferredForms": [
+          "salmon"
+        ],
+        "avoidForms": [],
+        "requiredDescriptors": [],
+        "alternateQueries": []
+      },
+      "attempts": [
+        {
+          "at": "2026-04-06T01:23:45.457Z",
+          "store": "Metro",
+          "query": "salmon",
+          "searchUrl": "https://www.instacart.ca/store/metro/s?k=salmon&xrs_id=afdfffc8-9b02-4353-a2b8-e818553079ff",
+          "success": true,
+          "matchedLabel": "Current price: $39.66 per kilogram$3966/kgFresh Salmon Fillet",
+          "decision": "exact_match",
+          "matchType": "exact",
+          "refinedQuery": null,
+          "reason": "Fresh Salmon Fillet is a direct match for plain salmon as requested, suitable for the recipe and preferred form.",
+          "selectionTrace": {
+            "totalCandidates": 40,
+            "windows": [
+              {
+                "window": 1,
+                "candidates": [
+                  {
+                    "index": 0,
+                    "title": "Current price: $11.99$1199Jarlsberg Skin-On Salmon Portion300 g",
+                    "rawLabel": "Add 1 ct Jarlsberg Skin-On Salmon Portion",
+                    "score": 230.4,
+                    "cardText": "Current price: $11.99 $1199 Jarlsberg Skin-On Salmon Portion 300 g Add"
+                  },
+                  {
+                    "index": 1,
+                    "title": "Current price: $28.64 per kilogram$2864/kgSteelhead Salmon Fillet",
+                    "rawLabel": "Add 1 kg Steelhead Salmon Fillet",
+                    "score": 228.3,
+                    "cardText": "Current price: $28.64 per kilogram $2864 /kg Steelhead Salmon Fillet Add"
+                  },
+                  {
+                    "index": 2,
+                    "title": "Current price: $35.25 per kilogram$3525/kgNorwegian Salmon Fillet",
+                    "rawLabel": "Add 1 kg Norwegian Salmon Fillet",
+                    "score": 228.3,
+                    "cardText": "Current price: $35.25 per kilogram $3525 /kg Norwegian Salmon Fillet Add"
+                  },
+                  {
+                    "index": 3,
+                    "title": "Current price: $39.66 per kilogram$3966/kgFresh Salmon Fillet",
+                    "rawLabel": "Add 1 kg Fresh Salmon Fillet",
+                    "score": 228.3,
+                    "cardText": "Current price: $39.66 per kilogram $3966 /kg Fresh Salmon Fillet Add"
+                  },
+                  {
+                    "index": 4,
+                    "title": "Current price: $39.66 per kilogram$3966/kgFresh Salmon Fillets",
+                    "rawLabel": "Add 1 kg Fresh Salmon Fillets",
+                    "score": 228.3,
+                    "cardText": "Current price: $39.66 per kilogram $3966 /kg Fresh Salmon Fillets Add"
+                  },
+                  {
+                    "index": 5,
+                    "title": "Current price: $4.99$499Maple Chipotle Rub Salmon Portion113 g",
+                    "rawLabel": "Add 1 ct Maple Chipotle Rub Salmon Portion",
+                    "score": 228.3,
+                    "cardText": "Current price: $4.99 $499 Maple Chipotle Rub Salmon Portion 113 g Add"
+                  },
+                  {
+                    "index": 6,
+                    "title": "OrganicCurrent price: $48.47 per kilogram$4847/kgFresh Organic Salmon Fillets",
+                    "rawLabel": "Add 1 kg Fresh Organic Salmon Fillets",
+                    "score": 228.3,
+                    "cardText": "Organic Current price: $48.47 per kilogram $4847 /kg Fresh Organic Salmon Fillets Add"
+                  },
+                  {
+                    "index": 7,
+                    "title": "Current price: $17.61 per kilogram$1761/kgWild Pink Salmon Fillet",
+                    "rawLabel": "Add 1 kg Wild Pink Salmon Fillet",
+                    "score": 226.2,
+                    "cardText": "Current price: $17.61 per kilogram $1761 /kg Wild Pink Salmon Fillet Add"
+                  },
+                  {
+                    "index": 8,
+                    "title": "Current price: $19.96$1996Salmon Portion452 g",
+                    "rawLabel": "Add 1 ct Salmon Portion",
+                    "score": 226.2,
+                    "cardText": "Current price: $19.96 $1996 Salmon Portion 452 g Add"
+                  },
+                  {
+                    "index": 9,
+                    "title": "Current price: $27.54 per kilogram$2754/kgFresh Steelhead Salmon Fillets",
+                    "rawLabel": "Add 1 kg Fresh Steelhead Salmon Fillets",
+                    "score": 226.2,
+                    "cardText": "Current price: $27.54 per kilogram $2754 /kg Fresh Steelhead Salmon Fillets Add"
+                  }
+                ],
+                "selectedIndex": 3,
+                "selectedCandidate": {
+                  "title": "Current price: $39.66 per kilogram$3966/kgFresh Salmon Fillet",
+                  "rawLabel": "Add 1 kg Fresh Salmon Fillet",
+                  "score": 228.3,
+                  "actionType": "add",
+                  "actionLabel": "Add 1 kg Fresh Salmon Fillet",
+                  "productHref": "https://www.instacart.ca/products/29710204-fresh-salmon-fillet-each?retailerSlug=metro",
+                  "cardText": "Current price: $39.66 per kilogram $3966 /kg Fresh Salmon Fillet Add"
+                },
+                "decision": "exact_match",
+                "matchType": "exact",
+                "confidence": 0.95,
+                "reason": "Fresh Salmon Fillet is a direct match for plain salmon as requested, suitable for the recipe and preferred form.",
+                "refinedQuery": null
+              }
+            ],
+            "click": {
+              "clicked": true,
+              "method": "visible_action",
+              "liveCandidate": {
+                "title": "Current price: $39.66 per kilogram$3966/kgFresh Salmon Fillet",
+                "rawLabel": "Add 1 kg Fresh Salmon Fillet",
+                "score": 228.3,
+                "actionType": "add",
+                "actionLabel": "Add 1 kg Fresh Salmon Fillet",
+                "productHref": "https://www.instacart.ca/products/29710204-fresh-salmon-fillet-each?retailerSlug=metro",
+                "cardText": "Current price: $39.66 per kilogram $3966 /kg Fresh Salmon Fillet Add"
+              }
+            },
+            "choiceFlow": null,
+            "cartVerification": {
+              "beforeCount": 4,
+              "afterCount": 5,
+              "changed": true
+            }
+          }
+        }
+      ],
+      "quantityEvents": [],
+      "finalStatus": {
+        "status": "exact",
+        "matchedStore": "Metro",
+        "decision": "exact_match",
+        "matchType": "exact",
+        "quantityAdded": 1,
+        "shortfall": 0
+      }
+    },
+    {
+      "requested": "carrot",
+      "canonicalName": "carrot",
+      "normalizedQuery": "carrot",
+      "quantityRequested": 2,
+      "shoppingContext": {
+        "role": "ingredient",
+        "exactness": "preferred_exact",
+        "substitutionPolicy": "strict",
+        "preferredForms": [
+          "carrot"
+        ],
+        "avoidForms": [],
+        "requiredDescriptors": [],
+        "alternateQueries": []
+      },
+      "attempts": [
+        {
+          "at": "2026-04-06T01:23:58.338Z",
+          "store": "Metro",
+          "query": "carrot",
+          "searchUrl": "https://www.instacart.ca/store/metro/s?k=carrot&xrs_id=afdfffc8-9b02-4353-a2b8-e818553079ff",
+          "success": true,
+          "matchedLabel": "Current price: $3.49$349Carrot Bunch1 eachMany in stock",
+          "decision": "exact_match",
+          "matchType": "exact",
+          "refinedQuery": null,
+          "reason": "The product is a plain carrot bunch, which matches the requested ingredient 'carrot' exactly. It is fresh and unprocessed, suitable for the recipe.",
+          "selectionTrace": {
+            "totalCandidates": 40,
+            "windows": [
+              {
+                "window": 1,
+                "candidates": [
+                  {
+                    "index": 0,
+                    "title": "Current price: $3.49$349Carrot Bunch1 eachMany in stock",
+                    "rawLabel": "Add 1 ct Carrot Bunch",
+                    "score": 237.9,
+                    "cardText": "Current price: $3.49 $349 Carrot Bunch 1 each Many in stock Add"
+                  },
+                  {
+                    "index": 1,
+                    "title": "OrganicCurrent price: $3.99$399Organic Carrot Bunch1 eachLikely out of stock",
+                    "rawLabel": "Add 1 ct Organic Carrot Bunch",
+                    "score": 235.8,
+                    "cardText": "Organic Current price: $3.99 $399 Organic Carrot Bunch 1 each Likely out of stock Request"
+                  },
+                  {
+                    "index": 2,
+                    "title": "Current price: $3.49$349Bolthouse Farms Carrot Matchstix284 g",
+                    "rawLabel": "Add 1 ct Bolthouse Farms Carrot Matchstix",
+                    "score": 230.4,
+                    "cardText": "Current price: $3.49 $349 Bolthouse Farms Carrot Matchstix 284 g Add"
+                  },
+                  {
+                    "index": 3,
+                    "title": "Current price: $8.80 per kilogram$880/kgOrganic Baby Carrot",
+                    "rawLabel": "Add 1 kg Organic Baby Carrot",
+                    "score": 225.8,
+                    "cardText": "Current price: $8.80 per kilogram $880 /kg Organic Baby Carrot Add"
+                  },
+                  {
+                    "index": 4,
+                    "title": "Current price: $4.99$499Baby Gourmet Carrot Sticks40 gMany in stock",
+                    "rawLabel": "Add 1 ct Baby Gourmet Carrot Sticks",
+                    "score": 224.10000000000002,
+                    "cardText": "Current price: $4.99 $499 Baby Gourmet Carrot Sticks 40 g Many in stock Add"
+                  },
+                  {
+                    "index": 5,
+                    "title": "Current price: $4.99$499Carrot Bag1 eachMany in stock",
+                    "rawLabel": "Add 1 ct Carrot Bag",
+                    "score": 219.9,
+                    "cardText": "Current price: $4.99 $499 Carrot Bag 1 each Many in stock Add"
+                  },
+                  {
+                    "index": 6,
+                    "title": "Best sellerCurrent price: $2.99$299Carrot2 lbMany in stock",
+                    "rawLabel": "Add 1 ct Carrot",
+                    "score": 217.8,
+                    "cardText": "Best seller Current price: $2.99 $299 Carrot 2 lb Many in stock Add"
+                  },
+                  {
+                    "index": 7,
+                    "title": "Best sellerCurrent price: $3.49$349Carrot Baby Cut1.05 lb",
+                    "rawLabel": "Add 1 ct Carrot Baby Cut",
+                    "score": 217.8,
+                    "cardText": "Best seller Current price: $3.49 $349 Carrot Baby Cut 1.05 lb Add"
+                  },
+                  {
+                    "index": 8,
+                    "title": "Current price: $3.99$399Bolthouse Farms Premium Petite Baby Carrot340 gLikely out of stock",
+                    "rawLabel": "Add 1 ct Bolthouse Farms Premium Petite Baby Carrot",
+                    "score": 209.4,
+                    "cardText": "Current price: $3.99 $399 Bolthouse Farms Premium Petite Baby Carrot 340 g Likely out of stock Request"
+                  },
+                  {
+                    "index": 9,
+                    "title": "OrganicCurrent price: $0.82 each (estimated)$082each (est.)Carrot$4.39 / kgAbout 0.19 kg eachMany in stock",
+                    "rawLabel": "Add 1 ct Carrot",
+                    "score": 203.1,
+                    "cardText": "Organic Current price: $0.82 each (estimated) $082 each (est.) Carrot $4.39 / kg About 0.19 kg each Many in stock Add"
+                  }
+                ],
+                "selectedIndex": 0,
+                "selectedCandidate": {
+                  "title": "Current price: $3.49$349Carrot Bunch1 eachMany in stock",
+                  "rawLabel": "Add 1 ct Carrot Bunch",
+                  "score": 237.9,
+                  "actionType": "add",
+                  "actionLabel": "Add 1 ct Carrot Bunch",
+                  "productHref": "https://www.instacart.ca/products/16346052-carrot-bunch-each?retailerSlug=metro",
+                  "cardText": "Current price: $3.49 $349 Carrot Bunch 1 each Many in stock Add"
+                },
+                "decision": "exact_match",
+                "matchType": "exact",
+                "confidence": 0.95,
+                "reason": "The product is a plain carrot bunch, which matches the requested ingredient 'carrot' exactly. It is fresh and unprocessed, suitable for the recipe.",
+                "refinedQuery": null
+              }
+            ],
+            "click": {
+              "clicked": true,
+              "method": "visible_action",
+              "liveCandidate": {
+                "title": "Current price: $3.49$349Carrot Bunch1 eachMany in stock",
+                "rawLabel": "Add 1 ct Carrot Bunch",
+                "score": 237.9,
+                "actionType": "add",
+                "actionLabel": "Add 1 ct Carrot Bunch",
+                "productHref": "https://www.instacart.ca/products/16346052-carrot-bunch-each?retailerSlug=metro",
+                "cardText": "Current price: $3.49 $349 Carrot Bunch 1 each Many in stock Add"
+              }
+            },
+            "choiceFlow": null,
+            "cartVerification": {
+              "beforeCount": 5,
+              "afterCount": 6,
+              "changed": true
+            }
+          }
+        }
+      ],
+      "quantityEvents": [
+        {
+          "at": "2026-04-06T01:24:12.991Z",
+          "attempt": 1,
+          "success": false,
+          "matchedLabel": null,
+          "beforeCount": null,
+          "afterCount": null,
+          "verified": false,
+          "verificationMode": null
+        },
+        {
+          "at": "2026-04-06T01:24:23.907Z",
+          "attempt": 2,
+          "success": false,
+          "matchedLabel": null,
+          "beforeCount": null,
+          "afterCount": null,
+          "verified": false,
+          "verificationMode": null
+        },
+        {
+          "at": "2026-04-06T01:24:34.862Z",
+          "attempt": 3,
+          "success": false,
+          "matchedLabel": null,
+          "beforeCount": null,
+          "afterCount": null,
+          "verified": false,
+          "verificationMode": null
+        }
+      ],
+      "finalStatus": {
+        "status": "exact",
+        "matchedStore": "Metro",
+        "decision": "exact_match",
+        "matchType": "exact",
+        "quantityAdded": 1,
+        "shortfall": 1
+      }
+    }
+  ],
+  "sessionSource": "local",
+  "completedAt": "2026-04-06T01:24:59.787Z",
+  "success": false,
+  "error": "locator.count: Target page, context or browser has been closed"
+}

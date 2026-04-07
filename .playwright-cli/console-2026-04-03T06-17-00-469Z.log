@@ -1,0 +1,2 @@
+[     895ms] [WARNING] [DebugManager] Creating instance with empty registry - call initializeDebugToggles() for full functionality @ https://d2guulkeunn7d8.cloudfront.net/assets/rspack/sentry-bundle.min-e758b2a5efb6b457-v2.js:3
+[   10881ms] [LOG] Download the Apollo DevTools for a better development experience: %s https://chrome.google.com/webstore/detail/apollo-client-developer-t/jdkknkkbebbapilgoeccciglkfbmbnfm @ https://d2guulkeunn7d8.cloudfront.net/assets/rspack/sentry-bundle.min-e758b2a5efb6b457-v2.js:3

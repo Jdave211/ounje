@@ -1,0 +1,488 @@
+{
+  "cookies": [
+    {
+      "name": "enableHTTPS",
+      "value": "1",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "userSegment",
+      "value": "40-percent",
+      "domain": ".www.walmart.ca",
+      "path": "/",
+      "expires": 1777777450.964796,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ak_bmsc",
+      "value": "A3329B9DBF2DE3909BC098C5B713BD28~000000000000000000000000000000~YAAQLhghF/WIkk+dAQAA1ldMUR+RdVzSoTY8zCd5o6eYKWnqx6sOXHvL/79HjPORU/R3DKB6hPJbmivuuh/fXLxPQ6ineq6OjdLBBvYsVopFBavyqpbJd0XCUOKRdorjt5uQomOGEpYEiAjMSXveEjjUO5V2rWDrDz9HG6seZdoeFht3esMs9kf19n1kxqJnXCCIVhz1OqoVx0X2nK4hCyExIVO2RGwcOsTff49WMz+TpWP9X+W11rKqMDYZ0S+DBQdnNg26S0df/Ysb3S5INBHJx3K8DbtX14kCsWpxVpHa0+So4J8+ZaIzJP3WOWrFVvTf8kYLQ4xucjj5yt7Xbhf/GzQhGpBKzafPPH7wb0OE6mwZdXJMzmBfTHj3UOnLhOJvDADxk/g8NbM=",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775192650.965134,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "wm_route_based_language",
+      "value": "en-CA",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "ACID",
+      "value": "9020e343-9a1c-4ae7-8574-abbcd7631aa0",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1806721452.246259,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_intlbu",
+      "value": "false",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": 1775189054.072188,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_shcc",
+      "value": "CA",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": 1775189054.072205,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "assortmentStoreId",
+      "value": "1139",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": 1775189055.072216,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "hasACID",
+      "value": "true",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1806721452.246321,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "hasLocData",
+      "value": "1",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": 1780369454.072227,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "locGuestData",
+      "value": "eyJpbnRlbnQiOiJERUxJVkVSWSIsImlzRXhwbGljaXQiOmZhbHNlLCJzdG9yZUludGVudCI6IkRFTElWRVJZIiwibWVyZ2VGbGFnIjpmYWxzZSwiaXNEZWZhdWx0ZWQiOmZhbHNlLCJwaWNrdXAiOnsibm9kZUlkIjoiMTEzOSIsInRpbWVzdGFtcCI6MTc3NTE4NTQ1MTY5MCwic2VsZWN0aW9uVHlwZSI6IkxTX1NFTEVDVEVEIiwic2VsZWN0aW9uU291cmNlIjoiSVBfU05JRkZFRF9CWV9MUyJ9LCJzaGlwcGluZ0FkZHJlc3MiOnsidGltZXN0YW1wIjoxNzc1MTg1NDUxNjkwLCJ0eXBlIjoicGFydGlhbC1sb2NhdGlvbiIsImdpZnRBZGRyZXNzIjpmYWxzZSwicG9zdGFsQ29kZSI6Ik0zSiA5WjAiLCJkZWxpdmVyeVN0b3JlTGlzdCI6W3sibm9kZUlkIjoiMTEzOSIsInR5cGUiOiJERUxJVkVSWSIsInRpbWVzdGFtcCI6MTc3NTE4NTM4NDk3NCwiZGVsaXZlcnlUaWVyIjpudWxsLCJzZWxlY3Rpb25UeXBlIjoiTFNfU0VMRUNURUQiLCJzZWxlY3Rpb25Tb3VyY2UiOiJJUF9TTklGRkVEX0JZX0xTIn1dLCJjaXR5IjoiVG9yb250byIsInN0YXRlIjoiT04ifSwicG9zdGFsQ29kZSI6eyJ0aW1lc3RhbXAiOjE3NzUxODU0NTE2OTAsImJhc2UiOiJNM0ogOVowIn0sIm1wIjpbXSwibXBEZWxTdG9yZUNvdW50IjowLCJzaG93TG9jYWxFeHBlcmllbmNlIjpmYWxzZSwic2hvd0xNUEVudHJ5UG9pbnQiOmZhbHNlLCJtcFVuaXF1ZVNlbGxlckNvdW50IjowLCJ2YWxpZGF0ZUtleSI6InByb2Q6djM6OTAyMGUzNDMtOWExYy00YWU3LTg1NzQtYWJiY2Q3NjMxYWEwIn0=",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1806721452.246378,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "userAppVersion",
+      "value": "caweb-1.156.1-ebfaede3034e175e970be229253edb603c7c6416-4020749r",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": 1806721452.246434,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "ak-ca-origin-route",
+      "value": "legacy",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "wmt.c",
+      "value": "0",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775790252.246467,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "vtc",
+      "value": "ZlObjGfPwGxU4g9aNLl1jM",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1809745454.072325,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "bstc",
+      "value": "ZlObjGfPwGxU4g9aNLl1jM",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775187254.072346,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "xpa",
+      "value": "0kRJG|6T8mR|7ek1s|8VCTI|AXJ7n|CnaaN|D8bsO|Gd5vG|GdMWU|M_CX9|Nj3Kz|ORR-Q|P_8Xi|QTet8|ReJMk|TBFcj|Y9_95|aKJax|gOxcY|hGpKh|ifvD1|kUUIV|mWXJ4|nyBjo|sDtdf|zUvaN",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775187254.072362,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "exp-ck",
+      "value": "0kRJG16T8mR18VCTI1D8bsO1Gd5vG1GdMWU1M_CX91Nj3Kz1ORR-Q1Y9_951aKJax1gOxcY1hGpKh1ifvD11nyBjo1sDtdf1zUvaN1",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775187254.072386,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "xptwj",
+      "value": "mw:ec22b9aef73c68aced07:PfQvRRGHYV+23HIgl8vBnjs7Z2ftNXWHWNT5cu4SMUDRDYyTVUvqablKV7Lfs7iiawtWIx4wwn5bArHqhHc/zYQutCTtSwpsfbmdlrL0KgmSVMnj2zgJhVaJ1KpDW+KRRcW6LhRj0Pcr0CpLDDX6Myqdz+76G9h4oNN5HnysWvgtJ3AL6v5yXK+d5JAcyXwK",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1806721452.246585,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "uxcon",
+      "value": "enforce=false&p13n=true&ads=true&createdAt=1775185452060&modifiedAt=",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775271852.2466,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "btc",
+      "value": "ZlObjGfPwGxU4g9aNLl1jM",
+      "domain": "beacon.walmart.ca",
+      "path": "/",
+      "expires": 1809745453.992567,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "bsc",
+      "value": "Uy0bH4DIJZP0Ikx1LvDBnI",
+      "domain": "beacon.walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "b30msc",
+      "value": "ZlObjGfPwGxU4g9aNLl1jM",
+      "domain": "beacon.walmart.ca",
+      "path": "/",
+      "expires": 1775187253.992604,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_astc",
+      "value": "fa6c862a4b8be4dce691c936f39065f5",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "adblocked",
+      "value": "false",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": 1775790253,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_pxvid",
+      "value": "caffa564-2f09-11f1-b080-c0c8c4d272ee",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1806721453.272543,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "pxcts",
+      "value": "caffaea6-2f09-11f1-b080-c97f4412854d",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_tap-criteo",
+      "value": "1775185453327:0:1",
+      "domain": "beacon.walmart.ca",
+      "path": "/",
+      "expires": 1776395053.342816,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_tap_path",
+      "value": "/rum.gif",
+      "domain": "beacon.walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__pxvid",
+      "value": "cb161b2b-2f09-11f1-99d4-9e8f96808f96",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1806807853,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "xpm",
+      "value": "1%2B1775185451%2BZlObjGfPwGxU4g9aNLl1jM~%2B0",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775187254.072373,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "uid",
+      "value": "6b263aeb-9e9a-4728-83b8-4ab3537886eb",
+      "domain": ".criteo.com",
+      "path": "/",
+      "expires": 1808881453.501397,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_ga_D2P3FM55BM",
+      "value": "GS2.1.s1775185453$o1$g0$t1775185453$j60$l0$h1047246138",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1809745453.549932,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_ga",
+      "value": "GA1.1.1922122124.1775185454",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1809745453.550146,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "cto_bundle",
+      "value": "U18bjV9vWkFSV1glMkJTUFBadXhyRjNwMUZHWHNZWFRRanVtdlhOTDg4S1hYa3ZWQk9jRFE0Q2tiYkVsSmNZaE1vdUtZQjdMdmhTOUQlMkI3dDQlMkZzdHBoVFdrJTJGTk5NQ1oyVExsSVNFOG9kQjRDelc0Z3BnJTNE",
+      "domain": ".criteo.com",
+      "path": "/",
+      "expires": 1808881453.597117,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None",
+      "partitionKey": "https://walmart.ca",
+      "_crHasCrossSiteAncestor": true
+    },
+    {
+      "name": "_gcl_au",
+      "value": "1.1.140924054.1775185454",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1782961454,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "seqnum",
+      "value": "2",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775187254.072337,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "test_cookie",
+      "value": "CheckForPermission",
+      "domain": ".doubleclick.net",
+      "path": "/",
+      "expires": 1775186353.854694,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_px3",
+      "value": "5ab2d1d26b4b00a6b8563c9173f0df2837aea84ad4d0cbd5219c4fb9f248ac0b:ZAKZuCdTazdq2Iu3+3L/2tXEa+wqEVk8YwqR63nMJlo5pPZGRjfW0U4tM025MBzteVJS98gvQ2FH80atUlUTRg==:1000:5kdopSmY3hJJjXPpbtlymnBWYAeMlG9j7LViqJ7NcPGdBV8S+3M4yJN57jhSmhJnDRq/bjy2d0ATQdCVRUefMqjBm2/x4S6t1FpjUieRofaMEHM5OR6nlcoAxNwp00Dg+5iIOdotCVN0cItOEgd0K/6p0/jpVXO3dVxP1W8Y4RB6dCG9bUL7hM2ab8L0ZTT4G7g5/MM0pKmcU7eE7pyzOonExI8bjo1nkgKMt7W412P59ESQOiD0Wb6pEQMZYwaAmU1ZoYOG1IN9DRmwuRcRuhU9WeL2izgxiJbZyibqOgX/Tn+SjDn+ZSOGOD/CxN25sNTpckEqKjFfr22A6oSDUCVRk2JCWcmKk3mO4aeAnyAWxbP67wfrcf4l0/e9LxBl74JxRg8PjoOhQEG/g9kfL2lflo5ANW2PVibKsIHarHhI61T4V8XC1PVUhohVzuhSNag8E1CKcUKV7uTrOtrI/DXisngxJ4EkCrQEASwtxjg=",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775185784.065346,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_pxde",
+      "value": "5f3a8c0852e946d18dd74c88dd16b47f57a719187e2155bef7d4d9726a9aa908:eyJ0aW1lc3RhbXAiOjE3NzUxODU0NTQwNDd9",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775185784.065514,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "locDataV3",
+      "value": "eyJhc3NvcnRtZW50Ijp7Im5vZGVJZCI6IjExMzkiLCJkaXNwbGF5TmFtZSI6IlRvcm9udG8gRG93bnN2aWV3IiwiYWNjZXNzUG9pbnRzIjpbeyJhY2Nlc3NUeXBlIjoiREVMSVZFUllfQUREUkVTUyJ9XSwic3VwcG9ydGVkQWNjZXNzVHlwZXMiOlsiREVMSVZFUllfQUREUkVTUyJdLCJpbnRlbnQiOiJERUxJVkVSWSJ9LCJkZWxpdmVyeSI6eyJub2RlSWQiOiIxMTM5IiwiZGlzcGxheU5hbWUiOiJUb3JvbnRvIERvd25zdmlldyIsImFkZHJlc3MiOnsicG9zdGFsQ29kZSI6Ik0zSiAxTjQiLCJhZGRyZXNzTGluZTEiOiIzNzU3IEtFRUxFIFNUIiwiY2l0eSI6IlRvcm9udG8iLCJzdGF0ZSI6Ik9OIiwiY291bnRyeSI6IkNBIn0sImdlb1BvaW50Ijp7ImxhdGl0dWRlIjo0My43NTc5NTMsImxvbmdpdHVkZSI6LTc5LjQ4ODEyNX0sInNjaGVkdWxlZEVuYWJsZWQiOmZhbHNlLCJ1blNjaGVkdWxlZEVuYWJsZWQiOmZhbHNlLCJhY2Nlc3NQb2ludHMiOlt7ImFjY2Vzc1R5cGUiOiJERUxJVkVSWV9BRERSRVNTIn1dLCJpc0V4cHJlc3NEZWxpdmVyeU9ubHkiOmZhbHNlLCJzdXBwb3J0ZWRBY2Nlc3NUeXBlcyI6WyJERUxJVkVSWV9BRERSRVNTIl0sInRpbWVab25lIjoiQW1lcmljYS9Ub3JvbnRvIiwic3RvcmVCcmFuZEZvcm1hdCI6IldhbG1hcnQgU3VwZXJjZW50ZXIiLCJzZWxlY3Rpb25UeXBlIjoiTFNfU0VMRUNURUQifSwiaW5zdG9yZSI6ZmFsc2UsImludGVudCI6IkRFTElWRVJZIiwiaXNEZWZhdWx0ZWQiOmZhbHNlLCJpc0V4cGxpY2l0IjpmYWxzZSwiaXNnZW9JbnRsVXNlciI6ZmFsc2UsInBpY2t1cCI6W3sibm9kZUlkIjoiMTEzOSIsImRpc3BsYXlOYW1lIjoiVG9yb250byBEb3duc3ZpZXciLCJhZGRyZXNzIjp7InBvc3RhbENvZGUiOiJNM0ogMU40IiwiYWRkcmVzc0xpbmUxIjoiMzc1NyBLRUVMRSBTVCIsImNpdHkiOiJUb3JvbnRvIiwic3RhdGUiOiJPTiIsImNvdW50cnkiOiJDQSJ9LCJnZW9Qb2ludCI6eyJsYXRpdHVkZSI6NDMuNzU3OTUzLCJsb25naXR1ZGUiOi03OS40ODgxMjV9LCJzY2hlZHVsZWRFbmFibGVkIjp0cnVlLCJ1blNjaGVkdWxlZEVuYWJsZWQiOmZhbHNlLCJzdG9yZUhycyI6IjA3OjAwLTIzOjAwIiwic3VwcG9ydGVkQWNjZXNzVHlwZXMiOlsiUElDS1VQX0NVUkJTSURFIiwiUElDS1VQX0lOU1RPUkUiXSwidGltZVpvbmUiOiJFU1QiLCJzdG9yZUJyYW5kRm9ybWF0IjoiV2FsbWFydCBTdXBlcmNlbnRlciIsInNlbGVjdGlvblR5cGUiOiJMU19TRUxFQ1RFRCJ9XSwic2hpcHBpbmdBZGRyZXNzIjp7ImxhdGl0dWRlIjo0My43Njc5ODAzLCJsb25naXR1ZGUiOi03OS40ODcyNjE5LCJwb3N0YWxDb2RlIjoiTTNKIDlaMCIsImNpdHkiOiJUb3JvbnRvIiwic3RhdGUiOiJPTiIsImNvdW50cnlDb2RlIjoiQ0EiLCJsb2NhdGlvbkFjY3VyYWN5IjoibG93IiwiZ2lmdEFkZHJlc3MiOmZhbHNlfSwibXBEZWxTdG9yZUNvdW50IjowLCJyZWZyZXNoQXQiOjE3NzUyMDcwNTM3NzYsInZhbGlkYXRlS2V5IjoicHJvZDp2MzoifQ%3D%3D",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1780369454.072239,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "TS010110a1",
+      "value": "0101f64b5a9fc63e92ccd29156cdc6022fd54db43769fe2e4ea6bfdb561666798857829035be83758524c79794002ca262473c6bb4",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "TS01ea8d4c",
+      "value": "0101f64b5a9fc63e92ccd29156cdc6022fd54db43769fe2e4ea6bfdb561666798857829035be83758524c79794002ca262473c6bb4",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "TS0180da25",
+      "value": "0101f64b5a9fc63e92ccd29156cdc6022fd54db43769fe2e4ea6bfdb561666798857829035be83758524c79794002ca262473c6bb4",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "TSe62c5f0d027",
+      "value": "08d69fc8e3ab200006c54d5c53d8837ae91f0fc998b4e4f0064c1a1e001a633c9499efa8271b81fc08f4b0900a113000cd18356db986198700025299d502d48170ca7d7efd7c81121f41862dd3d5a5f749f805f0dcd767122c072a5afcfc6edb",
+      "domain": "www.walmart.ca",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "bm_sv",
+      "value": "88A197945770C5956E05494A74440353~YAAQLhghF8KPkk+dAQAA2GNMUR/8IRwh5JjXgzKP58QsxJWNlEORcsnq2tRTQNSGGyAG0fsE3QzTttBM7y9COJ5DN0rUEcUUd3dRyFNo8TN022eyRMo3BlB91FWIcMMbJHVGpMFACbriYDipZsvkYbYt5FUxGruRDNJ/Tm4g28Qt9EX2CxO1FTrp+cbNyb5k1TIvptmFNPdYl9cDptOTYOyAxz7xyAAwPU924x3rGcRtuoj3R8o32YZ2JvsGflTX~1",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775192652.072507,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "QuantumMetricSessionID",
+      "value": "aa7689d872bb47e75b5c542a0c3e9785",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1775187254,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "QuantumMetricUserID",
+      "value": "53efca014332dc57952e4af9d4364f72",
+      "domain": ".walmart.ca",
+      "path": "/",
+      "expires": 1806721454,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    }
+  ],
+  "savedAt": "2026-04-03T03:04:18.195Z",
+  "lastUrl": "https://www.walmart.ca/en"
+}
