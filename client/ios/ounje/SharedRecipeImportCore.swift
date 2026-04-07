@@ -44,8 +44,18 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
         switch normalizedProcessingState {
         case "failed":
             return "Retry needed"
+        case "queued":
+            return (attemptCount ?? 0) > 0 ? "Queued on server" : "Queued"
         case "processing":
             return "Importing"
+        case "fetching":
+            return "Fetching"
+        case "parsing":
+            return "Parsing"
+        case "normalized":
+            return "Saving"
+        case "saved":
+            return "Saved"
         default:
             return "Queued"
         }
@@ -56,7 +66,23 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     }
 
     var shouldAutoProcess: Bool {
-        normalizedProcessingState == "queued"
+        normalizedProcessingState == "queued" && (attemptCount ?? 0) == 0 && lastAttemptAt == nil
+    }
+
+    var isTerminalLocalState: Bool {
+        ["saved", "draft", "needs_review"].contains(normalizedProcessingState)
+    }
+
+    var isLiveQueueState: Bool {
+        !isRetryNeeded && !isTerminalLocalState
+    }
+
+    var isPinnedTypedImport: Bool {
+        let sourceURL = sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sourceText = sourceText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return sourceURL.isEmpty
+            && !sourceText.isEmpty
+            && attachments.isEmpty
     }
 }
 
@@ -110,7 +136,8 @@ enum SharedRecipeImportInbox {
     static func reconcileStaleProcessingEnvelopes(staleAfter seconds: TimeInterval = 15 * 60) throws {
         let all = try readAll()
         let now = Date()
-        for envelope in all where envelope.normalizedProcessingState == "processing" {
+        let staleStates: Set<String> = ["processing", "fetching", "parsing", "normalized"]
+        for envelope in all where staleStates.contains(envelope.normalizedProcessingState) {
             let ref = envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
             guard now.timeIntervalSince(ref) >= seconds else { continue }
             let failed = SharedRecipeImportEnvelope(
@@ -145,6 +172,7 @@ enum SharedRecipeImportInbox {
             let data = try Data(contentsOf: payloadURL)
             return try JSONDecoder.sharedRecipeImport.decode(SharedRecipeImportEnvelope.self, from: data)
         }
+        .filter { !$0.isTerminalLocalState }
         .sorted {
             let leftRank = queueSortRank(for: $0)
             let rightRank = queueSortRank(for: $1)
@@ -186,6 +214,8 @@ enum SharedRecipeImportInbox {
             return 0
         case "processing":
             return 1
+        case "queued":
+            return (envelope.attemptCount ?? 0) > 0 ? 2 : 1
         default:
             return 2
         }

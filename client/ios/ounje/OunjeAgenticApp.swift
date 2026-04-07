@@ -81,6 +81,15 @@ private final class AppToastCenter: ObservableObject {
         )
     }
 
+    func showUnsavedRecipe(title: String, thumbnailURLString: String? = nil) {
+        show(
+            title: "Removed from saved",
+            subtitle: title,
+            systemImage: "bookmark.slash.fill",
+            thumbnailURLString: thumbnailURLString
+        )
+    }
+
     func show(
         title: String,
         subtitle: String? = nil,
@@ -123,6 +132,7 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
     }
 
     func refresh() async {
+        try? SharedRecipeImportInbox.reconcileStaleProcessingEnvelopes()
         envelopes = (try? SharedRecipeImportInbox.readAll()) ?? []
     }
 
@@ -144,7 +154,8 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
 
         let matchedIDs = currentEnvelopes
             .filter { envelope in
-                completedItems.contains { $0.matches(envelope: envelope) }
+                guard !envelope.isPinnedTypedImport else { return false }
+                return completedItems.contains(where: { $0.matches(envelope: envelope) })
             }
             .map(\.id)
 
@@ -594,6 +605,8 @@ private struct AuthenticationView: View {
     }
 
     private func completeSignIn(with session: AuthSession, fallbackStatusMessage: String? = nil) async {
+        store.persistAuthSession(session)
+
         do {
             let remoteState = try await SupabaseProfileStateService.shared.fetchOrCreateProfileState(
                 userID: session.userID,
@@ -2335,6 +2348,10 @@ private final class SavedRecipesStore: ObservableObject {
             )
         } else {
             savedRecipes.removeAll { $0.id == recipe.id }
+            toastCenter.showUnsavedRecipe(
+                title: recipe.title,
+                thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString
+            )
         }
         persist()
 
@@ -2405,7 +2422,8 @@ private final class SavedRecipesStore: ObservableObject {
     }
 
     private func merge(local: [DiscoverRecipeCardData], remote: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
-        deduplicated(local + remote)
+        // Prefer the server's newest ordering first, then keep any local-only saves.
+        deduplicated(remote + local)
     }
 
     private func deduplicated(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
@@ -2430,6 +2448,8 @@ private struct MealPlannerShellView: View {
     @State private var focusedCartRecipeID: String?
     @State private var requestedCookbookCycleID: String?
     @State private var isProcessingSharedImports = false
+    @State private var syncedCompletedImportIDs = Set<String>()
+    @State private var prewarmedCompletedImportIDs = Set<String>()
 
     private enum SharedImportProcessingScope {
         case queued
@@ -2474,6 +2494,8 @@ private struct MealPlannerShellView: View {
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .task(id: store.authSession?.userID ?? "signed-out") {
+            syncedCompletedImportIDs.removeAll()
+            prewarmedCompletedImportIDs.removeAll()
             await savedStore.bootstrap(authSession: store.authSession)
         }
         .task(id: "\(store.authSession?.userID ?? "signed-out")::\(store.isOnboarded)::\(store.profile?.trimmedPreferredName ?? "no-profile")") {
@@ -2489,6 +2511,25 @@ private struct MealPlannerShellView: View {
             await recipeReviewQueue.refresh(userID: store.authSession?.userID)
             await sharedImportInbox.reconcileCompletedImports(recipeReviewQueue.completedItems)
         }
+        .task(id: "shared-import-poll::\(store.authSession?.userID ?? "signed-out")::\(scenePhase == .active ? "active" : "inactive")") {
+            guard scenePhase == .active else { return }
+
+            while !Task.isCancelled {
+                await refreshSharedImportState()
+
+                let hasLiveImport = sharedImportInbox.envelopes.contains { envelope in
+                    switch envelope.normalizedProcessingState {
+                    case "queued", "processing", "fetching", "parsing", "normalized":
+                        return true
+                    default:
+                        return false
+                    }
+                }
+
+                let sleepSeconds: Double = hasLiveImport ? 3 : 12
+                try? await Task.sleep(nanoseconds: UInt64(sleepSeconds * 1_000_000_000))
+            }
+        }
         .onOpenURL { url in
             guard SharedRecipeImportInbox.isShareImportURL(url) else { return }
             Task {
@@ -2499,6 +2540,7 @@ private struct MealPlannerShellView: View {
             guard phase == .active else { return }
             Task {
                 await processPendingSharedImports(scope: .queued)
+                await refreshSharedImportState()
             }
         }
         .onChange(of: selectedTab) { newTab in
@@ -2559,6 +2601,12 @@ private struct MealPlannerShellView: View {
                             await refreshSharedImportState()
                         }
                     },
+                    onDeleteFailedSharedImport: { envelopeID in
+                        Task {
+                            try? SharedRecipeImportInbox.delete(envelopeID: envelopeID)
+                            await refreshSharedImportState()
+                        }
+                    },
                     onSelectRecipe: { recipe in
                         presentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
                     }
@@ -2605,6 +2653,33 @@ private struct MealPlannerShellView: View {
         await sharedImportInbox.refresh()
         await recipeReviewQueue.refresh(userID: store.authSession?.userID)
         await sharedImportInbox.reconcileCompletedImports(recipeReviewQueue.completedItems)
+        await syncCompletedImportsIntoSavedStore()
+        await prewarmCompletedImportDetails()
+    }
+
+    @MainActor
+    private func syncCompletedImportsIntoSavedStore() async {
+        for item in recipeReviewQueue.completedItems.reversed() {
+            guard syncedCompletedImportIDs.insert(item.id).inserted else { continue }
+            guard let savedRecipe = item.savedRecipeCard else { continue }
+            savedStore.saveImportedRecipe(savedRecipe, showToast: false)
+        }
+    }
+
+    private func prewarmCompletedImportDetails() async {
+        let recipeIDs = recipeReviewQueue.completedItems.compactMap { item -> String? in
+            guard let id = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
+                return nil
+            }
+            return id
+        }
+
+        for recipeID in recipeIDs.reversed() {
+            guard prewarmedCompletedImportIDs.insert(recipeID).inserted else { continue }
+            Task(priority: .utility) {
+                _ = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
+            }
+        }
     }
 
     @MainActor
@@ -2688,6 +2763,15 @@ private struct MealPlannerShellView: View {
                     )
                     try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
                 } else if response.job.status == "queued" || response.recipe == nil {
+                    let backendProcessingState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    let normalizedProcessingState: String = {
+                        switch backendProcessingState {
+                        case "queued", "processing", "fetching", "parsing", "normalized", "saved":
+                            return backendProcessingState
+                        default:
+                            return "queued"
+                        }
+                    }()
                     let queuedEnvelope = SharedRecipeImportEnvelope(
                         id: envelope.id,
                         createdAt: envelope.createdAt,
@@ -2696,7 +2780,7 @@ private struct MealPlannerShellView: View {
                         sourceURLString: envelope.sourceURLString,
                         sourceApp: envelope.sourceApp,
                         attachments: envelope.attachments,
-                        processingState: "processing",
+                        processingState: normalizedProcessingState,
                         attemptCount: processingEnvelope.attemptCount,
                         lastAttemptAt: Date(),
                         lastError: nil,
@@ -3224,6 +3308,7 @@ private struct CookbookTabView: View {
     @ObservedObject var toastCenter: AppToastCenter
     let onRefreshSharedImports: () -> Void
     let onRetryFailedSharedImports: () -> Void
+    let onDeleteFailedSharedImport: (String) -> Void
     let onSelectRecipe: (DiscoverRecipeCardData) -> Void
 
     @EnvironmentObject private var savedStore: SavedRecipesStore
@@ -3441,8 +3526,7 @@ private struct CookbookTabView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .recipeImportReviewQueueNeedsRefresh)) { _ in
             Task {
-                await recipeReviewQueue.refresh(userID: store.authSession?.userID)
-                await sharedImportInbox.reconcileCompletedImports(recipeReviewQueue.completedItems)
+                onRefreshSharedImports()
             }
         }
         .sheet(isPresented: $isComposerPresented) {
@@ -3461,6 +3545,10 @@ private struct CookbookTabView: View {
                 onRetryFailed: {
                     onRetryFailedSharedImports()
                     isImportQueuePresented = false
+                },
+                onDeleteFailed: { envelopeID in
+                    try? SharedRecipeImportInbox.delete(envelopeID: envelopeID)
+                    onRefreshSharedImports()
                 }
             )
             .presentationDetents([.medium, .large])
@@ -3510,17 +3598,6 @@ private struct CookbookTabView: View {
     @ViewBuilder
     private var savedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if recipeReviewQueue.badgeCount > 0 {
-                RecipeImportReviewQueueBanner(
-                    draftCount: recipeReviewQueue.draftCount,
-                    needsReviewCount: recipeReviewQueue.needsReviewCount,
-                    totalCount: recipeReviewQueue.badgeCount,
-                    onOpen: {
-                        isRecipeReviewQueuePresented = true
-                    }
-                )
-            }
-
             if showsSavedSearch {
                 if filters.count > 1 {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -3623,11 +3700,12 @@ private struct SharedRecipeImportQueueSheet: View {
     @ObservedObject var historyStore: RecipeImportReviewQueueStore
     let onRefreshAll: () -> Void
     let onRetryFailed: () -> Void
+    let onDeleteFailed: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SharedRecipeImportQueueTab = .queued
 
     private var queuedItems: [SharedRecipeImportEnvelope] {
-        items.filter { !$0.isRetryNeeded }
+        items.filter(\.isLiveQueueState)
     }
 
     private var failedItems: [SharedRecipeImportEnvelope] {
@@ -3717,7 +3795,10 @@ private struct SharedRecipeImportQueueSheet: View {
                 } label: {
                     HStack(spacing: 8) {
                         Text(tab.rawValue)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .fixedSize(horizontal: true, vertical: false)
                         if tab == .queued, queuedTabCount > 0 {
                             countBadge(queuedTabCount, isSelected: selectedTab == tab)
                         } else if tab == .failed, failedTabCount > 0 {
@@ -3773,11 +3854,11 @@ private struct SharedRecipeImportQueueSheet: View {
                     detail: "Fresh shares will show up here while Ounje is pulling and parsing them."
                 )
             } else {
-                VStack(spacing: 12) {
-                    ForEach(queuedItems) { item in
-                        SharedRecipeImportQueueRow(item: item)
+                    VStack(spacing: 12) {
+                        ForEach(queuedItems) { item in
+                            SharedRecipeImportQueueRow(item: item, onDelete: nil)
+                        }
                     }
-                }
             }
         } else if selectedTab == .failed {
             if failedItems.isEmpty {
@@ -3785,13 +3866,18 @@ private struct SharedRecipeImportQueueSheet: View {
                     title: "No failed imports",
                     detail: "If a share needs another pass, it will land here with the retry reason."
                 )
-            } else {
-                VStack(spacing: 12) {
-                    ForEach(failedItems) { item in
-                        SharedRecipeImportQueueRow(item: item)
+                } else {
+                    VStack(spacing: 12) {
+                        ForEach(failedItems) { item in
+                            SharedRecipeImportQueueRow(
+                                item: item,
+                                onDelete: {
+                                    onDeleteFailed(item.id)
+                                }
+                            )
+                        }
                     }
                 }
-            }
         } else {
             if historyStore.completedItems.isEmpty {
                 emptyState(
@@ -4020,6 +4106,9 @@ private struct RecipeImportReviewRow: View {
                 let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
                 return normalized.isEmpty ? nil : normalized.capitalized
             }
+        if parts.isEmpty, let sourceKindLabel = item.sourceKindLabel {
+            return sourceKindLabel
+        }
         return parts.isEmpty ? "Imported draft" : parts.joined(separator: " • ")
     }
 
@@ -4056,6 +4145,18 @@ private struct RecipeImportReviewRow: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(OunjePalette.secondaryText)
                         .lineLimit(1)
+
+                    if let sourceKindLabel = item.sourceKindLabel {
+                        Text(sourceKindLabel)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(OunjePalette.background)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(OunjePalette.accent.opacity(0.9))
+                            )
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -4093,6 +4194,7 @@ private struct RecipeImportReviewRow: View {
 
 private struct SharedRecipeImportQueueRow: View {
     let item: SharedRecipeImportEnvelope
+    let onDelete: (() -> Void)?
 
     private var titleText: String {
         let source = item.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4136,6 +4238,21 @@ private struct SharedRecipeImportQueueRow: View {
                 }
 
                 Spacer(minLength: 0)
+
+                if item.isRetryNeeded, let onDelete {
+                    Button(role: .destructive, action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.red)
+                            .frame(width: 30, height: 30)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(Color.red.opacity(0.12))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Delete failed import")
+                }
             }
 
             if let error = item.lastError, !error.isEmpty {
@@ -4230,6 +4347,18 @@ private struct RecipeImportCompletedRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(OunjePalette.secondaryText)
                     .lineLimit(1)
+
+                if let sourceKindLabel = item.sourceKindLabel {
+                    Text(sourceKindLabel)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(OunjePalette.background)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(OunjePalette.accent.opacity(0.9))
+                        )
+                }
 
                 if let sourceURL = item.sourceURL, !sourceURL.isEmpty {
                     Text(sourceURL)
@@ -9970,6 +10099,7 @@ private struct BottomNavigationDock: View {
 private struct DiscoverComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var savedStore: SavedRecipesStore
+    @EnvironmentObject private var sharedImportInbox: SharedRecipeImportInboxStore
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var toastCenter: AppToastCenter
     let context: CookbookComposerContext
@@ -10303,9 +10433,27 @@ private struct DiscoverComposerSheet: View {
         isSubmitting = true
         errorMessage = nil
         attachmentMessage = nil
+        let isTypedPromptImport = detectedLinks.isEmpty && !trimmedDraftText.isEmpty
 
         Task {
             do {
+                let localEnvelope = SharedRecipeImportEnvelope(
+                    id: UUID().uuidString,
+                    createdAt: Date(),
+                    targetState: context == .prepped ? "prepped" : "saved",
+                    sourceText: trimmedDraftText,
+                    sourceURLString: detectedLinks.first,
+                    sourceApp: "Ounje",
+                    attachments: [],
+                    processingState: "queued",
+                    attemptCount: 1,
+                    lastAttemptAt: Date(),
+                    lastError: nil,
+                    updatedAt: Date()
+                )
+                try? SharedRecipeImportInbox.write(localEnvelope)
+                await sharedImportInbox.refresh()
+
                 let response = try await RecipeImportAPIService.shared.importRecipe(
                     userID: store.authSession?.userID,
                     accessToken: store.authSession?.accessToken,
@@ -10330,7 +10478,7 @@ private struct DiscoverComposerSheet: View {
                 await MainActor.run {
                     isSubmitting = false
 
-                    if response.job.status == "queued" || response.recipe == nil {
+                    if (context == .saved && isTypedPromptImport) || response.job.status == "queued" || response.recipe == nil {
                         toastCenter.show(
                             title: "Import queued",
                             subtitle: "Ounje is pulling the recipe in now.",
@@ -11447,8 +11595,7 @@ private struct RecipeDetailExperienceView: View {
         guard let text = descriptionText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             return nil
         }
-        let firstSentence = text.split(whereSeparator: { ".!?".contains($0) }).first.map(String.init) ?? text
-        let collapsed = firstSentence.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let collapsed = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !collapsed.isEmpty else { return nil }
         return collapsed
@@ -11561,7 +11708,7 @@ private struct RecipeDetailExperienceView: View {
             let heroTopCrop = heroSize * 0.16
             let heroTopBleed: CGFloat = 18
             let heroHeight = max(160, heroSize - heroTopCrop - 8)
-            let ingredientColumns = Array(repeating: GridItem(.flexible(), spacing: 18, alignment: .top), count: 4)
+            let ingredientColumns = Self.ingredientGridColumns(for: pageWidth)
             ScrollViewReader { proxy in
                 ZStack(alignment: .bottom) {
                     detailBackground
@@ -11657,9 +11804,9 @@ private struct RecipeDetailExperienceView: View {
 
                             if let summaryLine {
                                 Text(summaryLine)
-                                    .font(.system(size: 15, weight: .medium))
+                                    .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(OunjePalette.secondaryText)
-                                    .lineLimit(2)
+                                    .lineLimit(nil)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
 
@@ -12110,6 +12257,23 @@ private struct RecipeDetailExperienceView: View {
         }
 
         return .american
+    }
+
+    private static func ingredientGridColumns(for pageWidth: CGFloat) -> [GridItem] {
+        let count: Int
+        let spacing: CGFloat
+        if pageWidth < 500 {
+            count = 2
+            spacing = 14
+        } else if pageWidth < 760 {
+            count = 3
+            spacing = 16
+        } else {
+            count = 4
+            spacing = 18
+        }
+
+        return Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .top), count: count)
     }
 
     private func ingredientTileTint(for index: Int) -> Color {
@@ -13227,7 +13391,10 @@ private enum IngredientMonogramFormatter {
         let parts = name
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .map(String.init)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+            .filter { $0.rangeOfCharacter(from: .letters) != nil }
+            .filter { $0.count > 1 }
 
         if parts.count >= 2 {
             let initials = parts.prefix(2).compactMap { $0.first.map { String($0).uppercased() } }.joined()
@@ -17378,12 +17545,26 @@ private final class SupabaseIngredientsCatalogService {
         }
 
         if !recordsNeedingFallbackArt.isEmpty {
-            let fallbackArtByIngredientID = try await fetchFallbackRecipeArt(
-                ingredientIDs: recordsNeedingFallbackArt.map(\.id)
+            let fallbackArtRows = try await SupabaseRecipeIngredientArtService.shared.fetchArtRows(
+                ingredientIDs: recordsNeedingFallbackArt.map(\.id),
+                displayNames: recordsNeedingFallbackArt.compactMap { $0.displayName ?? $0.normalizedName }
             )
+            let fallbackArtByIngredientID: [String: String] = fallbackArtRows.reduce(into: [:]) { partial, row in
+                guard let imageURLString = row.imageURL?.absoluteString, !imageURLString.isEmpty else { return }
+                partial[row.ingredientID] = imageURLString
+            }
+            let fallbackArtByName: [String: String] = fallbackArtRows.reduce(into: [:]) { partial, row in
+                guard let imageURLString = row.imageURL?.absoluteString, !imageURLString.isEmpty else { return }
+                let key = SupabaseIngredientsCatalogService.normalizedName(row.displayName)
+                guard !key.isEmpty, partial[key] == nil else { return }
+                partial[key] = imageURLString
+            }
 
             for record in recordsNeedingFallbackArt {
-                guard let fallbackImageURLString = fallbackArtByIngredientID[record.id] else { continue }
+                let nameKey = SupabaseIngredientsCatalogService.normalizedName(record.matchKey)
+                let fallbackImageURLString = fallbackArtByIngredientID[record.id]
+                    ?? (nameKey.isEmpty ? nil : fallbackArtByName[nameKey])
+                guard let fallbackImageURLString else { continue }
                 merged[record.id] = record.replacingDefaultImageURLString(fallbackImageURLString)
             }
         }
@@ -18043,6 +18224,7 @@ private enum DiscoverPreset: CaseIterable {
     case beans
     case potatoes
     case salmon
+    case nigerian
     case beginner
     case under500Cal
 
@@ -18065,6 +18247,7 @@ private enum DiscoverPreset: CaseIterable {
         case .beans: return "Beans"
         case .potatoes: return "Potatoes"
         case .salmon: return "Salmon"
+        case .nigerian: return "Nigerian"
         case .beginner: return "Beginner"
         case .under500Cal: return "Under 500 Cal"
         }
@@ -18107,6 +18290,8 @@ private enum DiscoverPreset: CaseIterable {
             return "steak"
         case "fish":
             return "fish"
+        case "nigerian", "westafrican", "west african":
+            return "nigerian"
         case "salad":
             return "salad"
         case "sandwich", "sandwiches":
@@ -19478,6 +19663,7 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
     let authorHandle: String?
     let category: String?
     let recipeType: String?
+    let discoverBrackets: [String]?
     let cookTimeText: String?
     let cookTimeMinutes: Int?
     let publishedDate: String?
@@ -19494,6 +19680,7 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
         case authorHandle = "author_handle"
         case category
         case recipeType = "recipe_type"
+        case discoverBrackets = "discover_brackets"
         case cookTimeText = "cook_time_text"
         case cookTimeMinutes = "cook_time_minutes"
         case publishedDate = "published_date"
@@ -19532,6 +19719,9 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
     }
 
     var filterLabel: String {
+        if let discoverBracketLabel = discoverBracketLabel {
+            return discoverBracketLabel
+        }
         if let normalizedRecipeType = Self.normalizedFilterLabel(from: recipeType) {
             return normalizedRecipeType
         }
@@ -19543,6 +19733,11 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
             }
         }
         return "Recipes"
+    }
+
+    private var discoverBracketLabel: String? {
+        guard let discoverBrackets else { return nil }
+        return discoverBrackets.compactMap { Self.normalizedFilterLabel(from: $0) }.first
     }
 
     var filterChipLabel: String? {
@@ -19565,6 +19760,8 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
 
         let lowered = trimmed.lowercased()
         switch lowered {
+        case "concept_prompt", "direct_input", "text", "media_image", "media_video", "tiktok", "instagram", "youtube", "ounje":
+            return nil
         case "breakfast":
             return "Breakfast"
         case "lunch":
@@ -19577,6 +19774,8 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
             return "Vegetarian"
         case "vegan":
             return "Vegan"
+        case "nigerian", "westafrican", "west african":
+            return "Nigerian"
         case "other", "recipes":
             return "Other"
         default:
@@ -19640,6 +19839,8 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
             return "🍽️"
         case "dessert":
             return "🍰"
+        case "nigerian":
+            return "🍛"
         default:
             return "🍴"
         }
@@ -19655,6 +19856,8 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
             return Color(hex: "52C67A")
         case "dessert":
             return Color(hex: "FF8AAE")
+        case "nigerian":
+            return Color(hex: "F1A24A")
         default:
             return OunjePalette.accent
         }
@@ -19668,6 +19871,7 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
         authorHandle: String?,
         category: String?,
         recipeType: String?,
+        discoverBrackets: [String]? = nil,
         cookTimeText: String?,
         cookTimeMinutes: Int? = nil,
         publishedDate: String?,
@@ -19683,6 +19887,7 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
         self.authorHandle = authorHandle
         self.category = category
         self.recipeType = recipeType
+        self.discoverBrackets = discoverBrackets
         self.cookTimeText = cookTimeText
         self.cookTimeMinutes = cookTimeMinutes
         self.publishedDate = publishedDate
@@ -19754,8 +19959,7 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
     }
 
     private var discoverFilterTokens: [String] {
-        let rawValues = [category, recipeType, filterLabel]
-            .compactMap { $0 }
+        let rawValues = [category, recipeType, filterLabel].compactMap { $0 } + (discoverBrackets ?? [])
 
         return rawValues.compactMap { value in
             let normalized = DiscoverPreset.normalizedKey(for: value)
@@ -19980,7 +20184,8 @@ private final class SupabaseDiscoverRecipeService {
             "discover_card_image_url",
             "hero_image_url",
             "recipe_url",
-            "source"
+            "source",
+            "discover_brackets"
         ].joined(separator: ",")
 
         guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(select)&order=updated_at.desc.nullslast,published_date.desc.nullslast&limit=\(limit)") else {
@@ -20419,14 +20624,33 @@ private struct RecipeImportReviewItem: Identifiable, Decodable {
     }
 }
 
+private extension RecipeImportReviewItem {
+    var sourceKindLabel: String? {
+        switch sourceProvenance?.sourceType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "" {
+        case "recipe_search":
+            return "Recipe search"
+        case "concept_prompt", "direct_input", "text":
+            return "Typed import"
+        case "media_image", "media_video":
+            return "Media import"
+        case "tiktok", "instagram", "youtube":
+            return "Shared import"
+        default:
+            return nil
+        }
+    }
+}
+
 private struct RecipeImportCompletedItem: Identifiable, Decodable {
     let id: String
     let recipeID: String?
     let title: String
     let status: String
     let reviewState: String
+    let sourceType: String?
     let sourceURL: String?
     let canonicalURL: String?
+    let sourceText: String?
     let imageURL: String?
     let source: String?
     let cookTimeText: String?
@@ -20439,8 +20663,10 @@ private struct RecipeImportCompletedItem: Identifiable, Decodable {
         case title
         case status
         case reviewState = "review_state"
+        case sourceType = "source_type"
         case sourceURL = "source_url"
         case canonicalURL = "canonical_url"
+        case sourceText = "source_text"
         case imageURL = "image_url"
         case source
         case cookTimeText = "cook_time_text"
@@ -20477,10 +20703,26 @@ private extension SharedRecipeImportEnvelope {
 }
 
 private extension RecipeImportCompletedItem {
+    var sourceKindLabel: String? {
+        switch sourceType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "" {
+        case "recipe_search":
+            return "Recipe search"
+        case "concept_prompt", "direct_input", "text":
+            return "Typed import"
+        case "media_image", "media_video":
+            return "Media import"
+        case "tiktok", "instagram", "youtube":
+            return "Shared import"
+        default:
+            return nil
+        }
+    }
+
     var reconciliationKeys: Set<String> {
         [
             SharedRecipeImportEnvelope.normalizedImportKey(from: sourceURL),
-            SharedRecipeImportEnvelope.normalizedImportKey(from: canonicalURL)
+            SharedRecipeImportEnvelope.normalizedImportKey(from: canonicalURL),
+            SharedRecipeImportEnvelope.normalizedImportKey(from: sourceText)
         ]
         .compactMap { $0 }
         .reduce(into: Set<String>()) { partialResult, key in
@@ -20490,6 +20732,33 @@ private extension RecipeImportCompletedItem {
 
     func matches(envelope: SharedRecipeImportEnvelope) -> Bool {
         !reconciliationKeys.isDisjoint(with: envelope.reconciliationKeys)
+    }
+
+    var savedRecipeCard: DiscoverRecipeCardData? {
+        let normalizedRecipeID = recipeID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let normalizedRecipeID, !normalizedRecipeID.isEmpty else { return nil }
+
+        let normalizedSource = source?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedImageURL = imageURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRecipeURL = (canonicalURL ?? sourceURL)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displaySource = (normalizedSource?.isEmpty == false ? normalizedSource : nil) ?? "Imported recipe"
+
+        return DiscoverRecipeCardData(
+            id: normalizedRecipeID,
+            title: title,
+            description: displaySource == "Imported recipe" ? "Imported recipe." : "Imported from \(displaySource).",
+            authorName: nil,
+            authorHandle: nil,
+            category: displaySource,
+            recipeType: displaySource,
+            cookTimeText: cookTimeText,
+            cookTimeMinutes: nil,
+            publishedDate: completedAt ?? createdAt,
+            imageURLString: normalizedImageURL?.isEmpty == true ? nil : normalizedImageURL,
+            heroImageURLString: normalizedImageURL?.isEmpty == true ? nil : normalizedImageURL,
+            recipeURLString: normalizedRecipeURL?.isEmpty == true ? nil : normalizedRecipeURL,
+            source: displaySource
+        )
     }
 }
 
@@ -20743,12 +21012,11 @@ enum OunjeDevelopmentServer {
         var baseURLs: [String] = []
         if let explicitLocalBaseURL = explicitLocalBaseURL {
             baseURLs.append(explicitLocalBaseURL)
-            return deduplicated(baseURLs)
         }
+        baseURLs.append(productionBaseURL)
         #if targetEnvironment(simulator)
         baseURLs.append("http://127.0.0.1:8080")
         #endif
-        baseURLs.append(productionBaseURL)
 
         return deduplicated(baseURLs)
     }

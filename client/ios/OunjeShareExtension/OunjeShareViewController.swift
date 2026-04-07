@@ -1,3 +1,4 @@
+import AVFoundation
 import UIKit
 import UniformTypeIdentifiers
 
@@ -150,6 +151,40 @@ final class OunjeShareViewController: UIViewController {
             do {
                 let envelope = try await self.captureEnvelope(targetState: targetState)
                 try SharedRecipeImportInbox.write(envelope)
+
+                if let authSession = self.sharedAuthSession() {
+                    let response = try await self.submitEnvelopeToBackend(envelope, authSession: authSession)
+                    let backendState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+                    if Self.terminalBackendStates.contains(backendState) {
+                        try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
+                    } else {
+                        let reconciled = SharedRecipeImportEnvelope(
+                            id: envelope.id,
+                            createdAt: envelope.createdAt,
+                            targetState: envelope.targetState,
+                            sourceText: envelope.sourceText,
+                            sourceURLString: response.job.canonicalURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                                ? response.job.canonicalURL
+                                : (response.job.sourceURL ?? envelope.sourceURLString),
+                            sourceApp: envelope.sourceApp,
+                            attachments: envelope.attachments,
+                            processingState: backendState.isEmpty ? "queued" : backendState,
+                            attemptCount: max(envelope.attemptCount ?? 0, 1),
+                            lastAttemptAt: Date(),
+                            lastError: nil,
+                            updatedAt: Date()
+                        )
+                        try? SharedRecipeImportInbox.update(reconciled)
+                    }
+
+                    await MainActor.run {
+                        self.toggleBusy(false)
+                        self.extensionContext?.completeRequest(returningItems: nil)
+                    }
+                    return
+                }
+
                 await MainActor.run {
                     self.openContainingApp(for: envelope.id)
                     self.extensionContext?.completeRequest(returningItems: nil)
@@ -309,6 +344,120 @@ final class OunjeShareViewController: UIViewController {
         }
     }
 
+    private func sharedAuthSession() -> SharedAuthSession? {
+        guard let defaults = UserDefaults(suiteName: SharedRecipeImportConstants.appGroupID) else {
+            return nil
+        }
+        defaults.synchronize()
+
+        let decoder = JSONDecoder()
+        if let data = defaults.data(forKey: SharedAuthSession.compactStorageKey),
+           let session = try? decoder.decode(SharedAuthSession.self, from: data) {
+            return session
+        }
+
+        if let data = defaults.data(forKey: SharedAuthSession.storageKey),
+           let session = try? decoder.decode(SharedAuthSession.self, from: data) {
+            return session
+        }
+
+        return nil
+    }
+
+    private func submitEnvelopeToBackend(
+        _ envelope: SharedRecipeImportEnvelope,
+        authSession: SharedAuthSession
+    ) async throws -> RecipeImportResponse {
+        let attachments = try await makeRecipeImportAttachmentPayloads(from: envelope.attachments)
+        let sourceText = envelope.resolvedSourceText
+
+        var lastError: Error?
+        for baseURL in ImportSubmissionServer.candidateBaseURLs {
+            do {
+                return try await submitEnvelopeToBackend(
+                    baseURL: baseURL,
+                    envelope: envelope,
+                    authSession: authSession,
+                    sourceText: sourceText,
+                    attachments: attachments
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? URLError(.badServerResponse)
+    }
+
+    private func submitEnvelopeToBackend(
+        baseURL: String,
+        envelope: SharedRecipeImportEnvelope,
+        authSession: SharedAuthSession,
+        sourceText: String,
+        attachments: [RecipeImportAttachmentPayload]
+    ) async throws -> RecipeImportResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            RecipeImportRequestPayload(
+                userID: authSession.userID,
+                sourceURL: envelope.sourceURLString,
+                sourceText: sourceText,
+                accessToken: authSession.accessToken,
+                targetState: envelope.targetState,
+                attachments: attachments
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+    }
+
+    private func makeRecipeImportAttachmentPayloads(from attachments: [SharedRecipeImportAttachment]) async throws -> [RecipeImportAttachmentPayload] {
+        var payloads: [RecipeImportAttachmentPayload] = []
+
+        for attachment in attachments {
+            let fileURL = try SharedRecipeImportInbox.absoluteURL(forRelativePath: attachment.relativePath)
+            switch attachment.kind.lowercased() {
+            case "image":
+                let data = try Data(contentsOf: fileURL)
+                payloads.append(
+                    try makeRecipeImportImageAttachment(
+                        from: data,
+                        mimeType: attachment.mimeType,
+                        fileName: attachment.fileName
+                    )
+                )
+            case "video":
+                payloads.append(
+                    try await makeRecipeImportVideoAttachment(
+                        from: fileURL,
+                        mimeType: attachment.mimeType,
+                        fileName: attachment.fileName
+                    )
+                )
+            default:
+                continue
+            }
+        }
+
+        return payloads
+    }
+
     private func copyMediaAttachment(
         from provider: NSItemProvider,
         contentType: UTType,
@@ -365,6 +514,192 @@ final class OunjeShareViewController: UIViewController {
                 break
             }
             responder = current.next
+        }
+    }
+
+    private static let terminalBackendStates: Set<String> = ["saved", "needs_review", "draft"]
+}
+
+private struct SharedAuthSession: Codable {
+    static let storageKey = "agentic-auth-session-v1"
+    static let compactStorageKey = "agentic-share-auth-session-v1"
+
+    let userID: String
+    let accessToken: String?
+}
+
+private struct RecipeImportAttachmentPayload: Encodable {
+    let kind: String
+    let sourceURL: String?
+    let dataURL: String?
+    let mimeType: String?
+    let fileName: String?
+    let previewFrameURLs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case sourceURL = "source_url"
+        case dataURL = "data_url"
+        case mimeType = "mime_type"
+        case fileName = "file_name"
+        case previewFrameURLs = "preview_frame_urls"
+    }
+}
+
+private struct RecipeImportRequestPayload: Encodable {
+    let userID: String?
+    let sourceURL: String?
+    let sourceText: String
+    let accessToken: String?
+    let targetState: String
+    let attachments: [RecipeImportAttachmentPayload]
+    let processInline: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case sourceURL = "source_url"
+        case sourceText = "source_text"
+        case accessToken = "access_token"
+        case targetState = "target_state"
+        case attachments
+        case processInline = "process_inline"
+    }
+}
+
+private struct RecipeImportResponse: Decodable {
+    let job: RecipeImportJobPayload
+}
+
+private struct RecipeImportJobPayload: Decodable {
+    let status: String
+    let sourceURL: String?
+    let canonicalURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case sourceURL = "source_url"
+        case canonicalURL = "canonical_url"
+    }
+}
+
+private enum ImportSubmissionServer {
+    static let productionBaseURL = "https://api.ounje.app"
+
+    static var candidateBaseURLs: [String] {
+        var baseURLs: [String] = []
+        if let explicitLocalBaseURL = explicitLocalBaseURL {
+            baseURLs.append(explicitLocalBaseURL)
+        }
+        baseURLs.append(productionBaseURL)
+        #if targetEnvironment(simulator)
+        baseURLs.append("http://127.0.0.1:8080")
+        #endif
+        return deduplicated(baseURLs)
+    }
+
+    private static var explicitLocalBaseURL: String? {
+        guard
+            let host = Bundle.main.object(forInfoDictionaryKey: "OunjeDevServerHost") as? String,
+            !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+
+        let configuredPort = (Bundle.main.object(forInfoDictionaryKey: "OunjeDevServerPort") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = (configuredPort?.isEmpty == false ? configuredPort! : "8080")
+        return "http://\(host):\(port)"
+    }
+
+    private static func deduplicated(_ baseURLs: [String]) -> [String] {
+        var uniqueBaseURLs: [String] = []
+        for baseURL in baseURLs where !uniqueBaseURLs.contains(baseURL) {
+            uniqueBaseURLs.append(baseURL)
+        }
+        return uniqueBaseURLs
+    }
+}
+
+private func makeRecipeImportImageAttachment(
+    from data: Data,
+    mimeType: String?,
+    fileName: String
+) throws -> RecipeImportAttachmentPayload {
+    guard let image = UIImage(data: data) else {
+        throw NSError(domain: "OunjeShareExtension", code: 1)
+    }
+
+    let prepared = image.ounjeResized(maxDimension: 1600)
+    let jpegData = prepared.jpegData(compressionQuality: 0.82) ?? data
+    return RecipeImportAttachmentPayload(
+        kind: "image",
+        sourceURL: nil,
+        dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
+        mimeType: mimeType ?? "image/jpeg",
+        fileName: fileName,
+        previewFrameURLs: []
+    )
+}
+
+private func makeRecipeImportVideoAttachment(
+    from fileURL: URL,
+    mimeType: String?,
+    fileName: String
+) async throws -> RecipeImportAttachmentPayload {
+    let byteLimit = 25 * 1024 * 1024
+    let data = try Data(contentsOf: fileURL)
+    guard data.count <= byteLimit else {
+        throw NSError(domain: "OunjeShareExtension", code: 2)
+    }
+
+    let asset = AVAsset(url: fileURL)
+    let duration = try await asset.load(.duration)
+    let durationSeconds = max(CMTimeGetSeconds(duration), 0.6)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: 1200, height: 1200)
+
+    let fractions: [Double] = durationSeconds < 1.2 ? [0.3, 0.7] : [0.18, 0.5, 0.82]
+    var frameDataURLs: [String] = []
+    for fraction in fractions {
+        let second = max(0.05, min(durationSeconds * fraction, max(durationSeconds - 0.05, 0.05)))
+        let time = CMTime(seconds: second, preferredTimescale: 600)
+        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
+            continue
+        }
+        let image = UIImage(cgImage: cgImage).ounjeResized(maxDimension: 1200)
+        guard let frameData = image.jpegData(compressionQuality: 0.78) else {
+            continue
+        }
+        frameDataURLs.append("data:image/jpeg;base64,\(frameData.base64EncodedString())")
+    }
+
+    return RecipeImportAttachmentPayload(
+        kind: "video",
+        sourceURL: nil,
+        dataURL: nil,
+        mimeType: mimeType ?? "video/quicktime",
+        fileName: fileName,
+        previewFrameURLs: frameDataURLs
+    )
+}
+
+private extension UIImage {
+    func ounjeResized(maxDimension: CGFloat) -> UIImage {
+        let largestDimension = max(size.width, size.height)
+        guard largestDimension > maxDimension, largestDimension > 0 else {
+            return self
+        }
+
+        let scaleRatio = maxDimension / largestDimension
+        let targetSize = CGSize(
+            width: floor(size.width * scaleRatio),
+            height: floor(size.height * scaleRatio)
+        )
+
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
         }
     }
 }

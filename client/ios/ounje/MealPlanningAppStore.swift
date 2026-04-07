@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 @MainActor
 final class MealPlanningAppStore: ObservableObject {
@@ -22,9 +23,15 @@ final class MealPlanningAppStore: ObservableObject {
     private let historyKeyPrefix = "agentic-meal-history-v2"
     private let legacyHistoryKey = "agentic-meal-history-v1"
     private let onboardingStepKey = "agentic-onboarding-step-v1"
+    private let sharedAuthSessionKey = "agentic-share-auth-session-v1"
+    private let authKeychainService = "net.ounje.auth"
+    private let authKeychainAccount = "agentic-auth-session-v1"
     static let googleDevUserIDKey = "agentic-google-dev-user-id-v1"
     static let googleDevEmailKey = "agentic-google-dev-email-v1"
     private var activeHistoryUserID: String?
+    private var sharedDefaults: UserDefaults? {
+        UserDefaults(suiteName: SharedRecipeImportConstants.appGroupID)
+    }
 
     init() {
         loadState()
@@ -64,9 +71,13 @@ final class MealPlanningAppStore: ObservableObject {
         isOnboarded = onboarded
         lastOnboardingStep = remoteStep
         hasResolvedInitialState = true
-        saveAuthSession()
+        saveAuthSession(session)
         saveOnboardingState()
         saveOnboardingStep()
+    }
+
+    func persistAuthSession(_ session: AuthSession) {
+        saveAuthSession(session)
     }
 
     func completeOnboarding(with profile: UserProfile, lastStep: Int) {
@@ -150,7 +161,9 @@ final class MealPlanningAppStore: ObservableObject {
             profile = recoveredProfile ?? (resolvedOnboarded ? nil : .starter)
             lastOnboardingStep = max(0, recoveredStep)
 
-            saveAuthSession()
+            if let authSession {
+                saveAuthSession(authSession)
+            }
             saveOnboardingState()
             saveOnboardingStep()
             if profile != nil {
@@ -378,6 +391,10 @@ final class MealPlanningAppStore: ObservableObject {
         isGenerating = false
         prepRecipeOverrides = []
         UserDefaults.standard.removeObject(forKey: authSessionKey)
+        sharedDefaults?.removeObject(forKey: authSessionKey)
+        sharedDefaults?.removeObject(forKey: sharedAuthSessionKey)
+        sharedDefaults?.synchronize()
+        deleteAuthSessionFromKeychain()
         UserDefaults.standard.removeObject(forKey: onboardedKey)
         UserDefaults.standard.removeObject(forKey: profileKey)
         UserDefaults.standard.removeObject(forKey: onboardingStepKey)
@@ -396,7 +413,7 @@ final class MealPlanningAppStore: ObservableObject {
     private func loadState() {
         let decoder = JSONDecoder()
 
-        if let authData = UserDefaults.standard.data(forKey: authSessionKey),
+        if let authData = loadAuthSessionData(),
            let decodedAuth = try? decoder.decode(AuthSession.self, from: authData) {
             authSession = decodedAuth
         }
@@ -586,11 +603,21 @@ final class MealPlanningAppStore: ObservableObject {
         UserDefaults.standard.set(data, forKey: profileKey)
     }
 
-    private func saveAuthSession() {
-        guard let authSession else { return }
+    private func saveAuthSession(_ authSession: AuthSession) {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(authSession) else { return }
+        let sharedSessionData = try? encoder.encode(SharedAuthSessionRecord(
+            userID: authSession.userID,
+            accessToken: authSession.accessToken
+        ))
         UserDefaults.standard.set(data, forKey: authSessionKey)
+        UserDefaults.standard.synchronize()
+        sharedDefaults?.set(data, forKey: authSessionKey)
+        if let sharedSessionData {
+            sharedDefaults?.set(sharedSessionData, forKey: sharedAuthSessionKey)
+        }
+        sharedDefaults?.synchronize()
+        saveAuthSessionToKeychain(data)
     }
 
     private func saveOnboardingState() {
@@ -636,6 +663,63 @@ final class MealPlanningAppStore: ObservableObject {
         "\(historyKeyPrefix)-\(userID ?? "guest")"
     }
 
+    private func loadAuthSessionData() -> Data? {
+        if let keychainData = loadAuthSessionFromKeychain() {
+            return keychainData
+        }
+
+        if let sharedData = sharedDefaults?.data(forKey: sharedAuthSessionKey) {
+            return sharedData
+        }
+
+        if let defaultsData = UserDefaults.standard.data(forKey: authSessionKey) {
+            return defaultsData
+        }
+
+        return sharedDefaults?.data(forKey: authSessionKey)
+    }
+
+    private func saveAuthSessionToKeychain(_ data: Data) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: authKeychainService,
+            kSecAttrAccount as String: authKeychainAccount,
+        ]
+
+        SecItemDelete(query as CFDictionary)
+
+        let addQuery: [String: Any] = query.merging([
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]) { _, new in new }
+
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    private func loadAuthSessionFromKeychain() -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: authKeychainService,
+            kSecAttrAccount as String: authKeychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess else { return nil }
+        return result as? Data
+    }
+
+    private func deleteAuthSessionFromKeychain() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: authKeychainService,
+            kSecAttrAccount as String: authKeychainAccount,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
     private func shouldPurgePersistedPlan(_ history: [MealPlan]) -> Bool {
         history.contains(where: { plan in
             plan.recipes.contains(where: { recipe in
@@ -643,4 +727,9 @@ final class MealPlanningAppStore: ObservableObject {
             })
         })
     }
+}
+
+private struct SharedAuthSessionRecord: Codable {
+    let userID: String
+    let accessToken: String?
 }

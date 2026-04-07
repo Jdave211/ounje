@@ -19,6 +19,7 @@ const DISCOVER_PRESETS = [
   { key: "chicken", title: "Chicken", description: "Chicken-forward recipes." },
   { key: "steak", title: "Steak", description: "Beef and steak recipes." },
   { key: "fish", title: "Fish", description: "Fish-forward recipes." },
+  { key: "nigerian", title: "Nigerian", description: "Nigerian and West African recipes." },
   { key: "salad", title: "Salad", description: "Salads and lighter bowls." },
   { key: "sandwich", title: "Sandwich", description: "Sandwiches, burgers, and wraps." },
   { key: "beans", title: "Beans", description: "Bean and legume-forward recipes." },
@@ -45,6 +46,7 @@ const DESSERT_HEAVY_REGEX = /\b(cookies?|cake|cheesecake|brownies?|brookies?|blo
 const DRINK_STRONG_REGEX = /\b(smoothies?|juices?|lattes?|coffees?|teas?|matcha|lemonades?|spritz(?:es)?|cocktails?|mocktails?|sodas?|shakes?|margaritas?|martinis?|mojitos?|spritzers?|punch|hot chocolate|cocoa|espresso|americanos?|cappuccinos?|frappes?|slush(?:ies)?|milkshakes?|carajillo)\b/i;
 const DRINK_EXCLUSION_REGEX = /\b(soup|salad|bowl|sandwich|wrap|tacos?|pasta|noodles?|rice|chicken|beef|steak|salmon|shrimp|prawns?|cod|beans?|potatoes?)\b/i;
 const FISH_STRONG_REGEX = /\b(salmon|cod|snapper|tilapia|trout|sea bass|halibut|mackerel|tuna|sardine|anchovy|shrimp|prawn|lobster|crab|scallop|mussels?|clams?|ceviche|seafood|fish)\b/i;
+const NIGERIAN_STRONG_REGEX = /\b(nigerian|west african|westafrican|jollof|egusi|suya|akara|moin\s?moin|ofada|banga|pepper soup|puff puff|yam porridge|okro soup|ogbono)\b/i;
 
 function buildDiscoverBracketEvidence(recipe = {}) {
   return {
@@ -82,6 +84,7 @@ export function sanitizeDiscoverBrackets(recipe = {}, candidateBrackets = []) {
   const hasDrinkSignal = DRINK_STRONG_REGEX.test(titleContextText) || String(recipe?.recipe_type ?? "").toLowerCase() === "drinks";
   const hasDrinkExclusionSignal = DRINK_EXCLUSION_REGEX.test(titleContextText);
   const hasFishSignal = FISH_STRONG_REGEX.test(visibleText);
+  const hasNigerianSignal = NIGERIAN_STRONG_REGEX.test(visibleText);
 
   if (brackets.has("breakfast") && ((hasDessertHeavySignal && !hasBreakfastCoreSignal) || (hasDrinkSignal && !hasBreakfastCoreSignal))) {
     brackets.delete("breakfast");
@@ -95,6 +98,10 @@ export function sanitizeDiscoverBrackets(recipe = {}, candidateBrackets = []) {
     brackets.delete("fish");
   }
 
+  if (brackets.has("nigerian") && !hasNigerianSignal) {
+    brackets.delete("nigerian");
+  }
+
   if (brackets.has("salmon")) {
     brackets.add("fish");
   }
@@ -103,6 +110,7 @@ export function sanitizeDiscoverBrackets(recipe = {}, candidateBrackets = []) {
     if (hasDrinkSignal && !hasDrinkExclusionSignal) brackets.add("drinks");
     else if (hasBreakfastCoreSignal) brackets.add("breakfast");
     else if (hasFishSignal) brackets.add("fish");
+    else if (hasNigerianSignal) brackets.add("nigerian");
     else if (hasDessertHeavySignal) brackets.add("dessert");
     else if (String(recipe?.recipe_type ?? "").toLowerCase() === "lunch") brackets.add("lunch");
     else if (String(recipe?.recipe_type ?? "").toLowerCase() === "breakfast") brackets.add("breakfast");
@@ -189,6 +197,10 @@ export function normalizeDiscoverBracketKey(value) {
       return "steak";
     case "fish":
       return "fish";
+    case "nigerian":
+    case "westafrican":
+    case "west african":
+      return "nigerian";
     case "salad":
       return "salad";
     case "sandwich":

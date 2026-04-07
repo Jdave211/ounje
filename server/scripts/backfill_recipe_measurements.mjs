@@ -25,8 +25,10 @@ const HEADERS = {
 
 const DEFAULT_BATCH_SIZE = 100;
 const DEFAULT_IDLE_SLEEP_MS = 5 * 60 * 1000;
-const DEFAULT_COOLDOWN_MS = 30 * 60 * 1000;
-const DEFAULT_RECENT_RETRY_MS = 10 * 60 * 1000;
+const DEFAULT_MATCHED_UPDATED_COOLDOWN_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_MATCHED_NO_UPDATE_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_PARTIAL_OR_AMBIGUOUS_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_NOT_FOUND_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 const VAGUE_QUANTITY_PATTERNS = [
   /^$/,
@@ -50,6 +52,7 @@ function parseArgs(argv) {
     batchSize: DEFAULT_BATCH_SIZE,
     headless: true,
     idleSleepMs: DEFAULT_IDLE_SLEEP_MS,
+    allowNonJulienne: false,
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -61,6 +64,7 @@ function parseArgs(argv) {
     else if (token === "--recipe-id") args.recipeId = argv[++i] ?? null;
     else if (token === "--batch-size") args.batchSize = Math.max(1, parseInt(argv[++i] ?? "", 10) || DEFAULT_BATCH_SIZE);
     else if (token === "--idle-sleep-ms") args.idleSleepMs = Math.max(10_000, parseInt(argv[++i] ?? "", 10) || DEFAULT_IDLE_SLEEP_MS);
+    else if (token === "--allow-non-julienne") args.allowNonJulienne = true;
   }
 
   return args;
@@ -710,6 +714,62 @@ function sortRecipeCandidates(recipes) {
   });
 }
 
+function isLikelyJulienneRecipe(recipe) {
+  const source = normalizeText(recipe?.source).toLowerCase();
+  const recipeURL = normalizeText(recipe?.recipe_url).toLowerCase();
+  return source.includes("julienne") || recipeURL.includes("withjulienne.com");
+}
+
+function buildMissingCountsByRecipe(allRows) {
+  const counts = new Map();
+  const { recipeIngredients, stepIngredients, stepById } = allRows;
+
+  for (const row of recipeIngredients) {
+    if (!needsBackfill(row)) continue;
+    counts.set(row.recipe_id, (counts.get(row.recipe_id) ?? 0) + 1);
+  }
+
+  for (const row of stepIngredients) {
+    if (!needsBackfill(row)) continue;
+    const recipeId = stepById.get(row.recipe_step_id)?.recipe_id;
+    if (!recipeId) continue;
+    counts.set(recipeId, (counts.get(recipeId) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+function hasDirectJulienneURL(recipe) {
+  const recipeURL = normalizeText(recipe?.recipe_url).toLowerCase();
+  return recipeURL.includes("withjulienne.com");
+}
+
+function sortRecipesByPriority(recipes, missingCountsByRecipe) {
+  return [...recipes].sort((a, b) => {
+    const aMissing = missingCountsByRecipe.get(a.id) ?? 0;
+    const bMissing = missingCountsByRecipe.get(b.id) ?? 0;
+    if (aMissing !== bMissing) return bMissing - aMissing;
+
+    const aDirect = hasDirectJulienneURL(a) ? 1 : 0;
+    const bDirect = hasDirectJulienneURL(b) ? 1 : 0;
+    if (aDirect !== bDirect) return bDirect - aDirect;
+
+    const aUpdated = new Date(a.updated_at || a.created_at || 0).getTime();
+    const bUpdated = new Date(b.updated_at || b.created_at || 0).getTime();
+    return aUpdated - bUpdated;
+  });
+}
+
+function cooldownForOutcome(outcome) {
+  if (!outcome) return DEFAULT_PARTIAL_OR_AMBIGUOUS_COOLDOWN_MS;
+  if (outcome.status === "not_found") return DEFAULT_NOT_FOUND_COOLDOWN_MS;
+  if (outcome.status === "partial" || outcome.status === "ambiguous") {
+    return DEFAULT_PARTIAL_OR_AMBIGUOUS_COOLDOWN_MS;
+  }
+  if (outcome.updated > 0) return DEFAULT_MATCHED_UPDATED_COOLDOWN_MS;
+  return DEFAULT_MATCHED_NO_UPDATE_COOLDOWN_MS;
+}
+
 async function processBatch(recipeIds, allRows, args) {
   const { recipeIngredients, recipeSteps, stepIngredients } = allRows;
   const recipes = await fetchRecipesByIds(recipeIds);
@@ -727,6 +787,7 @@ async function processBatch(recipeIds, allRows, args) {
   let partial = 0;
   let ambiguous = 0;
   let notFound = 0;
+  const outcomes = [];
 
   for (const recipeId of recipeIds) {
     const recipe = recipeMap.get(recipeId);
@@ -755,7 +816,13 @@ async function processBatch(recipeIds, allRows, args) {
       else if (result.status === "partial") partial += 1;
       else if (result.status === "ambiguous") ambiguous += 1;
       else if (result.status === "not_found") notFound += 1;
-      updated += result.backfill_updates.length;
+      const rowUpdates = result.backfill_updates.length;
+      updated += rowUpdates;
+      outcomes.push({
+        recipeId: recipe.id,
+        status: result.status,
+        updated: rowUpdates,
+      });
 
       console.log(
         JSON.stringify(
@@ -774,16 +841,20 @@ async function processBatch(recipeIds, allRows, args) {
     } catch (error) {
       processed += 1;
       notFound += 1;
+      outcomes.push({
+        recipeId: recipe.id,
+        status: "not_found",
+        updated: 0,
+      });
       console.error(`[backfill] ${recipe.id} ${recipe.title}: ${error.message}`);
     }
   }
 
-  return { processed, updated, matched, partial, ambiguous, notFound };
+  return { processed, updated, matched, partial, ambiguous, notFound, outcomes };
 }
 
 async function selectBatchRecipeIds(allRows, args, cooldownMap) {
-  const { recipeIngredients, recipeSteps, stepIngredients, candidateRecipeIds, stepById } = allRows;
-  const candidateSet = new Set(candidateRecipeIds);
+  const { candidateRecipeIds } = allRows;
   const filtered = [];
 
   for (const recipeId of candidateRecipeIds) {
@@ -797,7 +868,10 @@ async function selectBatchRecipeIds(allRows, args, cooldownMap) {
   }
 
   const recipes = await fetchRecipesByIds(filtered);
-  const sortedRecipeIds = sortRecipeCandidates(recipes).map((recipe) => recipe.id);
+  const julienneScoped = args.allowNonJulienne ? recipes : recipes.filter(isLikelyJulienneRecipe);
+  const missingCountsByRecipe = buildMissingCountsByRecipe(allRows);
+  const sortedRecipes = sortRecipesByPriority(julienneScoped, missingCountsByRecipe);
+  const sortedRecipeIds = sortedRecipes.map((recipe) => recipe.id);
   return sortedRecipeIds.slice(0, args.batchSize);
 }
 
@@ -813,6 +887,7 @@ async function main() {
         batch_size: args.batchSize,
         headless: args.headless,
         dry_run: args.dryRun,
+        allow_non_julienne: args.allowNonJulienne,
       },
       null,
       2
@@ -851,8 +926,8 @@ async function main() {
 
     if (args.recipeId || args.once) break;
 
-    for (const recipeId of batchRecipeIds) {
-      cooldownMap.set(recipeId, Date.now() + (summary.partial || summary.ambiguous || summary.notFound ? DEFAULT_RECENT_RETRY_MS : DEFAULT_COOLDOWN_MS));
+    for (const outcome of summary.outcomes ?? []) {
+      cooldownMap.set(outcome.recipeId, Date.now() + cooldownForOutcome(outcome));
     }
 
     if (summary.processed === 0) {

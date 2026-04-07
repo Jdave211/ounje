@@ -16,6 +16,110 @@ function normalizeRecipeLine(value) {
     .trim();
 }
 
+const INGREDIENT_UNIT_WORDS = new Set([
+  "cup",
+  "cups",
+  "tbsp",
+  "tablespoon",
+  "tablespoons",
+  "tsp",
+  "teaspoon",
+  "teaspoons",
+  "oz",
+  "ounce",
+  "ounces",
+  "lb",
+  "lbs",
+  "pound",
+  "pounds",
+  "g",
+  "kg",
+  "ml",
+  "l",
+  "pinch",
+  "pinches",
+  "dash",
+  "dashes",
+  "clove",
+  "cloves",
+  "can",
+  "cans",
+  "packet",
+  "packets",
+  "stick",
+  "sticks",
+  "slice",
+  "slices",
+  "bunch",
+  "bunches",
+  "head",
+  "heads",
+]);
+
+function cleanIngredientDisplayName(value) {
+  let normalized = normalizeRecipeLine(value);
+  if (!normalized) return "";
+
+  const exampleMatch = normalized.match(/\s*\((?:e\.?g\.?|example|examples).*$/i);
+  if (exampleMatch) {
+    normalized = normalized.slice(0, exampleMatch.index).trim();
+  } else {
+    const openIndex = normalized.indexOf("(");
+    const closeIndex = normalized.indexOf(")");
+    if (openIndex >= 0 && (closeIndex < 0 || closeIndex < openIndex)) {
+      normalized = normalized.slice(0, openIndex).trim();
+    }
+  }
+
+  return normalized.replace(/\s{2,}/g, " ").trim();
+}
+
+function splitIngredientQuantityPrefix(displayName, quantityText = null) {
+  const name = cleanIngredientDisplayName(displayName);
+  const quantity = normalizeRecipeLine(quantityText ?? "") || null;
+  if (!name) {
+    return { displayName: name, quantityText: quantity };
+  }
+
+  let workingName = name;
+  let workingQuantity = quantity;
+
+  if (workingQuantity) {
+    const loweredName = workingName.toLowerCase();
+    const loweredQuantity = workingQuantity.toLowerCase();
+    if (loweredName.startsWith(loweredQuantity)) {
+      workingName = workingName.slice(workingQuantity.length).trim();
+      workingName = workingName.replace(/^[,;:\-\u2013\u2014]+\s*/, "");
+
+      const tokens = workingName.split(/\s+/).filter(Boolean);
+      while (tokens.length && INGREDIENT_UNIT_WORDS.has(tokens[0].toLowerCase())) {
+        if (!workingQuantity) {
+          workingQuantity = tokens.shift();
+        } else {
+          workingQuantity = `${workingQuantity} ${tokens.shift()}`;
+        }
+      }
+      workingName = tokens.join(" ").trim();
+    }
+  }
+
+  const leadingMatch = workingName.match(/^((?:\d+\s+)?\d+\/\d+|\d+(?:\.\d+)?)(?:\s+([a-zA-Z]+))?\s+(.+)$/);
+  if (leadingMatch) {
+    const parsedQuantity = leadingMatch[1].trim();
+    const parsedUnit = normalizeRecipeLine(leadingMatch[2] ?? "") || null;
+    const parsedName = cleanIngredientDisplayName(leadingMatch[3]);
+    return {
+      displayName: parsedName || workingName,
+      quantityText: [parsedQuantity, parsedUnit].filter(Boolean).join(" ").trim() || workingQuantity,
+    };
+  }
+
+  return {
+    displayName: workingName,
+    quantityText: workingQuantity,
+  };
+}
+
 function normalizeStepText(value) {
   return String(value ?? "")
     .replace(/^[-*•\s]+/, "")
@@ -165,11 +269,13 @@ function parseIngredientLine(line) {
 
 function normalizeIngredientObject(value) {
   if (!value || typeof value !== "object") return null;
-  const name = normalizeRecipeLine(value.name ?? value.ingredient ?? value.label ?? "");
+  const rawName = normalizeRecipeLine(value.name ?? value.ingredient ?? value.label ?? "");
+  const split = splitIngredientQuantityPrefix(rawName, value.quantity ?? value.amount ?? value.qty ?? null);
+  const name = split.displayName;
   if (!name) return null;
 
   const quantityRaw = value.quantity ?? value.amount ?? value.qty ?? null;
-  const quantity = typeof quantityRaw === "number" ? quantityRaw : parseQuantityToken(String(quantityRaw ?? "").trim());
+  const quantity = typeof quantityRaw === "number" ? quantityRaw : parseQuantityToken(String(split.quantityText ?? quantityRaw ?? "").trim());
   const unit = normalizeRecipeLine(value.unit ?? value.measure ?? "") || null;
   const note = normalizeRecipeLine(value.note ?? value.notes ?? "") || null;
   const imageHint = normalizeRecipeLine(value.image_hint ?? value.imageHint ?? name).toLowerCase() || name.toLowerCase();
@@ -192,14 +298,16 @@ function normalizeIngredientObject(value) {
 function normalizeRecipeIngredientRow(value) {
   if (!value || typeof value !== "object") return null;
 
-  const displayName = normalizeRecipeLine(value.display_name ?? value.name ?? value.ingredient_name ?? "");
+  const rawDisplayName = normalizeRecipeLine(value.display_name ?? value.name ?? value.ingredient_name ?? "");
+  const split = splitIngredientQuantityPrefix(rawDisplayName, value.quantity_text ?? value.amount_text ?? "");
+  const displayName = split.displayName;
   if (!displayName) return null;
 
   return {
     id: value.id ?? null,
     ingredient_id: value.ingredient_id ?? null,
     display_name: displayName,
-    quantity_text: normalizeRecipeLine(value.quantity_text ?? value.amount_text ?? "") || null,
+    quantity_text: split.quantityText || normalizeRecipeLine(value.quantity_text ?? value.amount_text ?? "") || null,
     image_url: value.image_url ?? null,
     sort_order: Number.isFinite(value.sort_order) ? Number(value.sort_order) : null,
     name: displayName,
