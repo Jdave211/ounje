@@ -41,3 +41,4 @@ server/uploads/
 sb_backup
 *.swp
 *.swo
+.codex-deriveddata/

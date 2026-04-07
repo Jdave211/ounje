@@ -1,11 +1,14 @@
 import SwiftUI
 import UIKit
 import AVKit
+import PhotosUI
 import AuthenticationServices
 import CryptoKit
 import Security
 import MapKit
+import UniformTypeIdentifiers
 import WebKit
+import SafariServices
 
 @main
 struct OunjeAgenticApp: App {
@@ -17,6 +20,7 @@ struct OunjeAgenticApp: App {
             RootView()
                 .environmentObject(store)
                 .environmentObject(toastCenter)
+                .preferredColorScheme(.dark)
         }
     }
 }
@@ -55,6 +59,11 @@ private struct AppToast: Identifiable, Equatable {
     let title: String
     let subtitle: String?
     let systemImage: String
+    let thumbnailURLString: String?
+}
+
+extension Notification.Name {
+    static let recipeImportReviewQueueNeedsRefresh = Notification.Name("recipeImportReviewQueueNeedsRefresh")
 }
 
 @MainActor
@@ -63,18 +72,29 @@ private final class AppToastCenter: ObservableObject {
 
     private var dismissTask: Task<Void, Never>?
 
-    func showSavedRecipe(title: String) {
+    func showSavedRecipe(title: String, thumbnailURLString: String? = nil) {
         show(
             title: "Saved",
             subtitle: title,
-            systemImage: "bookmark.fill"
+            systemImage: "bookmark.fill",
+            thumbnailURLString: thumbnailURLString
         )
     }
 
-    func show(title: String, subtitle: String? = nil, systemImage: String = "checkmark.circle.fill") {
+    func show(
+        title: String,
+        subtitle: String? = nil,
+        systemImage: String = "checkmark.circle.fill",
+        thumbnailURLString: String? = nil
+    ) {
         dismissTask?.cancel()
         withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
-            toast = AppToast(title: title, subtitle: subtitle, systemImage: systemImage)
+            toast = AppToast(
+                title: title,
+                subtitle: subtitle,
+                systemImage: systemImage,
+                thumbnailURLString: thumbnailURLString
+            )
         }
 
         dismissTask = Task { [weak self] in
@@ -90,39 +110,131 @@ private final class AppToastCenter: ObservableObject {
     }
 }
 
+@MainActor
+private final class SharedRecipeImportInboxStore: ObservableObject {
+    @Published private(set) var envelopes: [SharedRecipeImportEnvelope] = []
+
+    var badgeCount: Int {
+        envelopes.count
+    }
+
+    var failedCount: Int {
+        envelopes.filter(\.isRetryNeeded).count
+    }
+
+    func refresh() async {
+        envelopes = (try? SharedRecipeImportInbox.readAll()) ?? []
+    }
+
+    func envelope(withID envelopeID: String) -> SharedRecipeImportEnvelope? {
+        envelopes.first(where: { $0.id == envelopeID })
+    }
+
+    func reconcileCompletedImports(_ completedItems: [RecipeImportCompletedItem]) async {
+        guard !completedItems.isEmpty else {
+            await refresh()
+            return
+        }
+
+        let currentEnvelopes = (try? SharedRecipeImportInbox.readAll()) ?? []
+        guard !currentEnvelopes.isEmpty else {
+            envelopes = []
+            return
+        }
+
+        let matchedIDs = currentEnvelopes
+            .filter { envelope in
+                completedItems.contains { $0.matches(envelope: envelope) }
+            }
+            .map(\.id)
+
+        guard !matchedIDs.isEmpty else {
+            envelopes = currentEnvelopes
+            return
+        }
+
+        matchedIDs.forEach { envelopeID in
+            try? SharedRecipeImportInbox.delete(envelopeID: envelopeID)
+        }
+
+        await refresh()
+    }
+}
+
+@MainActor
+private final class RecipeImportReviewQueueStore: ObservableObject {
+    @Published private(set) var items: [RecipeImportReviewItem] = []
+    @Published private(set) var completedItems: [RecipeImportCompletedItem] = []
+
+    var badgeCount: Int {
+        items.count
+    }
+
+    var completedCount: Int {
+        completedItems.count
+    }
+
+    var draftCount: Int {
+        items.filter { $0.reviewState == "draft" }.count
+    }
+
+    var needsReviewCount: Int {
+        items.filter { $0.reviewState == "needs_review" }.count
+    }
+
+    func refresh(userID: String?) async {
+        guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            items = []
+            completedItems = []
+            return
+        }
+        async let reviewFetch = RecipeImportAPIService.shared.fetchReviewQueue(userID: userID)
+        async let completedFetch = RecipeImportAPIService.shared.fetchCompletedImports(userID: userID)
+        items = (try? await reviewFetch) ?? []
+        completedItems = (try? await completedFetch) ?? []
+    }
+}
+
 private struct AppToastBanner: View {
     let toast: AppToast
 
+    private var thumbnailURL: URL? {
+        guard let raw = toast.thumbnailURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        return URL(string: raw)
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                OunjePalette.softCream.opacity(0.96),
-                                OunjePalette.accent.opacity(0.30)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: 34, height: 34)
-
-                Image(systemName: toast.systemImage)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(OunjePalette.background)
+        HStack(spacing: 10) {
+            Group {
+                if let thumbnailURL {
+                    AsyncImage(url: thumbnailURL) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        default:
+                            toastFallbackBadge
+                        }
+                    }
+                } else {
+                    toastFallbackBadge
+                }
             }
+            .frame(width: 30, height: 30)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(toast.title)
-                    .font(.custom("Slee_handwritting-Regular", size: 18))
-                    .tracking(0.1)
+                    .font(.custom("Slee_handwritting-Regular", size: 16))
+                    .tracking(0.05)
                     .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(1)
 
                 if let subtitle = toast.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .font(.system(size: 11.5, weight: .medium, design: .rounded))
                         .foregroundStyle(OunjePalette.secondaryText)
                         .lineLimit(1)
                 }
@@ -130,69 +242,53 @@ private struct AppToastBanner: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            OunjePalette.surface.opacity(0.98),
-                            OunjePalette.panel.opacity(0.92),
-                            Color.white.opacity(0.03)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.96))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
                 )
         )
-        .shadow(color: OunjePalette.softCream.opacity(0.08), radius: 18, y: 10)
-        .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
+    }
+
+    private var toastFallbackBadge: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.96))
+
+            Image(systemName: toast.systemImage)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(OunjePalette.softCream)
+        }
     }
 }
 
 private struct RemoteStateBootstrapView: View {
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    OunjePalette.background,
-                    OunjePalette.panel,
-                    OunjePalette.background
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            Color.black
             .ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                ProgressView()
-                    .tint(OunjePalette.accent)
-                    .scaleEffect(1.2)
+            Circle()
+                .fill(OunjePalette.accent.opacity(0.16))
+                .frame(width: 180, height: 180)
+                .blur(radius: 42)
+                .offset(x: 96, y: -48)
 
-                Text("Loading your setup")
-                    .biroHeaderFont(22)
-                    .foregroundStyle(.white)
+            VStack(spacing: 14) {
+                Text("ounje")
+                    .font(.custom("Slee_handwritting-Regular", size: 52))
+                    .tracking(0.2)
+                    .foregroundStyle(OunjePalette.accent)
 
-                Text("We’re syncing your profile from Supabase so we can drop you into the right place.")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 280)
+                Text("Getting your kitchen ready")
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .foregroundStyle(OunjePalette.softCream.opacity(0.78))
             }
-            .padding(32)
-            .background(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(OunjePalette.panel.opacity(0.92))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .strokeBorder(.white.opacity(0.06), lineWidth: 1)
-                    )
-            )
             .padding(.horizontal, 28)
         }
     }
@@ -207,7 +303,6 @@ private struct AuthenticationView: View {
     @State private var appleSignInNonce = ""
     @State private var showAuthSheet = false
     @State private var revealContent = false
-    @State private var previewLift = false
 
     var body: some View {
         ZStack {
@@ -314,7 +409,7 @@ private struct AuthenticationView: View {
                         )
                             .foregroundStyle(.white)
 
-                        Text("Use Apple or Google to save your food profile, recipes, and prep flow.")
+                        Text("Use Apple or Google to keep your profile, prep, and cookbook synced.")
                             .font(.system(size: 15, weight: .medium, design: .rounded))
                             .foregroundStyle(OunjePalette.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -387,9 +482,6 @@ private struct AuthenticationView: View {
             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                 revealContent = true
             }
-            withAnimation(.easeInOut(duration: 1.35).repeatForever(autoreverses: true)) {
-                previewLift = true
-            }
         }
     }
 
@@ -428,7 +520,8 @@ private struct AuthenticationView: View {
                         userID: authResult.userID,
                         email: authResult.email ?? credential.email,
                         displayName: authResult.displayName ?? fallbackName,
-                        signedInAt: Date()
+                        signedInAt: Date(),
+                        accessToken: authResult.accessToken
                     )
                     await completeSignIn(with: session)
                 } catch {
@@ -475,7 +568,8 @@ private struct AuthenticationView: View {
                 userID: stableGoogleDevUserID(),
                 email: stableGoogleDevEmail(),
                 displayName: "Google user",
-                signedInAt: Date()
+                signedInAt: Date(),
+                accessToken: nil
             )
 
             await completeSignIn(with: session)
@@ -494,7 +588,8 @@ private struct AuthenticationView: View {
             userID: credential.user,
             email: credential.email,
             displayName: fallbackName,
-            signedInAt: Date()
+            signedInAt: Date(),
+            accessToken: nil
         )
     }
 
@@ -2234,7 +2329,10 @@ private final class SavedRecipesStore: ObservableObject {
         if shouldSave {
             savedRecipes.removeAll { $0.id == recipe.id }
             savedRecipes.insert(recipe, at: 0)
-            toastCenter.showSavedRecipe(title: recipe.title)
+            toastCenter.showSavedRecipe(
+                title: recipe.title,
+                thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString
+            )
         } else {
             savedRecipes.removeAll { $0.id == recipe.id }
         }
@@ -2258,6 +2356,19 @@ private final class SavedRecipesStore: ObservableObject {
             } catch {
                 // Local persistence remains the source of truth when sync fails.
             }
+        }
+    }
+
+    func saveImportedRecipe(_ recipe: DiscoverRecipeCardData, showToast: Bool = true) {
+        savedRecipes.removeAll { $0.id == recipe.id }
+        savedRecipes.insert(recipe, at: 0)
+        persist()
+
+        if showToast {
+            toastCenter.showSavedRecipe(
+                title: recipe.title,
+                thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString
+            )
         }
     }
 
@@ -2306,14 +2417,25 @@ private final class SavedRecipesStore: ObservableObject {
 }
 
 private struct MealPlannerShellView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: MealPlanningAppStore
     @ObservedObject private var toastCenter: AppToastCenter
+    @StateObject private var sharedImportInbox = SharedRecipeImportInboxStore()
+    @StateObject private var recipeReviewQueue = RecipeImportReviewQueueStore()
     @StateObject private var savedStore: SavedRecipesStore
     @State private var selectedTab: AppTab = .prep
     @State private var discoverSearchText = ""
     @State private var cookbookSearchText = ""
     @State private var presentedRecipe: PresentedRecipeDetail?
     @State private var focusedCartRecipeID: String?
+    @State private var requestedCookbookCycleID: String?
+    @State private var isProcessingSharedImports = false
+
+    private enum SharedImportProcessingScope {
+        case queued
+        case failed
+        case all
+    }
 
     init(toastCenter: AppToastCenter) {
         _toastCenter = ObservedObject(wrappedValue: toastCenter)
@@ -2327,6 +2449,7 @@ private struct MealPlannerShellView: View {
 
                 tabContent
                     .environmentObject(savedStore)
+                    .environmentObject(sharedImportInbox)
                     .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity))
             }
             .background(OunjePalette.background.ignoresSafeArea())
@@ -2356,6 +2479,33 @@ private struct MealPlannerShellView: View {
         .task(id: "\(store.authSession?.userID ?? "signed-out")::\(store.isOnboarded)::\(store.profile?.trimmedPreferredName ?? "no-profile")") {
             await store.ensureFreshPlanIfNeeded()
         }
+        .task(id: "shared-import::\(store.authSession?.userID ?? "signed-out")") {
+            await processPendingSharedImports(scope: .queued)
+        }
+        .task(id: "shared-import-inbox::\(store.authSession?.userID ?? "signed-out")") {
+            await sharedImportInbox.refresh()
+        }
+        .task(id: "recipe-review-queue::\(store.authSession?.userID ?? "signed-out")") {
+            await recipeReviewQueue.refresh(userID: store.authSession?.userID)
+            await sharedImportInbox.reconcileCompletedImports(recipeReviewQueue.completedItems)
+        }
+        .onOpenURL { url in
+            guard SharedRecipeImportInbox.isShareImportURL(url) else { return }
+            Task {
+                await processPendingSharedImports(scope: .queued)
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
+            Task {
+                await processPendingSharedImports(scope: .queued)
+            }
+        }
+        .onChange(of: selectedTab) { newTab in
+            if newTab != .discover {
+                discoverSearchText = ""
+            }
+        }
         .fullScreenCover(item: $presentedRecipe) { presentedRecipe in
             RecipeDetailExperienceView(
                 presentedRecipe: presentedRecipe,
@@ -2377,6 +2527,7 @@ private struct MealPlannerShellView: View {
         case .prep:
             PrepTabView(
                 selectedTab: $selectedTab,
+                requestedCookbookCycleID: $requestedCookbookCycleID,
                 onSelectRecipe: { plannedRecipe in
                     presentedRecipe = PresentedRecipeDetail(plannedRecipe: plannedRecipe)
                 }
@@ -2390,13 +2541,28 @@ private struct MealPlannerShellView: View {
                 }
             )
         case .cookbook:
-            CookbookTabView(
-                selectedTab: $selectedTab,
-                searchText: $cookbookSearchText,
-                onSelectRecipe: { recipe in
-                    presentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
-                }
-            )
+                CookbookTabView(
+                    selectedTab: $selectedTab,
+                    searchText: $cookbookSearchText,
+                    requestedCycleID: $requestedCookbookCycleID,
+                    sharedImportInbox: sharedImportInbox,
+                    recipeReviewQueue: recipeReviewQueue,
+                    toastCenter: toastCenter,
+                    onRefreshSharedImports: {
+                        Task {
+                            await refreshSharedImportState()
+                        }
+                    },
+                    onRetryFailedSharedImports: {
+                        Task {
+                            await processPendingSharedImports(scope: .failed)
+                            await refreshSharedImportState()
+                        }
+                    },
+                    onSelectRecipe: { recipe in
+                        presentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
+                    }
+                )
         case .cart:
             CartTabView(selectedTab: $selectedTab, focusedRecipeID: $focusedCartRecipeID)
         case .profile:
@@ -2433,6 +2599,182 @@ private struct MealPlannerShellView: View {
             return nil
         }
     }
+
+    @MainActor
+    private func refreshSharedImportState() async {
+        await sharedImportInbox.refresh()
+        await recipeReviewQueue.refresh(userID: store.authSession?.userID)
+        await sharedImportInbox.reconcileCompletedImports(recipeReviewQueue.completedItems)
+    }
+
+    @MainActor
+    private func processPendingSharedImports(scope: SharedImportProcessingScope = .queued) async {
+        guard !isProcessingSharedImports, let userID = store.authSession?.userID else { return }
+
+        let envelopes: [SharedRecipeImportEnvelope]
+        do {
+            envelopes = try SharedRecipeImportInbox.readAll()
+        } catch {
+            return
+        }
+
+        guard !envelopes.isEmpty else {
+            await sharedImportInbox.refresh()
+            return
+        }
+        isProcessingSharedImports = true
+        defer { isProcessingSharedImports = false }
+
+        let eligibleEnvelopes = envelopes.filter { envelope in
+            switch scope {
+            case .queued:
+                return envelope.shouldAutoProcess
+            case .failed:
+                return envelope.isRetryNeeded
+            case .all:
+                return envelope.shouldAutoProcess || envelope.isRetryNeeded
+            }
+        }
+
+        guard !eligibleEnvelopes.isEmpty else {
+            await sharedImportInbox.refresh()
+            return
+        }
+
+        for envelope in eligibleEnvelopes {
+            do {
+                var processingEnvelope = envelope
+                let nextAttemptCount = (processingEnvelope.attemptCount ?? 0) + 1
+                processingEnvelope = SharedRecipeImportEnvelope(
+                    id: processingEnvelope.id,
+                    createdAt: processingEnvelope.createdAt,
+                    targetState: processingEnvelope.targetState,
+                    sourceText: processingEnvelope.sourceText,
+                    sourceURLString: processingEnvelope.sourceURLString,
+                    sourceApp: processingEnvelope.sourceApp,
+                    attachments: processingEnvelope.attachments,
+                    processingState: "processing",
+                    attemptCount: nextAttemptCount,
+                    lastAttemptAt: Date(),
+                    lastError: nil,
+                    updatedAt: Date()
+                )
+                try? SharedRecipeImportInbox.update(processingEnvelope)
+                await sharedImportInbox.refresh()
+
+                let attachments = try await sharedImportAttachmentPayloads(from: envelope.attachments)
+                let response = try await RecipeImportAPIService.shared.importRecipe(
+                    userID: userID,
+                    accessToken: store.authSession?.accessToken,
+                    sourceURL: envelope.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    sourceText: envelope.resolvedSourceText,
+                    targetState: envelope.targetState,
+                    attachments: attachments
+                )
+
+                if let importedRecipe = response.recipe {
+                    savedStore.saveImportedRecipe(importedRecipe, showToast: false)
+                }
+                NotificationCenter.default.post(name: .recipeImportReviewQueueNeedsRefresh, object: nil)
+
+                if let detail = response.recipeDetail, envelope.targetState == "prepped" {
+                    await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
+                    selectedTab = .prep
+                    toastCenter.show(
+                        title: "Added to next prep",
+                        subtitle: detail.title,
+                        systemImage: "sparkles",
+                        thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString
+                    )
+                    try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
+                } else if response.job.status == "queued" || response.recipe == nil {
+                    let queuedEnvelope = SharedRecipeImportEnvelope(
+                        id: envelope.id,
+                        createdAt: envelope.createdAt,
+                        targetState: envelope.targetState,
+                        sourceText: envelope.sourceText,
+                        sourceURLString: envelope.sourceURLString,
+                        sourceApp: envelope.sourceApp,
+                        attachments: envelope.attachments,
+                        processingState: "processing",
+                        attemptCount: processingEnvelope.attemptCount,
+                        lastAttemptAt: Date(),
+                        lastError: nil,
+                        updatedAt: Date()
+                    )
+                    try? SharedRecipeImportInbox.update(queuedEnvelope)
+                    toastCenter.show(
+                        title: "Import queued",
+                        subtitle: envelope.resolvedSourceText.isEmpty ? "Ounje is pulling your recipe in now." : envelope.resolvedSourceText,
+                        systemImage: "tray.and.arrow.down.fill"
+                    )
+                } else if response.job.reviewState == "draft" {
+                    selectedTab = .cookbook
+                    toastCenter.show(
+                        title: "Saved as draft",
+                        subtitle: response.recipe?.title ?? "Imported recipe",
+                        systemImage: "doc.badge.gearshape",
+                        thumbnailURLString: response.recipe?.imageURL?.absoluteString
+                    )
+                    try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
+                } else if response.job.reviewState == "needs_review" {
+                    selectedTab = .cookbook
+                    toastCenter.show(
+                        title: "Saved with notes",
+                        subtitle: response.recipe?.title ?? "Imported recipe",
+                        systemImage: "bookmark.fill",
+                        thumbnailURLString: response.recipe?.imageURL?.absoluteString
+                    )
+                    try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
+                } else if let recipe = response.recipe {
+                    selectedTab = .cookbook
+                    toastCenter.show(
+                        title: "Saved",
+                        subtitle: recipe.title,
+                        systemImage: "bookmark.fill",
+                        thumbnailURLString: recipe.imageURL?.absoluteString
+                    )
+                    try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
+                }
+
+                await sharedImportInbox.refresh()
+                NotificationCenter.default.post(name: .recipeImportReviewQueueNeedsRefresh, object: nil)
+            } catch {
+                let errorMessage = (error as? RecipeImportServiceError).map {
+                    switch $0 {
+                    case .invalidRequest:
+                        return "Invalid import request."
+                    case .invalidResponse:
+                        return "Unexpected import response."
+                    case .requestFailed(let message):
+                        return message
+                    }
+                } ?? error.localizedDescription
+                let failedEnvelope = SharedRecipeImportEnvelope(
+                    id: envelope.id,
+                    createdAt: envelope.createdAt,
+                    targetState: envelope.targetState,
+                    sourceText: envelope.sourceText,
+                    sourceURLString: envelope.sourceURLString,
+                    sourceApp: envelope.sourceApp,
+                    attachments: envelope.attachments,
+                    processingState: "failed",
+                    attemptCount: (envelope.attemptCount ?? 0) + 1,
+                    lastAttemptAt: Date(),
+                    lastError: errorMessage,
+                    updatedAt: Date()
+                )
+                try? SharedRecipeImportInbox.update(failedEnvelope)
+                await sharedImportInbox.refresh()
+                NotificationCenter.default.post(name: .recipeImportReviewQueueNeedsRefresh, object: nil)
+                toastCenter.show(
+                    title: "Couldn’t import share",
+                    subtitle: errorMessage,
+                    systemImage: "exclamationmark.circle.fill"
+                )
+            }
+        }
+    }
 }
 
 private struct DiscoverTabView: View {
@@ -2442,6 +2784,8 @@ private struct DiscoverTabView: View {
     let onSelectRecipe: (DiscoverRecipeCardData) -> Void
     @StateObject private var viewModel = DiscoverRecipesViewModel()
     @StateObject private var environmentModel = DiscoverEnvironmentViewModel()
+    @State private var hasAppearedOnce = false
+    @State private var searchRefreshTask: Task<Void, Never>?
 
     private let recipeColumns = [
         GridItem(.flexible(), spacing: 16, alignment: .top),
@@ -2563,23 +2907,20 @@ private struct DiscoverTabView: View {
                     }
 
                     if let errorMessage = viewModel.errorMessage {
-                        BubblySurfaceCard(accent: Color(hex: "FF8E8E")) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Recipe feed unavailable")
-                                    .biroHeaderFont(18)
-                                    .foregroundStyle(OunjePalette.primaryText)
-                                Text(errorMessage)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-                            }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Recipe feed unavailable")
+                                .biroHeaderFont(18)
+                                .foregroundStyle(OunjePalette.primaryText)
+                            Text(errorMessage)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
                         }
-                    } else if (viewModel.isLoading && isSearching) || (viewModel.isLoading && viewModel.recipes.isEmpty) || (viewModel.isTransitioningFeed && !isSearching) {
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 6)
+                    } else if !viewModel.hasResolvedInitialLoad || (viewModel.isLoading && isSearching) || (viewModel.isLoading && viewModel.recipes.isEmpty) || (viewModel.isTransitioningFeed && !isSearching) {
                         LazyVGrid(columns: recipeColumns, spacing: 14) {
                             ForEach(0..<6, id: \.self) { _ in
-                                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                    .fill(OunjePalette.surface.opacity(0.9))
-                                    .frame(height: 292)
-                                    .redacted(reason: .placeholder)
+                                DiscoverRecipeCardLoadingPlaceholder()
                             }
                         }
                     } else if visibleRecipes.isEmpty {
@@ -2604,38 +2945,66 @@ private struct DiscoverTabView: View {
             }
             .scrollIndicators(.hidden)
         }
-        .task(id: discoverRankingKey) {
+        .task(id: discoverFeedKey) {
+            let initialContext = environmentModel.feedContext
+            async let environmentRefresh: Void = environmentModel.refresh(profile: store.profile)
+            await viewModel.loadIfNeeded(profile: store.profile, query: searchText, feedContext: initialContext)
+            await environmentRefresh
             await viewModel.loadIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
         }
-        .task(id: environmentRefreshKey) {
-            await environmentModel.refresh(profile: store.profile)
+        .onChange(of: searchText) { newValue in
+            searchRefreshTask?.cancel()
+
+            let normalized = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty else {
+                Task {
+                    await viewModel.forceReload(profile: store.profile, query: "", feedContext: environmentModel.feedContext)
+                }
+                return
+            }
+
+            searchRefreshTask = Task {
+                try? await Task.sleep(nanoseconds: 240_000_000)
+                guard !Task.isCancelled else { return }
+                await viewModel.refresh(profile: store.profile, query: normalized, feedContext: environmentModel.feedContext)
+            }
         }
         .onAppear {
+            if normalizedSearchText.isEmpty {
+                viewModel.selectedFilter = "All"
+            }
+
             guard normalizedSearchText.isEmpty else { return }
+            guard hasAppearedOnce else {
+                hasAppearedOnce = true
+                return
+            }
+            guard viewModel.selectedFilter == "All", !viewModel.recipes.isEmpty else { return }
             Task {
                 await viewModel.rotateBaseFeedIfNeeded(profile: store.profile, feedContext: environmentModel.feedContext)
+            }
+            Task {
+                if viewModel.recipes.isEmpty || viewModel.errorMessage != nil {
+                    await viewModel.forceReload(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
+                }
             }
         }
     }
 
-    private var discoverRankingKey: String {
+    private var discoverFeedKey: String {
         let cuisines = store.profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
         let foods = store.profile?.favoriteFoods.joined(separator: ",") ?? ""
         let flavors = store.profile?.favoriteFlavors.joined(separator: ",") ?? ""
         let dietary = store.profile?.dietaryPatterns.joined(separator: ",") ?? ""
         let goals = store.profile?.mealPrepGoals.joined(separator: ",") ?? ""
-        let query = normalizedSearchText
-        return "\(cuisines)|\(foods)|\(flavors)|\(dietary)|\(goals)|\(viewModel.selectedFilter)|\(query)|\(environmentModel.feedContext.cacheKey)"
-    }
-
-    private var environmentRefreshKey: String {
         let address = store.profile?.deliveryAddress
-        return [
+        let environmentKey = [
             address?.city ?? "",
             address?.region ?? "",
             address?.postalCode ?? "",
             Date.now.formatted(.dateTime.year().month().day().hour())
         ].joined(separator: "|")
+        return "\(cuisines)|\(foods)|\(flavors)|\(dietary)|\(goals)|\(viewModel.selectedFilter)|\(environmentKey)"
     }
 }
 
@@ -2813,7 +3182,7 @@ private enum CookbookSection: String, CaseIterable, Identifiable {
         case .saved:
             return "Recipes you’ve kept for later."
         case .prepped:
-            return "Meals you’re cooking next or already ran."
+            return "Meals you’re cooking."
         }
     }
 }
@@ -2849,6 +3218,12 @@ private enum CookbookComposerContext {
 private struct CookbookTabView: View {
     @Binding var selectedTab: AppTab
     @Binding var searchText: String
+    @Binding var requestedCycleID: String?
+    @ObservedObject var sharedImportInbox: SharedRecipeImportInboxStore
+    @ObservedObject var recipeReviewQueue: RecipeImportReviewQueueStore
+    @ObservedObject var toastCenter: AppToastCenter
+    let onRefreshSharedImports: () -> Void
+    let onRetryFailedSharedImports: () -> Void
     let onSelectRecipe: (DiscoverRecipeCardData) -> Void
 
     @EnvironmentObject private var savedStore: SavedRecipesStore
@@ -2859,6 +3234,10 @@ private struct CookbookTabView: View {
     @State private var isComposerPresented = false
     @State private var composerContext: CookbookComposerContext = .saved
     @State private var selectedCycle: CookbookPreppedCycle?
+    @State private var isSavedSearchPresented = false
+    @State private var isImportQueuePresented = false
+    @State private var isRecipeReviewQueuePresented = false
+    @State private var keyboardHeight: CGFloat = 0
 
     private let columns = [
         GridItem(.flexible(), spacing: 14, alignment: .top),
@@ -2883,6 +3262,10 @@ private struct CookbookTabView: View {
                 recipe.filterLabel.lowercased().contains(query)
             return matchesFilter && matchesQuery
         }
+    }
+
+    private var showsSavedSearch: Bool {
+        savedStore.savedRecipes.count >= 5
     }
 
     private var upcomingCycle: CookbookPreppedCycle? {
@@ -2916,6 +3299,10 @@ private struct CookbookTabView: View {
         ]
     }
 
+    private var keyboardLift: CGFloat {
+        max(0, keyboardHeight - 8)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -2928,6 +3315,60 @@ private struct CookbookTabView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.92)
                     }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        isImportQueuePresented = true
+                    } label: {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "tray.full")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .frame(width: 42, height: 42)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(OunjePalette.surface)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                                        )
+                                )
+
+                            if sharedImportInbox.badgeCount > 0 {
+                                Text("\(sharedImportInbox.badgeCount)")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(OunjePalette.background)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(OunjePalette.accent)
+                                    )
+                                    .offset(x: 4, y: -4)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        composerContext = selectedSection == .prepped ? .prepped : .saved
+                        isComposerPresented = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(width: 42, height: 42)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(OunjePalette.surface)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 CookbookSectionTabs(
@@ -2948,29 +3389,139 @@ private struct CookbookTabView: View {
         }
         .scrollIndicators(.hidden)
         .background(OunjePalette.background.ignoresSafeArea())
+        .overlay {
+            if selectedSection == .saved, isSavedSearchPresented {
+                Color.black.opacity(0.001)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                            isSavedSearchPresented = false
+                        }
+                    }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if selectedSection == .saved,
+               showsSavedSearch,
+               !isSavedSearchPresented,
+               searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                FloatingSavedSearchButton(
+                    isActive: false
+                ) {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                        isSavedSearchPresented = true
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 18)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if selectedSection == .saved,
+               showsSavedSearch,
+               isSavedSearchPresented || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                SavedSearchBottomDock(
+                    text: $searchText,
+                    placeholder: "Search saved recipes",
+                    isPresented: $isSavedSearchPresented
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12 + keyboardLift)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .task(id: selectedSection == .saved ? (store.authSession?.userID ?? "guest") : "cookbook-idle") {
             guard selectedSection == .saved else { return }
             await savedStore.bootstrap(authSession: store.authSession)
+        }
+        .task(id: "recipe-review-queue::\(store.authSession?.userID ?? "signed-out")") {
+            await recipeReviewQueue.refresh(userID: store.authSession?.userID)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .recipeImportReviewQueueNeedsRefresh)) { _ in
+            Task {
+                await recipeReviewQueue.refresh(userID: store.authSession?.userID)
+                await sharedImportInbox.reconcileCompletedImports(recipeReviewQueue.completedItems)
+            }
         }
         .sheet(isPresented: $isComposerPresented) {
             DiscoverComposerSheet(context: composerContext)
                 .presentationDetents([.fraction(0.5)])
                 .presentationDragIndicator(.hidden)
         }
+        .sheet(isPresented: $isImportQueuePresented) {
+            SharedRecipeImportQueueSheet(
+                items: sharedImportInbox.envelopes,
+                historyStore: recipeReviewQueue,
+                onRefreshAll: {
+                    onRefreshSharedImports()
+                    isImportQueuePresented = false
+                },
+                onRetryFailed: {
+                    onRetryFailedSharedImports()
+                    isImportQueuePresented = false
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.hidden)
+        }
+        .sheet(isPresented: $isRecipeReviewQueuePresented) {
+            RecipeImportReviewQueueSheet(
+                items: recipeReviewQueue.items
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.hidden)
+        }
         .fullScreenCover(item: $selectedCycle) { cycle in
-            CookbookCyclePage(cycle: cycle, onSelectRecipe: onSelectRecipe)
+            CookbookCyclePage(
+                cycle: cycle,
+                selectedTab: $selectedTab,
+                toastCenter: toastCenter
+            )
+        }
+        .onAppear {
+            openRequestedCycleIfNeeded()
+            isSavedSearchPresented = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        .onChange(of: requestedCycleID) { _ in
+            openRequestedCycleIfNeeded()
+        }
+        .onChange(of: selectedSection) { section in
+            if section != .saved && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                isSavedSearchPresented = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let screenHeight = UIScreen.main.bounds.height
+            let overlap = max(0, screenHeight - frame.minY)
+            withAnimation(.easeOut(duration: 0.22)) {
+                keyboardHeight = overlap
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) {
+                keyboardHeight = 0
+            }
         }
     }
 
     @ViewBuilder
     private var savedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if savedStore.savedRecipes.count >= 5 {
-                InlineSearchBar(
-                    text: $searchText,
-                    placeholder: "Search saved recipes"
+            if recipeReviewQueue.badgeCount > 0 {
+                RecipeImportReviewQueueBanner(
+                    draftCount: recipeReviewQueue.draftCount,
+                    needsReviewCount: recipeReviewQueue.needsReviewCount,
+                    totalCount: recipeReviewQueue.badgeCount,
+                    onOpen: {
+                        isRecipeReviewQueuePresented = true
+                    }
                 )
+            }
 
+            if showsSavedSearch {
                 if filters.count > 1 {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 22) {
@@ -3014,7 +3565,7 @@ private struct CookbookTabView: View {
     private var preppedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
             if upcomingCycle == nil && previousCycles.isEmpty {
-                RecipesEmptyState(
+                CookbookPreppedEmptyState(
                     title: "No prep meals yet",
                     detail: "Once Ounje builds a cycle, the meals you’re cooking next and the ones you’ve already run will live here.",
                     symbolName: "fork.knife.circle"
@@ -3040,12 +3591,703 @@ private struct CookbookTabView: View {
             }
         }
     }
+
+    private func openRequestedCycleIfNeeded() {
+        guard let requestedCycleID, !requestedCycleID.isEmpty else { return }
+
+        if let upcomingCycle, upcomingCycle.id == requestedCycleID {
+            selectedSection = .prepped
+            selectedCycle = upcomingCycle
+            self.requestedCycleID = nil
+            return
+        }
+
+        if let matchedPreviousCycle = previousCycles.first(where: { $0.id == requestedCycleID }) {
+            selectedSection = .prepped
+            selectedCycle = matchedPreviousCycle
+            self.requestedCycleID = nil
+        }
+    }
+}
+
+private enum SharedRecipeImportQueueTab: String, CaseIterable, Identifiable {
+    case queued = "Queued"
+    case failed = "Failed"
+    case completed = "Completed"
+
+    var id: String { rawValue }
+}
+
+private struct SharedRecipeImportQueueSheet: View {
+    let items: [SharedRecipeImportEnvelope]
+    @ObservedObject var historyStore: RecipeImportReviewQueueStore
+    let onRefreshAll: () -> Void
+    let onRetryFailed: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedTab: SharedRecipeImportQueueTab = .queued
+
+    private var queuedItems: [SharedRecipeImportEnvelope] {
+        items.filter { !$0.isRetryNeeded }
+    }
+
+    private var failedItems: [SharedRecipeImportEnvelope] {
+        items.filter(\.isRetryNeeded)
+    }
+
+    private var queuedTabCount: Int {
+        queuedItems.count
+    }
+
+    private var failedTabCount: Int {
+        failedItems.count
+    }
+
+    private var shouldShowFooter: Bool {
+        selectedTab != .completed
+    }
+
+    private var footerButtonTitle: String {
+        switch selectedTab {
+        case .queued:
+            return "Refresh imports"
+        case .failed:
+            return failedItems.isEmpty ? "Refresh imports" : "Retry imports"
+        case .completed:
+            return "Refresh imports"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            tabBar
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    subtitle
+                    content
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+                .padding(.bottom, shouldShowFooter ? 120 : 28)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .background(OunjePalette.background.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if shouldShowFooter {
+                retryFooter
+            }
+        }
+        .onAppear {
+            if !queuedItems.isEmpty {
+                selectedTab = .queued
+            } else if !failedItems.isEmpty {
+                selectedTab = .failed
+            } else if !historyStore.completedItems.isEmpty {
+                selectedTab = .completed
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            Text("Recipe imports")
+                .sleeDisplayFont(30)
+                .foregroundStyle(OunjePalette.primaryText)
+
+            Spacer(minLength: 0)
+
+            Button("Done") { dismiss() }
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 8)
+    }
+
+    private var tabBar: some View {
+        HStack(spacing: 10) {
+            ForEach(SharedRecipeImportQueueTab.allCases) { tab in
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(tab.rawValue)
+                            .font(.system(size: 14, weight: .semibold))
+                        if tab == .queued, queuedTabCount > 0 {
+                            countBadge(queuedTabCount, isSelected: selectedTab == tab)
+                        } else if tab == .failed, failedTabCount > 0 {
+                            countBadge(failedTabCount, isSelected: selectedTab == tab)
+                        } else if tab == .completed, historyStore.completedCount > 0 {
+                            countBadge(historyStore.completedCount, isSelected: selectedTab == tab)
+                        }
+                    }
+                    .foregroundStyle(selectedTab == tab ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(selectedTab == tab ? OunjePalette.surface : OunjePalette.surface.opacity(0.5))
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(selectedTab == tab ? OunjePalette.stroke : Color.clear, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 4)
+    }
+
+    private var subtitle: some View {
+        Group {
+            if selectedTab == .queued {
+                Text("Queued shares live here until Ounje finishes pulling them in.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            } else if selectedTab == .failed {
+                Text("Imports that timed out or need another pass live here until you retry them.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            } else {
+                Text("Completed imports live here so you can trace what already made it through.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if selectedTab == .queued {
+            if queuedItems.isEmpty {
+                emptyState(
+                    title: "No imports waiting",
+                    detail: "Fresh shares will show up here while Ounje is pulling and parsing them."
+                )
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(queuedItems) { item in
+                        SharedRecipeImportQueueRow(item: item)
+                    }
+                }
+            }
+        } else if selectedTab == .failed {
+            if failedItems.isEmpty {
+                emptyState(
+                    title: "No failed imports",
+                    detail: "If a share needs another pass, it will land here with the retry reason."
+                )
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(failedItems) { item in
+                        SharedRecipeImportQueueRow(item: item)
+                    }
+                }
+            }
+        } else {
+            if historyStore.completedItems.isEmpty {
+                emptyState(
+                    title: "No completed imports yet",
+                    detail: "Once Ounje finishes a shared recipe cleanly, it will show up here."
+                )
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(historyStore.completedItems) { item in
+                        RecipeImportCompletedRow(item: item)
+                    }
+                }
+            }
+        }
+    }
+
+    private var retryFooter: some View {
+        VStack(spacing: 0) {
+            Divider()
+                .overlay(OunjePalette.stroke)
+
+            Button {
+                if selectedTab == .failed, !failedItems.isEmpty {
+                    onRetryFailed()
+                } else {
+                    onRefreshAll()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.clockwise")
+                    Text(footerButtonTitle)
+                        .biroHeaderFont(17)
+                }
+                .foregroundStyle(OunjePalette.primaryText)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(OunjePalette.accent)
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+            .padding(.bottom, 14)
+            .background(OunjePalette.background)
+        }
+    }
+
+    private func emptyState(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+            Text(detail)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+
+    private func countBadge(_ count: Int, isSelected: Bool) -> some View {
+        Text("\(count)")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(isSelected ? OunjePalette.background : OunjePalette.primaryText)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(isSelected ? OunjePalette.accent : OunjePalette.stroke)
+            )
+    }
+}
+
+private struct RecipeImportReviewQueueBanner: View {
+    let draftCount: Int
+    let needsReviewCount: Int
+    let totalCount: Int
+    let onOpen: () -> Void
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if draftCount > 0 {
+            parts.append("\(draftCount) draft\(draftCount == 1 ? "" : "s")")
+        }
+        if needsReviewCount > 0 {
+            parts.append("\(needsReviewCount) needs review")
+        }
+        return parts.isEmpty ? "Imports waiting for a quick check." : parts.joined(separator: " • ")
+    }
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("Recipe review queue")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                        Text("\(totalCount)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(OunjePalette.background)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(OunjePalette.accent)
+                            )
+                    }
+
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.95))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct RecipeImportReviewQueueSheet: View {
+    let items: [RecipeImportReviewItem]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Recipe review queue")
+                            .biroHeaderFont(30)
+                            .foregroundStyle(OunjePalette.primaryText)
+                        Text("Draft imports are usable, but they still need a quick check before they feel finished.")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if items.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Nothing waiting")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                            Text("Short-form imports that need attention will show up here.")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(18)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .fill(OunjePalette.surface.opacity(0.94))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                                )
+                        )
+                    } else {
+                        VStack(spacing: 12) {
+                            ForEach(items) { item in
+                                RecipeImportReviewRow(item: item)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 18)
+                .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+            .background(OunjePalette.background.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+            }
+        }
+    }
+}
+
+private struct RecipeImportReviewRow: View {
+    let item: RecipeImportReviewItem
+
+    private var sourceLine: String {
+        let parts = [item.sourceProvenance?.platform, item.sourceProvenance?.sourceType]
+            .compactMap { value -> String? in
+                guard let value else { return nil }
+                let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                return normalized.isEmpty ? nil : normalized.capitalized
+            }
+        return parts.isEmpty ? "Imported draft" : parts.joined(separator: " • ")
+    }
+
+    private var stateText: String {
+        switch item.reviewState {
+        case "draft":
+            return "Draft"
+        case "needs_review":
+            return "Needs review"
+        default:
+            return item.reviewState.capitalized
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .frame(width: 42, height: 42)
+
+                    Image(systemName: item.reviewState == "draft" ? "doc.badge.gearshape" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(item.reviewState == "draft" ? OunjePalette.accent : Color.orange)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(2)
+                    Text(sourceLine)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(stateText)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(OunjePalette.background)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(item.reviewState == "draft" ? OunjePalette.accent : Color.orange)
+                    )
+            }
+
+            if let note = item.reviewReason, !note.isEmpty {
+                Text(note)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct SharedRecipeImportQueueRow: View {
+    let item: SharedRecipeImportEnvelope
+
+    private var titleText: String {
+        let source = item.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let source, !source.isEmpty {
+            return source
+        }
+
+        let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !sourceText.isEmpty {
+            return sourceText.components(separatedBy: .newlines).first ?? sourceText
+        }
+
+        if let app = item.sourceApp?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
+            return app
+        }
+
+        return "Imported recipe"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .frame(width: 42, height: 42)
+
+                    Image(systemName: item.isRetryNeeded ? "exclamationmark.triangle.fill" : "tray.full.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(item.isRetryNeeded ? Color.orange : OunjePalette.primaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(titleText)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(2)
+                    Text(item.queueStatusLabel)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(item.isRetryNeeded ? Color.orange : OunjePalette.secondaryText)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if let error = item.lastError, !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                if let attemptCount = item.attemptCount {
+                    Text("Attempts: \(attemptCount)")
+                }
+                if let attemptAt = item.lastAttemptAt {
+                    Text(attemptAt.formatted(.relative(presentation: .named)))
+                } else {
+                    Text(item.createdAt.formatted(.relative(presentation: .named)))
+                }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(OunjePalette.secondaryText)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct RecipeImportCompletedRow: View {
+    let item: RecipeImportCompletedItem
+
+    private var relativeTimestamp: String? {
+        let formatter = ISO8601DateFormatter()
+        if let completedAt = item.completedAt,
+           let date = formatter.date(from: completedAt) {
+            return date.formatted(.relative(presentation: .named))
+        }
+        if let createdAt = item.createdAt,
+           let date = formatter.date(from: createdAt) {
+            return date.formatted(.relative(presentation: .named))
+        }
+        return nil
+    }
+
+    private var sourceLine: String {
+        let parts = [item.source, item.cookTimeText]
+            .compactMap { raw -> String? in
+                guard let raw else { return nil }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+        return parts.isEmpty ? "Imported recipe" : parts.joined(separator: " • ")
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Group {
+                if let raw = item.imageURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   let url = URL(string: raw),
+                   !raw.isEmpty {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        default:
+                            completedFallbackIcon
+                        }
+                    }
+                } else {
+                    completedFallbackIcon
+                }
+            }
+            .frame(width: 46, height: 46)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(2)
+
+                Text(sourceLine)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(1)
+
+                if let sourceURL = item.sourceURL, !sourceURL.isEmpty {
+                    Text(sourceURL)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.9))
+                        .lineLimit(1)
+                }
+
+                if let relativeTimestamp {
+                    Text(relativeTimestamp)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Text(item.reviewState == "needs_review" ? "Needs review" : "Done")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(OunjePalette.background)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(item.reviewState == "needs_review" ? Color.orange : OunjePalette.accent)
+                )
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+
+    private var completedFallbackIcon: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(OunjePalette.surface)
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(OunjePalette.accent)
+        }
+    }
 }
 
 private struct PrepTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @Binding var selectedTab: AppTab
+    @Binding var requestedCookbookCycleID: String?
     let onSelectRecipe: (PlannedRecipe) -> Void
+    @State private var isRegenerationSheetPresented = false
+    @State private var selectedRegenerationFocus: PrepRegenerationFocus = .balanced
+    @State private var prepLinkPulse = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -3054,14 +4296,75 @@ private struct PrepTabView: View {
                     PrepTrackerCard(store: store)
 
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Meals in this prep")
-                            .biroHeaderFont(26)
-                            .foregroundStyle(OunjePalette.primaryText)
+                        HStack(alignment: .center, spacing: 12) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("Meals in")
+                                    .biroHeaderFont(26)
+                                    .foregroundStyle(OunjePalette.primaryText)
+
+                                Button {
+                                    requestedCookbookCycleID = store.latestPlan?.id.uuidString
+                                    selectedTab = .cookbook
+                                } label: {
+                                        HStack(alignment: .center, spacing: 5) {
+                                            Text("this prep")
+                                                .sleeDisplayFont(22)
+                                                .foregroundStyle(prepLinkPulse ? OunjePalette.softCream : OunjePalette.softCream.opacity(0.96))
+
+                                            Image(systemName: "pencil")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(OunjePalette.softCream.opacity(prepLinkPulse ? 1 : 0.88))
+                                                .scaleEffect(prepLinkPulse ? 1.08 : 0.98)
+                                                .rotationEffect(.degrees(prepLinkPulse ? 6 : -3))
+                                                .offset(y: prepLinkPulse ? -1 : 0)
+                                                .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
+                                        }
+                                    .padding(.horizontal, 2)
+                                    .padding(.vertical, 1)
+                                    .scaleEffect(prepLinkPulse ? 1.03 : 0.985)
+                                    .shadow(color: OunjePalette.accent.opacity(prepLinkPulse ? 0.16 : 0.08), radius: prepLinkPulse ? 6 : 3, x: 0, y: 2)
+                                }
+                                .buttonStyle(.plain)
+                                .contentShape(Rectangle())
+                                .onAppear {
+                                    guard !prepLinkPulse else { return }
+                                    withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
+                                        prepLinkPulse = true
+                                    }
+                                }
+                            }
+
+                            Spacer(minLength: 12)
+
+                            Button {
+                                selectedRegenerationFocus = .balanced
+                                isRegenerationSheetPresented = true
+                            } label: {
+                                Group {
+                                    if store.isGenerating {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                            .tint(OunjePalette.softCream)
+                                    } else {
+                                        Image(systemName: "wand.and.stars")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
+                                    }
+                                }
+                                .frame(width: 26, height: 26)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(store.isGenerating || !(store.profile?.isAutomationReady ?? false))
+                            .opacity((store.isGenerating || !(store.profile?.isAutomationReady ?? false)) ? 0.65 : 1)
+                        }
 
                         MealsPrepCarousel(
                             plannedRecipes: store.latestPlan?.recipes ?? [],
+                            isGenerating: store.isGenerating,
                             onSelectRecipe: onSelectRecipe
                         )
+                        .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
                     }
                     .padding(.top, 4)
                 }
@@ -3072,6 +4375,21 @@ private struct PrepTabView: View {
             .scrollIndicators(.hidden)
         }
         .background(OunjePalette.background.ignoresSafeArea())
+        .sheet(isPresented: $isRegenerationSheetPresented) {
+            PrepRegenerationSheet(
+                selectedFocus: $selectedRegenerationFocus,
+                isGenerating: store.isGenerating,
+                onCancel: {
+                    isRegenerationSheetPresented = false
+                },
+                onConfirm: { options in
+                    isRegenerationSheetPresented = false
+                    Task { await store.regeneratePrepBatch(using: options) }
+                }
+            )
+            .presentationDetents([.fraction(0.78), .large])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     private func recipeForSlot(_ index: Int) -> Recipe? {
@@ -3080,13 +4398,230 @@ private struct PrepTabView: View {
     }
 }
 
+private struct PrepRegenerationSheet: View {
+    @Binding var selectedFocus: PrepRegenerationFocus
+    let isGenerating: Bool
+    let onCancel: () -> Void
+    let onConfirm: (PrepGenerationOptions) -> Void
+
+    var body: some View {
+        ZStack {
+            OunjePalette.background.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    SleeScriptDisplayText("Generate new prep?", size: 26, color: OunjePalette.primaryText)
+                    Text("Pick the direction for the next batch. We’ll still respect your profile, saved meals, and allergy guardrails.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 10) {
+                        ForEach(PrepRegenerationFocus.allCases) { focus in
+                            Button {
+                                selectedFocus = focus
+                            } label: {
+                                HStack(spacing: 14) {
+                                    Image(systemName: focus.systemImageName)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(selectedFocus == focus ? OunjePalette.softCream.opacity(0.96) : OunjePalette.softCream.opacity(0.92))
+                                        .frame(width: 18)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(focus.title)
+                                            .sleeDisplayFont(17)
+                                            .foregroundStyle(OunjePalette.primaryText)
+
+                                        Text(focus.subtitle)
+                                            .font(.system(size: 12.5, weight: .medium))
+                                            .foregroundStyle(selectedFocus == focus ? OunjePalette.primaryText.opacity(0.72) : OunjePalette.secondaryText)
+                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(2)
+                                    }
+
+                                    Spacer(minLength: 0)
+
+                                    Image(systemName: selectedFocus == focus ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundStyle(selectedFocus == focus ? OunjePalette.softCream.opacity(0.96) : OunjePalette.secondaryText.opacity(0.72))
+                                }
+                                .padding(.horizontal, 15)
+                                .padding(.vertical, 13)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .fill(
+                                            selectedFocus == focus
+                                                ? AnyShapeStyle(
+                                                    LinearGradient(
+                                                        colors: [
+                                                            OunjePalette.surface.opacity(0.98),
+                                                            OunjePalette.panel.opacity(0.98),
+                                                            OunjePalette.accent.opacity(0.34)
+                                                        ],
+                                                        startPoint: .leading,
+                                                        endPoint: .trailing
+                                                    )
+                                                )
+                                                : AnyShapeStyle(OunjePalette.surface.opacity(0.96))
+                                        )
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .stroke(
+                                            selectedFocus == focus
+                                                ? OunjePalette.accent.opacity(0.46)
+                                                : OunjePalette.stroke.opacity(0.84),
+                                            lineWidth: 1
+                                        )
+                                )
+                                .shadow(
+                                    color: selectedFocus == focus ? OunjePalette.accent.opacity(0.12) : .clear,
+                                    radius: 14,
+                                    x: 0,
+                                    y: 8
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 2)
+                    .padding(.bottom, 8)
+                }
+
+                HStack(spacing: 12) {
+                    Button(action: onCancel) {
+                        Text("Keep current")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 54)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(OunjePalette.surface.opacity(0.94))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onConfirm(PrepGenerationOptions(focus: selectedFocus))
+                    } label: {
+                        Text(isGenerating ? "Generating..." : "Generate prep")
+                            .sleeDisplayFont(19)
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 54)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                OunjePalette.accent.opacity(0.94),
+                                                OunjePalette.accent.opacity(0.78)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isGenerating)
+                    .opacity(isGenerating ? 0.72 : 1)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
+        }
+    }
+}
+
+private extension PrepRegenerationFocus {
+    var title: String {
+        switch self {
+        case .balanced:
+            return "More satisfying"
+        case .closerToFavorites:
+            return "More like my favorites"
+        case .moreVariety:
+            return "More imaginative"
+        case .lessPrepTime:
+            return "Less prep time"
+        case .tighterOverlap:
+            return "Tighter grocery overlap"
+        case .savedRecipeRefresh:
+            return "Use more saved meals"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .balanced:
+            return "Heartier picks that keep you full for longer."
+        case .closerToFavorites:
+            return "More of the cuisines and dishes you already love."
+        case .moreVariety:
+            return "Explore meals you likely would not have picked yourself."
+        case .lessPrepTime:
+            return "Quicker recipes with a lighter lift."
+        case .tighterOverlap:
+            return "Reuse more ingredients to keep the cart tighter."
+        case .savedRecipeRefresh:
+            return "Pull more strongly from saved meals that still fit."
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .balanced:
+            return "fork.knife"
+        case .closerToFavorites:
+            return "heart.text.square"
+        case .moreVariety:
+            return "sparkles"
+        case .lessPrepTime:
+            return "timer"
+        case .tighterOverlap:
+            return "carrot"
+        case .savedRecipeRefresh:
+            return "bookmark"
+        }
+    }
+
+    var promptSeed: String {
+        switch self {
+        case .balanced:
+            return "more satisfying, keep the prep filling, and stay grounded in my saved meals"
+        case .closerToFavorites:
+            return "more like my favorites, lean into the cuisines and flavors I already love"
+        case .moreVariety:
+            return "more imaginative, explore meals I would not normally pick"
+        case .lessPrepTime:
+            return "less prep time, keep the meals simpler and faster to make"
+        case .tighterOverlap:
+            return "tighter grocery overlap, reuse more ingredients across the prep"
+        case .savedRecipeRefresh:
+            return "use more saved meals, but refresh them so the cycle still feels new"
+        }
+    }
+}
+
 private struct MealsPrepCarousel: View {
     let plannedRecipes: [PlannedRecipe]
+    let isGenerating: Bool
     let onSelectRecipe: (PlannedRecipe) -> Void
 
     var body: some View {
-        if plannedRecipes.isEmpty {
-            RecipesEmptyState(
+        if isGenerating {
+            MealsPrepLoadingCarousel()
+        } else if plannedRecipes.isEmpty {
+            PrepEmptyState(
                 title: "No meals in this prep yet",
                 detail: "Generate a fresh cycle and your scheduled meals will show up here.",
                 symbolName: "fork.knife.circle"
@@ -3102,9 +4637,103 @@ private struct MealsPrepCarousel: View {
                             .frame(width: 232)
                     }
                 }
-                .padding(.trailing, 4)
+                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+private struct MealsPrepLoadingCarousel: View {
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 14) {
+                ForEach(0..<4, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 14) {
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(OunjePalette.surface.opacity(0.82))
+                            .frame(height: 188)
+                            .overlay(alignment: .topTrailing) {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(OunjePalette.surface.opacity(0.95))
+                                    .frame(width: 26, height: 26)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(OunjePalette.stroke.opacity(0.64), lineWidth: 1)
+                                    )
+                                    .padding(10)
+                            }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(OunjePalette.surface.opacity(0.82))
+                                .frame(width: index.isMultiple(of: 2) ? 176 : 152, height: 22)
+
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(OunjePalette.surface.opacity(0.82))
+                                .frame(width: 104, height: 14)
+                        }
+                        .padding(.horizontal, 2)
+                        .padding(.bottom, 2)
+                    }
+                    .padding(14)
+                    .frame(width: 232, height: 292, alignment: .topLeading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        OunjePalette.panel.opacity(0.92),
+                                        OunjePalette.surface.opacity(0.78)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .stroke(.white.opacity(0.05), lineWidth: 1)
+                    )
+                }
+            }
+            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .redacted(reason: .placeholder)
+    }
+}
+
+private struct PrepEmptyState: View {
+    let title: String
+    let detail: String
+    let symbolName: String
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: symbolName)
+                .font(.system(size: 72, weight: .light))
+                .foregroundStyle(OunjePalette.secondaryText.opacity(0.42))
+                .padding(.top, 24)
+
+            VStack(spacing: 8) {
+                Text(title)
+                    .biroHeaderFont(20)
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                Text(detail)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: 280)
+            .padding(.bottom, 6)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 8)
     }
 }
 
@@ -3286,14 +4915,33 @@ private struct DarkBlurView: UIViewRepresentable {
 
 private struct CookbookCyclePage: View {
     let cycle: CookbookPreppedCycle
-    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
+    @Binding var selectedTab: AppTab
+    let toastCenter: AppToastCenter
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var savedStore: SavedRecipesStore
+
+    @State private var presentedRecipe: PresentedRecipeDetail?
+    @State private var isRegenerationSheetPresented = false
+    @State private var selectedRegenerationFocus: PrepRegenerationFocus = .balanced
+    @State private var regenerationPromptText: String = ""
 
     private let columns = [
         GridItem(.flexible(), spacing: 14, alignment: .top),
         GridItem(.flexible(), spacing: 14, alignment: .top)
     ]
+
+    private var isCurrentPrepCycle: Bool {
+        store.latestPlan?.id.uuidString == cycle.id
+    }
+
+    private var displayedRecipes: [DiscoverRecipeCardData] {
+        if isCurrentPrepCycle {
+            return store.latestPlan?.recipes.map(DiscoverRecipeCardData.init(preppedRecipe:)) ?? []
+        }
+        return cycle.recipes
+    }
 
     var body: some View {
         NavigationStack {
@@ -3312,10 +4960,31 @@ private struct CookbookCyclePage: View {
                                 .foregroundStyle(OunjePalette.secondaryText)
                         }
 
-                        LazyVGrid(columns: columns, spacing: 14) {
-                            ForEach(cycle.recipes) { recipe in
-                                DiscoverRemoteRecipeCard(recipe: recipe) {
-                                    onSelectRecipe(recipe)
+                        if displayedRecipes.isEmpty {
+                            RecipesEmptyState(
+                                title: "No meals left in this prep",
+                                detail: "Add a few back into next prep and they’ll show up here again.",
+                                symbolName: "fork.knife.circle"
+                            )
+                        } else {
+                            LazyVGrid(columns: columns, spacing: 14) {
+                                ForEach(displayedRecipes) { recipe in
+                                    DiscoverRemoteRecipeCard(
+                                        recipe: recipe,
+                                        secondaryTopAction: isCurrentPrepCycle
+                                            ? .init(
+                                                systemName: "xmark",
+                                                accessibilityLabel: "Remove from prep",
+                                                action: {
+                                                    Task {
+                                                        await store.removeRecipeFromLatestPlan(recipeID: recipe.id)
+                                                    }
+                                                }
+                                            )
+                                            : nil
+                                    ) {
+                                        presentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
+                                    }
                                 }
                             }
                         }
@@ -3339,7 +5008,206 @@ private struct CookbookCyclePage: View {
                             .foregroundStyle(OunjePalette.primaryText)
                     }
                 }
+
+                if isCurrentPrepCycle {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            selectedRegenerationFocus = .balanced
+                            regenerationPromptText = ""
+                            isRegenerationSheetPresented = true
+                        } label: {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(store.isGenerating || !(store.profile?.isAutomationReady ?? false))
+                        .opacity((store.isGenerating || !(store.profile?.isAutomationReady ?? false)) ? 0.65 : 1)
+                    }
+                }
             }
+        }
+        .fullScreenCover(item: $presentedRecipe) { presentedRecipe in
+            RecipeDetailExperienceView(
+                presentedRecipe: presentedRecipe,
+                onOpenCart: {
+                    selectedTab = .cart
+                },
+                toastCenter: toastCenter
+            )
+            .environmentObject(savedStore)
+            .background(OunjePalette.background.ignoresSafeArea())
+            .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $isRegenerationSheetPresented) {
+            CookbookCyclePromptSheet(
+                cycleTitle: cycle.title,
+                selectedFocus: $selectedRegenerationFocus,
+                promptText: $regenerationPromptText,
+                isGenerating: store.isGenerating,
+                onCancel: {
+                    isRegenerationSheetPresented = false
+                },
+                onConfirm: { options in
+                    isRegenerationSheetPresented = false
+                    Task { await store.regeneratePrepBatch(using: options) }
+                }
+            )
+            .presentationDetents([.fraction(0.78), .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+}
+
+private struct CookbookCyclePromptSheet: View {
+    let cycleTitle: String
+    @Binding var selectedFocus: PrepRegenerationFocus
+    @Binding var promptText: String
+    let isGenerating: Bool
+    let onCancel: () -> Void
+    let onConfirm: (PrepGenerationOptions) -> Void
+
+    private let promptFocuses: [PrepRegenerationFocus] = [
+        .balanced,
+        .closerToFavorites,
+        .moreVariety,
+        .lessPrepTime,
+        .tighterOverlap,
+        .savedRecipeRefresh
+    ]
+
+    var body: some View {
+        ZStack {
+            OunjePalette.background.ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    SleeScriptDisplayText("Shape this prep.", size: 26, color: OunjePalette.primaryText)
+                    Text("Tell Ounje what to lean toward. It will fold your note into search, similarity, and reranking.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(cycleTitle)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.72))
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Prompt")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+
+                    ZStack(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .fill(OunjePalette.surface.opacity(0.96))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    .stroke(OunjePalette.stroke.opacity(0.86), lineWidth: 1)
+                            )
+
+                        TextEditor(text: $promptText)
+                            .scrollContentBackground(.hidden)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .padding(11)
+                            .frame(minHeight: 116)
+                            .tint(OunjePalette.accent)
+
+                        if promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("Say what you want more of, less of, or what should feel different.")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText.opacity(0.78))
+                                .padding(.horizontal, 17)
+                                .padding(.vertical, 18)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Quick starts")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(promptFocuses) { focus in
+                                Button {
+                                    selectedFocus = focus
+                                } label: {
+                                    HStack(spacing: 7) {
+                                        Image(systemName: focus.systemImageName)
+                                            .font(.system(size: 11, weight: .semibold))
+                                        Text(focus.title)
+                                            .sleeDisplayFont(14)
+                                    }
+                                    .foregroundStyle(selectedFocus == focus ? OunjePalette.softCream.opacity(0.98) : OunjePalette.primaryText)
+                                    .padding(.horizontal, 13)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(selectedFocus == focus ? OunjePalette.accent.opacity(0.92) : OunjePalette.surface)
+                                            .overlay(
+                                                Capsule(style: .continuous)
+                                                    .stroke(selectedFocus == focus ? OunjePalette.accent.opacity(0.22) : OunjePalette.stroke, lineWidth: 1)
+                                            )
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Button(action: onCancel) {
+                        Text("Keep current")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 54)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(OunjePalette.surface.opacity(0.94))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onConfirm(PrepGenerationOptions(focus: selectedFocus, userPrompt: promptText))
+                    } label: {
+                        Text(isGenerating ? "Generating..." : "Generate prep")
+                            .sleeDisplayFont(18)
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 54)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                OunjePalette.accent.opacity(0.94),
+                                                OunjePalette.accent.opacity(0.78)
+                                            ],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isGenerating)
+                    .opacity(isGenerating ? 0.72 : 1)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
         }
     }
 }
@@ -3350,6 +5218,7 @@ private struct ProfileTabView: View {
     @State private var isFoodProfilePresented = false
     @State private var isCadencePickerPresented = false
     @State private var isAutonomyPickerPresented = false
+    @State private var isPaywallPresented = false
     @StateObject private var addressAutocomplete = AddressAutocompleteViewModel()
 
     @State private var addressLine1 = ""
@@ -3404,84 +5273,94 @@ private struct ProfileTabView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let profile {
-                        VStack(alignment: .leading, spacing: 16) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if let profile {
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 6) {
                             BiroScriptDisplayText("Profile", size: 29, color: OunjePalette.primaryText)
-
-                            ProfileIdentityCard(
-                                displayName: accountDisplayName,
-                                email: accountEmail,
-                                budgetSummary: profile.budgetSummary,
-                                cadenceTitle: profile.cadence.title,
-                                autonomyTitle: profile.orderingAutonomy.title
-                            )
-
-                            ProfileSettingsCard(
-                                title: "Profile",
-                                rows: [
-                                    .init(
-                                        icon: "fork.knife.circle.fill",
-                                        title: "Food profile",
-                                        value: "Diet, cuisines, goals, and hard limits",
-                                        action: { isFoodProfilePresented = true }
-                                    ),
-                                    .init(
-                                        icon: "house.circle.fill",
-                                        title: "Home address",
-                                        value: addressSummary.isEmpty ? "Add address" : addressSummary,
-                                        action: { isAddressSheetPresented = true }
-                                    )
-                                ]
-                            )
-
-                            ProfileSettingsCard(
-                                title: "Preferences",
-                                rows: [
-                                    .init(
-                                        icon: "calendar",
-                                        title: "Delivery cadence",
-                                        value: profile.cadence.title,
-                                        action: { isCadencePickerPresented = true }
-                                    ),
-                                    .init(
-                                        icon: "slider.horizontal.3",
-                                        title: "Ordering autonomy",
-                                        value: profile.orderingAutonomy.title,
-                                        action: { isAutonomyPickerPresented = true }
-                                    )
-                                ]
-                            )
-
-                            ProfileSettingsCard(
-                                title: "Account",
-                                rows: [
-                                    .init(
-                                        icon: "rectangle.portrait.and.arrow.right",
-                                        title: "Sign out",
-                                        value: "Log out of this device",
-                                        isDestructive: true,
-                                        action: { store.signOutToWelcome() }
-                                    )
-                                ]
-                            )
+                            Text("Taste, cadence, delivery, and support.")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                    } else {
-                        RecipesEmptyState(
-                            title: "No profile loaded",
-                            detail: "Once your onboarding sync is present, your planning profile shows up here.",
-                            symbolName: "person.crop.circle"
+
+                        ProfileIdentityCard(
+                            displayName: accountDisplayName,
+                            email: accountEmail,
+                            budgetSummary: profile.budgetSummary,
+                            cadenceTitle: profile.cadence.title,
+                            autonomyTitle: profile.orderingAutonomy.title
+                        )
+
+                        ProfileUpgradeCard {
+                            isPaywallPresented = true
+                        }
+
+                        ProfileSettingsCard(
+                            title: "Profile",
+                            rows: [
+                                .init(
+                                    icon: "fork.knife",
+                                    title: "Food profile",
+                                    value: "Diet, cuisines, goals, and hard limits",
+                                    action: { isFoodProfilePresented = true }
+                                ),
+                                .init(
+                                    icon: "house",
+                                    title: "Home address",
+                                    value: addressSummary.isEmpty ? "Add address" : addressSummary,
+                                    action: { isAddressSheetPresented = true }
+                                )
+                            ]
+                        )
+
+                        ProfileSettingsCard(
+                            title: "Preferences",
+                            rows: [
+                                .init(
+                                    icon: "calendar",
+                                    title: "Delivery cadence",
+                                    value: profile.cadence.title,
+                                    action: { isCadencePickerPresented = true }
+                                ),
+                                .init(
+                                    icon: "slider.horizontal.3",
+                                    title: "Ordering autonomy",
+                                    value: profile.orderingAutonomy.title,
+                                    action: { isAutonomyPickerPresented = true }
+                                )
+                            ]
+                        )
+
+                        GroceryProvidersCard()
+
+                        ProfileSettingsCard(
+                            title: "Account",
+                            rows: [
+                                .init(
+                                    icon: "rectangle.portrait.and.arrow.right",
+                                    title: "Sign out",
+                                    value: "Log out of this device",
+                                    isDestructive: true,
+                                    action: { store.signOutToWelcome() }
+                                )
+                            ]
                         )
                     }
+                } else {
+                    RecipesEmptyState(
+                        title: "No profile loaded",
+                        detail: "Once your onboarding sync is present, your planning profile shows up here.",
+                        symbolName: "person.crop.circle"
+                    )
                 }
-                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+            .padding(.top, 14)
+            .padding(.bottom, 24)
         }
+        .scrollIndicators(.hidden)
         .background(OunjePalette.background.ignoresSafeArea())
         .sheet(isPresented: $isAddressSheetPresented, onDismiss: saveAddressChanges) {
             AddressSetupSheet(
@@ -3500,6 +5379,10 @@ private struct ProfileTabView: View {
             if let profile {
                 FoodProfileSheet(profile: profile)
             }
+        }
+        .sheet(isPresented: $isPaywallPresented) {
+            OunjePlusPaywallSheet()
+                .presentationDragIndicator(.hidden)
         }
         .confirmationDialog("Delivery cadence", isPresented: $isCadencePickerPresented, titleVisibility: .visible) {
             if let profile {
@@ -3577,95 +5460,68 @@ private struct ProfileIdentityCard: View {
     let autonomyTitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    OunjePalette.accent.opacity(0.22),
-                                    OunjePalette.softCream.opacity(0.12)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayName)
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(1)
 
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 32, weight: .semibold))
-                        .foregroundStyle(OunjePalette.softCream)
-                }
-                .frame(width: 58, height: 58)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(displayName)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
+                if let email {
+                    Text(email)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
                         .lineLimit(1)
-
-                    if let email {
-                        Text(email)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .lineLimit(1)
-                    } else {
-                        Text("Defaults, delivery, and food profile")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                    }
+                } else {
+                    Text("Defaults, delivery, and food profile")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
                 }
-
-                Spacer(minLength: 0)
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ProfileMetaPill(title: budgetSummary)
-                    ProfileMetaPill(title: cadenceTitle)
-                    ProfileMetaPill(title: autonomyTitle)
+            ViewThatFits {
+                HStack(alignment: .top, spacing: 16) {
+                    ProfileMetaDetail(label: "Budget", value: budgetSummary)
+                    ProfileMetaDivider()
+                    ProfileMetaDetail(label: "Cadence", value: cadenceTitle)
+                    ProfileMetaDivider()
+                    ProfileMetaDetail(label: "Ordering", value: autonomyTitle)
                 }
-                .padding(.horizontal, 1)
+                VStack(alignment: .leading, spacing: 12) {
+                    ProfileMetaDetail(label: "Budget", value: budgetSummary)
+                    ProfileMetaDetail(label: "Cadence", value: cadenceTitle)
+                    ProfileMetaDetail(label: "Ordering", value: autonomyTitle)
+                }
             }
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            OunjePalette.surface.opacity(0.98),
-                            OunjePalette.panel.opacity(0.96)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                )
-        )
+        .padding(.bottom, 2)
     }
 }
 
-private struct ProfileMetaPill: View {
-    let title: String
+private struct ProfileMetaDetail: View {
+    let label: String
+    let value: String
 
     var body: some View {
-        Text(title)
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(OunjePalette.elevated)
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(OunjePalette.stroke, lineWidth: 1)
-                    )
-            )
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.9)
+                .foregroundStyle(OunjePalette.secondaryText)
+            Text(value)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ProfileMetaDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(OunjePalette.stroke.opacity(0.85))
+            .frame(width: 1, height: 32)
     }
 }
 
@@ -3678,58 +5534,969 @@ private struct ProfileSettingRowModel: Identifiable {
     let action: () -> Void
 }
 
+// MARK: - Grocery Providers Connection
+
+private struct GroceryProvidersCard: View {
+    @EnvironmentObject private var store: MealPlanningAppStore
+    @StateObject private var viewModel = GroceryProvidersViewModel()
+    @State private var selectedProvider: GroceryProviderInfo?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Providers")
+                .biroHeaderFont(18)
+                .foregroundStyle(OunjePalette.primaryText)
+
+            VStack(spacing: 0) {
+                ForEach(Array(viewModel.providers.enumerated()), id: \.element.id) { index, provider in
+                    Button {
+                        selectedProvider = provider
+                    } label: {
+                        HStack(alignment: .center, spacing: 12) {
+                            Image(systemName: provider.connected ? "checkmark.circle.fill" : "cart.circle.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(provider.connected ? OunjePalette.accent : OunjePalette.softCream.opacity(0.92))
+                                .frame(width: 22)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(provider.name)
+                                .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                Text(provider.connected ? "Connected and ready" : "Tap to connect")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(provider.connected ? OunjePalette.accent : OunjePalette.secondaryText)
+                            }
+
+                            Spacer(minLength: 8)
+
+                            if provider.connected {
+                                Text("On")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(OunjePalette.accent)
+                            } else {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
+                            }
+                        }
+                        .padding(.vertical, 15)
+                    }
+                    .buttonStyle(.plain)
+
+                    if index < viewModel.providers.count - 1 {
+                        Divider()
+                            .overlay(OunjePalette.stroke.opacity(0.55))
+                    }
+                }
+            }
+        }
+        .onAppear {
+            viewModel.loadProviders(userId: store.authSession?.userID, accessToken: store.authSession?.accessToken)
+        }
+        .sheet(item: $selectedProvider) { provider in
+            GroceryProviderConnectSheet(
+                provider: provider,
+                userId: store.authSession?.userID ?? "",
+                accessToken: store.authSession?.accessToken,
+                onConnected: {
+                    viewModel.loadProviders(userId: store.authSession?.userID, accessToken: store.authSession?.accessToken)
+                    selectedProvider = nil
+                }
+            )
+        }
+    }
+}
+
+private struct GroceryProviderInfo: Identifiable {
+    let id: String
+    let name: String
+    var connected: Bool
+}
+
+@MainActor
+private class GroceryProvidersViewModel: ObservableObject {
+    @Published var providers: [GroceryProviderInfo] = [
+        GroceryProviderInfo(id: "instacart", name: "Instacart", connected: false),
+        GroceryProviderInfo(id: "walmart", name: "Walmart", connected: false),
+    ]
+    @Published var isLoading = false
+
+    func loadProviders(userId: String?, accessToken: String?) {
+        Task {
+            isLoading = true
+            defer { isLoading = false }
+
+            guard let url = URL(string: "\(OunjeDevelopmentServer.baseURL)/v1/connect/providers") else { return }
+
+            var request = URLRequest(url: url)
+            if let userId = userId {
+                request.setValue(userId, forHTTPHeaderField: "x-user-id")
+            }
+            if let accessToken, !accessToken.isEmpty {
+                request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            }
+            do {
+                let (data, _) = try await URLSession.shared.data(for: request)
+                let response = try JSONDecoder().decode(ProvidersResponse.self, from: data)
+                providers = response.providers.map { p in
+                    GroceryProviderInfo(id: p.id, name: p.name, connected: p.connected)
+                }
+            } catch {
+                print("[GroceryProviders] Failed to load: \(error)")
+            }
+        }
+    }
+
+    private struct ProvidersResponse: Decodable {
+        let providers: [ProviderData]
+        struct ProviderData: Decodable {
+            let id: String
+            let name: String
+            let connected: Bool
+        }
+    }
+}
+
+private struct GroceryProviderConnectSheet: View {
+    let provider: GroceryProviderInfo
+    let userId: String
+    let accessToken: String?
+    let onConnected: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var phase: Phase = .instructions
+    @State private var isLoading = false
+    @State private var isSaving = false
+
+    enum Phase { case instructions, login, saving, connected, error(String) }
+
+    private var loginURL: URL {
+        switch provider.id {
+        case "instacart":
+            return URL(string: "https://www.instacart.ca/login")!
+        case "walmart":
+            return URL(string: "https://www.walmart.ca/sign-in")!
+        default:
+            return URL(string: "https://www.instacart.ca/login")!
+        }
+    }
+
+    private var cookieDomain: String {
+        switch provider.id {
+        case "instacart":
+            return "instacart.ca"
+        case "walmart":
+            return "walmart.ca"
+        default:
+            return provider.id
+        }
+    }
+
+    private var cookieDomains: [String] {
+        switch provider.id {
+        case "instacart":
+            return ["instacart.ca", "instacart.com"]
+        case "walmart":
+            return ["walmart.ca", "walmart.com"]
+        default:
+            return [cookieDomain]
+        }
+    }
+
+    private var mobileUserAgent: String {
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                switch phase {
+                case .instructions: instructionsView
+                case .login: loginView
+                case .saving: savingView
+                case .connected: connectedView
+                case .error(let msg): errorView(msg)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(OunjePalette.background.ignoresSafeArea())
+            .navigationTitle("Connect \(provider.name)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .onAppear {
+            if provider.connected { phase = .connected }
+        }
+    }
+
+    private var instructionsView: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "iphone.and.arrow.forward")
+                .font(.system(size: 64))
+                .foregroundStyle(OunjePalette.accent)
+
+            VStack(spacing: 8) {
+                Text("Connect \(provider.name)")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                Text("Open the mobile login inside Ounje so we can save the session back into your account.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                stepRow("1", "Open the mobile login in Ounje")
+                stepRow("2", "Sign in with your \(provider.name) account")
+                stepRow("3", "Tap Link session after you’re signed in")
+            }
+            .padding()
+            .background(OunjePalette.panel, in: RoundedRectangle(cornerRadius: 12))
+
+            Button {
+                phase = .login
+            } label: {
+                Text("Open \(provider.name)")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(OunjePalette.accent, in: RoundedRectangle(cornerRadius: 12))
+            }
+            Spacer()
+        }
+    }
+
+    private var loginView: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.name)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text("Mobile login")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+
+                Spacer()
+
+                Button("Back") {
+                    phase = .instructions
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+            }
+
+            ProviderLoginWebView(
+                url: loginURL,
+                customUserAgent: mobileUserAgent,
+                isLoading: $isLoading
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.9)
+                        .padding(10)
+                        .background(OunjePalette.panel.opacity(0.88), in: Capsule())
+                        .padding(12)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("When you’re signed in, tap Link session and Ounje will transfer the login back into your profile.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(OunjePalette.secondaryText)
+
+                Button {
+                    Task {
+                        await saveSessionFromWebLogin()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isSaving {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "link")
+                        }
+                        Text(isSaving ? "Linking…" : "Link session")
+                    }
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(OunjePalette.accent, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(isSaving)
+            }
+        }
+    }
+
+    private var savingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.35)
+            Text("Linking session…")
+                .font(.system(size: 15))
+                .foregroundStyle(OunjePalette.secondaryText)
+        }
+    }
+
+    private var connectedView: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 80))
+                .foregroundStyle(.green)
+            VStack(spacing: 8) {
+                Text("Connected!")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                Text("Your \(provider.name) account is linked.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+            Button {
+                dismiss()
+            } label: {
+                Text("Done")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(OunjePalette.accent, in: RoundedRectangle(cornerRadius: 12))
+            }
+            Spacer()
+        }
+    }
+
+    private func errorView(_ message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 50)).foregroundStyle(.orange)
+            Text("Connection Failed")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+            Text(message)
+                .font(.system(size: 14))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .multilineTextAlignment(.center)
+            Button("Try Again") { phase = .instructions }
+                .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private func stepRow(_ n: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(n)
+                .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(OunjePalette.accent, in: Circle())
+            Text(text)
+                .font(.system(size: 15)).foregroundStyle(OunjePalette.primaryText)
+            Spacer()
+        }
+    }
+
+    @MainActor
+    private func saveSessionFromWebLogin() async {
+        isSaving = true
+        phase = .saving
+        defer { isSaving = false }
+
+        do {
+            let cookies = await readProviderCookiesFromWebLogin()
+            guard !cookies.isEmpty else {
+                phase = .error("No session found yet. Finish logging in, then tap Link session again.")
+                return
+            }
+            try await saveCookies(cookies, accessToken: accessToken)
+            phase = .connected
+            onConnected()
+        } catch {
+            phase = .error(error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func readProviderCookiesFromWebLogin() async -> [[String: Any]] {
+        await withCheckedContinuation { continuation in
+            WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+                let relevant = cookies.filter { cookie in
+                    let domain = cookie.domain.lowercased()
+                    return cookieDomains.contains(where: { domain.contains($0) })
+                }
+                let data: [[String: Any]] = relevant.map { cookie in
+                    var record: [String: Any] = [
+                        "name": cookie.name,
+                        "value": cookie.value,
+                        "domain": cookie.domain,
+                        "path": cookie.path
+                    ]
+                    if let expiresDate = cookie.expiresDate {
+                        record["expires"] = expiresDate.timeIntervalSince1970
+                    }
+                    if cookie.isSecure { record["secure"] = true }
+                    if cookie.isHTTPOnly { record["httpOnly"] = true }
+                    return record
+                }
+                continuation.resume(returning: data)
+            }
+        }
+    }
+
+    private func saveCookies(_ cookies: [[String: Any]], accessToken: String?) async throws {
+        guard let url = URL(string: "\(OunjeDevelopmentServer.baseURL)/v1/connect/\(provider.id)/save-session") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(userId, forHTTPHeaderField: "x-user-id")
+        if let accessToken, !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["cookies": cookies])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+    }
+}
+
+private struct ProviderLoginWebView: UIViewRepresentable {
+    let url: URL
+    let customUserAgent: String
+    @Binding var isLoading: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isLoading: $isLoading)
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.customUserAgent = customUserAgent
+        webView.allowsBackForwardNavigationGestures = true
+        webView.isOpaque = false
+        webView.backgroundColor = UIColor.black
+        webView.scrollView.backgroundColor = UIColor.black
+        context.coordinator.webView = webView
+        context.coordinator.lastLoadedURL = url
+        webView.load(URLRequest(url: url))
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        if context.coordinator.lastLoadedURL != url {
+            context.coordinator.lastLoadedURL = url
+            uiView.load(URLRequest(url: url))
+        }
+    }
+
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.navigationDelegate = nil
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        weak var webView: WKWebView?
+        var lastLoadedURL: URL?
+        private var isLoading: Binding<Bool>
+
+        init(isLoading: Binding<Bool>) {
+            self.isLoading = isLoading
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            isLoading.wrappedValue = true
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            isLoading.wrappedValue = false
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            isLoading.wrappedValue = false
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFailProvisionalNavigation navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            isLoading.wrappedValue = false
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            guard let url = navigationAction.request.url else { return nil }
+            if shouldAllow(url: url) {
+                webView.load(URLRequest(url: url))
+            }
+            return nil
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.allow)
+                return
+            }
+
+            if shouldAllow(url: url) {
+                decisionHandler(.allow)
+            } else {
+                decisionHandler(.cancel)
+            }
+        }
+
+        private func shouldAllow(url: URL) -> Bool {
+            guard let scheme = url.scheme?.lowercased() else { return false }
+            return ["http", "https", "about", "data", "blob"].contains(scheme)
+        }
+    }
+}
+
 private struct ProfileSettingsCard: View {
     let title: String
     let rows: [ProfileSettingRowModel]
 
     var body: some View {
-        ThemedCard {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(title)
-                    .biroHeaderFont(18)
-                    .foregroundStyle(OunjePalette.primaryText)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .biroHeaderFont(18)
+                .foregroundStyle(OunjePalette.primaryText)
 
-                VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        Button(action: row.action) {
-                            HStack(spacing: 12) {
-                                Image(systemName: row.icon)
-                                    .font(.system(size: 15, weight: .bold))
-                                    .foregroundStyle(row.isDestructive ? Color(hex: "FF8E8E") : OunjePalette.softCream)
-                                    .frame(width: 30, height: 30)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .fill(OunjePalette.elevated)
-                                    )
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    Button(action: row.action) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: row.icon)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(row.isDestructive ? Color(hex: "FF8E8E") : OunjePalette.softCream.opacity(0.92))
+                                .frame(width: 22)
+                                .padding(.top, 2)
 
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(row.title)
-                                        .biroHeaderFont(15)
-                                        .foregroundStyle(row.isDestructive ? Color(hex: "FF8E8E") : OunjePalette.primaryText)
-                                    Text(row.value)
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundStyle(OunjePalette.secondaryText)
-                                        .lineLimit(2)
-                                }
-
-                                Spacer(minLength: 8)
-
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(row.title)
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(row.isDestructive ? Color(hex: "FF8E8E") : OunjePalette.primaryText)
+                                Text(row.value)
+                                    .font(.system(size: 13, weight: .regular))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                                    .lineLimit(2)
                             }
-                            .padding(.vertical, 12)
-                        }
-                        .buttonStyle(.plain)
 
-                        if index < rows.count - 1 {
-                            Divider()
-                                .overlay(OunjePalette.stroke)
+                            Spacer(minLength: 8)
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
+                                .padding(.top, 4)
                         }
+                        .padding(.vertical, 15)
+                    }
+                    .buttonStyle(.plain)
+
+                    if index < rows.count - 1 {
+                        Divider()
+                            .overlay(OunjePalette.stroke.opacity(0.55))
                     }
                 }
             }
         }
+    }
+}
+
+private struct ProfileUpgradeCard: View {
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("OUNJE PLUS")
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(1.8)
+                        .foregroundStyle(OunjePalette.accent)
+
+                    Text("Keep Ounje on call.")
+                        .font(.system(size: 28, weight: .semibold, design: .serif))
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Text("Prep, imports, carts, and ordering without the weekly drag.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("Founding 50")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(OunjePalette.softCream, in: Capsule())
+
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("$300")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.8))
+                            .strikethrough(true, color: OunjePalette.secondaryText.opacity(0.8))
+
+                        Text("$150")
+                            .font(.system(size: 30, weight: .bold, design: .serif))
+                            .foregroundStyle(OunjePalette.primaryText)
+                    }
+
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText.opacity(0.72))
+                }
+            }
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                OunjePalette.panel.opacity(0.86),
+                                OunjePalette.surface.opacity(0.72)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private enum OunjeSubscriptionTier: String, CaseIterable, Identifiable {
+    case weekly
+    case monthly
+    case foundingLifetime
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .weekly:
+            return "Weekly"
+        case .monthly:
+            return "Monthly"
+        case .foundingLifetime:
+            return "Founding lifetime"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .weekly:
+            return "Good for trying Ounje during a single prep cycle."
+        case .monthly:
+            return "Best value if Ounje is becoming part of your regular flow."
+        case .foundingLifetime:
+            return "Only 50 spots. One-time support for the first supporters."
+        }
+    }
+
+    var priceText: String {
+        switch self {
+        case .weekly:
+            return "$3.99"
+        case .monthly:
+            return "$14.99"
+        case .foundingLifetime:
+            return "$150"
+        }
+    }
+
+    var originalPriceText: String? {
+        switch self {
+        case .foundingLifetime:
+            return "$300"
+        default:
+            return nil
+        }
+    }
+
+    var cadenceText: String {
+        switch self {
+        case .weekly:
+            return "/week"
+        case .monthly:
+            return "/month"
+        case .foundingLifetime:
+            return "one-time"
+        }
+    }
+
+    var badgeText: String? {
+        switch self {
+        case .weekly:
+            return nil
+        case .monthly:
+            return "Best value"
+        case .foundingLifetime:
+            return "50% off"
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .weekly:
+            return OunjePalette.softCream
+        case .monthly:
+            return OunjePalette.accent
+        case .foundingLifetime:
+            return Color(hex: "B57DFF")
+        }
+    }
+}
+
+private struct OunjePlusPaywallSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedTier: OunjeSubscriptionTier = .monthly
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            OunjePalette.background
+                .ignoresSafeArea()
+
+            LinearGradient(
+                colors: [
+                    OunjePalette.panel.opacity(0.32),
+                    .clear,
+                    OunjePalette.accent.opacity(0.08)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 24) {
+                    VStack(alignment: .center, spacing: 12) {
+                        Text("OUNJE PLUS")
+                            .font(.system(size: 11, weight: .bold))
+                            .tracking(2.0)
+                            .foregroundStyle(OunjePalette.accent)
+
+                        Text("Keep Ounje on call.")
+                            .font(.system(size: 40, weight: .semibold, design: .serif))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .multilineTextAlignment(.center)
+
+                        Text("Meal prep, imports, carts, and ordering that stay grounded in your profile and the way you actually cook.")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 320)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 64)
+
+                    VStack(spacing: 12) {
+                        ForEach(OunjeSubscriptionTier.allCases) { tier in
+                            Button {
+                                selectedTier = tier
+                            } label: {
+                                PaywallTierCard(
+                                    tier: tier,
+                                    isSelected: selectedTier == tier,
+                                    featureLines: []
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        PaywallFeatureLine(text: "24/7 direct support")
+                        PaywallFeatureLine(text: "Priority product feedback")
+                        PaywallFeatureLine(text: "Beta features before wider release")
+                        PaywallFeatureLine(text: "Smarter prep, cart, and ordering automation")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("For this founder window, the first fifty supporters can lock lifetime access in at half price: $150 instead of $300.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text("Continue with \(selectedTier.title)")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 17)
+                    }
+                    .buttonStyle(PrimaryPillButtonStyle())
+
+                    Text("Cancel any time on weekly or monthly. Founder access is limited and one-time.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 24)
+                }
+                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+            }
+
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
+                    .frame(width: 36, height: 36)
+                    .background(OunjePalette.panel.opacity(0.8), in: Circle())
+            }
+            .padding(.top, 18)
+            .padding(.trailing, OunjeLayout.screenHorizontalPadding)
+        }
+    }
+}
+
+private struct PaywallTag: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(OunjePalette.primaryText)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.96))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+    }
+}
+
+private struct PaywallFeatureLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(OunjePalette.accent)
+                .padding(.top, 4)
+            Text(text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct PaywallTierCard: View {
+    let tier: OunjeSubscriptionTier
+    let isSelected: Bool
+    let featureLines: [String]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(tier.title)
+                        .font(.system(size: 22, weight: .semibold, design: .serif))
+                        .foregroundStyle(OunjePalette.primaryText)
+                    if let badgeText = tier.badgeText {
+                        Text(badgeText)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(isSelected ? .black : tier.accentColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(isSelected ? OunjePalette.softCream : tier.accentColor.opacity(0.12))
+                            )
+                    }
+                }
+
+                Text(tier.subtitle)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                if let originalPriceText = tier.originalPriceText {
+                    Text(originalPriceText)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.78))
+                        .strikethrough(true, color: OunjePalette.secondaryText.opacity(0.78))
+                }
+                Text(tier.priceText)
+                    .font(.system(size: 30, weight: .bold, design: .serif))
+                    .foregroundStyle(OunjePalette.primaryText)
+                Text(tier.cadenceText)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+
+            ZStack {
+                Circle()
+                    .stroke(isSelected ? tier.accentColor : OunjePalette.stroke.opacity(0.7), lineWidth: 1.4)
+                    .frame(width: 22, height: 22)
+
+                if isSelected {
+                    Circle()
+                        .fill(tier.accentColor)
+                        .frame(width: 10, height: 10)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isSelected ? tier.accentColor.opacity(0.09) : OunjePalette.surface.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(isSelected ? tier.accentColor.opacity(0.5) : OunjePalette.stroke, lineWidth: 1.2)
+                )
+        )
     }
 }
 
@@ -3785,8 +6552,12 @@ private struct CartTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @Binding var selectedTab: AppTab
     @Binding var focusedRecipeID: String?
+    @State private var displayMode: CartDisplayMode = .reconciled
     @State private var ingredientRows: [SupabaseRecipeIngredientRow] = []
-    @State private var canonicalIngredientRecords: [SupabaseIngredientRecord] = []
+    @State private var cartDisplayItems: [CartGroceryDisplayItem] = []
+    @State private var reconciledCartItems: [CartGroceryDisplayItem] = []
+    @State private var reconciledCartSections: [ReconciledCartSection] = []
+    @State private var boxedCartCoverageSummary: BoxedCartCoverageSummary?
     @State private var isLoadingIngredients = false
     @State private var ingredientLoadError: String?
 
@@ -3799,7 +6570,7 @@ private struct CartTabView: View {
                             Text("Cart")
                                 .biroHeaderFont(32)
                                 .foregroundStyle(OunjePalette.primaryText)
-                            Text("Ingredient shelves for this prep")
+                            Text(cartSummaryLine)
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(OunjePalette.secondaryText)
                         }
@@ -3807,32 +6578,8 @@ private struct CartTabView: View {
                         Spacer(minLength: 16)
                     }
 
-                    if shouldShowLiveCartContent, let best = store.latestPlan?.bestQuote {
-                        BubblySurfaceCard(accent: Color(hex: "56D7C8")) {
-                            HStack(alignment: .center, spacing: 16) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Buying from")
-                                        .font(.system(size: 13, weight: .bold))
-                                        .foregroundStyle(OunjePalette.secondaryText)
-                                    Text(best.provider.title)
-                                        .biroHeaderFont(24)
-                                    Text("\(best.estimatedTotal.asCurrency) total • \(best.etaDays)-day ETA")
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundStyle(OunjePalette.secondaryText)
-                                }
-
-                                Spacer()
-
-                                VStack(alignment: .trailing, spacing: 6) {
-                                    Text("\(displayGroceryItems.count)")
-                                        .font(.system(size: 26, weight: .bold))
-                                        .foregroundStyle(OunjePalette.primaryText)
-                                    Text("grocery lines")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(OunjePalette.secondaryText)
-                                }
-                            }
-                        }
+                    if shouldShowLiveCartContent {
+                        CartDisplayModeBar(selection: $displayMode)
                     }
 
                     if shouldShowEmptyCartState {
@@ -3842,83 +6589,7 @@ private struct CartTabView: View {
                     } else if isLoadingIngredients && displayIngredientGroups.isEmpty && displayGroceryItems.isEmpty {
                         CartLoadingState()
                     } else {
-                        if !displayGroceryItems.isEmpty {
-                            VStack(alignment: .leading, spacing: 16) {
-                                MainAppSectionHeader(eyebrow: "Current cart", title: "Buy next")
-                                Text("Everything queued for this prep cycle, built from the recipes you selected.")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-
-                                VStack(spacing: 12) {
-                                    ForEach(displayGroceryItems) { item in
-                                        CartGroceryLineItemRow(item: item)
-                                    }
-                                }
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 16) {
-                            MainAppSectionHeader(eyebrow: "Recipe shelves", title: "Ingredient shelves")
-                            Text("Built from the recipes in your active prep.")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-
-                            if displayIngredientGroups.isEmpty {
-                                RecipesEmptyState(
-                                    title: "Shelves still loading",
-                                    detail: "Ounje is matching ingredient art and per-recipe shelves for this prep.",
-                                    symbolName: "square.stack.3d.down.forward"
-                                )
-                            } else {
-                                ForEach(displayIngredientGroups) { group in
-                                    CartIngredientShelf(
-                                        group: group,
-                                        isFocused: group.recipeID == focusedRecipeID
-                                    )
-                                }
-                            }
-                        }
-
-                        if !allIngredientCards.isEmpty {
-                            VStack(alignment: .leading, spacing: 16) {
-                            MainAppSectionHeader(eyebrow: "Everything to buy", title: "Ingredients at a glance")
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    LazyHStack(spacing: 14) {
-                                        ForEach(allIngredientCards) { ingredient in
-                                            CartIngredientTile(ingredient: ingredient, compact: false)
-                                                .frame(width: 116)
-                                        }
-                                    }
-                                    .padding(.trailing, 4)
-                                }
-                            }
-                        }
-
-                        if !displayGroceryItems.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                            MainAppSectionHeader(eyebrow: "Order memory", title: "Previously bought")
-                            Text("Recent order history Ounje can learn from.")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                            if let previousQuote = store.planHistory.dropFirst().first?.bestQuote {
-                                BubblySurfaceCard(accent: OunjePalette.softCream) {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text(previousQuote.provider.title)
-                                            .biroHeaderFont(20)
-                                        Text("Recent total \(previousQuote.estimatedTotal.asCurrency)")
-                                            .font(.system(size: 14, weight: .medium))
-                                            .foregroundStyle(OunjePalette.secondaryText)
-                                    }
-                                }
-                            } else {
-                                RecipesEmptyState(
-                                    title: "No order memory yet",
-                                    detail: "Once you run more prep cycles, Ounje will remember where you bought ingredients and how much you spent.",
-                                    symbolName: "cart"
-                                )
-                            }
-                        }
-                        }
+                        cartDisplayContent
                     }
                 }
                 .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
@@ -3929,6 +6600,7 @@ private struct CartTabView: View {
         }
         .background(OunjePalette.background.ignoresSafeArea())
         .task(id: activeRecipeIDs.joined(separator: "|")) {
+            await store.refreshLatestPlanGrocerySourcesIfNeeded()
             await reloadCartIngredients()
         }
     }
@@ -3938,11 +6610,32 @@ private struct CartTabView: View {
     }
 
     private var shouldShowEmptyCartState: Bool {
-        activeRecipeIDs.isEmpty && displayGroceryItems.isEmpty
+        activeRecipeIDs.isEmpty && displayGroceryItems.isEmpty && reconciledCartItems.isEmpty
     }
 
     private var shouldShowLiveCartContent: Bool {
         !shouldShowEmptyCartState
+    }
+
+    private var cartSummaryLine: String {
+        if displayMode == .reconciled, !reconciledCartItems.isEmpty {
+            let itemLabel = reconciledCartItems.count == 1 ? "shoppable item" : "shoppable items"
+            if let boxedCartCoverageSummary, !boxedCartCoverageSummary.isFullyAccountedFor {
+                let uncoveredCount = boxedCartCoverageSummary.uncoveredBaseLabels.count
+                let uncoveredLabel = uncoveredCount == 1 ? "item still needs review" : "items still need review"
+                return "\(reconciledCartItems.count) \(itemLabel) • \(uncoveredCount) \(uncoveredLabel)"
+            }
+            return "\(reconciledCartItems.count) \(itemLabel) for this prep"
+        }
+
+        let recipeCount = displayIngredientGroups.count
+        let ingredientCount = allIngredientCards.count
+        if recipeCount > 0 || ingredientCount > 0 {
+            let recipeLabel = recipeCount == 1 ? "recipe" : "recipes"
+            let ingredientLabel = ingredientCount == 1 ? "ingredient" : "ingredients"
+            return "\(recipeCount) \(recipeLabel) • \(ingredientCount) \(ingredientLabel)"
+        }
+        return "Next prep ingredients"
     }
 
     private var displayIngredientGroups: [CartIngredientGroup] {
@@ -3975,32 +6668,7 @@ private struct CartTabView: View {
     }
 
     private var displayGroceryItems: [CartGroceryDisplayItem] {
-        guard let latestPlan = store.latestPlan else { return [] }
-        let recipeLookup = cartRecipeIngredientImageLookup
-        let canonicalLookup = CanonicalIngredientImageIndex(records: canonicalIngredientRecords)
-
-        return latestPlan.groceryItems.map { item in
-            let key = Self.normalizedIngredientKey(item.name)
-            return CartGroceryDisplayItem(
-                name: item.name,
-                quantityText: CartQuantityFormatter.format(amount: item.amount, unit: item.unit),
-                estimatedPriceText: item.estimatedPrice.asCurrency,
-                imageURL: recipeLookup[key] ?? canonicalLookup.imageURL(forName: item.name)
-            )
-        }
-    }
-
-    private var cartRecipeIngredientImageLookup: [String: URL] {
-        var lookup: [String: URL] = [:]
-
-        for ingredient in ingredientRows {
-            guard let imageURL = ingredient.imageURL else { continue }
-            let key = Self.normalizedIngredientKey(ingredient.displayName)
-            guard !key.isEmpty, lookup[key] == nil else { continue }
-            lookup[key] = imageURL
-        }
-
-        return lookup
+        cartDisplayItems
     }
 
     private var allIngredientCards: [SupabaseRecipeIngredientRow] {
@@ -4013,6 +6681,57 @@ private struct CartTabView: View {
         }
     }
 
+    @ViewBuilder
+    private var cartDisplayContent: some View {
+        switch displayMode {
+        case .recipes:
+            VStack(spacing: 18) {
+                ForEach(displayIngredientGroups) { group in
+                    CartRecipeListCard(group: group)
+                }
+            }
+        case .grid:
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 18, alignment: .top), count: 4),
+                spacing: 24
+            ) {
+                ForEach(allIngredientCards) { ingredient in
+                    CartFlatIngredientTile(ingredient: ingredient)
+                }
+            }
+        case .reconciled:
+            VStack(alignment: .leading, spacing: 22) {
+                if let quote = store.latestPlan?.bestQuote, !quote.reviewItems.isEmpty {
+                    ProviderCartReviewCard(quote: quote)
+                }
+
+                if let boxedCartCoverageSummary, !boxedCartCoverageSummary.isFullyAccountedFor {
+                    CartReconciledCoverageNotice(summary: boxedCartCoverageSummary)
+                }
+
+                ForEach(reconciledCartSections) { section in
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(section.title)
+                            .biroHeaderFont(16)
+                            .foregroundStyle(OunjePalette.primaryText)
+
+                        if let subtitle = section.subtitle {
+                            Text(subtitle)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                        }
+
+                        VStack(spacing: 14) {
+                            ForEach(section.items) { item in
+                                CartGroceryLineItemRow(item: item)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private static func normalizedIngredientKey(_ value: String) -> String {
         value
             .lowercased()
@@ -4020,10 +6739,676 @@ private struct CartTabView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func bestMatchingRecipeIngredientRow(
+        for ingredientNames: [String],
+        rows: [SupabaseRecipeIngredientRow]
+    ) -> SupabaseRecipeIngredientRow? {
+        guard !rows.isEmpty else { return nil }
+
+        let normalizedIngredientNames = ingredientNames
+            .map(Self.normalizedIngredientKey)
+            .filter { !$0.isEmpty }
+        guard !normalizedIngredientNames.isEmpty else { return nil }
+
+        if let exactMatch = rows.first(where: { row in
+            let key = Self.normalizedIngredientKey(row.displayTitle)
+            return normalizedIngredientNames.contains(key)
+        }) {
+            return exactMatch
+        }
+
+        return rows
+            .compactMap { row -> (SupabaseRecipeIngredientRow, Int)? in
+                let score = ingredientNames.reduce(0) { partialResult, name in
+                    max(partialResult, ingredientSimilarityScore(lhs: name, rhs: row.displayTitle))
+                } + (row.imageURL == nil ? 0 : 6)
+                return score > 0 ? (row, score) : nil
+            }
+            .sorted { lhs, rhs in
+                if lhs.1 == rhs.1 {
+                    return (lhs.0.sortOrder ?? .max, lhs.0.id) < (rhs.0.sortOrder ?? .max, rhs.0.id)
+                }
+                return lhs.1 > rhs.1
+            }
+            .first?
+            .0
+    }
+
+    private func ingredientSimilarityScore(lhs: String, rhs: String) -> Int {
+        let lhsKey = Self.normalizedIngredientKey(lhs)
+        let rhsKey = Self.normalizedIngredientKey(rhs)
+
+        guard !lhsKey.isEmpty, !rhsKey.isEmpty else { return 0 }
+        if lhsKey == rhsKey { return 100 }
+        if lhsKey.contains(rhsKey) || rhsKey.contains(lhsKey) { return 80 }
+
+        let lhsTokenList = lhsKey.split(separator: " ").map(String.init)
+        let rhsTokenList = rhsKey.split(separator: " ").map(String.init)
+        let lhsTokens = Set(lhsTokenList)
+        let rhsTokens = Set(rhsTokenList)
+        let overlap = lhsTokens.intersection(rhsTokens).count
+        guard overlap > 0 else { return 0 }
+
+        var score = overlap * 20
+        if lhsTokenList.last == rhsTokenList.last {
+            score += 25
+        }
+
+        return score
+    }
+
+    private func buildCartDisplayItems(
+        from groceryItems: [GroceryItem],
+        ingredientRows: [SupabaseRecipeIngredientRow]
+    ) -> [CartGroceryDisplayItem] {
+        let rowsByRecipeID = Dictionary(grouping: ingredientRows, by: \.recipeID)
+
+        return groceryItems
+            .map { item in
+                let matchedRows = item.sourceIngredients.compactMap { source in
+                    bestMatchingRecipeIngredientRow(
+                        for: [source.ingredientName, item.name],
+                        rows: rowsByRecipeID[source.recipeID] ?? []
+                    )
+                }
+
+                let primaryMatch = matchedRows.first(where: { $0.imageURL != nil }) ?? matchedRows.first
+                let displayName = resolvedCartDisplayName(itemName: item.name, matchedRows: matchedRows)
+                let imageURL = primaryMatch?.imageURL
+
+                return CartGroceryDisplayItem(
+                    name: displayName,
+                    quantityText: CartQuantityFormatter.format(amount: item.amount, unit: item.unit),
+                    supportingText: nil,
+                    imageURL: imageURL,
+                    estimatedPriceText: item.estimatedPrice.asCurrency,
+                    estimatedPriceValue: item.estimatedPrice
+                )
+            }
+            .sorted { lhs, rhs in
+                lhs.estimatedPriceValue > rhs.estimatedPriceValue
+            }
+    }
+
+    private func buildReconciledCartDisplayItems(
+        from groceryItems: [GroceryItem],
+        ingredientRows: [SupabaseRecipeIngredientRow]
+    ) -> [ReconciledCartSection] {
+        let graph = buildBoxedCartGraph(from: groceryItems, ingredientRows: ingredientRows)
+        let entries = graph.nodes.map { aggregate in
+            let packaged = reconciledQuantity(
+                for: aggregate.displayName,
+                amount: aggregate.amount,
+                unit: aggregate.unit,
+                sourceCount: aggregate.sourceUseCount,
+                recipeCount: aggregate.recipeIDs.count,
+                isPantryStaple: aggregate.isPantryStaple,
+                isOptional: aggregate.isOptional,
+                packageRule: aggregate.packageRule
+            )
+
+            return (
+                aggregate.category.sectionKind,
+                CartGroceryDisplayItem(
+                    name: aggregate.displayName,
+                    quantityText: packaged.quantityText,
+                    supportingText: packaged.supportingText,
+                    imageURL: aggregate.imageURL,
+                    estimatedPriceText: nil,
+                    estimatedPriceValue: 0
+                )
+            )
+        }
+
+        let grouped = Dictionary(grouping: entries, by: \.0)
+        return ReconciledCartSectionKind.allCases.compactMap { kind in
+            guard let items = grouped[kind]?.map(\.1), !items.isEmpty else { return nil }
+            return ReconciledCartSection(
+                kind: kind,
+                items: items.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            )
+        }
+    }
+
+    private func buildReconciledCartDisplayItems(
+        from shoppingSpecItems: [GroceryShoppingSpecResponse.ShoppingSpecItem],
+        ingredientRows: [SupabaseRecipeIngredientRow]
+    ) -> [ReconciledCartSection] {
+        let rowsByRecipeID = Dictionary(grouping: ingredientRows, by: \.recipeID)
+
+        let entries = shoppingSpecItems.map { item in
+            let matchedRows = item.sourceIngredients.compactMap { source in
+                bestMatchingRecipeIngredientRow(
+                    for: [source.ingredientName, item.canonicalName ?? item.name, item.name],
+                    rows: rowsByRecipeID[source.recipeID] ?? []
+                )
+            }
+
+            let primaryMatch = matchedRows.first(where: { $0.imageURL != nil }) ?? matchedRows.first
+            let displayName = prettyShoppingName(item.shoppingContext?.canonicalName ?? item.canonicalName ?? item.name)
+            let role = item.shoppingContext?.role ?? "ingredient"
+            let isPantryStaple = item.shoppingContext?.isPantryStaple ?? false
+            let isOptional = item.shoppingContext?.isOptional ?? false
+            let category = reconciledCategory(
+                for: displayName,
+                role: role,
+                isPantryStaple: isPantryStaple,
+                isOptional: isOptional,
+                combinedContext: [
+                    role,
+                    item.shoppingContext?.canonicalName,
+                    item.shoppingContext?.sourceIngredientNames.joined(separator: " "),
+                    item.shoppingContext?.neighborIngredients.joined(separator: " ")
+                ]
+                .compactMap { $0 }
+                .joined(separator: " ")
+            )
+
+            let quantityText = CartQuantityFormatter.format(amount: item.amount, unit: item.unit)
+            let sourceUseCount = max(
+                1,
+                Set(item.sourceIngredients.map {
+                    "\(Self.normalizedIngredientKey($0.recipeID))::\(Self.normalizedIngredientKey($0.ingredientName))::\($0.unit.lowercased())"
+                }).count
+            )
+            let recipeTitles = Set((item.shoppingContext?.recipeTitles ?? []) + item.sourceRecipes)
+            let recipeCount = recipeTitles.count
+
+            var supportingParts: [String] = []
+            supportingParts.append(contentsOf: coverageSupportingParts(sourceUseCount: sourceUseCount, recipeCount: recipeCount))
+            if isPantryStaple {
+                supportingParts.append("Pantry check")
+            }
+            if isOptional {
+                supportingParts.append("Optional")
+            }
+
+            return (
+                category.sectionKind,
+                CartGroceryDisplayItem(
+                    name: displayName,
+                    quantityText: quantityText,
+                    supportingText: supportingParts.isEmpty ? nil : supportingParts.joined(separator: " • "),
+                    imageURL: primaryMatch?.imageURL,
+                    estimatedPriceText: nil,
+                    estimatedPriceValue: 0
+                )
+            )
+        }
+
+        let grouped = Dictionary(grouping: entries, by: \.0)
+        return ReconciledCartSectionKind.allCases.compactMap { kind in
+            guard let items = grouped[kind]?.map(\.1), !items.isEmpty else { return nil }
+            return ReconciledCartSection(
+                kind: kind,
+                items: items.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                }
+            )
+        }
+    }
+
+    private func packageRule(
+        for ingredientName: String,
+        unit: String,
+        category: ReconciledShoppingCategory
+    ) -> ReconciledPackageRule? {
+        let normalizedName = Self.normalizedIngredientKey(ingredientName)
+
+        if normalizedName.contains("egg") {
+            return ReconciledPackageRule(packageSize: 12, singularLabel: "carton", pluralLabel: "cartons")
+        }
+        if normalizedName.contains("rice") {
+            return ReconciledPackageRule(packageSize: 4, singularLabel: "bag", pluralLabel: "bags")
+        }
+        if normalizedName.contains("flour") || normalizedName.contains("sugar") {
+            return ReconciledPackageRule(packageSize: 3, singularLabel: "bag", pluralLabel: "bags")
+        }
+        if normalizedName.contains("milk")
+            || normalizedName.contains("cream")
+            || normalizedName.contains("broth")
+            || normalizedName.contains("stock") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "carton", pluralLabel: "cartons")
+        }
+        if normalizedName.contains("yogurt") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "tub", pluralLabel: "tubs")
+        }
+        if normalizedName.contains("cheese") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "pack", pluralLabel: "packs")
+        }
+        if normalizedName.contains("seasoning")
+            || normalizedName.contains("pepper")
+            || normalizedName.contains("cinnamon")
+            || normalizedName.contains("baking powder")
+            || normalizedName.contains("bouillon")
+            || normalizedName.contains("curry powder")
+            || normalizedName.contains("paprika") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "jar", pluralLabel: "jars")
+        }
+        if normalizedName.contains("dressing")
+            || normalizedName.contains("sauce")
+            || normalizedName.contains("juice") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "bottle", pluralLabel: "bottles")
+        }
+        if normalizedName.contains("beans") || normalizedName.contains("tomatoes") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "can", pluralLabel: "cans")
+        }
+        if normalizedName.contains("chips") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "bag", pluralLabel: "bags")
+        }
+        if normalizedName.contains("cilantro")
+            || normalizedName.contains("parsley")
+            || normalizedName.contains("green onions")
+            || normalizedName.contains("scallions") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "bunch", pluralLabel: "bunches")
+        }
+        if normalizedName.contains("romaine")
+            || normalizedName.contains("lettuce")
+            || normalizedName.contains("greens") {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "head", pluralLabel: "heads")
+        }
+        if category == .tool {
+            return ReconciledPackageRule(packageSize: 1, singularLabel: "pack", pluralLabel: "packs")
+        }
+        if ["lb", "lbs", "kg"].contains(unit.lowercased()) {
+            return ReconciledPackageRule(packageSize: 2, singularLabel: "pack", pluralLabel: "packs")
+        }
+        return nil
+    }
+
+    private func reconciledCategory(
+        displayName: String,
+        combinedContext: String,
+        isPantryStaple: Bool,
+        isOptional: Bool
+    ) -> ReconciledShoppingCategory {
+        let normalizedName = Self.normalizedIngredientKey(displayName)
+        if isOptional { return .optional }
+        if isPantryStaple { return .pantry }
+        if combinedContext.contains("sauce")
+            || combinedContext.contains("dressing")
+            || combinedContext.contains("marinade")
+            || combinedContext.contains("dip") {
+            return .prepared
+        }
+        if normalizedName.contains("skewer") || normalizedName.contains("toothpick") {
+            return .tool
+        }
+        if normalizedName.contains("chicken")
+            || normalizedName.contains("shrimp")
+            || normalizedName.contains("salmon")
+            || normalizedName.contains("steak")
+            || normalizedName.contains("egg") {
+            return .protein
+        }
+        if normalizedName.contains("cheese")
+            || normalizedName.contains("yogurt")
+            || normalizedName.contains("milk")
+            || normalizedName.contains("cream") {
+            return .dairy
+        }
+        if normalizedName.contains("rice")
+            || normalizedName.contains("flour")
+            || normalizedName.contains("sugar")
+            || normalizedName.contains("chips")
+            || normalizedName.contains("beans")
+            || normalizedName.contains("stock")
+            || normalizedName.contains("broth") {
+            return .dryGoods
+        }
+        if normalizedName.contains("romaine")
+            || normalizedName.contains("greens")
+            || normalizedName.contains("lettuce")
+            || normalizedName.contains("cilantro")
+            || normalizedName.contains("green onions")
+            || normalizedName.contains("scallions")
+            || normalizedName.contains("jalape")
+            || normalizedName.contains("garlic")
+            || normalizedName.contains("carrot")
+            || normalizedName.contains("cucumber")
+            || normalizedName.contains("apple")
+            || normalizedName.contains("avocado")
+            || normalizedName.contains("blueberr")
+            || normalizedName.contains("broccoli")
+            || normalizedName.contains("tomato") {
+            return .produce
+        }
+        return .main
+    }
+
+    private func reconciledCategory(
+        for displayName: String,
+        role: String,
+        isPantryStaple: Bool,
+        isOptional: Bool,
+        combinedContext: String
+    ) -> ReconciledShoppingCategory {
+        if isOptional { return .optional }
+        if isPantryStaple { return .pantry }
+
+        switch role.lowercased() {
+        case "protein":
+            return .protein
+        case "dairy":
+            return .dairy
+        case "sauce":
+            return .prepared
+        case "wrapper", "pantry":
+            return .dryGoods
+        case "fresh garnish", "salad base":
+            return .produce
+        case "cooking tool":
+            return .tool
+        default:
+            return reconciledCategory(
+                displayName: displayName,
+                combinedContext: combinedContext,
+                isPantryStaple: isPantryStaple,
+                isOptional: isOptional
+            )
+        }
+    }
+
+    private func prettyShoppingName(_ rawName: String) -> String {
+        rawName
+            .split(separator: " ")
+            .map { token in
+                let lowered = token.lowercased()
+                return ["bbq", "caesar"].contains(lowered) ? lowered.uppercased() : lowered.capitalized
+            }
+            .joined(separator: " ")
+    }
+
+    private func buildBoxedCartGraph(
+        from groceryItems: [GroceryItem],
+        ingredientRows: [SupabaseRecipeIngredientRow]
+    ) -> BoxedCartGraph {
+        let rowsByRecipeID = Dictionary(grouping: ingredientRows, by: \.recipeID)
+        var nodesByKey: [String: BoxedCartNode] = [:]
+        var totalDemandIDs = Set<String>()
+        var coveredDemandIDs = Set<String>()
+        var uncoveredBaseLabels: [String] = []
+
+        for item in groceryItems {
+            let matchedRows = item.sourceIngredients.compactMap { source in
+                bestMatchingRecipeIngredientRow(
+                    for: [source.ingredientName, item.name],
+                    rows: rowsByRecipeID[source.recipeID] ?? []
+                )
+            }
+            let primaryMatch = matchedRows.first(where: { $0.imageURL != nil }) ?? matchedRows.first
+            let displayName = resolvedCartDisplayName(itemName: item.name, matchedRows: matchedRows)
+            let sourceEdges = item.sourceIngredients.map {
+                BoxedCartSourceEdge(recipeID: $0.recipeID, ingredientName: $0.ingredientName, unit: $0.unit)
+            }
+            let demandIDs = baseDemandIdentifiers(for: item, sourceEdges: sourceEdges)
+            totalDemandIDs.formUnion(demandIDs)
+
+            let components = deconstructedBoxedComponents(
+                for: item,
+                displayName: displayName,
+                imageURL: primaryMatch?.imageURL,
+                sourceEdges: sourceEdges,
+                demandIDs: demandIDs
+            )
+
+            guard !components.isEmpty else {
+                uncoveredBaseLabels.append(item.name)
+                continue
+            }
+
+            coveredDemandIDs.formUnion(demandIDs)
+
+            for component in components {
+                let key = Self.normalizedIngredientKey(component.displayName)
+                guard !key.isEmpty else { continue }
+
+                if var existing = nodesByKey[key] {
+                    let mergedBaseNames = existing.baseItemNames.union(component.baseItemNames)
+                    let mergedPantry = existing.isPantryStaple || component.isPantryStaple
+                    let mergedOptional = existing.isOptional && component.isOptional
+                    let mergedContext = mergedBaseNames
+                        .map(Self.normalizedIngredientKey)
+                        .joined(separator: " ")
+                    existing.amount += component.amount
+                    if existing.imageURL == nil {
+                        existing.imageURL = component.imageURL
+                    }
+                    existing.baseItemNames = mergedBaseNames
+                    existing.sourceEdges.formUnion(component.sourceEdges)
+                    existing.recipeIDs.formUnion(component.recipeIDs)
+                    existing.demandIDs.formUnion(component.demandIDs)
+                    existing.isPantryStaple = mergedPantry
+                    existing.isOptional = mergedOptional
+                    existing.category = reconciledCategory(
+                        displayName: existing.displayName,
+                        combinedContext: mergedContext,
+                        isPantryStaple: mergedPantry,
+                        isOptional: mergedOptional
+                    )
+                    existing.packageRule = packageRule(
+                        for: existing.displayName,
+                        unit: existing.unit,
+                        category: existing.category
+                    )
+                    nodesByKey[key] = existing
+                } else {
+                    nodesByKey[key] = component
+                }
+            }
+        }
+
+        return BoxedCartGraph(
+            nodes: Array(nodesByKey.values),
+            coverageSummary: BoxedCartCoverageSummary(
+                totalBaseUses: totalDemandIDs.count,
+                accountedBaseUses: coveredDemandIDs.count,
+                uncoveredBaseLabels: uncoveredBaseLabels
+            )
+        )
+    }
+
+    private func baseDemandIdentifiers(
+        for item: GroceryItem,
+        sourceEdges: [BoxedCartSourceEdge]
+    ) -> Set<String> {
+        let identifiers = sourceEdges.map {
+            "\(Self.normalizedIngredientKey($0.recipeID))::\(Self.normalizedIngredientKey($0.ingredientName))::\($0.unit.lowercased())"
+        }
+        if identifiers.isEmpty {
+            return ["fallback::\(item.id)::\(CartQuantityFormatter.format(amount: item.amount, unit: item.unit))"]
+        }
+        return Set(identifiers)
+    }
+
+    private func deconstructedBoxedComponents(
+        for item: GroceryItem,
+        displayName: String,
+        imageURL: URL?,
+        sourceEdges: [BoxedCartSourceEdge],
+        demandIDs: Set<String>
+    ) -> [BoxedCartNode] {
+        let normalizedDisplayName = Self.normalizedIngredientKey(displayName)
+        let normalizedSourceNames = sourceEdges
+            .map(\.ingredientName)
+            .map(Self.normalizedIngredientKey)
+        let combinedContext = ([normalizedDisplayName] + normalizedSourceNames)
+            .joined(separator: " ")
+        let recipeIDs = Set(sourceEdges.map(\.recipeID))
+        let baseItemNames = Set([displayName, item.name])
+        let optional = combinedContext.contains("optional")
+        let pantryStaple = [
+            "salt",
+            "black pepper",
+            "olive oil",
+            "garlic powder",
+            "onion powder",
+            "paprika",
+            "cinnamon",
+            "baking powder",
+            "bouillon powder",
+            "curry powder",
+        ].contains(where: { combinedContext.contains($0) || normalizedDisplayName.contains($0) })
+
+        func component(
+            name: String,
+            amount: Double = item.amount,
+            unit: String = item.unit,
+            imageURL: URL? = imageURL,
+            isPantryStaple: Bool = false,
+            isOptional: Bool = false,
+            category: ReconciledShoppingCategory? = nil
+        ) -> BoxedCartNode {
+            let resolvedName = prettyShoppingName(name)
+            let resolvedCategory = category ?? reconciledCategory(
+                displayName: resolvedName,
+                combinedContext: combinedContext,
+                isPantryStaple: isPantryStaple,
+                isOptional: isOptional
+            )
+            return BoxedCartNode(
+                displayName: resolvedName,
+                amount: amount,
+                unit: unit,
+                imageURL: imageURL,
+                baseItemNames: baseItemNames,
+                sourceEdges: Set(sourceEdges),
+                recipeIDs: recipeIDs,
+                demandIDs: demandIDs,
+                isPantryStaple: isPantryStaple,
+                isOptional: isOptional,
+                category: resolvedCategory,
+                packageRule: packageRule(for: resolvedName, unit: unit, category: resolvedCategory)
+            )
+        }
+
+        if combinedContext.contains("buffalo chicken") {
+            let primaryChickenName = combinedContext.contains("thigh") ? "Chicken Thighs" : "Chicken Breast"
+            return [
+                component(name: primaryChickenName, category: .protein),
+                component(name: "Buffalo Sauce", amount: 1, unit: "bottle", imageURL: nil, category: .prepared)
+            ]
+        }
+
+        if combinedContext.contains("shredded chicken breast")
+            || combinedContext.contains("cooked chicken breast")
+            || combinedContext.contains("chicken breast") {
+            return [component(name: "Chicken Breast")]
+        }
+
+        if combinedContext.contains("shredded chicken")
+            || combinedContext.contains("cooked chicken")
+            || combinedContext.contains("pulled chicken") {
+            return [component(name: "Chicken Breast")]
+        }
+
+        if combinedContext.contains("chicken thighs") || combinedContext.contains("chicken thigh") {
+            return [component(name: "Chicken Thighs", category: .protein)]
+        }
+
+        if combinedContext.contains("cooked jasmine rice") || combinedContext.contains("jasmine rice") {
+            return [component(name: "Jasmine Rice", category: .dryGoods)]
+        }
+
+        if combinedContext.contains("cooked rice") {
+            return [component(name: "Rice", category: .dryGoods)]
+        }
+
+        if combinedContext.contains("crispy romaine") || combinedContext.contains("romaine") {
+            return [component(name: "Romaine Lettuce", category: .produce)]
+        }
+
+        return [component(name: displayName, isPantryStaple: pantryStaple, isOptional: optional)]
+    }
+
+    private func reconciledQuantity(
+        for ingredientName: String,
+        amount: Double,
+        unit: String,
+        sourceCount: Int,
+        recipeCount: Int,
+        isPantryStaple: Bool,
+        isOptional: Bool,
+        packageRule: ReconciledPackageRule?
+    ) -> (quantityText: String, supportingText: String?) {
+        let supportingParts = {
+            var parts: [String] = []
+            parts.append(contentsOf: coverageSupportingParts(sourceUseCount: sourceCount, recipeCount: recipeCount))
+            if isPantryStaple {
+                parts.append("Pantry check")
+            }
+            if isOptional {
+                parts.append("Optional")
+            }
+            return parts
+        }()
+        let supportingText = supportingParts.isEmpty ? nil : supportingParts.joined(separator: " • ")
+
+        guard let rule = packageRule else {
+            return (CartQuantityFormatter.format(amount: amount, unit: unit), supportingText)
+        }
+
+        let packageCount = max(1, Int(ceil(amount / rule.packageSize)))
+        let label = packageCount == 1 ? rule.singularLabel : rule.pluralLabel
+        return ("\(packageCount) \(label)", supportingText)
+    }
+
+    private func resolvedCartDisplayName(
+        itemName: String,
+        matchedRows: [SupabaseRecipeIngredientRow]
+    ) -> String {
+        let trimmedItemName = itemName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchedTitles = matchedRows
+            .map(\.displayTitle)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard let richestTitle = matchedTitles.max(by: { lhs, rhs in
+            let lhsScore = ingredientDisplayScore(lhs)
+            let rhsScore = ingredientDisplayScore(rhs)
+            if lhsScore == rhsScore {
+                return lhs.count < rhs.count
+            }
+            return lhsScore < rhsScore
+        }) else {
+            return trimmedItemName
+        }
+
+        return ingredientDisplayScore(richestTitle) >= ingredientDisplayScore(trimmedItemName)
+            ? richestTitle
+            : trimmedItemName
+    }
+
+    private func ingredientDisplayScore(_ name: String) -> Int {
+        let normalized = Self.normalizedIngredientKey(name)
+        guard !normalized.isEmpty else { return 0 }
+
+        let tokenCount = normalized.split(separator: " ").count
+        let abbreviationPenalty = normalized.count <= 3 ? 50 : 0
+        return tokenCount * 20 + normalized.count - abbreviationPenalty
+    }
+
+    private func coverageSupportingParts(sourceUseCount: Int, recipeCount: Int) -> [String] {
+        switch (sourceUseCount > 1, recipeCount > 1) {
+        case (_, true):
+            return ["Used in \(recipeCount) recipes"]
+        case (true, false):
+            return ["Used \(sourceUseCount)x in this prep"]
+        case (false, false):
+            return []
+        }
+    }
+
     private func reloadCartIngredients() async {
-        guard !activeRecipeIDs.isEmpty else {
+        guard let latestPlan = store.latestPlan, !latestPlan.recipes.isEmpty else {
             ingredientRows = []
             ingredientLoadError = nil
+            cartDisplayItems = []
+            reconciledCartItems = []
+            reconciledCartSections = []
+            boxedCartCoverageSummary = nil
             focusedRecipeID = nil
             return
         }
@@ -4033,58 +7418,250 @@ private struct CartTabView: View {
         defer { isLoadingIngredients = false }
 
         do {
-            var rows = try await SupabaseRecipeIngredientsService.shared.fetchIngredients(recipeIDs: activeRecipeIDs)
-
-            let loadedRecipeIDs = Set(rows.map(\.recipeID))
-            let missingRecipeIDs = activeRecipeIDs.filter { !loadedRecipeIDs.contains($0) }
-
-            if !missingRecipeIDs.isEmpty {
-                for recipeID in missingRecipeIDs {
-                    if let detail = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID) {
-                        let hydratedRows = detail.ingredients.enumerated().map { index, ingredient in
-                            let ingredientID = ingredient.id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                            return SupabaseRecipeIngredientRow(
-                                id: "\(recipeID)::detail::\(ingredientID.isEmpty ? String(index) : ingredientID)",
-                                recipeID: recipeID,
-                                ingredientID: ingredient.ingredientID,
-                                displayName: ingredient.displayTitle,
-                                quantityText: ingredient.displayQuantityText ?? "",
-                                imageURLString: ingredient.imageURLString,
-                                sortOrder: ingredient.sortOrder ?? index
-                            )
-                        }
-                        rows.append(contentsOf: hydratedRows)
-                    }
-                }
-            }
-
-            do {
-                let canonicalRecords = try await SupabaseIngredientsCatalogService.shared.fetchIngredients(
-                    ingredientIDs: rows.compactMap(\.ingredientID),
-                    normalizedNames: rows.map(\.displayName) + (store.latestPlan?.groceryItems.map(\.name) ?? [])
-                )
-                canonicalIngredientRecords = canonicalRecords
-                let canonicalIndex = CanonicalIngredientImageIndex(records: canonicalRecords)
-                rows = rows.map(canonicalIndex.enrich(_:))
-            } catch {
-                canonicalIngredientRecords = []
-            }
-
+            let rows = try await buildPrepRecipeIngredientRows(from: latestPlan.recipes)
             ingredientRows = rows
+            cartDisplayItems = buildCartDisplayItems(
+                from: latestPlan.groceryItems,
+                ingredientRows: rows
+            )
+
+            if let shoppingSpec = try? await GroceryService.shared.fetchShoppingSpec(items: latestPlan.groceryItems) {
+                boxedCartCoverageSummary = BoxedCartCoverageSummary(
+                    totalBaseUses: shoppingSpec.coverageSummary.totalBaseUses,
+                    accountedBaseUses: shoppingSpec.coverageSummary.accountedBaseUses,
+                    uncoveredBaseLabels: shoppingSpec.coverageSummary.uncoveredBaseLabels
+                )
+                reconciledCartSections = buildReconciledCartDisplayItems(
+                    from: shoppingSpec.items,
+                    ingredientRows: rows
+                )
+                reconciledCartItems = reconciledCartSections.flatMap(\.items)
+            } else {
+                let boxedGraph = buildBoxedCartGraph(
+                    from: latestPlan.groceryItems,
+                    ingredientRows: rows
+                )
+                boxedCartCoverageSummary = boxedGraph.coverageSummary
+                reconciledCartSections = buildReconciledCartDisplayItems(
+                    from: latestPlan.groceryItems,
+                    ingredientRows: rows
+                )
+                reconciledCartItems = reconciledCartSections.flatMap(\.items)
+            }
         } catch {
             ingredientLoadError = error.localizedDescription
             ingredientRows = []
-            canonicalIngredientRecords = []
+            cartDisplayItems = []
+            reconciledCartItems = []
+            reconciledCartSections = []
+            boxedCartCoverageSummary = nil
         }
+    }
+
+    private func buildPrepRecipeIngredientRows(from recipes: [PlannedRecipe]) async throws -> [SupabaseRecipeIngredientRow] {
+        var rows: [SupabaseRecipeIngredientRow] = []
+
+        for plannedRecipe in recipes {
+            let detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: plannedRecipe.recipe.id)
+            let scaledIngredients = prepRecipeIngredients(from: detail, servings: plannedRecipe.servings)
+
+            let detailRows = scaledIngredients.enumerated().map { index, ingredient in
+                let preferredID = ingredient.id?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let preferredResolvedID = (preferredID?.isEmpty == false) ? preferredID : nil
+                let ingredientResolvedID = ingredient.ingredientID?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let resolvedID = preferredResolvedID ?? ingredientResolvedID ?? String(index)
+                return SupabaseRecipeIngredientRow(
+                    id: "\(plannedRecipe.recipe.id)::detail::\(resolvedID)",
+                    recipeID: plannedRecipe.recipe.id,
+                    ingredientID: ingredient.ingredientID,
+                    displayName: ingredient.displayTitle,
+                    quantityText: ingredient.displayQuantityText ?? "",
+                    imageURLString: ingredient.imageURLString,
+                    sortOrder: ingredient.sortOrder ?? index
+                )
+            }
+
+            rows.append(contentsOf: detailRows)
+        }
+
+        return rows
+    }
+
+    private func prepRecipeIngredients(from detail: RecipeDetailData, servings: Int) -> [RecipeDetailIngredient] {
+        let baseIngredients: [RecipeDetailIngredient]
+        if !detail.ingredients.isEmpty {
+            baseIngredients = detail.ingredients
+        } else {
+            var seen = Set<String>()
+            baseIngredients = detail.steps
+                .flatMap(\.ingredients)
+                .filter { ingredient in
+                    let key = Self.normalizedIngredientKey(ingredient.displayTitle)
+                    guard !key.isEmpty else { return false }
+                    return seen.insert(key).inserted
+                }
+        }
+
+        let scale = Double(max(1, servings)) / Double(max(1, detail.displayServings))
+        return baseIngredients.map { $0.scaled(by: scale) }
     }
 }
 
 private struct CartGroceryDisplayItem: Identifiable, Hashable {
-    var id: String { name.lowercased() }
+    var id: String { "\(name.lowercased())::\(quantityText)::\(supportingText ?? "")" }
     let name: String
     let quantityText: String
-    let estimatedPriceText: String
+    let supportingText: String?
     let imageURL: URL?
+    let estimatedPriceText: String?
+    let estimatedPriceValue: Double
+}
+
+private struct BoxedCartSourceEdge: Hashable {
+    let recipeID: String
+    let ingredientName: String
+    let unit: String
+}
+
+private struct BoxedCartNode: Hashable {
+    let displayName: String
+    var amount: Double
+    var unit: String
+    var imageURL: URL?
+    var baseItemNames: Set<String>
+    var sourceEdges: Set<BoxedCartSourceEdge>
+    var recipeIDs: Set<String>
+    var demandIDs: Set<String>
+    var isPantryStaple: Bool
+    var isOptional: Bool
+    var category: ReconciledShoppingCategory
+    var packageRule: ReconciledPackageRule?
+
+    var sourceUseCount: Int {
+        max(1, demandIDs.count)
+    }
+}
+
+private struct BoxedCartCoverageSummary: Hashable {
+    let totalBaseUses: Int
+    let accountedBaseUses: Int
+    let uncoveredBaseLabels: [String]
+
+    var isFullyAccountedFor: Bool {
+        totalBaseUses == accountedBaseUses && uncoveredBaseLabels.isEmpty
+    }
+}
+
+private struct BoxedCartGraph: Hashable {
+    let nodes: [BoxedCartNode]
+    let coverageSummary: BoxedCartCoverageSummary
+}
+
+private struct ReconciledPackageRule: Hashable {
+    let packageSize: Double
+    let singularLabel: String
+    let pluralLabel: String
+}
+
+private enum ReconciledShoppingCategory: String, Hashable {
+    case main
+    case protein
+    case produce
+    case dairy
+    case dryGoods
+    case prepared
+    case pantry
+    case optional
+    case tool
+
+    var sectionKind: ReconciledCartSectionKind {
+        switch self {
+        case .protein, .produce, .dairy, .main:
+            return .mainShop
+        case .dryGoods:
+            return .dryGoods
+        case .prepared:
+            return .prepared
+        case .pantry:
+            return .pantry
+        case .optional:
+            return .optional
+        case .tool:
+            return .tools
+        }
+    }
+}
+
+private enum ReconciledCartSectionKind: Int, CaseIterable, Identifiable {
+    case mainShop
+    case dryGoods
+    case prepared
+    case pantry
+    case optional
+    case tools
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .mainShop: return "Main shop"
+        case .dryGoods: return "Dry goods"
+        case .prepared: return "Sauces & prepared"
+        case .pantry: return "Pantry check"
+        case .optional: return "Optional extras"
+        case .tools: return "Kitchen extras"
+        }
+    }
+
+    var subtitle: String? {
+        switch self {
+        case .mainShop:
+            return "What you actually need to buy for this prep."
+        case .dryGoods:
+            return "Shelf-stable staples grouped into real units."
+        case .prepared:
+            return "Sauces, dressings, and ready-made parts."
+        case .pantry:
+            return "Check these at home before you buy again."
+        case .optional:
+            return "Nice-to-haves that should not block the batch."
+        case .tools:
+            return "Non-ingredient kitchen extras."
+        }
+    }
+}
+
+private struct ReconciledCartSection: Identifiable, Hashable {
+    let kind: ReconciledCartSectionKind
+    let items: [CartGroceryDisplayItem]
+
+    var id: ReconciledCartSectionKind { kind }
+    var title: String { kind.title }
+    var subtitle: String? { kind.subtitle }
+}
+
+private struct CartReconciledCoverageNotice: View {
+    let summary: BoxedCartCoverageSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Some recipe uses still need review.")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+
+            if summary.uncoveredBaseLabels.isEmpty {
+                Text("We accounted for \(summary.accountedBaseUses) of \(summary.totalBaseUses) base uses.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            } else {
+                Text("Uncovered ingredients: \(summary.uncoveredBaseLabels.prefix(3).joined(separator: ", "))")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
 }
 
 private struct CartEmptyState: View {
@@ -4258,16 +7835,14 @@ private struct CookbookSectionTabs: View {
                                 selection = tab.section
                             }
                         } label: {
-                            BiroScriptDisplayText(
-                                tab.section.title,
-                                size: isSelected ? 22 : 20,
-                                color: isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText.opacity(0.94)
-                            )
-                            .opacity(isSelected ? 1 : 0.76)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 30, alignment: .center)
-                            .padding(.vertical, 2)
-                            .contentShape(Rectangle())
+                            Text(tab.section.title)
+                                .sleeDisplayFont(isSelected ? 22 : 20)
+                                .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText.opacity(0.94))
+                                .opacity(isSelected ? 1 : 0.76)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 30, alignment: .center)
+                                .padding(.vertical, 2)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -4407,6 +7982,82 @@ private struct InlineSearchBar: View {
     }
 }
 
+private struct CollapsibleSavedSearchBar: View {
+    @Binding var text: String
+    let placeholder: String
+    @Binding var isExpanded: Bool
+    @FocusState private var isFocused: Bool
+
+    private var hasQuery: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        Group {
+            if isExpanded || hasQuery {
+                HStack(spacing: 10) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+
+                        TextField("", text: $text, prompt: Text(placeholder).foregroundColor(OunjePalette.secondaryText))
+                            .font(.system(size: 16, weight: .medium, design: .rounded))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .focused($isFocused)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 13)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(OunjePalette.surface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                            )
+                    )
+
+                    Button {
+                        text = ""
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded = false
+                        }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .frame(width: 36, height: 36)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .onAppear {
+                    DispatchQueue.main.async {
+                        isFocused = true
+                    }
+                }
+            } else {
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded = true
+                        }
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
+                            .frame(width: 36, height: 36)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: isExpanded)
+        .animation(.easeInOut(duration: 0.18), value: hasQuery)
+    }
+}
+
 private struct RecipesEmptyState: View {
     let title: String
     let detail: String
@@ -4444,6 +8095,35 @@ private struct RecipesEmptyState: View {
                         .stroke(OunjePalette.stroke, lineWidth: 1)
                 )
         )
+    }
+}
+
+private struct CookbookPreppedEmptyState: View {
+    let title: String
+    let detail: String
+    let symbolName: String
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: symbolName)
+                .font(.system(size: 74, weight: .light))
+                .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
+                .padding(.top, 18)
+
+            VStack(spacing: 8) {
+                BiroScriptDisplayText(title, size: 28, color: OunjePalette.primaryText)
+
+                Text(detail)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: 290)
+        }
+        .frame(maxWidth: .infinity, minHeight: 280, alignment: .center)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 22)
     }
 }
 
@@ -4611,6 +8291,52 @@ private struct ShoppingListRow: View {
     }
 }
 
+private enum CartDisplayMode: String, CaseIterable, Identifiable {
+    case reconciled
+    case recipes
+    case grid
+
+    var id: String { rawValue }
+
+    var symbolName: String {
+        switch self {
+        case .reconciled: return "shippingbox"
+        case .recipes: return "list.bullet.rectangle"
+        case .grid: return "square.grid.2x2"
+        }
+    }
+}
+
+private struct CartDisplayModeBar: View {
+    @Binding var selection: CartDisplayMode
+
+    var body: some View {
+        HStack(spacing: 22) {
+            ForEach(CartDisplayMode.allCases) { mode in
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                        selection = mode
+                    }
+                } label: {
+                    VStack(spacing: 8) {
+                        Image(systemName: mode.symbolName)
+                            .font(.system(size: 17, weight: .semibold))
+
+                        Capsule(style: .continuous)
+                            .fill(selection == mode ? OunjePalette.accent : Color.clear)
+                            .frame(width: 20, height: 3)
+                    }
+                    .foregroundStyle(selection == mode ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                    .frame(width: 28)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 private struct CartIngredientGroup: Identifiable, Hashable {
     var id: String { recipeID }
     let recipeID: String
@@ -4620,9 +8346,8 @@ private struct CartIngredientGroup: Identifiable, Hashable {
     let ingredients: [SupabaseRecipeIngredientRow]
 }
 
-private struct CartIngredientShelf: View {
+private struct CartRecipeListCard: View {
     let group: CartIngredientGroup
-    let isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -4639,93 +8364,150 @@ private struct CartIngredientShelf: View {
                 Spacer()
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(group.ingredients) { ingredient in
-                        CartIngredientTile(ingredient: ingredient, compact: true)
-                            .frame(width: 104)
+            VStack(spacing: 0) {
+                ForEach(Array(group.ingredients.enumerated()), id: \.element.id) { index, ingredient in
+                    CartRecipeIngredientRow(ingredient: ingredient)
+
+                    if index < group.ingredients.count - 1 {
+                        Divider()
+                            .overlay(OunjePalette.stroke.opacity(0.8))
+                            .padding(.leading, 64)
+                            .padding(.vertical, 10)
                     }
                 }
-                .padding(.trailing, 4)
             }
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(isFocused ? OunjePalette.panel.opacity(0.92) : OunjePalette.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .stroke(isFocused ? OunjePalette.accent.opacity(0.42) : OunjePalette.stroke, lineWidth: 1)
-                )
-        )
-        .shadow(color: isFocused ? OunjePalette.accent.opacity(0.12) : .black.opacity(0.06), radius: isFocused ? 18 : 8, y: 8)
+        .padding(.bottom, 22)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(OunjePalette.stroke.opacity(0.72))
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct CartRecipeIngredientRow: View {
+    let ingredient: SupabaseRecipeIngredientRow
+
+    var body: some View {
+        HStack(spacing: 12) {
+            CartIngredientArtwork(ingredient: ingredient, compact: true)
+                .frame(width: 50, height: 50)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(ingredient.displayTitle)
+                    .sleeDisplayFont(16)
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(2)
+
+                if let quantityText = ingredient.displayQuantityText, !quantityText.isEmpty {
+                    Text(quantityText)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+            }
+
+            Spacer(minLength: 8)
+        }
+        .padding(.vertical, 2)
     }
 }
 
 private struct CartIngredientTile: View {
     let ingredient: SupabaseRecipeIngredientRow
     let compact: Bool
+    var elevated: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(OunjePalette.panel)
-                    .frame(height: compact ? 88 : 102)
+            CartIngredientArtwork(ingredient: ingredient, compact: compact)
+                .frame(height: compact ? 88 : 102)
 
-                if let imageURL = ingredient.imageURL {
-                    AsyncImage(url: imageURL) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        case .empty:
-                            ProgressView()
-                                .tint(OunjePalette.accent)
-                        default:
-                            fallbackGlyph
-                        }
-                    }
-                } else {
-                    fallbackGlyph
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            Text(ingredient.displayName)
+            Text(ingredient.displayTitle)
                 .sleeDisplayFont(compact ? 16 : 17)
                 .foregroundStyle(OunjePalette.primaryText)
                 .lineLimit(2)
 
-            Text(ingredient.quantityText)
-                .font(.system(size: compact ? 11 : 12, weight: .medium))
-                .foregroundStyle(OunjePalette.secondaryText)
-                .lineLimit(1)
+            if let quantityText = ingredient.displayQuantityText, !quantityText.isEmpty {
+                Text(quantityText)
+                    .font(.system(size: compact ? 11 : 12, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(1)
+            }
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(OunjePalette.elevated)
+                .fill(elevated ? OunjePalette.elevated : OunjePalette.panel.opacity(0.52))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                        .stroke(elevated ? OunjePalette.stroke : OunjePalette.stroke.opacity(0.72), lineWidth: 1)
                 )
         )
     }
+}
+
+private struct CartFlatIngredientTile: View {
+    let ingredient: SupabaseRecipeIngredientRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CartIngredientArtwork(ingredient: ingredient, compact: false)
+                .frame(height: 84)
+
+            Text(ingredient.displayTitle)
+                .sleeDisplayFont(16)
+                .foregroundStyle(OunjePalette.primaryText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+
+            if let quantityText = ingredient.displayQuantityText, !quantityText.isEmpty {
+                Text(quantityText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct CartIngredientArtwork: View {
+    let ingredient: SupabaseRecipeIngredientRow
+    let compact: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.panel)
+
+            if let imageURL = ingredient.imageURL {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .empty:
+                        ProgressView()
+                            .tint(OunjePalette.accent)
+                    default:
+                        fallbackGlyph
+                    }
+                }
+            } else {
+                fallbackGlyph
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
 
     private var fallbackGlyph: some View {
-        VStack(spacing: 8) {
-            Text("🥣")
-                .font(.system(size: compact ? 34 : 38))
-            Text(ingredient.displayName)
-                .sleeDisplayFont(12)
-                .foregroundStyle(OunjePalette.secondaryText)
-                .lineLimit(1)
-                .padding(.horizontal, 8)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Text(IngredientMonogramFormatter.monogram(for: ingredient.displayTitle))
+            .sleeDisplayFont(compact ? 24 : 28)
+            .foregroundStyle(OunjePalette.softCream)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -4769,13 +8551,21 @@ private struct CartGroceryLineItemRow: View {
                 Text(item.quantityText)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
+
+                if let supportingText = item.supportingText, !supportingText.isEmpty {
+                    Text(supportingText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.82))
+                }
             }
 
             Spacer(minLength: 10)
 
-            Text(item.estimatedPriceText)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(OunjePalette.primaryText)
+            if let estimatedPriceText = item.estimatedPriceText, !estimatedPriceText.isEmpty {
+                Text(estimatedPriceText)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -4790,19 +8580,10 @@ private struct CartGroceryLineItemRow: View {
     }
 
     private var fallbackGlyph: some View {
-        Text(acronym)
+        Text(IngredientMonogramFormatter.monogram(for: item.name))
             .sleeDisplayFont(18)
             .foregroundStyle(OunjePalette.softCream)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var acronym: String {
-        let letters = item.name
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .prefix(3)
-            .compactMap { $0.first.map { String($0).uppercased() } }
-            .joined()
-        return letters.isEmpty ? "•" : letters
     }
 }
 
@@ -4835,6 +8616,25 @@ private enum CartQuantityFormatter {
             return String(Int(value.rounded()))
         }
         return value.roundedString(1)
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0, !isEmpty else {
+            return isEmpty ? [] : [self]
+        }
+
+        var chunks: [[Element]] = []
+        var index = startIndex
+
+        while index < endIndex {
+            let nextIndex = self.index(index, offsetBy: size, limitedBy: endIndex) ?? endIndex
+            chunks.append(Array(self[index ..< nextIndex]))
+            index = nextIndex
+        }
+
+        return chunks
     }
 }
 
@@ -5266,6 +9066,10 @@ private struct PrepTrackerCard: View {
                     quote: store.latestPlan?.bestQuote,
                     address: store.profile?.deliveryAddress
                 )
+
+                if let quote = store.latestPlan?.bestQuote, !quote.reviewItems.isEmpty {
+                    ProviderCartReviewCard(quote: quote)
+                }
             }
             .padding(.top, 4)
         }
@@ -5609,6 +9413,7 @@ private struct PrepDeliveryMapPanel: View {
             PrepRouteOverlay(
                 snapshot: snapshot,
                 providerTitle: quote?.provider.title,
+                storeTitle: quote?.selectedStore?.storeName,
                 etaText: quote.map { snapshot.etaLabel(for: $0) }
             )
         }
@@ -5643,6 +9448,160 @@ private struct PrepMetaPill: View {
                             .stroke(accent.opacity(0.34), lineWidth: 1)
                     )
             )
+    }
+}
+
+private struct ProviderCartReviewCard: View {
+    let quote: ProviderQuote
+
+    private var substituted: [ProviderCartReviewItem] {
+        quote.reviewItems.filter { $0.status.caseInsensitiveCompare("substituted") == .orderedSame }
+    }
+
+    private var unresolved: [ProviderCartReviewItem] {
+        quote.reviewItems.filter { $0.status.caseInsensitiveCompare("unresolved") == .orderedSame }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                Text("Cart review")
+                    .biroHeaderFont(16)
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                Spacer(minLength: 12)
+
+                Text(summaryLine)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                if !unresolved.isEmpty {
+                    reviewGroup(
+                        title: "Missing",
+                        accent: OunjePalette.softCream,
+                        items: Array(unresolved.prefix(3))
+                    )
+                }
+
+                if !substituted.isEmpty {
+                    reviewGroup(
+                        title: "Substituted",
+                        accent: OunjePalette.accent,
+                        items: Array(substituted.prefix(3))
+                    )
+                }
+            }
+
+            let remainingCount = max(0, quote.reviewItems.count - min(3, unresolved.count) - min(3, substituted.count))
+            if remainingCount > 0 {
+                Text("\(remainingCount) more item\(remainingCount == 1 ? "" : "s") still need a look.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(OunjePalette.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+
+    private var summaryLine: String {
+        let parts = [
+            unresolved.isEmpty ? nil : "\(unresolved.count) missing",
+            substituted.isEmpty ? nil : "\(substituted.count) swapped"
+        ].compactMap { $0 }
+
+        return parts.isEmpty ? "No review needed" : parts.joined(separator: " • ")
+    }
+
+    private func prettyRequested(_ item: ProviderCartReviewItem) -> String {
+        let value = item.requested.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "Unnamed item" : value
+    }
+
+    private func isUnresolved(_ item: ProviderCartReviewItem) -> Bool {
+        item.status.caseInsensitiveCompare("unresolved") == .orderedSame
+    }
+
+    private func badgeText(for item: ProviderCartReviewItem) -> String {
+        isUnresolved(item) ? "Missing" : "Swap"
+    }
+
+    private func badgeColor(for item: ProviderCartReviewItem) -> Color {
+        isUnresolved(item) ? OunjePalette.softCream : OunjePalette.accent
+    }
+
+    @ViewBuilder
+    private func reviewGroup(title: String, accent: Color, items: [ProviderCartReviewItem]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 8, height: 8)
+
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+            }
+
+            VStack(spacing: 10) {
+                ForEach(items) { item in
+                    reviewRow(for: item)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func reviewRow(for item: ProviderCartReviewItem) -> some View {
+        let badgeColor = badgeColor(for: item)
+
+        HStack(alignment: .top, spacing: 10) {
+            Text(badgeText(for: item))
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(badgeColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(badgeColor.opacity(0.14))
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(prettyRequested(item))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                Text(detailLine(for: item))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func detailLine(for item: ProviderCartReviewItem) -> String {
+        if isUnresolved(item) {
+            if let refinedQuery = item.refinedQuery, !refinedQuery.isEmpty {
+                return "Couldn’t place it. Last search: \(refinedQuery)."
+            }
+            return "Couldn’t find a safe match in the current cart run."
+        }
+
+        if let matched = item.matched, !matched.isEmpty {
+            return "Using \(matched) instead."
+        }
+
+        return "Substituted during the provider fill."
     }
 }
 
@@ -5777,12 +9736,18 @@ private struct DeliveryTimeSheet: View {
 private struct PrepRouteOverlay: View {
     let snapshot: PrepDeliverySnapshot
     let providerTitle: String?
+    let storeTitle: String?
     let etaText: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Label(providerTitle ?? "Delivery", systemImage: "storefront.fill")
+                let title = [providerTitle, storeTitle]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " • ")
+
+                Label(title.isEmpty ? "Delivery" : title, systemImage: "storefront.fill")
                     .biroHeaderFont(11)
                     .foregroundStyle(OunjePalette.primaryText)
                     .padding(.horizontal, 10)
@@ -5936,15 +9901,15 @@ private struct CustomTabBar: View {
                     VStack(spacing: 3) {
                         Capsule(style: .continuous)
                             .fill(selectedTab == tab ? OunjePalette.accent.opacity(0.92) : .clear)
-                            .frame(width: 18, height: 3)
+                            .frame(width: 22, height: 3)
                             .padding(.bottom, 3)
 
                         Image(systemName: tab.symbol)
-                            .font(.system(size: 19, weight: selectedTab == tab ? .semibold : .medium))
+                            .font(.system(size: 22, weight: selectedTab == tab ? .semibold : .medium))
                             .foregroundStyle(selectedTab == tab ? OunjePalette.primaryText : OunjePalette.secondaryText)
 
                         Text(tab.title)
-                            .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .medium, design: .rounded))
+                            .sleeDisplayFont(13)
                             .foregroundStyle(selectedTab == tab ? OunjePalette.primaryText : OunjePalette.secondaryText)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -6004,17 +9969,96 @@ private struct BottomNavigationDock: View {
 
 private struct DiscoverComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var savedStore: SavedRecipesStore
+    @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var toastCenter: AppToastCenter
     let context: CookbookComposerContext
     @State private var draftText = ""
+    @State private var selectedMediaItems: [PhotosPickerItem] = []
+    @State private var attachments: [RecipeImportMediaDraft] = []
+    @State private var isSubmitting = false
+    @State private var isPreparingMedia = false
+    @State private var attachmentMessage: String?
+    @State private var errorMessage: String?
+    @FocusState private var isTextFocused: Bool
 
-    private let suggestionChips = [
-        "Dinner ideas",
-        "Meal-prep lunch",
-        "High protein",
-        "Nigerian recipes",
-        "Budget dinners",
-        "Comfort food"
-    ]
+    private var trimmedDraftText: String {
+        draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSubmit: Bool {
+        !trimmedDraftText.isEmpty || !attachments.isEmpty
+    }
+
+    private var hasPromptTextBeyondLinks: Bool {
+        guard !trimmedDraftText.isEmpty else { return false }
+        var remaining = trimmedDraftText
+        for link in detectedLinks {
+            remaining = remaining.replacingOccurrences(of: link, with: " ")
+        }
+        remaining = remaining
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !remaining.isEmpty
+    }
+
+    private var primaryActionTitle: String {
+        switch context {
+        case .prepped:
+            return "Prep"
+        case .saved:
+            return hasPromptTextBeyondLinks ? "Generate" : "Save"
+        }
+    }
+
+    private var submittingActionTitle: String {
+        switch context {
+        case .prepped:
+            return "Prepping..."
+        case .saved:
+            return hasPromptTextBeyondLinks ? "Generating..." : "Saving..."
+        }
+    }
+
+    private var mediaButtonTitle: String {
+        if isPreparingMedia {
+            return "Preparing media…"
+        }
+        if attachments.isEmpty {
+            return "Attach photo or video"
+        }
+        return attachments.count == 1 ? "1 attachment ready" : "\(attachments.count) attachments ready"
+    }
+
+    private var helperCopy: String {
+        switch context {
+        case .prepped:
+            return "Paste a link, add media, or describe what you want."
+        case .saved:
+            return "Paste a link, add media, or describe what you want."
+        }
+    }
+
+    private var detectedLinks: [String] {
+        let nsRange = NSRange(draftText.startIndex..<draftText.endIndex, in: draftText)
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return []
+        }
+        var seen = Set<String>()
+        var ordered: [String] = []
+        detector.matches(in: draftText, options: [], range: nsRange).forEach { result in
+            guard
+                let range = Range(result.range, in: draftText),
+                let url = result.url?.absoluteString ?? URL(string: String(draftText[range]))?.absoluteString
+            else { return }
+            if seen.insert(url).inserted {
+                ordered.append(url)
+            }
+        }
+        return ordered
+    }
 
     var body: some View {
         ZStack {
@@ -6028,101 +10072,208 @@ private struct DiscoverComposerSheet: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 8)
 
-                ZStack(alignment: .topTrailing) {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(OunjePalette.panel)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                        )
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(context == .saved ? "What are we saving?" : "What are we prepping?")
+                        .font(.system(size: 24, weight: .regular, design: .serif))
+                        .foregroundStyle(OunjePalette.primaryText)
 
-                    Circle()
-                        .fill(OunjePalette.accent.opacity(0.14))
-                        .frame(width: 120, height: 120)
-                        .blur(radius: 26)
-                        .offset(x: 18, y: -8)
-
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text(context.title)
-                            .biroHeaderFont(24)
-                            .foregroundStyle(OunjePalette.primaryText)
-
-                        TextEditor(text: $draftText)
-                            .scrollContentBackground(.hidden)
-                            .foregroundStyle(OunjePalette.primaryText)
-                            .font(.system(size: 16, weight: .medium, design: .rounded))
-                            .frame(minHeight: 104)
-                            .overlay(alignment: .topLeading) {
-                                if draftText.isEmpty {
-                                    Text(context.placeholder)
-                                        .font(.system(size: 16, weight: .medium, design: .rounded))
-                                        .foregroundStyle(OunjePalette.secondaryText)
-                                        .padding(.horizontal, 6)
-                                        .padding(.top, 8)
-                                }
-                            }
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            LazyVGrid(
-                                columns: [
-                                    GridItem(.flexible(), spacing: 10),
-                                    GridItem(.flexible(), spacing: 10)
-                                ],
-                                spacing: 10
-                            ) {
-                                ComposerActionChip(title: "Attach file", systemImage: "plus")
-                                ComposerActionChip(title: "Import links", systemImage: "link")
-                                ComposerActionChip(title: "Recipe photos", systemImage: "photo")
-                            }
-
-                            Button {
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Text(context.primaryActionTitle)
-                                        .biroHeaderFont(15)
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 13, weight: .bold))
-                                    Spacer(minLength: 0)
-                                }
-                                .foregroundStyle(.black.opacity(0.9))
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 14)
-                                .frame(maxWidth: .infinity)
-                                .background(
-                                    Capsule(style: .continuous)
-                                        .fill(OunjePalette.softCream)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(18)
-                }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Try prompts")
-                        .font(.system(size: 14, weight: .bold))
+                    Text(helperCopy)
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(OunjePalette.secondaryText)
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(suggestionChips, id: \.self) { chip in
-                                Text(chip)
-                                    .font(.system(size: 14, weight: .medium, design: .rounded))
-                                    .foregroundStyle(OunjePalette.primaryText)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        Capsule(style: .continuous)
-                                            .fill(OunjePalette.surface)
-                                            .overlay(
-                                                Capsule(style: .continuous)
-                                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                    ZStack(alignment: .topTrailing) {
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .fill(OunjePalette.panel)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                    .stroke(OunjePalette.stroke.opacity(0.82), lineWidth: 1)
+                            )
+
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        OunjePalette.accent.opacity(0.20),
+                                        .clear
+                                    ],
+                                    startPoint: .topTrailing,
+                                    endPoint: .bottomLeading
+                                )
+                            )
+                            .frame(width: 118, height: 80)
+                            .blur(radius: 22)
+                            .offset(x: 18, y: -10)
+
+                        VStack(alignment: .leading, spacing: 16) {
+                            if isPreparingMedia || !attachments.isEmpty || !detectedLinks.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 10) {
+                                        if isPreparingMedia {
+                                            HStack(spacing: 8) {
+                                                ProgressView()
+                                                    .progressViewStyle(.circular)
+                                                    .tint(OunjePalette.primaryText)
+                                                Text("Preparing media")
+                                                    .font(.system(size: 13, weight: .medium))
+                                            }
+                                            .foregroundStyle(OunjePalette.secondaryText)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 10)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                    .fill(OunjePalette.surface)
                                             )
-                                    )
+                                        }
+
+                                        ForEach(attachments) { attachment in
+                                            HStack(spacing: 8) {
+                                                Image(systemName: attachment.kind == .image ? "photo" : "video")
+                                                    .font(.system(size: 13, weight: .semibold))
+                                                Text(attachment.title)
+                                                    .font(.system(size: 13, weight: .medium))
+                                                    .lineLimit(1)
+                                                Button {
+                                                    removeAttachment(id: attachment.id)
+                                                } label: {
+                                                    Image(systemName: "xmark")
+                                                        .font(.system(size: 11, weight: .bold))
+                                                }
+                                            }
+                                            .foregroundStyle(OunjePalette.primaryText)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 10)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                    .fill(OunjePalette.surface)
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                                                    )
+                                            )
+                                        }
+
+                                        ForEach(detectedLinks, id: \.self) { link in
+                                            HStack(spacing: 8) {
+                                                Image(systemName: "link")
+                                                    .font(.system(size: 13, weight: .semibold))
+                                                Text(compactLinkLabel(for: link))
+                                                    .font(.system(size: 13, weight: .medium))
+                                                    .lineLimit(1)
+                                                Button {
+                                                    removeDetectedLink(link)
+                                                } label: {
+                                                    Image(systemName: "xmark")
+                                                        .font(.system(size: 11, weight: .bold))
+                                                }
+                                            }
+                                            .foregroundStyle(OunjePalette.primaryText)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 10)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                    .fill(OunjePalette.surface)
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                                                    )
+                                            )
+                                        }
+                                    }
+                                }
                             }
+
+                            TextEditor(text: $draftText)
+                                .scrollContentBackground(.hidden)
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .font(.system(size: 16, weight: .medium, design: .rounded))
+                                .frame(minHeight: 120)
+                                .focused($isTextFocused)
+                                .overlay(alignment: .topLeading) {
+                                    if draftText.isEmpty {
+                                        Text(context == .saved
+                                             ? "Drop a link, media, or a quick recipe idea."
+                                             : "Drop a link, media, or a quick meal idea.")
+                                            .font(.system(size: 15, weight: .medium, design: .rounded))
+                                            .foregroundStyle(OunjePalette.secondaryText)
+                                            .padding(.top, 8)
+                                    }
+                                }
+
+                            HStack(alignment: .bottom, spacing: 12) {
+                                Button {
+                                    insertLinkFromClipboard()
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "link")
+                                            .font(.system(size: 14, weight: .semibold))
+                                        Text("Link")
+                                            .font(.system(size: 14, weight: .medium))
+                                            .lineLimit(1)
+                                    }
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                    .opacity(isSubmitting ? 0.6 : 1)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isSubmitting)
+
+                                PhotosPicker(
+                                    selection: $selectedMediaItems,
+                                    maxSelectionCount: 4,
+                                    matching: .any(of: [.images, .videos]),
+                                    photoLibrary: .shared()
+                                ) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "paperclip")
+                                            .font(.system(size: 14, weight: .semibold))
+                                        Text(attachments.isEmpty ? "Attach file" : mediaButtonTitle)
+                                            .font(.system(size: 14, weight: .medium))
+                                            .lineLimit(1)
+                                    }
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                    .opacity(isPreparingMedia ? 0.78 : 1)
+                                }
+                                .buttonStyle(.plain)
+
+                                Spacer(minLength: 0)
+
+                                Button {
+                                    submitImport()
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        if isSubmitting {
+                                            ProgressView()
+                                                .progressViewStyle(.circular)
+                                                .tint(.white)
+                                                .scaleEffect(0.9)
+                                        }
+                                        Text(isSubmitting ? submittingActionTitle : primaryActionTitle)
+                                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                            .lineLimit(1)
+                                            .fixedSize(horizontal: true, vertical: false)
+                                        Image(systemName: "sparkles")
+                                            .font(.system(size: 12, weight: .bold))
+                                    }
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 18)
+                                    .padding(.vertical, 12)
+                                    .frame(minWidth: 112)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .fill(Color(hex: "D97A3A"))
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!canSubmit || isSubmitting || isPreparingMedia)
+                                .opacity(!canSubmit || isSubmitting || isPreparingMedia ? 0.62 : 1)
+                            }
+
                         }
+                        .padding(16)
+                    }
+                    if let errorMessage, !errorMessage.isEmpty {
+                        Text(errorMessage)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.94, green: 0.53, blue: 0.49))
                     }
                 }
 
@@ -6131,6 +10282,738 @@ private struct DiscoverComposerSheet: View {
             .padding(.horizontal, 18)
             .padding(.top, 14)
             .padding(.bottom, 24)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                isTextFocused = true
+            }
+        }
+        .onChange(of: selectedMediaItems.count) { count in
+            guard count > 0 else { return }
+            let items = selectedMediaItems
+            Task {
+                await prepareAttachments(from: items)
+            }
+        }
+    }
+
+    private func submitImport() {
+        guard canSubmit, !isSubmitting, !isPreparingMedia else { return }
+
+        isSubmitting = true
+        errorMessage = nil
+        attachmentMessage = nil
+
+        Task {
+            do {
+                let response = try await RecipeImportAPIService.shared.importRecipe(
+                    userID: store.authSession?.userID,
+                    accessToken: store.authSession?.accessToken,
+                    sourceURL: detectedLinks.first,
+                    sourceText: trimmedDraftText,
+                    targetState: context == .prepped ? "prepped" : "saved",
+                    attachments: attachments.map(\.payload)
+                )
+
+                await MainActor.run {
+                    let importedRecipe = response.recipe
+                    if let importedRecipe {
+                        savedStore.saveImportedRecipe(importedRecipe, showToast: context == .saved)
+                    }
+                }
+                NotificationCenter.default.post(name: .recipeImportReviewQueueNeedsRefresh, object: nil)
+
+                if context == .prepped, let detail = response.recipeDetail {
+                    await store.updateLatestPlan(with: recipeFromImportedDetail(detail), servings: detail.displayServings)
+                }
+
+                await MainActor.run {
+                    isSubmitting = false
+
+                    if response.job.status == "queued" || response.recipe == nil {
+                        toastCenter.show(
+                            title: "Import queued",
+                            subtitle: "Ounje is pulling the recipe in now.",
+                            systemImage: "tray.and.arrow.down.fill"
+                        )
+                    } else if context == .prepped, let detail = response.recipeDetail {
+                        toastCenter.show(
+                            title: "Added to next prep",
+                            subtitle: detail.title,
+                            systemImage: "sparkles",
+                            thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString
+                        )
+                    } else if response.job.reviewState == "draft" {
+                        toastCenter.show(
+                            title: "Saved as draft",
+                            subtitle: response.recipe?.title ?? "Imported recipe",
+                            systemImage: "doc.badge.gearshape",
+                            thumbnailURLString: response.recipe?.imageURL?.absoluteString
+                        )
+                    } else if response.job.reviewState == "needs_review" {
+                        toastCenter.show(
+                            title: "Saved with notes",
+                            subtitle: response.recipe?.title ?? "Imported recipe",
+                            systemImage: "bookmark.fill",
+                            thumbnailURLString: response.recipe?.imageURL?.absoluteString
+                        )
+                    }
+
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isSubmitting = false
+                    errorMessage = (error as? RecipeImportServiceError).map {
+                        switch $0 {
+                        case .invalidRequest:
+                            return "The import request could not be built."
+                        case .invalidResponse:
+                            return "The import response came back in an unexpected format."
+                        case .requestFailed(let message):
+                            return message
+                        }
+                    } ?? error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func prepareAttachments(from items: [PhotosPickerItem]) async {
+        await MainActor.run {
+            isPreparingMedia = true
+            attachmentMessage = "Preparing attachments…"
+            errorMessage = nil
+        }
+
+        do {
+            var drafts: [RecipeImportMediaDraft] = []
+            for item in items.prefix(4) {
+                if let draft = try await RecipeImportMediaDraft.load(from: item) {
+                    drafts.append(draft)
+                }
+            }
+
+            await MainActor.run {
+                attachments = drafts
+                selectedMediaItems = []
+                isPreparingMedia = false
+                attachmentMessage = drafts.isEmpty
+                    ? nil
+                    : drafts.count == 1
+                        ? "1 attachment ready"
+                        : "\(drafts.count) attachments ready"
+            }
+        } catch {
+            await MainActor.run {
+                attachments = []
+                selectedMediaItems = []
+                isPreparingMedia = false
+                attachmentMessage = nil
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func removeAttachment(id: UUID) {
+        attachments.removeAll { $0.id == id }
+        attachmentMessage = attachments.isEmpty
+            ? nil
+            : attachments.count == 1
+                ? "1 attachment ready"
+                : "\(attachments.count) attachments ready"
+    }
+
+    private func compactLinkLabel(for link: String) -> String {
+        guard let url = URL(string: link), let host = url.host, !host.isEmpty else {
+            return link
+        }
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.isEmpty {
+            return host
+        }
+        let firstPath = path.split(separator: "/").first.map(String.init) ?? ""
+        return "\(host)/\(firstPath)"
+    }
+
+    private func removeDetectedLink(_ link: String) {
+        draftText = draftText.replacingOccurrences(of: link, with: "")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func insertLinkFromClipboard() {
+        errorMessage = nil
+        if let raw = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty {
+            let normalized: String
+            if raw.lowercased().hasPrefix("http://") || raw.lowercased().hasPrefix("https://") {
+                normalized = raw
+            } else if raw.contains(".") && !raw.contains(" ") {
+                normalized = "https://\(raw)"
+            } else {
+                errorMessage = "No valid link found in clipboard."
+                isTextFocused = true
+                return
+            }
+            if !draftText.isEmpty, !draftText.hasSuffix("\n") {
+                draftText.append("\n")
+            }
+            draftText.append(normalized)
+            isTextFocused = true
+            return
+        }
+
+        errorMessage = "Copy a link first, then tap Link."
+        isTextFocused = true
+    }
+
+    private func recipeFromImportedDetail(_ detail: RecipeDetailData) -> Recipe {
+        let ingredientSource = detail.ingredients.isEmpty ? detail.steps.flatMap(\.ingredients) : detail.ingredients
+        let ingredients = ingredientSource.map { ingredient in
+            let measurement = parsedIngredientMeasurement(from: ingredient.quantityText)
+            return RecipeIngredient(
+                name: ingredient.displayTitle,
+                amount: measurement?.amount ?? 1,
+                unit: measurement?.unit ?? "ct",
+                estimatedUnitPrice: 0
+            )
+        }
+
+        return Recipe(
+            id: detail.id,
+            title: detail.title,
+            cuisine: cuisinePreference(from: detail),
+            prepMinutes: detail.prepTimeMinutes ?? detail.cookTimeMinutes ?? 0,
+            servings: max(1, detail.displayServings),
+            storageFootprint: .medium,
+            tags: recipeTags(from: detail),
+            ingredients: ingredients,
+            cardImageURLString: detail.discoverCardImageURLString ?? detail.imageURL?.absoluteString,
+            heroImageURLString: detail.heroImageURLString ?? detail.imageURL?.absoluteString,
+            source: detail.source ?? detail.sourcePlatform ?? detail.authorLine
+        )
+    }
+
+    private func parsedIngredientMeasurement(from quantityText: String?) -> (amount: Double, unit: String)? {
+        guard let quantityText else { return nil }
+        let raw = quantityText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+
+        let pattern = #"^(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?)(?:\s+(.*))?$"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern),
+            let match = regex.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+            let amountRange = Range(match.range(at: 1), in: raw)
+        else {
+            return nil
+        }
+
+        let amountText = String(raw[amountRange])
+        let unitText: String
+        if let unitRange = Range(match.range(at: 2), in: raw) {
+            unitText = String(raw[unitRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            unitText = "ct"
+        }
+
+        if amountText.contains(" ") {
+            let pieces = amountText.split(separator: " ", maxSplits: 1).map(String.init)
+            if pieces.count == 2, let whole = Double(pieces[0]), let fraction = fractionalAmount(from: pieces[1]) {
+                return (whole + fraction, unitText.isEmpty ? "ct" : unitText)
+            }
+        }
+
+        if let fraction = fractionalAmount(from: amountText) {
+            return (fraction, unitText.isEmpty ? "ct" : unitText)
+        }
+
+        if let amount = Double(amountText) {
+            return (amount, unitText.isEmpty ? "ct" : unitText)
+        }
+
+        return nil
+    }
+
+    private func fractionalAmount(from raw: String) -> Double? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("/") else { return nil }
+        let pieces = trimmed.split(separator: "/", maxSplits: 1).map(String.init)
+        guard pieces.count == 2, let numerator = Double(pieces[0]), let denominator = Double(pieces[1]), denominator != 0 else {
+            return nil
+        }
+        return numerator / denominator
+    }
+
+    private func cuisinePreference(from detail: RecipeDetailData) -> CuisinePreference {
+        let raw = (detail.cuisineTags.first ?? detail.category ?? detail.recipeType ?? "american")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+
+        switch raw {
+        case "italian":
+            return .italian
+        case "mexican":
+            return .mexican
+        case "mediterranean":
+            return .mediterranean
+        case "asian":
+            return .asian
+        case "indian":
+            return .indian
+        case "american":
+            return .american
+        case "middleeastern", "levantine":
+            return .middleEastern
+        case "japanese":
+            return .japanese
+        case "thai":
+            return .thai
+        case "korean":
+            return .korean
+        case "chinese":
+            return .chinese
+        case "greek":
+            return .greek
+        case "french":
+            return .french
+        case "spanish":
+            return .spanish
+        case "caribbean":
+            return .caribbean
+        case "westafrican", "nigerian":
+            return .westAfrican
+        case "ethiopian":
+            return .ethiopian
+        case "brazilian":
+            return .brazilian
+        case "vegan":
+            return .vegan
+        default:
+            return .american
+        }
+    }
+
+    private func recipeTags(from detail: RecipeDetailData) -> [String] {
+        let combinedTags = detail.dietaryTags + detail.flavorTags + detail.occasionTags + [detail.recipeType, detail.category].compactMap { $0 }
+        return Array(
+            Set(
+                combinedTags
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
+    }
+}
+
+private struct RecipeImportMediaDraft: Identifiable {
+    enum Kind {
+        case image
+        case video
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let title: String
+    let subtitle: String
+    let payload: RecipeImportAttachmentPayload
+
+    static func load(from item: PhotosPickerItem) async throws -> RecipeImportMediaDraft? {
+        let imageType = item.supportedContentTypes.first(where: { $0.conforms(to: .image) })
+        let videoType = item.supportedContentTypes.first(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) })
+
+        if let imageType {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                throw RecipeImportMediaError.unreadable
+            }
+            return try makeImageAttachment(from: data, contentType: imageType)
+        }
+
+        if let videoType {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                throw RecipeImportMediaError.unreadable
+            }
+            return try await makeVideoAttachment(from: data, contentType: videoType)
+        }
+
+        throw RecipeImportMediaError.unsupported
+    }
+
+    private static func makeImageAttachment(from data: Data, contentType: UTType) throws -> RecipeImportMediaDraft {
+        guard let image = UIImage(data: data) else {
+            throw RecipeImportMediaError.unreadable
+        }
+
+        let prepared = image.ounjeResized(maxDimension: 1600)
+        let jpegData = prepared.jpegData(compressionQuality: 0.82) ?? data
+        let payload = RecipeImportAttachmentPayload(
+            kind: "image",
+            sourceURL: nil,
+            dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
+            mimeType: "image/jpeg",
+            fileName: "recipe-photo.\(contentType.preferredFilenameExtension ?? "jpg")",
+            previewFrameURLs: []
+        )
+
+        let subtitle = ByteCountFormatter.string(fromByteCount: Int64(jpegData.count), countStyle: .file)
+        return RecipeImportMediaDraft(
+            kind: .image,
+            title: "Photo attached",
+            subtitle: subtitle,
+            payload: payload
+        )
+    }
+
+    private static func makeVideoAttachment(from data: Data, contentType: UTType) async throws -> RecipeImportMediaDraft {
+        let byteLimit = 25 * 1024 * 1024
+        guard data.count <= byteLimit else {
+            throw RecipeImportMediaError.videoTooLarge
+        }
+
+        let extensionName = contentType.preferredFilenameExtension ?? "mov"
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ounje-import-\(UUID().uuidString)")
+            .appendingPathExtension(extensionName)
+        try data.write(to: tempURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let frameDataURLs = try await previewFrameDataURLs(from: tempURL)
+        guard !frameDataURLs.isEmpty else {
+            throw RecipeImportMediaError.videoPreviewUnavailable
+        }
+
+        let payload = RecipeImportAttachmentPayload(
+            kind: "video",
+            sourceURL: nil,
+            dataURL: nil,
+            mimeType: contentType.preferredMIMEType ?? "video/quicktime",
+            fileName: "recipe-video.\(extensionName)",
+            previewFrameURLs: frameDataURLs
+        )
+
+        let subtitle = frameDataURLs.count == 1
+            ? "1 preview frame ready"
+            : "\(frameDataURLs.count) preview frames ready"
+        return RecipeImportMediaDraft(
+            kind: .video,
+            title: "Short video attached",
+            subtitle: subtitle,
+            payload: payload
+        )
+    }
+
+    private static func previewFrameDataURLs(from videoURL: URL) async throws -> [String] {
+        let asset = AVAsset(url: videoURL)
+        let duration = try await asset.load(.duration)
+        let durationSeconds = max(CMTimeGetSeconds(duration), 0.6)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 1200, height: 1200)
+
+        let fractions: [Double] = durationSeconds < 1.2 ? [0.3, 0.7] : [0.18, 0.5, 0.82]
+        return fractions.compactMap { fraction in
+            let second = max(0.05, min(durationSeconds * fraction, max(durationSeconds - 0.05, 0.05)))
+            let time = CMTime(seconds: second, preferredTimescale: 600)
+            guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
+                return nil
+            }
+            let image = UIImage(cgImage: cgImage).ounjeResized(maxDimension: 1200)
+            guard let data = image.jpegData(compressionQuality: 0.78) else {
+                return nil
+            }
+            return "data:image/jpeg;base64,\(data.base64EncodedString())"
+        }
+    }
+}
+
+private func sharedImportAttachmentPayloads(
+    from attachments: [SharedRecipeImportAttachment]
+) async throws -> [RecipeImportAttachmentPayload] {
+    try await attachments.asyncCompactMap { attachment in
+        let fileURL = try SharedRecipeImportInbox.absoluteURL(forRelativePath: attachment.relativePath)
+        switch attachment.kind.lowercased() {
+        case "image":
+            let data = try Data(contentsOf: fileURL)
+            return try makeRecipeImportImageAttachment(
+                from: data,
+                mimeType: attachment.mimeType,
+                fileName: attachment.fileName
+            )
+        case "video":
+            return try await makeRecipeImportVideoAttachment(
+                from: fileURL,
+                mimeType: attachment.mimeType,
+                fileName: attachment.fileName
+            )
+        default:
+            return nil
+        }
+    }
+}
+
+private func makeRecipeImportImageAttachment(
+    from data: Data,
+    mimeType: String?,
+    fileName: String
+) throws -> RecipeImportAttachmentPayload {
+    guard let image = UIImage(data: data) else {
+        throw RecipeImportMediaError.unreadable
+    }
+
+    let prepared = image.ounjeResized(maxDimension: 1600)
+    let jpegData = prepared.jpegData(compressionQuality: 0.82) ?? data
+    return RecipeImportAttachmentPayload(
+        kind: "image",
+        sourceURL: nil,
+        dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
+        mimeType: mimeType ?? "image/jpeg",
+        fileName: fileName,
+        previewFrameURLs: []
+    )
+}
+
+private func makeRecipeImportVideoAttachment(
+    from fileURL: URL,
+    mimeType: String?,
+    fileName: String
+) async throws -> RecipeImportAttachmentPayload {
+    let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+    let byteLimit = 25 * 1024 * 1024
+    if let size = attributes[.size] as? NSNumber, size.intValue > byteLimit {
+        throw RecipeImportMediaError.videoTooLarge
+    }
+
+    let frameDataURLs = try await recipeImportPreviewFrameDataURLs(from: fileURL)
+    guard !frameDataURLs.isEmpty else {
+        throw RecipeImportMediaError.videoPreviewUnavailable
+    }
+
+    return RecipeImportAttachmentPayload(
+        kind: "video",
+        sourceURL: nil,
+        dataURL: nil,
+        mimeType: mimeType ?? "video/quicktime",
+        fileName: fileName,
+        previewFrameURLs: frameDataURLs
+    )
+}
+
+private func recipeImportPreviewFrameDataURLs(from videoURL: URL) async throws -> [String] {
+    let asset = AVAsset(url: videoURL)
+    let duration = try await asset.load(.duration)
+    let durationSeconds = max(CMTimeGetSeconds(duration), 0.6)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: 1200, height: 1200)
+
+    let fractions: [Double] = durationSeconds < 1.2 ? [0.3, 0.7] : [0.18, 0.5, 0.82]
+    return fractions.compactMap { fraction in
+        let second = max(0.05, min(durationSeconds * fraction, max(durationSeconds - 0.05, 0.05)))
+        let time = CMTime(seconds: second, preferredTimescale: 600)
+        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
+            return nil
+        }
+        let image = UIImage(cgImage: cgImage).ounjeResized(maxDimension: 1200)
+        guard let data = image.jpegData(compressionQuality: 0.78) else {
+            return nil
+        }
+        return "data:image/jpeg;base64,\(data.base64EncodedString())"
+    }
+}
+
+private func importedRecipePlanModel(from detail: RecipeDetailData) -> Recipe {
+    let ingredientSource = detail.ingredients.isEmpty ? detail.steps.flatMap(\.ingredients) : detail.ingredients
+    let ingredients = ingredientSource.map { ingredient in
+        let measurement = importedRecipeMeasurement(from: ingredient.quantityText)
+        return RecipeIngredient(
+            name: ingredient.displayTitle,
+            amount: measurement?.amount ?? 1,
+            unit: measurement?.unit ?? "ct",
+            estimatedUnitPrice: 0
+        )
+    }
+
+    return Recipe(
+        id: detail.id,
+        title: detail.title,
+        cuisine: importedRecipeCuisinePreference(from: detail),
+        prepMinutes: detail.prepTimeMinutes ?? detail.cookTimeMinutes ?? 0,
+        servings: max(1, detail.displayServings),
+        storageFootprint: .medium,
+        tags: importedRecipeTags(from: detail),
+        ingredients: ingredients,
+        cardImageURLString: detail.discoverCardImageURLString ?? detail.imageURL?.absoluteString,
+        heroImageURLString: detail.heroImageURLString ?? detail.imageURL?.absoluteString,
+        source: detail.source ?? detail.sourcePlatform ?? detail.authorLine
+    )
+}
+
+private func importedRecipeMeasurement(from quantityText: String?) -> (amount: Double, unit: String)? {
+    guard let quantityText else { return nil }
+    let raw = quantityText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !raw.isEmpty else { return nil }
+
+    let pattern = #"^(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?)(?:\s+(.*))?$"#
+    guard
+        let regex = try? NSRegularExpression(pattern: pattern),
+        let match = regex.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+        let amountRange = Range(match.range(at: 1), in: raw)
+    else {
+        return nil
+    }
+
+    let amountText = String(raw[amountRange])
+    let unitText: String
+    if let unitRange = Range(match.range(at: 2), in: raw) {
+        unitText = String(raw[unitRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+    } else {
+        unitText = "ct"
+    }
+
+    if amountText.contains(" ") {
+        let pieces = amountText.split(separator: " ", maxSplits: 1).map(String.init)
+        if pieces.count == 2, let whole = Double(pieces[0]), let fraction = importedRecipeFraction(from: pieces[1]) {
+            return (whole + fraction, unitText.isEmpty ? "ct" : unitText)
+        }
+    }
+
+    if let fraction = importedRecipeFraction(from: amountText) {
+        return (fraction, unitText.isEmpty ? "ct" : unitText)
+    }
+
+    if let amount = Double(amountText) {
+        return (amount, unitText.isEmpty ? "ct" : unitText)
+    }
+
+    return nil
+}
+
+private func importedRecipeFraction(from raw: String) -> Double? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.contains("/") else { return nil }
+    let pieces = trimmed.split(separator: "/", maxSplits: 1).map(String.init)
+    guard pieces.count == 2, let numerator = Double(pieces[0]), let denominator = Double(pieces[1]), denominator != 0 else {
+        return nil
+    }
+    return numerator / denominator
+}
+
+private func importedRecipeCuisinePreference(from detail: RecipeDetailData) -> CuisinePreference {
+    let raw = (detail.cuisineTags.first ?? detail.category ?? detail.recipeType ?? "american")
+        .replacingOccurrences(of: " ", with: "")
+        .replacingOccurrences(of: "-", with: "")
+        .lowercased()
+
+    switch raw {
+    case "italian":
+        return .italian
+    case "mexican":
+        return .mexican
+    case "mediterranean":
+        return .mediterranean
+    case "asian":
+        return .asian
+    case "indian":
+        return .indian
+    case "american":
+        return .american
+    case "middleeastern", "levantine":
+        return .middleEastern
+    case "japanese":
+        return .japanese
+    case "thai":
+        return .thai
+    case "korean":
+        return .korean
+    case "chinese":
+        return .chinese
+    case "greek":
+        return .greek
+    case "french":
+        return .french
+    case "spanish":
+        return .spanish
+    case "caribbean":
+        return .caribbean
+    case "westafrican", "nigerian":
+        return .westAfrican
+    case "ethiopian":
+        return .ethiopian
+    case "brazilian":
+        return .brazilian
+    case "vegan":
+        return .vegan
+    default:
+        return .american
+    }
+}
+
+private func importedRecipeTags(from detail: RecipeDetailData) -> [String] {
+    let rawTags = detail.dietaryTags + detail.flavorTags + detail.cuisineTags + detail.occasionTags
+    let contextualTags = [
+        detail.recipeType,
+        detail.category,
+        detail.subcategory,
+        detail.cookMethod,
+        detail.mainProtein
+    ].compactMap { $0 }
+
+    var seen = Set<String>()
+    return (rawTags + contextualTags)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        .filter { !$0.isEmpty }
+        .filter { seen.insert($0).inserted }
+}
+
+private extension Sequence {
+    func asyncCompactMap<T>(_ transform: (Element) async throws -> T?) async rethrows -> [T] {
+        var results: [T] = []
+        for element in self {
+            if let transformed = try await transform(element) {
+                results.append(transformed)
+            }
+        }
+        return results
+    }
+}
+
+private enum RecipeImportMediaError: LocalizedError {
+    case unsupported
+    case unreadable
+    case videoTooLarge
+    case videoPreviewUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupported:
+            return "That file type is not supported yet."
+        case .unreadable:
+            return "We couldn’t read that attachment. Try another photo or a shorter video."
+        case .videoTooLarge:
+            return "Short videos only for now. Try one under 25 MB."
+        case .videoPreviewUnavailable:
+            return "We couldn’t pull clear frames from that video."
+        }
+    }
+}
+
+private extension UIImage {
+    func ounjeResized(maxDimension: CGFloat) -> UIImage {
+        let largestDimension = max(size.width, size.height)
+        guard largestDimension > maxDimension, largestDimension > 0 else {
+            return self
+        }
+
+        let scaleRatio = maxDimension / largestDimension
+        let targetSize = CGSize(
+            width: floor(size.width * scaleRatio),
+            height: floor(size.height * scaleRatio)
+        )
+
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
         }
     }
 }
@@ -6174,9 +11057,20 @@ private struct ThemedCard<Content: View>: View {
 
 private struct DiscoverRemoteRecipeCard: View {
     let recipe: DiscoverRecipeCardData
+    let secondaryTopAction: DiscoverRemoteRecipeCardTopAction?
     let onSelect: () -> Void
     @EnvironmentObject private var savedStore: SavedRecipesStore
     private let cardHeight: CGFloat = 292
+
+    init(
+        recipe: DiscoverRecipeCardData,
+        secondaryTopAction: DiscoverRemoteRecipeCardTopAction? = nil,
+        onSelect: @escaping () -> Void
+    ) {
+        self.recipe = recipe
+        self.secondaryTopAction = secondaryTopAction
+        self.onSelect = onSelect
+    }
 
     var body: some View {
         Button {
@@ -6232,31 +11126,58 @@ private struct DiscoverRemoteRecipeCard: View {
                     .stroke(.white.opacity(0.06), lineWidth: 1)
             )
             .overlay(alignment: .topTrailing) {
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        savedStore.toggle(recipe)
+                HStack(spacing: 8) {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            savedStore.toggle(recipe)
+                        }
+                    } label: {
+                        Image(systemName: savedStore.isSaved(recipe) ? "bookmark.fill" : "bookmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(savedStore.isSaved(recipe) ? OunjePalette.softCream : OunjePalette.primaryText.opacity(0.88))
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(OunjePalette.surface.opacity(0.96))
+                                    .overlay(
+                                        Circle()
+                                            .stroke(savedStore.isSaved(recipe) ? OunjePalette.accent.opacity(0.45) : OunjePalette.stroke, lineWidth: 1)
+                                    )
+                            )
                     }
-                } label: {
-                    Image(systemName: savedStore.isSaved(recipe) ? "bookmark.fill" : "bookmark")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(savedStore.isSaved(recipe) ? OunjePalette.softCream : OunjePalette.primaryText.opacity(0.88))
-                        .frame(width: 32, height: 32)
-                        .background(
-                            Circle()
-                                .fill(OunjePalette.surface.opacity(0.96))
-                                .overlay(
+                    .buttonStyle(.plain)
+
+                    if let secondaryTopAction {
+                        Button(action: secondaryTopAction.action) {
+                            Image(systemName: secondaryTopAction.systemName)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
+                                .frame(width: 32, height: 32)
+                                .background(
                                     Circle()
-                                        .stroke(savedStore.isSaved(recipe) ? OunjePalette.accent.opacity(0.45) : OunjePalette.stroke, lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
+                                        .fill(OunjePalette.surface.opacity(0.96))
+                                        .overlay(
+                                            Circle()
+                                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(secondaryTopAction.accessibilityLabel)
+                    }
+                }
                 .padding(8)
             }
             .shadow(color: .black.opacity(0.16), radius: 12, x: 0, y: 8)
         }
         .buttonStyle(.plain)
     }
+}
+
+private struct DiscoverRemoteRecipeCardTopAction {
+    let systemName: String
+    let accessibilityLabel: String
+    let action: () -> Void
 }
 
 private struct DiscoverRemoteRecipeImage: View {
@@ -6354,6 +11275,7 @@ private struct RecipeDetailExperienceView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var savedStore: SavedRecipesStore
     @StateObject private var viewModel = RecipeDetailViewModel()
+    @State private var relatedPresentedRecipe: PresentedRecipeDetail?
     @State private var servingsCount = 4
     @State private var baseServingsCount = 4
     @State private var shouldScrollToSteps = false
@@ -6387,18 +11309,12 @@ private struct RecipeDetailExperienceView: View {
         store.latestPlan?.recipes.contains(where: { $0.recipe.id == recipeID }) ?? (presentedRecipe.plannedRecipe != nil)
     }
 
-    private var hasPendingPrepChanges: Bool {
-        servingsCount != max(1, baseServingsCount)
-    }
-
     private var primaryBottomActionTitle: String {
-        if !isInCurrentPrep { return "Prep" }
-        if hasPendingPrepChanges { return "Save" }
-        return "Cook"
+        isInCurrentPrep ? "Remove" : "Add"
     }
 
     private var ingredientSecondaryActionTitle: String {
-        isInCurrentPrep ? "Add all to grocery list" : "Add to next prep"
+        isInCurrentPrep ? "Remove from prep" : "Add to next prep"
     }
 
     private var servingsScale: Double {
@@ -6512,6 +11428,10 @@ private struct RecipeDetailExperienceView: View {
 
     private var detailLoadFailed: Bool {
         !viewModel.isLoading && detail == nil && viewModel.errorMessage != nil
+    }
+
+    private var isLoadingSimilarRecipes: Bool {
+        viewModel.isLoading && detail != nil && viewModel.similarRecipes.isEmpty
     }
 
     private var subtitleLine: String? {
@@ -6642,8 +11562,6 @@ private struct RecipeDetailExperienceView: View {
             let heroTopBleed: CGFloat = 18
             let heroHeight = max(160, heroSize - heroTopCrop - 8)
             let ingredientColumns = Array(repeating: GridItem(.flexible(), spacing: 18, alignment: .top), count: 4)
-            let stackIngredientActions = pageWidth <= 430
-
             ScrollViewReader { proxy in
                 ZStack(alignment: .bottom) {
                     detailBackground
@@ -6659,6 +11577,15 @@ private struct RecipeDetailExperienceView: View {
                                             .frame(width: heroSize, height: heroSize)
                                             .offset(x: heroSize * 0.04, y: -(heroTopCrop + heroTopBleed))
                                             .allowsHitTesting(false)
+                                    }
+                                    .overlay(alignment: .topTrailing) {
+                                        if hasVideoSource {
+                                            RecipeDetailTopVideoButton(isActive: showInlineVideo) {
+                                                toggleInlineVideo()
+                                            }
+                                            .padding(.trailing, 20)
+                                            .padding(.top, max(safeTop - 2, 0) + 52 + 10)
+                                        }
                                     }
                             }
                             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -6717,7 +11644,7 @@ private struct RecipeDetailExperienceView: View {
                                         }
                                     }
 
-                                    RecipeDetailCompactActionButton(title: "Story", systemImage: "camera", compact: true) {
+                                    RecipeDetailCompactActionButton(title: "Story", showsInstagramGlyph: true, compact: true) {
                                         if let authorURL {
                                             openURL(authorURL)
                                         } else if let externalURL {
@@ -6748,6 +11675,14 @@ private struct RecipeDetailExperienceView: View {
                                         RecipeDetailSectionHeader(title: "Details")
 
                                         RecipeDetailMetricsGrid(metrics: detailMetrics)
+
+                                        if let detailFootnote = detail?.detailFootnote, !detailFootnote.isEmpty {
+                                            Text(detailFootnote)
+                                                .font(.system(size: 14, weight: .medium))
+                                                .foregroundStyle(OunjePalette.secondaryText)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                                .padding(.top, 2)
+                                        }
                                     }
                                 }
 
@@ -6764,19 +11699,7 @@ private struct RecipeDetailExperienceView: View {
                                             }
                                         }
 
-                                        Group {
-                                            if stackIngredientActions {
-                                                VStack(spacing: 14) {
-                                                    ingredientPrimaryButton
-                                                    ingredientSecondaryButton
-                                                }
-                                            } else {
-                                                HStack(spacing: 14) {
-                                                    ingredientPrimaryButton
-                                                    ingredientSecondaryButton
-                                                }
-                                            }
-                                        }
+                                        ingredientSecondaryButton
                                     }
                                     .padding(.top, detailMetrics.isEmpty ? 6 : 20)
                                 }
@@ -6799,17 +11722,17 @@ private struct RecipeDetailExperienceView: View {
                                     .padding(.top, ingredientItems.isEmpty ? 8 : 26)
                                 }
 
-                                if !instructionSteps.isEmpty {
-                                    RecipeDetailEnjoySection()
+                                if detail != nil && (isLoadingSimilarRecipes || !viewModel.similarRecipes.isEmpty) {
+                                    RecipeDetailEnjoySection(
+                                        recipes: viewModel.similarRecipes,
+                                        isLoading: isLoadingSimilarRecipes,
+                                        onSelectRecipe: { recipe in
+                                            relatedPresentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
+                                        }
+                                    )
                                 }
                             }
 
-                            if let detailFootnote = detail?.detailFootnote, !detailFootnote.isEmpty {
-                                Text(detailFootnote)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
                             }
                             .frame(maxWidth: 820, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -6907,15 +11830,6 @@ private struct RecipeDetailExperienceView: View {
                 .frame(width: pageWidth, alignment: .topLeading)
                 .clipped()
             }
-            .overlay(alignment: .topTrailing) {
-                if hasVideoSource {
-                    RecipeDetailTopVideoButton(isActive: showInlineVideo) {
-                        toggleInlineVideo()
-                    }
-                    .padding(.trailing, 20)
-                    .padding(.top, max(safeTop - 2, 0) + 52 + 10)
-                }
-            }
             .overlay(alignment: .top) {
                 if let toast = toastCenter.toast {
                     AppToastBanner(toast: toast)
@@ -6937,6 +11851,15 @@ private struct RecipeDetailExperienceView: View {
         .sheet(isPresented: $showShareSheet) {
             RecipeShareSheet(activityItems: shareItems)
                 .ignoresSafeArea()
+        }
+        .fullScreenCover(item: $relatedPresentedRecipe) { recipe in
+            RecipeDetailExperienceView(
+                presentedRecipe: recipe,
+                onOpenCart: onOpenCart,
+                toastCenter: toastCenter
+            )
+            .environmentObject(savedStore)
+            .environmentObject(store)
         }
         .fullScreenCover(isPresented: $showInlineVideoFullscreen, onDismiss: {
             guard shouldResumeInlineVideoAfterFullscreen else { return }
@@ -6965,40 +11888,25 @@ private struct RecipeDetailExperienceView: View {
             }
             _ = await prepareInlineVideoIfNeeded()
         }
-    }
-
-    private var ingredientPrimaryButton: some View {
-        Button {
-            dismiss()
-            onOpenCart()
-        } label: {
-            HStack(spacing: 10) {
-                Text("🥕")
-                Text("Get recipe ingredients")
-            }
-            .font(.system(size: 18, weight: .medium))
-            .foregroundStyle(OunjePalette.primaryText)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(OunjePalette.accent)
-            )
+        .onChange(of: servingsCount) { newValue in
+            guard isInCurrentPrep else { return }
+            guard newValue != baseServingsCount else { return }
+            Task { await persistPrepServingsChange(newValue) }
         }
-        .buttonStyle(.plain)
     }
 
     private var ingredientSecondaryButton: some View {
         Button {
-            if isInCurrentPrep {
-                dismiss()
-                onOpenCart()
-            } else {
-                Task { await addCurrentRecipeToPrep() }
+            Task {
+                if isInCurrentPrep {
+                    await removeCurrentRecipeFromPrep()
+                } else {
+                    await addCurrentRecipeToPrep()
+                }
             }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: isInCurrentPrep ? "cart" : "wand.and.stars")
+                Image(systemName: isInCurrentPrep ? "minus.circle" : "wand.and.stars")
                 Text(ingredientSecondaryActionTitle)
             }
             .font(.system(size: 18, weight: .medium))
@@ -7007,11 +11915,26 @@ private struct RecipeDetailExperienceView: View {
             .padding(.vertical, 18)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(OunjePalette.surface)
+                    .fill(
+                        isInCurrentPrep
+                            ? OunjePalette.surface
+                            : OunjePalette.accent.opacity(0.22)
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                            .stroke(
+                                isInCurrentPrep
+                                    ? OunjePalette.stroke
+                                    : OunjePalette.accent.opacity(0.38),
+                                lineWidth: 1
+                            )
                     )
+            )
+            .shadow(
+                color: isInCurrentPrep ? .clear : OunjePalette.accent.opacity(0.08),
+                radius: 10,
+                x: 0,
+                y: 5
             )
         }
         .buttonStyle(.plain)
@@ -7019,17 +11942,13 @@ private struct RecipeDetailExperienceView: View {
 
     @MainActor
     private func handlePrimaryBottomAction() {
-        if !isInCurrentPrep {
-            Task { await addCurrentRecipeToPrep() }
-            return
+        Task {
+            if isInCurrentPrep {
+                await removeCurrentRecipeFromPrep()
+            } else {
+                await addCurrentRecipeToPrep()
+            }
         }
-
-        if hasPendingPrepChanges {
-            Task { await saveCurrentRecipeChanges() }
-            return
-        }
-
-        shouldScrollToSteps = true
     }
 
     @MainActor
@@ -7037,22 +11956,30 @@ private struct RecipeDetailExperienceView: View {
         guard let detail else { return }
         let recipe = recipeFromDetail(detail)
         await store.updateLatestPlan(with: recipe, servings: servingsCount)
+        baseServingsCount = max(1, servingsCount)
         toastCenter.show(
             title: "Added to next prep",
             subtitle: titleText,
-            systemImage: "wand.and.stars"
+            systemImage: "wand.and.stars",
+            thumbnailURLString: toastPreviewImageURLString(for: detail)
         )
     }
 
     @MainActor
-    private func saveCurrentRecipeChanges() async {
+    private func persistPrepServingsChange(_ newServings: Int) async {
         guard let detail else { return }
         let recipe = recipeFromDetail(detail)
-        await store.updateLatestPlan(with: recipe, servings: servingsCount)
+        await store.updateLatestPlan(with: recipe, servings: newServings)
+        baseServingsCount = max(1, newServings)
+    }
+
+    @MainActor
+    private func removeCurrentRecipeFromPrep() async {
+        await store.removeRecipeFromLatestPlan(recipeID: recipeID)
         toastCenter.show(
-            title: "Saved prep changes",
+            title: "Removed from next prep",
             subtitle: titleText,
-            systemImage: "checkmark.circle.fill"
+            systemImage: "minus.circle.fill"
         )
     }
 
@@ -7081,6 +12008,25 @@ private struct RecipeDetailExperienceView: View {
             heroImageURLString: detail.heroImageURLString ?? detail.imageURL?.absoluteString,
             source: detail.source ?? detail.sourcePlatform ?? detail.authorLine
         )
+    }
+
+    private func toastPreviewImageURLString(for detail: RecipeDetailData) -> String? {
+        let recipeImageCandidates = [
+            detail.discoverCardImageURLString,
+            detail.heroImageURLString,
+            detail.imageURL?.absoluteString
+        ]
+
+        if let recipeImage = recipeImageCandidates
+            .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .first(where: { !$0.isEmpty }) {
+            return recipeImage
+        }
+
+        return detail.ingredients
+            .compactMap(\.imageURL)
+            .map(\.absoluteString)
+            .first
     }
 
     private static func recipeTags(from detail: RecipeDetailData) -> [String] {
@@ -7365,6 +12311,130 @@ private struct RecipeDetailTopVideoButton: View {
                 .shadow(color: isActive ? OunjePalette.softCream.opacity(0.16) : .black.opacity(0.16), radius: 10, y: 6)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct FloatingSavedSearchButton: View {
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        let baseFill: AnyShapeStyle = isActive
+            ? AnyShapeStyle(OunjePalette.softCream.opacity(0.96))
+            : AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.20),
+                        OunjePalette.accent.opacity(0.20),
+                        OunjePalette.panel.opacity(0.58)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+
+        Button(action: action) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(isActive ? Color.black.opacity(0.88) : OunjePalette.softCream)
+                .frame(width: 52, height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(baseFill)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .opacity(isActive ? 0 : 1)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(isActive ? 0.10 : 0.20),
+                                            Color.white.opacity(0.02)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .blendMode(.screen)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(isActive ? 0.24 : 0.18), lineWidth: 1)
+                        )
+                )
+                .shadow(color: isActive ? OunjePalette.softCream.opacity(0.16) : .black.opacity(0.16), radius: 10, y: 6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SavedSearchBottomDock: View {
+    @Binding var text: String
+    let placeholder: String
+    @Binding var isPresented: Bool
+    @FocusState private var isFocused: Bool
+
+    private var hasQuery: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(OunjePalette.softCream.opacity(0.9))
+
+            TextField("", text: $text, prompt: Text(placeholder).foregroundColor(OunjePalette.softCream.opacity(0.34)))
+                .font(.system(size: 17, weight: .medium, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .focused($isFocused)
+
+            Spacer(minLength: 0)
+
+            Button {
+                if hasQuery {
+                    text = ""
+                }
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                    isPresented = false
+                }
+            } label: {
+                Image(systemName: hasQuery ? "xmark.circle.fill" : "xmark")
+                    .font(.system(size: hasQuery ? 18 : 15, weight: .semibold))
+                    .foregroundStyle(OunjePalette.softCream.opacity(hasQuery ? 0.44 : 0.34))
+                    .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
+        .background(
+            Capsule(style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            OunjePalette.surface.opacity(0.98),
+                            OunjePalette.panel.opacity(0.96),
+                            OunjePalette.accent.opacity(0.12)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.94), lineWidth: 1)
+                )
+        )
+        .shadow(color: Color.black.opacity(0.22), radius: 22, y: 10)
+        .onAppear {
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
     }
 }
 
@@ -8048,15 +13118,20 @@ private struct RecipeDetailActionButton: View {
 
 private struct RecipeDetailCompactActionButton: View {
     let title: String
-    let systemImage: String
+    var systemImage: String? = nil
+    var showsInstagramGlyph: Bool = false
     var compact: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: compact ? 14 : 16, weight: .semibold))
+                if showsInstagramGlyph {
+                    InstagramGlyphIcon(size: compact ? 15 : 17)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: compact ? 14 : 16, weight: .semibold))
+                }
                 Text(title)
                     .font(.system(size: compact ? 15 : 16, weight: .medium))
                     .lineLimit(1)
@@ -8076,6 +13151,28 @@ private struct RecipeDetailCompactActionButton: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct InstagramGlyphIcon: View {
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .stroke(OunjePalette.primaryText, lineWidth: max(1.6, size * 0.12))
+                .frame(width: size, height: size)
+
+            Circle()
+                .stroke(OunjePalette.primaryText, lineWidth: max(1.4, size * 0.11))
+                .frame(width: size * 0.42, height: size * 0.42)
+
+            Circle()
+                .fill(OunjePalette.primaryText)
+                .frame(width: size * 0.14, height: size * 0.14)
+                .offset(x: size * 0.23, y: -size * 0.23)
+        }
+        .frame(width: size, height: size)
     }
 }
 
@@ -8125,6 +13222,31 @@ private struct RecipeDetailMetricsGrid: View {
     }
 }
 
+private enum IngredientMonogramFormatter {
+    static func monogram(for name: String) -> String {
+        let parts = name
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        if parts.count >= 2 {
+            let initials = parts.prefix(2).compactMap { $0.first.map { String($0).uppercased() } }.joined()
+            if !initials.isEmpty {
+                return initials
+            }
+        }
+
+        if let first = parts.first {
+            let pair = String(first.prefix(2)).uppercased()
+            if !pair.isEmpty {
+                return pair
+            }
+        }
+
+        return "•"
+    }
+}
+
 private struct RecipeIngredientTile: View {
     let ingredient: RecipeDetailIngredient
     @StateObject private var loader = DiscoverRecipeImageLoader()
@@ -8145,8 +13267,8 @@ private struct RecipeIngredientTile: View {
                     ProgressView()
                         .tint(OunjePalette.softCream)
                 } else {
-                    Text(fallbackToken)
-                        .sleeDisplayFont(28)
+                    Text(IngredientMonogramFormatter.monogram(for: ingredient.displayTitle))
+                        .sleeDisplayFont(24)
                         .foregroundStyle(OunjePalette.softCream.opacity(0.9))
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -8178,22 +13300,14 @@ private struct RecipeIngredientTile: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
-
-    private var fallbackToken: String {
-        let words = ingredient.displayTitle
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .prefix(3)
-            .map { String($0.prefix(1)).uppercased() }
-
-        let joined = words.joined()
-        return joined.isEmpty ? "•" : joined
-    }
 }
 
 private struct RecipeStepBlock: View {
     let step: RecipeDetailStep
     let ingredientMatches: [String]
     let dividerColor: Color
+
+    private let contentLeadingInset: CGFloat = 68
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -8221,6 +13335,7 @@ private struct RecipeStepBlock: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if !ingredientMatches.isEmpty {
                 GeometryReader { geometry in
@@ -8242,7 +13357,7 @@ private struct RecipeStepBlock: View {
                                     )
                             }
                         }
-                        .padding(.leading, 68)
+                        .padding(.leading, contentLeadingInset)
                         .padding(.trailing, 18)
                         .frame(minWidth: geometry.size.width + 92, alignment: .leading)
                     }
@@ -8263,30 +13378,158 @@ private struct RecipeStepBlock: View {
 }
 
 private struct RecipeDetailEnjoySection: View {
-    var body: some View {
-        VStack(spacing: 28) {
-            Text("Enjoy.")
-                .font(.system(size: 42, weight: .regular, design: .serif))
-                .foregroundStyle(OunjePalette.softCream)
+    let recipes: [DiscoverRecipeCardData]
+    let isLoading: Bool
+    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
 
-            HStack(spacing: 14) {
-                ForEach(0..<5, id: \.self) { index in
-                    Image(systemName: "carrot.fill")
-                        .font(.system(size: 34, weight: .medium))
-                        .rotationEffect(.degrees(Double(index - 2) * 6))
-                        .foregroundStyle(
-                            index == 2
-                                ? OunjePalette.softCream.opacity(0.62)
-                                : OunjePalette.secondaryText.opacity(0.52)
-                        )
-                }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Spacer(minLength: 0)
+
+                Text("Enjoy.")
+                    .sleeDisplayFont(38)
+                    .foregroundStyle(OunjePalette.softCream.opacity(0.9))
+                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+
+                Spacer(minLength: 0)
             }
-            .padding(.vertical, 8)
-            .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
+            .padding(.bottom, 34)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    if isLoading {
+                        ForEach(0..<3, id: \.self) { _ in
+                            RecipeEnjoyMiniCardPlaceholder()
+                        }
+                    } else {
+                        ForEach(recipes) { recipe in
+                            RecipeEnjoyMiniCard(recipe: recipe) {
+                                onSelectRecipe(recipe)
+                            }
+                        }
+                    }
+                }
+                .padding(.trailing, 8)
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 30)
+        .padding(.bottom, 10)
+    }
+}
+
+private struct RecipeEnjoyMiniCard: View {
+    let recipe: DiscoverRecipeCardData
+    let onSelect: () -> Void
+
+    var body: some View {
+        DiscoverRemoteRecipeCard(recipe: recipe) {
+            onSelect()
+        }
+        .frame(width: 240)
+    }
+}
+
+private struct RecipeEnjoyMiniCardPlaceholder: View {
+    var body: some View {
+        DiscoverRecipeCardLoadingPlaceholder(width: 240)
+    }
+}
+
+private struct DiscoverRecipeCardLoadingPlaceholder: View {
+    var width: CGFloat? = nil
+    @State private var shimmerOffset: CGFloat = -1.2
+    @State private var pulse = false
+
+    init(width: CGFloat? = nil) {
+        self.width = width
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Circle()
+                .fill(OunjePalette.surface)
+                .frame(width: 146, height: 146)
+                .overlay(
+                    Circle()
+                        .stroke(.white.opacity(0.06), lineWidth: 1)
+                )
+                .modifier(LoadingSheen(offset: shimmerOffset))
+                .scaleEffect(pulse ? 1.015 : 0.985)
+
+            VStack(alignment: .leading, spacing: 9) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(OunjePalette.surface)
+                    .frame(height: 22)
+                    .modifier(LoadingSheen(offset: shimmerOffset))
+
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.94))
+                    .frame(width: 116, height: 14)
+                    .modifier(LoadingSheen(offset: shimmerOffset))
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(14)
+        .frame(width: width)
+        .frame(maxWidth: width == nil ? .infinity : width, minHeight: 292, maxHeight: 292, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            OunjePalette.panel.opacity(0.98),
+                            OunjePalette.surface.opacity(0.84)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(.white.opacity(0.06), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.13), radius: 12, x: 0, y: 8)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
+                pulse.toggle()
+            }
+            withAnimation(.linear(duration: 1.35).repeatForever(autoreverses: false)) {
+                shimmerOffset = 1.4
+            }
+        }
+    }
+}
+
+private struct LoadingSheen: ViewModifier {
+    let offset: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                GeometryReader { proxy in
+                    let width = proxy.size.width
+                    let height = proxy.size.height
+
+                    LinearGradient(
+                        colors: [
+                            .clear,
+                            .white.opacity(0.16),
+                            .clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(width: max(54, width * 0.34), height: height * 1.7)
+                    .rotationEffect(.degrees(18))
+                    .offset(x: width * offset)
+                }
+                .allowsHitTesting(false)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            }
     }
 }
 
@@ -8319,98 +13562,83 @@ private struct RecipeCookBottomBar: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let availableWidth = proxy.size.width - 48
-            let cookButtonWidth = min(max(136, availableWidth * 0.42), 184)
+            let availableWidth = proxy.size.width - 32
+            let actionButtonWidth = min(max(118, availableWidth * 0.30), 142)
 
-            HStack(spacing: 12) {
-                HStack(spacing: 12) {
+            HStack(spacing: 0) {
+                HStack(spacing: 10) {
                     Button {
                         servingsCount = max(1, servingsCount - 1)
                     } label: {
                         Image(systemName: "minus")
-                            .font(.system(size: 20, weight: .medium))
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(OunjePalette.primaryText)
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
 
-                    Text("Cooking for \(servingsCount)")
-                        .font(.system(size: 16, weight: .medium))
+                    Text("\(servingsCount) servings")
+                        .sleeDisplayFont(19)
                         .foregroundStyle(OunjePalette.primaryText)
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                        .fixedSize(horizontal: true, vertical: false)
 
                     Button {
                         servingsCount += 1
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 20, weight: .medium))
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(OunjePalette.primaryText)
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
                 }
-                .frame(maxWidth: .infinity, minHeight: 64)
-                .padding(.horizontal, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(OunjePalette.surface)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                        )
-                )
+                .frame(minHeight: 50)
+                .padding(.leading, 6)
+
+                Spacer(minLength: 20)
 
                 Button(action: onPrimaryAction) {
                     Text(actionTitle)
-                        .font(.system(size: 21, weight: .medium))
+                        .sleeDisplayFont(21)
                         .foregroundStyle(OunjePalette.primaryText)
-                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .frame(maxWidth: .infinity, minHeight: 50)
                         .background(
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            OunjePalette.accent.opacity(0.90),
-                                            OunjePalette.accentDark.opacity(0.80)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
-                                )
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(actionTitle == "Remove" ? OunjePalette.surface : OunjePalette.accent)
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                        .fill(Color.white.opacity(0.06))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(
+                                            actionTitle == "Remove"
+                                                ? OunjePalette.stroke
+                                                : Color.white.opacity(0.14),
+                                            lineWidth: 1
+                                        )
                                 )
                         )
-                        .shadow(color: OunjePalette.accent.opacity(0.14), radius: 10, x: 0, y: 6)
+                        .shadow(
+                            color: (actionTitle == "Remove" ? Color.black : OunjePalette.accent).opacity(0.12),
+                            radius: 7,
+                            x: 0,
+                            y: 3
+                        )
                 }
-                .frame(width: cookButtonWidth)
+                .frame(width: actionButtonWidth)
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 18)
+            .padding(.top, 7)
+            .padding(.bottom, 9)
         }
-        .frame(height: 96)
+        .frame(height: 72)
         .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(OunjePalette.background)
+            OunjePalette.background
                 .overlay(
                     Rectangle()
                         .fill(OunjePalette.stroke)
-                        .frame(height: 1)
-                        .padding(.horizontal, 12),
+                        .frame(height: 1),
                     alignment: .top
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
                 )
                 .ignoresSafeArea(edges: .bottom)
         )
@@ -9410,46 +14638,21 @@ private struct OnboardingSectionCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                Text(detail)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        BubblySurfaceCard(accent: OunjePalette.accent) {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .biroHeaderFont(18)
+                        .foregroundStyle(.white)
+                    Text(detail)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            content()
+                content()
+            }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                OunjePalette.panel,
-                                OunjePalette.surface.opacity(0.96)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(OunjePalette.stroke, lineWidth: 1)
-                    )
-
-                Circle()
-                    .fill(OunjePalette.accent.opacity(0.1))
-                    .frame(width: 92, height: 92)
-                    .blur(radius: 18)
-                    .offset(x: 18, y: -18)
-            }
-        )
     }
 }
 
@@ -9480,94 +14683,100 @@ private struct OnboardingPromptCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Agent-guided step")
-                    .font(.system(size: 12, weight: .black))
-                    .foregroundStyle(.black.opacity(0.82))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.white.opacity(0.9), in: Capsule())
+        BubblySurfaceCard(accent: tint) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Step \(step.index + 1) of \(FirstLoginOnboardingView.SetupStep.allCases.count)")
+                        .font(.system(size: 11, weight: .black))
+                        .foregroundStyle(.black.opacity(0.82))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.white.opacity(0.9), in: Capsule())
 
-                Spacer()
+                    Spacer()
 
-                Text(step.title)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.82))
-            }
-
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    Circle()
-                        .stroke(tint.opacity(0.3), lineWidth: 1)
-                        .frame(width: 58, height: 58)
-                        .scaleEffect(isAnimating ? 1.1 : 0.92)
-                        .opacity(isAnimating ? 0.35 : 0.85)
-
-                    Circle()
-                        .fill(tint.opacity(0.18))
-                        .frame(width: 48, height: 48)
-
-                    Image(systemName: step.symbolName)
-                        .font(.system(size: 19, weight: .black))
-                        .foregroundStyle(tint)
-                        .rotationEffect(.degrees(isAnimating ? 6 : -6))
+                    Text(step.title)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(step.prompt)
-                        .biroHeaderFont(20)
-                        .foregroundStyle(.white)
-                        .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(tint.opacity(0.16))
+                            .frame(width: 52, height: 52)
 
-                    Text(step.subtitle)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.68))
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11, weight: .bold))
+                        Image(systemName: step.symbolName)
+                            .font(.system(size: 18, weight: .black))
                             .foregroundStyle(tint)
-                        Text("Tap what feels like you. Ounje adapts the next steps in real time.")
+                            .rotationEffect(.degrees(isAnimating ? 4 : -4))
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(step.prompt)
+                            .biroHeaderFont(20)
+                            .foregroundStyle(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text(step.subtitle)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text("These choices shape what Ounje learns next.")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.76))
-                            .lineLimit(2)
+                            .foregroundStyle(.white.opacity(0.74))
                     }
                 }
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                OunjePalette.surface,
-                                OunjePalette.panel
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .stroke(OunjePalette.stroke, lineWidth: 1)
-                    )
-
-                Circle()
-                    .fill(tint.opacity(0.16))
-                    .frame(width: 130, height: 130)
-                    .blur(radius: 28)
-                    .offset(x: 30, y: -24)
-            }
-        )
         .onAppear {
             withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) {
                 isAnimating = true
             }
+        }
+    }
+}
+
+private struct OnboardingStepRail: View {
+    let currentStep: FirstLoginOnboardingView.SetupStep
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(FirstLoginOnboardingView.SetupStep.allCases, id: \.rawValue) { step in
+                    let isCurrent = step == currentStep
+                    let isComplete = step.index < currentStep.index
+
+                    Text(step.title)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(
+                            isCurrent
+                                ? OunjePalette.softCream
+                                : (isComplete ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                        )
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(
+                                    isCurrent
+                                        ? OunjePalette.accent
+                                        : OunjePalette.surface
+                                )
+                                .overlay(
+                                    Capsule(style: .continuous)
+                                        .stroke(
+                                            isCurrent
+                                                ? OunjePalette.accent.opacity(0.22)
+                                                : OunjePalette.stroke,
+                                            lineWidth: 1
+                                        )
+                                )
+                        )
+                }
+            }
+            .padding(.trailing, 4)
         }
     }
 }
@@ -9683,8 +14892,12 @@ private struct OnboardingInputModifier: ViewModifier {
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(OunjePalette.elevated)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.96))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
             )
     }
 }
@@ -11116,6 +16329,7 @@ private struct SupabaseAppleUserSession {
     let userID: String
     let email: String?
     let displayName: String?
+    let accessToken: String?
 }
 
 private enum SupabaseAppleAuthError: LocalizedError {
@@ -11177,7 +16391,8 @@ private final class SupabaseAppleAuthService {
         return SupabaseAppleUserSession(
             userID: user.id,
             email: user.email,
-            displayName: displayName
+            displayName: displayName,
+            accessToken: tokenResponse.accessToken
         )
     }
 }
@@ -11413,12 +16628,49 @@ final class SupabaseProfileStateService {
     }
 }
 
-private final class SupabaseSavedRecipesService {
+final class SupabaseSavedRecipesService {
     static let shared = SupabaseSavedRecipesService()
+    private let legacyKey = "ounje-saved-recipes-v1"
+    private let keyPrefix = "ounje-saved-recipes-v2"
 
     private init() {}
 
-    func fetchSavedRecipes(userID: String) async throws -> [DiscoverRecipeCardData] {
+    func resolvedSavedRecipeIDs(userID: String?) async -> [String] {
+        let localIDs = locallyCachedSavedRecipeIDs(userID: userID)
+        guard let userID else { return localIDs }
+
+        do {
+            let remoteIDs = try await fetchSavedRecipeIDs(userID: userID)
+            return Array(Set(localIDs + remoteIDs))
+        } catch {
+            return localIDs
+        }
+    }
+
+    func fetchSavedRecipeIDs(userID: String) async throws -> [String] {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id&user_id=eq.\(encodedUserID)&order=saved_at.desc"
+              ) else {
+            throw SupabaseSavedRecipesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to read saved recipe ids (\(httpResponse.statusCode))."
+            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode([SupabaseSavedRecipeIDRow].self, from: data).map(\.recipeID)
+    }
+
+    fileprivate func fetchSavedRecipes(userID: String) async throws -> [DiscoverRecipeCardData] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
                 string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source&user_id=eq.\(encodedUserID)&order=saved_at.desc"
@@ -11441,7 +16693,7 @@ private final class SupabaseSavedRecipesService {
         return try JSONDecoder().decode([SupabaseSavedRecipeRow].self, from: data).map(\.recipe)
     }
 
-    func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData]) async throws {
+    fileprivate func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData]) async throws {
         guard !recipes.isEmpty,
               let url = URL(string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?on_conflict=user_id,recipe_id") else {
             throw SupabaseSavedRecipesError.invalidRequest
@@ -11472,7 +16724,7 @@ private final class SupabaseSavedRecipesService {
         }
     }
 
-    func deleteSavedRecipe(userID: String, recipeID: String) async throws {
+    fileprivate func deleteSavedRecipe(userID: String, recipeID: String) async throws {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let encodedRecipeID = recipeID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
@@ -11500,6 +16752,21 @@ private final class SupabaseSavedRecipesService {
             throw SupabaseSavedRecipesError.invalidResponse
         }
         return (data, httpResponse)
+    }
+
+    private func locallyCachedSavedRecipeIDs(userID: String?) -> [String] {
+        let defaults = UserDefaults.standard
+        let primaryKey = "\(keyPrefix)-\(userID ?? "guest")"
+        let data = defaults.data(forKey: primaryKey)
+            ?? (userID == nil ? defaults.data(forKey: legacyKey) : nil)
+
+        guard let data,
+              let decoded = try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: data)
+        else {
+            return []
+        }
+
+        return decoded.map(\.id)
     }
 }
 
@@ -11623,10 +16890,141 @@ final class SupabasePrepRecipeOverridesService {
         }
     }
 
+    func deleteAllPrepRecipeOverrides(userID: String) async throws {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/prep_recipe_overrides?user_id=eq.\(encodedUserID)"
+              ) else {
+            throw SupabasePrepRecipeOverridesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to clear prep overrides (\(httpResponse.statusCode))."
+            throw SupabasePrepRecipeOverridesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+    }
+
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabasePrepRecipeOverridesError.invalidResponse
+        }
+        return (data, httpResponse)
+    }
+}
+
+private enum SupabaseMealPrepCyclesError: LocalizedError {
+    case invalidRequest
+    case invalidResponse
+    case requestFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRequest:
+            return "Could not build the prep cycle request."
+        case .invalidResponse:
+            return "Unexpected prep cycle response."
+        case .requestFailed(let message):
+            return message
+        }
+    }
+}
+
+private struct SupabaseMealPrepCycleUpsertPayload: Codable {
+    let userID: String
+    let planID: UUID
+    let plan: MealPlan
+    let generatedAt: String
+    let periodStart: String
+    let periodEnd: String
+    let cadence: String
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case planID = "plan_id"
+        case plan
+        case generatedAt = "generated_at"
+        case periodStart = "period_start"
+        case periodEnd = "period_end"
+        case cadence
+    }
+}
+
+private struct SupabaseMealPrepCycleRow: Decodable {
+    let plan: MealPlan
+}
+
+final class SupabaseMealPrepCycleService {
+    static let shared = SupabaseMealPrepCycleService()
+    private let timestampFormatter = ISO8601DateFormatter()
+
+    private init() {}
+
+    func fetchMealPrepCycles(userID: String) async throws -> [MealPlan] {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/meal_prep_cycles?select=plan&user_id=eq.\(encodedUserID)&order=generated_at.desc&limit=12"
+              ) else {
+            throw SupabaseMealPrepCyclesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to read prep cycles (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode([SupabaseMealPrepCycleRow].self, from: data).map(\.plan)
+    }
+
+    func upsertMealPrepCycle(userID: String, plan: MealPlan) async throws {
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/meal_prep_cycles?on_conflict=user_id,plan_id") else {
+            throw SupabaseMealPrepCyclesError.invalidRequest
+        }
+
+        let payload = SupabaseMealPrepCycleUpsertPayload(
+            userID: userID,
+            planID: plan.id,
+            plan: plan,
+            generatedAt: timestampFormatter.string(from: plan.generatedAt),
+            periodStart: timestampFormatter.string(from: plan.periodStart),
+            periodEnd: timestampFormatter.string(from: plan.periodEnd),
+            cadence: plan.cadence.rawValue
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = try JSONEncoder().encode([payload])
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to save prep cycle (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseMealPrepCyclesError.invalidResponse
         }
         return (data, httpResponse)
     }
@@ -11672,6 +17070,20 @@ private struct SupabaseRecipeIngredientRow: Decodable, Identifiable, Hashable {
         Self.normalizedImageURL(from: imageURLString)
     }
 
+    var displayTitle: String {
+        if shouldPromoteQuantityTextToTitle, let promotedTitle = normalizedQuantityText {
+            return promotedTitle
+        }
+        return displayName
+    }
+
+    var displayQuantityText: String? {
+        if shouldPromoteQuantityTextToTitle {
+            return nil
+        }
+        return RecipeQuantityFormatter.normalize(quantityText)
+    }
+
     static func normalizedImageURL(from rawValue: String?) -> URL? {
         guard let rawValue, !rawValue.isEmpty else { return nil }
         let normalized = rawValue
@@ -11690,6 +17102,82 @@ private struct SupabaseRecipeIngredientRow: Decodable, Identifiable, Hashable {
             imageURLString: value,
             sortOrder: sortOrder
         )
+    }
+
+    func replacingDisplayName(_ value: String) -> SupabaseRecipeIngredientRow {
+        SupabaseRecipeIngredientRow(
+            id: id,
+            recipeID: recipeID,
+            ingredientID: ingredientID,
+            displayName: value,
+            quantityText: quantityText,
+            imageURLString: imageURLString,
+            sortOrder: sortOrder
+        )
+    }
+
+    func replacingQuantityText(_ value: String) -> SupabaseRecipeIngredientRow {
+        SupabaseRecipeIngredientRow(
+            id: id,
+            recipeID: recipeID,
+            ingredientID: ingredientID,
+            displayName: displayName,
+            quantityText: value,
+            imageURLString: imageURLString,
+            sortOrder: sortOrder
+        )
+    }
+
+    func normalizedForDisplay() -> SupabaseRecipeIngredientRow {
+        guard let promotedDisplayName = normalizedQuantityText,
+              shouldPromoteQuantityTextToTitle
+        else {
+            return self
+        }
+
+        return replacingDisplayName(promotedDisplayName)
+            .replacingQuantityText("")
+    }
+
+    private var normalizedQuantityText: String? {
+        quantityText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var shouldPromoteQuantityTextToTitle: Bool {
+        guard isLikelyAbbreviation(displayName),
+              let normalizedQuantityText,
+              looksLikeIngredientName(normalizedQuantityText)
+        else {
+            return false
+        }
+        return true
+    }
+
+    private func isLikelyAbbreviation(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 4, !trimmed.contains(" ") else {
+            return false
+        }
+        return trimmed == trimmed.uppercased()
+            || trimmed.count <= 2
+    }
+
+    private func looksLikeIngredientName(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.rangeOfCharacter(from: .decimalDigits) != nil { return false }
+
+        let lowered = trimmed.lowercased()
+        let disallowed = [
+            "to taste",
+            "as needed",
+            "for serving",
+            "optional",
+            "divided"
+        ]
+        if disallowed.contains(lowered) { return false }
+
+        return trimmed.rangeOfCharacter(from: .letters) != nil
     }
 }
 
@@ -11715,6 +17203,31 @@ private struct SupabaseIngredientRecord: Decodable, Hashable {
         if !normalized.isEmpty { return normalized }
         return displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
+
+    func replacingDefaultImageURLString(_ value: String?) -> SupabaseIngredientRecord {
+        SupabaseIngredientRecord(
+            id: id,
+            normalizedName: normalizedName,
+            displayName: displayName,
+            defaultImageURLString: value
+        )
+    }
+}
+
+private struct SupabaseRecipeIngredientArtRow: Decodable, Hashable {
+    let ingredientID: String
+    let displayName: String
+    let imageURLString: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ingredientID = "ingredient_id"
+        case displayName = "display_name"
+        case imageURLString = "image_url"
+    }
+
+    var imageURL: URL? {
+        SupabaseRecipeIngredientRow.normalizedImageURL(from: imageURLString)
+    }
 }
 
 private struct CanonicalIngredientImageIndex {
@@ -11737,35 +17250,53 @@ private struct CanonicalIngredientImageIndex {
     }
 
     func enrich(_ ingredient: RecipeDetailIngredient) -> RecipeDetailIngredient {
-        if let existing = ingredient.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+        var enriched = ingredient
+
+        if let replacementDisplayName = replacementDisplayName(
+            ingredientID: ingredient.ingredientID,
+            displayName: ingredient.displayName
+        ) {
+            enriched = enriched.replacingDisplayName(replacementDisplayName)
+        }
+
+        if let existing = enriched.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
            !existing.isEmpty {
-            return ingredient
+            return enriched
         }
 
         guard let imageURLString = imageURLString(
-            ingredientID: ingredient.ingredientID,
-            displayName: ingredient.displayTitle
+            ingredientID: enriched.ingredientID,
+            displayName: enriched.displayTitle
         ) else {
-            return ingredient
+            return enriched
         }
 
-        return ingredient.replacingImageURLString(imageURLString)
+        return enriched.replacingImageURLString(imageURLString)
     }
 
     func enrich(_ ingredient: SupabaseRecipeIngredientRow) -> SupabaseRecipeIngredientRow {
-        if let existing = ingredient.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+        var enriched = ingredient
+
+        if let replacementDisplayName = replacementDisplayName(
+            ingredientID: ingredient.ingredientID,
+            displayName: ingredient.displayName
+        ) {
+            enriched = enriched.replacingDisplayName(replacementDisplayName)
+        }
+
+        if let existing = enriched.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
            !existing.isEmpty {
-            return ingredient
+            return enriched
         }
 
         guard let imageURLString = imageURLString(
-            ingredientID: ingredient.ingredientID,
-            displayName: ingredient.displayName
+            ingredientID: enriched.ingredientID,
+            displayName: enriched.displayName
         ) else {
-            return ingredient
+            return enriched
         }
 
-        return ingredient.replacingImageURLString(imageURLString)
+        return enriched.replacingImageURLString(imageURLString)
     }
 
     private func imageURLString(ingredientID: String?, displayName: String) -> String? {
@@ -11788,6 +17319,29 @@ private struct CanonicalIngredientImageIndex {
         let key = SupabaseIngredientsCatalogService.normalizedName(displayName)
         guard !key.isEmpty else { return nil }
         return recordsByName[key]
+    }
+
+    private func replacementDisplayName(ingredientID: String?, displayName: String) -> String? {
+        guard let record = record(ingredientID: ingredientID, displayName: displayName),
+              let canonicalDisplayName = record.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              shouldReplaceDisplayName(displayName, with: canonicalDisplayName)
+        else {
+            return nil
+        }
+
+        return canonicalDisplayName
+    }
+
+    private func shouldReplaceDisplayName(_ current: String, with candidate: String) -> Bool {
+        let trimmedCurrent = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCandidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCandidate.isEmpty else { return false }
+
+        let currentKey = SupabaseIngredientsCatalogService.normalizedName(trimmedCurrent)
+        let candidateKey = SupabaseIngredientsCatalogService.normalizedName(trimmedCandidate)
+        guard currentKey != candidateKey else { return false }
+
+        return trimmedCurrent.isEmpty || (!trimmedCurrent.contains(" ") && trimmedCurrent.count <= 3)
     }
 }
 
@@ -11816,6 +17370,21 @@ private final class SupabaseIngredientsCatalogService {
         if !names.isEmpty {
             for record in try await fetch(byColumn: "normalized_name", values: names) {
                 merged[record.id] = record
+            }
+        }
+
+        let recordsNeedingFallbackArt = merged.values.filter {
+            ($0.defaultImageURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+        }
+
+        if !recordsNeedingFallbackArt.isEmpty {
+            let fallbackArtByIngredientID = try await fetchFallbackRecipeArt(
+                ingredientIDs: recordsNeedingFallbackArt.map(\.id)
+            )
+
+            for record in recordsNeedingFallbackArt {
+                guard let fallbackImageURLString = fallbackArtByIngredientID[record.id] else { continue }
+                merged[record.id] = record.replacingDefaultImageURLString(fallbackImageURLString)
             }
         }
 
@@ -11848,6 +17417,50 @@ private final class SupabaseIngredientsCatalogService {
         }
 
         return try JSONDecoder().decode([SupabaseIngredientRecord].self, from: data)
+    }
+
+    private func fetchFallbackRecipeArt(ingredientIDs: [String]) async throws -> [String: String] {
+        let ids = Array(Set(ingredientIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+        guard !ids.isEmpty else { return [:] }
+
+        let select = "ingredient_id,display_name,image_url"
+        let inClause = Self.encodedInClause(ids)
+        guard let url = URL(
+            string: "\(SupabaseConfig.url)/rest/v1/recipe_ingredients?select=\(select)&ingredient_id=in.\(inClause)&image_url=not.is.null&order=ingredient_id.asc&limit=5000"
+        ) else {
+            throw SupabaseRecipeIngredientsError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseRecipeIngredientsError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to load fallback ingredient art (\(httpResponse.statusCode))."
+            throw SupabaseRecipeIngredientsError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        let rows = try JSONDecoder().decode([SupabaseRecipeIngredientArtRow].self, from: data)
+        var lookup: [String: String] = [:]
+
+        for row in rows {
+            guard let imageURLString = row.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !imageURLString.isEmpty,
+                  lookup[row.ingredientID] == nil
+            else {
+                continue
+            }
+            lookup[row.ingredientID] = imageURLString
+        }
+
+        return lookup
     }
 
     private static func encodedInClause(_ values: [String]) -> String {
@@ -11902,6 +17515,98 @@ private final class SupabaseRecipeIngredientsService {
         }
 
         return try JSONDecoder().decode([SupabaseRecipeIngredientRow].self, from: data)
+    }
+}
+
+private final class SupabaseRecipeIngredientArtService {
+    static let shared = SupabaseRecipeIngredientArtService()
+
+    private init() {}
+
+    func fetchArtRows(ingredientIDs: [String], displayNames: [String] = []) async throws -> [SupabaseRecipeIngredientArtRow] {
+        let ids = Array(
+            Set(
+                ingredientIDs
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
+        let normalizedDisplayNames = Array(
+            Set(
+                displayNames
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
+
+        var artRows: [SupabaseRecipeIngredientArtRow] = []
+
+        if !ids.isEmpty {
+            let select = "ingredient_id,display_name,image_url"
+            let inClause = ids.joined(separator: ",")
+            guard let encodedIDs = inClause.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                  let url = URL(
+                    string: "\(SupabaseConfig.url)/rest/v1/recipe_ingredients?select=\(select)&ingredient_id=in.(\(encodedIDs))&image_url=not.is.null&order=ingredient_id.asc&limit=5000"
+                  ) else {
+                throw SupabaseRecipeIngredientsError.invalidRequest
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw SupabaseRecipeIngredientsError.invalidResponse
+            }
+
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+                let fallback = "Failed to load recipe ingredient art (\(httpResponse.statusCode))."
+                throw SupabaseRecipeIngredientsError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            }
+
+            artRows.append(contentsOf: try JSONDecoder().decode([SupabaseRecipeIngredientArtRow].self, from: data))
+        }
+
+        for displayName in normalizedDisplayNames {
+            guard let encodedPattern = displayName
+                .replacingOccurrences(of: " ", with: "%")
+                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                  let url = URL(
+                    string: "\(SupabaseConfig.url)/rest/v1/recipe_ingredients?select=ingredient_id,display_name,image_url&display_name=ilike.*\(encodedPattern)*&image_url=not.is.null&limit=12"
+                  ) else {
+                continue
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw SupabaseRecipeIngredientsError.invalidResponse
+            }
+
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                continue
+            }
+
+            let rows = try JSONDecoder().decode([SupabaseRecipeIngredientArtRow].self, from: data)
+            artRows.append(contentsOf: rows)
+        }
+
+        var seen = Set<String>()
+        return artRows.filter { row in
+            let key = [
+                row.ingredientID,
+                SupabaseIngredientsCatalogService.normalizedName(row.displayName),
+                row.imageURL?.absoluteString ?? ""
+            ].joined(separator: "::")
+            return seen.insert(key).inserted
+        }
     }
 }
 
@@ -12136,9 +17841,11 @@ private final class DiscoverRecipesViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isTransitioningFeed = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var hasResolvedInitialLoad = false
     @Published var selectedFilter = "All"
 
     private var lastLoadKey: String?
+    private var responseCache: [String: [DiscoverRecipeCardData]] = [:]
     private var activeRequestID: UUID?
     private let sessionSeed = String(UUID().uuidString.prefix(8))
     private var baseFeedRotationIndex = 0
@@ -12157,6 +17864,13 @@ private final class DiscoverRecipesViewModel: ObservableObject {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let hadExistingRecipes = !recipes.isEmpty
         let isPresetTransition = normalizedQuery.isEmpty && selectedFilter != lastLoadedFilter
+        let loadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
+
+        if let cachedRecipes = responseCache[loadKey], !cachedRecipes.isEmpty {
+            recipes = cachedRecipes
+            hasResolvedInitialLoad = true
+        }
+
         errorMessage = nil
         isLoading = true
         if isPresetTransition {
@@ -12179,7 +17893,7 @@ private final class DiscoverRecipesViewModel: ObservableObject {
                 : "\(sessionSeed)-search"
             let feedLimit: Int
             if normalizedQuery.isEmpty {
-                feedLimit = selectedFilter == "All" ? 300 : 500
+                feedLimit = selectedFilter == "All" ? 40 : 54
             } else {
                 feedLimit = 30
             }
@@ -12193,39 +17907,41 @@ private final class DiscoverRecipesViewModel: ObservableObject {
             )
             guard activeRequestID == requestID else { return }
             recipes = response.recipes
+            responseCache[loadKey] = response.recipes
             filters = DiscoverPreset.allTitles
             errorMessage = nil
+            hasResolvedInitialLoad = true
             lastLoadedFilter = selectedFilter
-            lastLoadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
+            lastLoadKey = loadKey
             if !filters.contains(selectedFilter) {
                 selectedFilter = "All"
             }
         } catch {
             guard activeRequestID == requestID else { return }
 
-            // If we already have a ranked feed on screen, keep it instead of
-            // dropping the user back to the stale latest-recipes fallback.
-            if hadExistingRecipes {
-                errorMessage = nil
-                return
-            }
-
             do {
                 let fallbackRecipes = try await SupabaseDiscoverRecipeService.shared.fetchRecipes(
-                    limit: normalizedQuery.isEmpty ? (selectedFilter == "All" ? 300 : 180) : 30
+                    limit: fallbackRecipeLimit(for: normalizedQuery)
                 )
                 guard activeRequestID == requestID else { return }
-                recipes = fallbackRecipes
+                recipes = applyLocalDiscoverFilters(to: fallbackRecipes, filter: selectedFilter, query: normalizedQuery)
+                responseCache[loadKey] = recipes
                 filters = DiscoverPreset.allTitles
                 errorMessage = nil
+                hasResolvedInitialLoad = true
                 lastLoadedFilter = selectedFilter
-                lastLoadKey = cacheKey(profile: profile, filter: "All", query: "", feedContext: feedContext)
+                lastLoadKey = loadKey
                 if !filters.contains(selectedFilter) {
                     selectedFilter = "All"
                 }
             } catch {
                 guard activeRequestID == requestID else { return }
-                errorMessage = (error as? LocalizedError)?.errorDescription ?? "We couldn’t load the live recipe feed."
+                hasResolvedInitialLoad = true
+                if hadExistingRecipes {
+                    errorMessage = "Live Discover refresh failed, so we kept the last feed on screen."
+                } else {
+                    errorMessage = (error as? LocalizedError)?.errorDescription ?? "We couldn’t load the live recipe feed."
+                }
             }
         }
     }
@@ -12240,6 +17956,11 @@ private final class DiscoverRecipesViewModel: ObservableObject {
         lastBaseRotationAt = now
         lastLoadKey = nil
         await refresh(profile: profile, query: "", feedContext: feedContext)
+    }
+
+    func forceReload(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
+        lastLoadKey = nil
+        await refresh(profile: profile, query: query, feedContext: feedContext)
     }
 
     func selectFilter(_ filter: String, isSearching: Bool) {
@@ -12258,6 +17979,49 @@ private final class DiscoverRecipesViewModel: ObservableObject {
         let goals = profile?.mealPrepGoals.joined(separator: ",") ?? ""
         let baseRotationKey = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "|rotation:\(baseFeedRotationIndex)" : ""
         return "\(sessionSeed)|\(feedContext.cacheKey)|\(filter)|\(cuisines)|\(dietary)|\(foods)|\(flavors)|\(goals)|\(query)\(baseRotationKey)"
+    }
+
+    private func fallbackRecipeLimit(for normalizedQuery: String) -> Int {
+        if normalizedQuery.isEmpty {
+            return selectedFilter == "All" ? 300 : 600
+        }
+        return 600
+    }
+
+    private func applyLocalDiscoverFilters(
+        to recipes: [DiscoverRecipeCardData],
+        filter: String,
+        query: String
+    ) -> [DiscoverRecipeCardData] {
+        let queryTerms = localDiscoverQueryTerms(from: query)
+
+        return recipes.filter { recipe in
+            let matchesFilter = recipe.matchesDiscoverFilter(filter)
+            let matchesQuery = queryTerms.isEmpty || recipe.matchesDiscoverSearchTerms(queryTerms)
+            return matchesFilter && matchesQuery
+        }
+    }
+
+    private func localDiscoverQueryTerms(from query: String) -> [String] {
+        let stopwords: Set<String> = [
+            "a", "an", "the", "all",
+            "what", "would", "like", "want", "need", "show", "find", "give",
+            "me", "my", "you", "your", "can", "could", "should",
+            "i", "im", "i'm", "to", "for", "of", "with", "in", "on", "at",
+            "something", "anything", "ideas", "idea",
+            "meal", "meals", "recipe", "recipes", "food", "foods",
+            "today", "tonight", "now"
+        ]
+
+        return query
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { term in
+                guard term.count > 1 else { return false }
+                return !stopwords.contains(term)
+            }
     }
 }
 
@@ -12308,6 +18072,58 @@ private enum DiscoverPreset: CaseIterable {
 
     static var allTitles: [String] {
         DiscoverPreset.allCases.map(\.title)
+    }
+
+    static func normalizedKey(for title: String) -> String {
+        let lowered = title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "calories", with: "cal")
+            .replacingOccurrences(of: "calorie", with: "cal")
+            .replacingOccurrences(of: " ", with: "")
+
+        switch lowered {
+        case "", "all":
+            return "all"
+        case "breakfast":
+            return "breakfast"
+        case "lunch":
+            return "lunch"
+        case "dinner":
+            return "dinner"
+        case "dessert", "desserts":
+            return "dessert"
+        case "drinks", "drink":
+            return "drinks"
+        case "vegetarian":
+            return "vegetarian"
+        case "vegan":
+            return "vegan"
+        case "pasta":
+            return "pasta"
+        case "chicken":
+            return "chicken"
+        case "steak", "beef":
+            return "steak"
+        case "fish":
+            return "fish"
+        case "salad":
+            return "salad"
+        case "sandwich", "sandwiches":
+            return "sandwich"
+        case "beans", "bean", "legumes", "legume":
+            return "beans"
+        case "potatoes", "potato":
+            return "potatoes"
+        case "salmon":
+            return "salmon"
+        case "beginner":
+            return "beginner"
+        case "under500", "under500cal", "under500cals":
+            return "under500"
+        default:
+            return lowered
+        }
     }
 }
 
@@ -12410,6 +18226,11 @@ private struct RecipeDetailIngredient: Decodable, Hashable, Identifiable {
         quantityText?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var promotedDisplayName: String? {
+        guard shouldPromoteQuantityTextToTitle else { return nil }
+        return normalizedQuantityText
+    }
+
     private var shouldPromoteQuantityTextToTitle: Bool {
         guard isLikelyAbbreviation(displayName),
               let normalizedQuantityText,
@@ -12453,6 +18274,29 @@ private struct RecipeDetailIngredient: Decodable, Hashable, Identifiable {
             ingredientID: ingredientID,
             displayName: displayName,
             quantityText: RecipeQuantityFormatter.scaled(quantityText, by: factor),
+            imageURLString: imageURLString,
+            sortOrder: sortOrder
+        )
+    }
+
+    func normalizedForDisplay() -> RecipeDetailIngredient {
+        guard let promotedDisplayName else { return self }
+        return RecipeDetailIngredient(
+            id: id,
+            ingredientID: ingredientID,
+            displayName: promotedDisplayName,
+            quantityText: nil,
+            imageURLString: imageURLString,
+            sortOrder: sortOrder
+        )
+    }
+
+    func replacingDisplayName(_ value: String) -> RecipeDetailIngredient {
+        RecipeDetailIngredient(
+            id: id,
+            ingredientID: ingredientID,
+            displayName: value,
+            quantityText: quantityText,
             imageURLString: imageURLString,
             sortOrder: sortOrder
         )
@@ -12886,6 +18730,10 @@ private struct RecipeDetailResponse: Decodable {
     let recipe: RecipeDetailData
 }
 
+private struct RecipeDetailRelatedResponse: Decodable {
+    let recipes: [DiscoverRecipeCardData]
+}
+
 private struct RecipeResolvedVideoData: Decodable, Hashable {
     enum PlaybackMode: String {
         case native
@@ -12958,6 +18806,7 @@ private struct RecipeWebVideoAction: Equatable {
 @MainActor
 private final class RecipeDetailViewModel: ObservableObject {
     @Published private(set) var detail: RecipeDetailData?
+    @Published private(set) var similarRecipes: [DiscoverRecipeCardData] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
 
@@ -12972,9 +18821,13 @@ private final class RecipeDetailViewModel: ObservableObject {
         }
 
         do {
-            detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
+            async let detailTask = RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
+            async let similarTask = RecipeDetailService.shared.fetchSimilarRecipes(id: recipeID)
+            detail = try await detailTask
+            similarRecipes = (try? await similarTask) ?? []
         } catch {
             detail = nil
+            similarRecipes = []
             errorMessage = error.localizedDescription
         }
     }
@@ -12984,6 +18837,7 @@ private actor RecipeDetailService {
     static let shared = RecipeDetailService()
 
     private var cache: [String: RecipeDetailData] = [:]
+    private var similarCache: [String: [DiscoverRecipeCardData]] = [:]
 
     func fetchRecipeDetail(id: String) async throws -> RecipeDetailData {
         if let cached = cache[id] {
@@ -13002,10 +18856,65 @@ private actor RecipeDetailService {
         return detail
     }
 
-    private func fetchRecipeDetailFromBackend(id: String) async throws -> RecipeDetailData {
-        guard let url = URL(string: "\(DiscoverAPIConfig.baseURL)/v1/recipe/detail/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)") else {
+    func fetchSimilarRecipes(id: String) async throws -> [DiscoverRecipeCardData] {
+        if let cached = similarCache[id] {
+            return cached
+        }
+
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchSimilarRecipes(baseURL: baseURL, id: id)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    private func fetchSimilarRecipes(baseURL: String, id: String) async throws -> [DiscoverRecipeCardData] {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/detail/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/similar?limit=5") else {
             throw SupabaseProfileStateError.invalidRequest
         }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to load similar recipes (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        let decoded = try JSONDecoder().decode(RecipeDetailRelatedResponse.self, from: data)
+        similarCache[id] = decoded.recipes
+        return decoded.recipes
+    }
+
+    private func fetchRecipeDetailFromBackend(id: String) async throws -> RecipeDetailData {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchRecipeDetailFromBackend(baseURL: baseURL, id: id)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    private func fetchRecipeDetailFromBackend(baseURL: String, id: String) async throws -> RecipeDetailData {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/detail/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
@@ -13026,6 +18935,11 @@ private actor RecipeDetailService {
 
     private func fetchRecipeDetailFromSupabase(id: String) async throws -> RecipeDetailData {
         let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
+        let isUserImported = id.hasPrefix("uir_")
+        let recipeTable = isUserImported ? "user_import_recipes" : "recipes"
+        let ingredientTable = isUserImported ? "user_import_recipe_ingredients" : "recipe_ingredients"
+        let stepTable = isUserImported ? "user_import_recipe_steps" : "recipe_steps"
+        let stepIngredientTable = isUserImported ? "user_import_recipe_step_ingredients" : "recipe_step_ingredients"
         let recipeSelect = [
             "id",
             "title",
@@ -13069,7 +18983,7 @@ private actor RecipeDetailService {
             "cook_method"
         ].joined(separator: ",")
 
-        guard let recipeURL = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(recipeSelect)&id=eq.\(encodedID)&limit=1") else {
+        guard let recipeURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(recipeTable)?select=\(recipeSelect)&id=eq.\(encodedID)&limit=1") else {
             throw SupabaseProfileStateError.invalidRequest
         }
 
@@ -13078,12 +18992,13 @@ private actor RecipeDetailService {
             throw SupabaseProfileStateError.requestFailed("Recipe detail could not be found.")
         }
 
-        guard let ingredientURL = URL(string: "\(SupabaseConfig.url)/rest/v1/recipe_ingredients?select=id,ingredient_id,display_name,quantity_text,image_url,sort_order&recipe_id=eq.\(encodedID)&order=sort_order.asc") else {
+        guard let ingredientURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(ingredientTable)?select=id,ingredient_id,display_name,quantity_text,image_url,sort_order&recipe_id=eq.\(encodedID)&order=sort_order.asc") else {
             throw SupabaseProfileStateError.invalidRequest
         }
         let ingredients: [RecipeDetailIngredient] = try await performSupabaseGET(url: ingredientURL, as: [RecipeDetailIngredient].self)
+            .map { $0.normalizedForDisplay() }
 
-        guard let stepsURL = URL(string: "\(SupabaseConfig.url)/rest/v1/recipe_steps?select=id,step_number,instruction_text,tip_text&recipe_id=eq.\(encodedID)&order=step_number.asc") else {
+        guard let stepsURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(stepTable)?select=id,step_number,instruction_text,tip_text&recipe_id=eq.\(encodedID)&order=step_number.asc") else {
             throw SupabaseProfileStateError.invalidRequest
         }
         let stepRows: [SupabaseRecipeStepRow] = try await performSupabaseGET(url: stepsURL, as: [SupabaseRecipeStepRow].self)
@@ -13094,7 +19009,7 @@ private actor RecipeDetailService {
             stepIngredients = []
         } else {
             let joined = stepIDs.joined(separator: ",")
-            guard let stepIngredientsURL = URL(string: "\(SupabaseConfig.url)/rest/v1/recipe_step_ingredients?select=id,recipe_step_id,ingredient_id,display_name,quantity_text,sort_order&recipe_step_id=in.(\(joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined))&order=recipe_step_id.asc,sort_order.asc") else {
+            guard let stepIngredientsURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(stepIngredientTable)?select=id,recipe_step_id,ingredient_id,display_name,quantity_text,sort_order&recipe_step_id=in.(\(joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined))&order=recipe_step_id.asc,sort_order.asc") else {
                 throw SupabaseProfileStateError.invalidRequest
             }
             stepIngredients = try await performSupabaseGET(url: stepIngredientsURL, as: [SupabaseRecipeStepIngredientRow].self)
@@ -13120,8 +19035,8 @@ private actor RecipeDetailService {
                     return RecipeDetailIngredient(
                         id: linked.id,
                         ingredientID: linked.ingredientID,
-                        displayName: linked.displayName,
-                        quantityText: stepIngredient.quantityText ?? linked.quantityText,
+                        displayName: linked.displayTitle,
+                        quantityText: stepIngredient.quantityText ?? linked.displayQuantityText,
                         imageURLString: linked.imageURLString,
                         sortOrder: stepIngredient.sortOrder ?? linked.sortOrder
                     )
@@ -13131,8 +19046,8 @@ private actor RecipeDetailService {
                     return RecipeDetailIngredient(
                         id: linkedByName.id,
                         ingredientID: linkedByName.ingredientID,
-                        displayName: linkedByName.displayName,
-                        quantityText: stepIngredient.quantityText ?? linkedByName.quantityText,
+                        displayName: linkedByName.displayTitle,
+                        quantityText: stepIngredient.quantityText ?? linkedByName.displayQuantityText,
                         imageURLString: linkedByName.imageURLString,
                         sortOrder: stepIngredient.sortOrder ?? linkedByName.sortOrder
                     )
@@ -13349,8 +19264,21 @@ private actor RecipeVideoResolveService {
     }
 
     private func fetchResolvedVideoFromBackend(sourceURL: URL) async throws -> RecipeResolvedVideoData {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchResolvedVideoFromBackend(baseURL: baseURL, sourceURL: sourceURL)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    private func fetchResolvedVideoFromBackend(baseURL: String, sourceURL: URL) async throws -> RecipeResolvedVideoData {
         guard
-            var components = URLComponents(string: "\(DiscoverAPIConfig.baseURL)/v1/recipe/video/resolve")
+            var components = URLComponents(string: "\(baseURL)/v1/recipe/video/resolve")
         else {
             throw SupabaseProfileStateError.invalidRequest
         }
@@ -13785,6 +19713,55 @@ private struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
             source: preppedRecipe.recipe.source ?? preppedRecipe.recipe.cuisine.title
         )
     }
+
+    func matchesDiscoverFilter(_ filter: String) -> Bool {
+        let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
+        guard normalizedFilter != "all" else { return true }
+
+        switch normalizedFilter {
+        case "under500":
+            if let cookTimeMinutes, cookTimeMinutes > 0 {
+                return cookTimeMinutes <= 500
+            }
+            return false
+        case "beginner":
+            let haystack = [category, recipeType, description, title]
+                .compactMap { $0?.lowercased() }
+                .joined(separator: " ")
+            return haystack.contains("beginner") || haystack.contains("easy")
+        default:
+            let filterTokens = Set(discoverFilterTokens)
+            return filterTokens.contains(normalizedFilter)
+        }
+    }
+
+    func matchesDiscoverSearchTerms(_ terms: [String]) -> Bool {
+        guard !terms.isEmpty else { return true }
+
+        let haystack = [
+            title,
+            description,
+            authorName,
+            authorHandle,
+            category,
+            recipeType,
+            source
+        ]
+        .compactMap { $0?.lowercased() }
+        .joined(separator: " ")
+
+        return terms.allSatisfy { haystack.contains($0) }
+    }
+
+    private var discoverFilterTokens: [String] {
+        let rawValues = [category, recipeType, filterLabel]
+            .compactMap { $0 }
+
+        return rawValues.compactMap { value in
+            let normalized = DiscoverPreset.normalizedKey(for: value)
+            return normalized.isEmpty ? nil : normalized
+        }
+    }
 }
 
 private struct DiscoverRankedRecipesResponse: Decodable {
@@ -14036,7 +20013,36 @@ private final class SupabaseDiscoverRecipeService {
         feedContext: DiscoverFeedContext,
         limit: Int = 30
     ) async throws -> DiscoverRankedRecipesResponse {
-        guard let url = URL(string: "\(DiscoverAPIConfig.baseURL)/v1/recipe/discover") else {
+        var lastError: Error?
+        for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchRankedRecipes(
+                    baseURL: candidateBaseURL,
+                    profile: profile,
+                    filter: filter,
+                    query: query,
+                    sessionSeed: sessionSeed,
+                    feedContext: feedContext,
+                    limit: limit
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    private func fetchRankedRecipes(
+        baseURL: String,
+        profile: UserProfile?,
+        filter: String,
+        query: String,
+        sessionSeed: String,
+        feedContext: DiscoverFeedContext,
+        limit: Int
+    ) async throws -> DiscoverRankedRecipesResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/discover") else {
             throw SupabaseProfileStateError.invalidRequest
         }
 
@@ -14163,7 +20169,13 @@ private struct DiscoverWeatherCurrent: Decodable {
 }
 
 private struct SupabaseTokenResponse: Codable {
+    let accessToken: String
     let user: SupabaseAuthUser
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case user
+    }
 }
 
 private struct SupabaseAuthUser: Codable {
@@ -14255,6 +20267,14 @@ private struct SupabaseSavedRecipeRow: Codable {
     }
 }
 
+private struct SupabaseSavedRecipeIDRow: Codable {
+    let recipeID: String
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+    }
+}
+
 private struct SupabaseSavedRecipeUpsertPayload: Codable {
     let userID: String
     let recipeID: String
@@ -14309,30 +20329,428 @@ private struct SupabaseSavedRecipeUpsertPayload: Codable {
     }
 }
 
+private struct RecipeImportJobPayload: Decodable {
+    let id: String
+    let targetState: String
+    let sourceType: String
+    let sourceURL: String?
+    let recipeID: String?
+    let status: String
+    let reviewState: String
+    let confidenceScore: Double?
+    let qualityFlags: [String]
+    let reviewReason: String?
+    let errorMessage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case targetState = "target_state"
+        case sourceType = "source_type"
+        case sourceURL = "source_url"
+        case recipeID = "recipe_id"
+        case status
+        case reviewState = "review_state"
+        case confidenceScore = "confidence_score"
+        case qualityFlags = "quality_flags"
+        case reviewReason = "review_reason"
+        case errorMessage = "error_message"
+    }
+}
+
+private struct RecipeImportSourceProvenanceSummary: Decodable {
+    let sourceType: String?
+    let platform: String?
+    let sourceURL: String?
+    let canonicalURL: String?
+    let attachedVideoURL: String?
+    let transcriptPresent: Bool?
+    let frameCount: Int?
+    let frameOCRCount: Int?
+    let reviewState: String?
+    let confidenceScore: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case sourceType = "source_type"
+        case platform
+        case sourceURL = "source_url"
+        case canonicalURL = "canonical_url"
+        case attachedVideoURL = "attached_video_url"
+        case transcriptPresent = "transcript_present"
+        case frameCount = "frame_count"
+        case frameOCRCount = "frame_ocr_count"
+        case reviewState = "review_state"
+        case confidenceScore = "confidence_score"
+    }
+}
+
+private struct RecipeImportReviewItem: Identifiable, Decodable {
+    let id: String
+    let title: String
+    let description: String?
+    let source: String?
+    let sourcePlatform: String?
+    let recipeType: String?
+    let reviewState: String
+    let confidenceScore: Double?
+    let qualityFlags: [String]
+    let sourceProvenance: RecipeImportSourceProvenanceSummary?
+    let reviewReason: String?
+    let createdAt: String?
+    let updatedAt: String?
+    let sourceURL: String?
+    let attachedVideoURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case description
+        case source
+        case sourcePlatform = "source_platform"
+        case recipeType = "recipe_type"
+        case reviewState = "review_state"
+        case confidenceScore = "confidence_score"
+        case qualityFlags = "quality_flags"
+        case sourceProvenance = "source_provenance_json"
+        case reviewReason = "review_reason"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case sourceURL = "recipe_url"
+        case attachedVideoURL = "attached_video_url"
+    }
+}
+
+private struct RecipeImportCompletedItem: Identifiable, Decodable {
+    let id: String
+    let recipeID: String?
+    let title: String
+    let status: String
+    let reviewState: String
+    let sourceURL: String?
+    let canonicalURL: String?
+    let imageURL: String?
+    let source: String?
+    let cookTimeText: String?
+    let completedAt: String?
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case recipeID = "recipe_id"
+        case title
+        case status
+        case reviewState = "review_state"
+        case sourceURL = "source_url"
+        case canonicalURL = "canonical_url"
+        case imageURL = "image_url"
+        case source
+        case cookTimeText = "cook_time_text"
+        case completedAt = "completed_at"
+        case createdAt = "created_at"
+    }
+}
+
+private extension SharedRecipeImportEnvelope {
+    var reconciliationKeys: Set<String> {
+        var keys: Set<String> = []
+        if let normalizedURL = Self.normalizedImportKey(from: sourceURLString) {
+            keys.insert(normalizedURL)
+        }
+        if let normalizedText = Self.normalizedImportKey(from: resolvedSourceText) {
+            keys.insert(normalizedText)
+        }
+        return keys
+    }
+
+    static func normalizedImportKey(from raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        if let url = URL(string: raw), let host = url.host?.lowercased(), !host.isEmpty {
+            let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+            return ([host, path].filter { !$0.isEmpty }).joined(separator: "/")
+        }
+
+        return raw
+            .lowercased()
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+}
+
+private extension RecipeImportCompletedItem {
+    var reconciliationKeys: Set<String> {
+        [
+            SharedRecipeImportEnvelope.normalizedImportKey(from: sourceURL),
+            SharedRecipeImportEnvelope.normalizedImportKey(from: canonicalURL)
+        ]
+        .compactMap { $0 }
+        .reduce(into: Set<String>()) { partialResult, key in
+            partialResult.insert(key)
+        }
+    }
+
+    func matches(envelope: SharedRecipeImportEnvelope) -> Bool {
+        !reconciliationKeys.isDisjoint(with: envelope.reconciliationKeys)
+    }
+}
+
+private struct RecipeImportResponse: Decodable {
+    let job: RecipeImportJobPayload
+    let recipe: DiscoverRecipeCardData?
+    let recipeDetail: RecipeDetailData?
+
+    enum CodingKeys: String, CodingKey {
+        case job
+        case recipe
+        case recipeDetail = "recipe_detail"
+    }
+}
+
+private enum RecipeImportServiceError: Error {
+    case invalidRequest
+    case invalidResponse
+    case requestFailed(String)
+}
+
+private struct RecipeImportAttachmentPayload: Encodable {
+    let kind: String
+    let sourceURL: String?
+    let dataURL: String?
+    let mimeType: String?
+    let fileName: String?
+    let previewFrameURLs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case sourceURL = "source_url"
+        case dataURL = "data_url"
+        case mimeType = "mime_type"
+        case fileName = "file_name"
+        case previewFrameURLs = "preview_frame_urls"
+    }
+}
+
+private struct RecipeImportRequestPayload: Encodable {
+    let userID: String?
+    let sourceURL: String?
+    let sourceText: String
+    let accessToken: String?
+    let targetState: String
+    let attachments: [RecipeImportAttachmentPayload]
+    let processInline: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case sourceURL = "source_url"
+        case sourceText = "source_text"
+        case accessToken = "access_token"
+        case targetState = "target_state"
+        case attachments
+        case processInline = "process_inline"
+    }
+}
+
+private final class RecipeImportAPIService {
+    static let shared = RecipeImportAPIService()
+
+    private init() {}
+
+    func importRecipe(
+        userID: String?,
+        accessToken: String? = nil,
+        sourceURL: String? = nil,
+        sourceText: String,
+        targetState: String,
+        attachments: [RecipeImportAttachmentPayload] = []
+    ) async throws -> RecipeImportResponse {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await importRecipe(
+                    baseURL: baseURL,
+                    userID: userID,
+                    accessToken: accessToken,
+                    sourceURL: sourceURL,
+                    sourceText: sourceText,
+                    targetState: targetState,
+                    attachments: attachments
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
+    func fetchReviewQueue(userID: String) async throws -> [RecipeImportReviewItem] {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchReviewQueue(baseURL: baseURL, userID: userID)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
+    func fetchCompletedImports(userID: String) async throws -> [RecipeImportCompletedItem] {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchCompletedImports(baseURL: baseURL, userID: userID)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
+    private func importRecipe(
+        baseURL: String,
+        userID: String?,
+        accessToken: String?,
+        sourceURL: String?,
+        sourceText: String,
+        targetState: String,
+        attachments: [RecipeImportAttachmentPayload]
+    ) async throws -> RecipeImportResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            RecipeImportRequestPayload(
+                userID: userID,
+                sourceURL: sourceURL,
+                sourceText: sourceText,
+                accessToken: accessToken,
+                targetState: targetState,
+                attachments: attachments
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Recipe import failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+    }
+
+    private func fetchReviewQueue(
+        baseURL: String,
+        userID: String
+    ) async throws -> [RecipeImportReviewItem] {
+        var components = URLComponents(string: "\(baseURL)/v1/recipe/imports/review") ?? URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: userID),
+            URLQueryItem(name: "limit", value: "24"),
+        ]
+        guard let url = components.url else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Recipe review queue failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        struct Payload: Decodable {
+            let items: [RecipeImportReviewItem]
+            let count: Int?
+        }
+
+        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        return payload.items
+    }
+
+    private func fetchCompletedImports(
+        baseURL: String,
+        userID: String
+    ) async throws -> [RecipeImportCompletedItem] {
+        var components = URLComponents(string: "\(baseURL)/v1/recipe/imports/completed") ?? URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: userID),
+            URLQueryItem(name: "limit", value: "24"),
+        ]
+        guard let url = components.url else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Completed imports failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        struct Payload: Decodable {
+            let items: [RecipeImportCompletedItem]
+            let count: Int?
+        }
+
+        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        return payload.items
+    }
+}
+
 private enum OunjeLayout {
     static let screenHorizontalPadding: CGFloat = 16
     static let authButtonHeight: CGFloat = 52
-    static let tabBarHeight: CGFloat = 50
+    static let tabBarHeight: CGFloat = 58
     static let setupActionBarReservedHeight: CGFloat = 112
     static let welcomeActionBarHeight: CGFloat = 182
 }
 
 enum OunjeDevelopmentServer {
-    private static let productionBaseURL = "https://api.ounje.app"
+    static let productionBaseURL = "https://api.ounje.app"
 
     static var baseURL: String {
-        #if targetEnvironment(simulator)
-        return "http://127.0.0.1:8080"
-        #else
         if let explicitLocalBaseURL = explicitLocalBaseURL {
             return explicitLocalBaseURL
         }
-        #if DEBUG
+        #if targetEnvironment(simulator)
         return "http://127.0.0.1:8080"
         #else
         return productionBaseURL
         #endif
+    }
+
+    static var candidateBaseURLs: [String] {
+        var baseURLs: [String] = []
+        if let explicitLocalBaseURL = explicitLocalBaseURL {
+            baseURLs.append(explicitLocalBaseURL)
+            return deduplicated(baseURLs)
+        }
+        #if targetEnvironment(simulator)
+        baseURLs.append("http://127.0.0.1:8080")
         #endif
+        baseURLs.append(productionBaseURL)
+
+        return deduplicated(baseURLs)
     }
 
     private static var explicitLocalBaseURL: String? {
@@ -14347,6 +20765,14 @@ enum OunjeDevelopmentServer {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let port = (configuredPort?.isEmpty == false ? configuredPort! : "8080")
         return "http://\(host):\(port)"
+    }
+
+    private static func deduplicated(_ baseURLs: [String]) -> [String] {
+        var uniqueBaseURLs: [String] = []
+        for baseURL in baseURLs where !uniqueBaseURLs.contains(baseURL) {
+            uniqueBaseURLs.append(baseURL)
+        }
+        return uniqueBaseURLs
     }
 }
 

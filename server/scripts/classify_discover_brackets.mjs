@@ -29,8 +29,8 @@ const CACHE_PATH = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
   "../data/discover/discover_brackets.json"
 );
-const BATCH_SIZE = 20;
-const PAGE_SIZE = 200;
+const DEFAULT_BATCH_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 200;
 const MODEL = "gpt-4.1-mini";
 
 const CLASSIFIABLE_KEYS = getClassifiableDiscoverBracketKeys().filter((key) => key !== "under500");
@@ -90,7 +90,31 @@ function ensureCacheDir() {
   fs.mkdirSync(path.dirname(CACHE_PATH), { recursive: true });
 }
 
-async function fetchRecipesBatch(offset, limit) {
+function parseArgs(argv) {
+  const args = {
+    limit: 0,
+    pageSize: DEFAULT_PAGE_SIZE,
+    batchSize: DEFAULT_BATCH_SIZE,
+    onlyMissing: false,
+    dryRun: false,
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === "--limit") args.limit = Number.parseInt(argv[i + 1] ?? "0", 10) || 0;
+    if (token === "--page-size") args.pageSize = Number.parseInt(argv[i + 1] ?? String(DEFAULT_PAGE_SIZE), 10) || DEFAULT_PAGE_SIZE;
+    if (token === "--batch-size") args.batchSize = Number.parseInt(argv[i + 1] ?? String(DEFAULT_BATCH_SIZE), 10) || DEFAULT_BATCH_SIZE;
+    if (token === "--only-missing") args.onlyMissing = true;
+    if (token === "--dry-run") args.dryRun = true;
+  }
+
+  args.limit = Math.max(0, Math.min(args.limit, 10000));
+  args.pageSize = Math.max(10, Math.min(args.pageSize, 500));
+  args.batchSize = Math.max(1, Math.min(args.batchSize, 50));
+  return args;
+}
+
+async function fetchRecipesBatch(offset, limit, { onlyMissing = false } = {}) {
   const select = [
     "id",
     "title",
@@ -105,9 +129,20 @@ async function fetchRecipesBatch(offset, limit) {
     "calories_kcal",
     "cook_time_minutes",
     "skill_level",
+    "discover_brackets",
   ].join(",");
 
-  const url = `${SUPABASE_URL}/rest/v1/recipes?select=${encodeURIComponent(select)}&order=id.asc&limit=${limit}&offset=${offset}`;
+  const params = new URLSearchParams({
+    select,
+    order: "id.asc",
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (onlyMissing) {
+    params.set("or", "(discover_brackets.is.null,discover_brackets.eq.{})");
+  }
+
+  const url = `${SUPABASE_URL}/rest/v1/recipes?${params.toString()}`;
   const response = await fetch(url, { headers: HEADERS });
   const data = await response.json().catch(() => []);
   if (!response.ok) {
@@ -296,19 +331,35 @@ function buildCache(rows) {
 
 async function main() {
   ensureCacheDir();
+  const args = parseArgs(process.argv.slice(2));
 
   const recipes = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const page = await fetchRecipesBatch(offset, PAGE_SIZE);
+  for (let offset = 0; ; offset += args.pageSize) {
+    const page = await fetchRecipesBatch(offset, args.pageSize, { onlyMissing: args.onlyMissing });
     if (!page.length) break;
-    recipes.push(...page);
+
+    let selected = page;
+    if (args.onlyMissing) {
+      selected = page.filter((recipe) => !Array.isArray(recipe.discover_brackets) || recipe.discover_brackets.length === 0);
+    }
+
+    if (args.limit > 0) {
+      const remaining = args.limit - recipes.length;
+      if (remaining <= 0) break;
+      selected = selected.slice(0, remaining);
+    }
+
+    recipes.push(...selected);
     console.log(`Fetched ${recipes.length} recipes...`);
-    if (page.length < PAGE_SIZE) break;
+
+    if ((args.limit > 0 && recipes.length >= args.limit) || page.length < args.pageSize) {
+      break;
+    }
   }
 
   const classified = [];
-  for (let index = 0; index < recipes.length; index += BATCH_SIZE) {
-    const batch = recipes.slice(index, index + BATCH_SIZE);
+  for (let index = 0; index < recipes.length; index += args.batchSize) {
+    const batch = recipes.slice(index, index + args.batchSize);
     const result = await classifyBatch(batch);
     classified.push(...result);
     console.log(`Classified ${classified.length}/${recipes.length} recipes...`);
@@ -318,11 +369,13 @@ async function main() {
   fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
   console.log(`Wrote cache to ${CACHE_PATH}`);
 
-  if (await hasDiscoverBracketColumn()) {
+  if (!args.dryRun && await hasDiscoverBracketColumn()) {
     for (const row of classified) {
       await patchDbBrackets(row);
     }
     console.log("Patched discover_brackets back into Supabase.");
+  } else if (args.dryRun) {
+    console.log("Dry run enabled; skipped DB patch.");
   } else {
     console.log("discover_brackets column does not exist yet; skipped DB patch.");
   }

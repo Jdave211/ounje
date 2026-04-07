@@ -1096,6 +1096,7 @@ struct AuthSession: Codable, Hashable {
     var email: String?
     var displayName: String?
     var signedInAt: Date
+    var accessToken: String? = nil
 }
 
 struct RecipeIngredient: Codable, Hashable {
@@ -1129,10 +1130,61 @@ struct Recipe: Identifiable, Codable, Hashable {
     var source: String? = nil
 }
 
+enum PrepRegenerationFocus: String, CaseIterable, Hashable, Identifiable {
+    case balanced
+    case closerToFavorites
+    case moreVariety
+    case lessPrepTime
+    case tighterOverlap
+    case savedRecipeRefresh
+
+    var id: String { rawValue }
+}
+
+struct PrepGenerationOptions: Hashable {
+    var focus: PrepRegenerationFocus = .balanced
+    var userPrompt: String? = nil
+
+    static let standard = PrepGenerationOptions()
+}
+
+struct PrepRegenerationContext: Hashable {
+    var focus: PrepRegenerationFocus
+    var currentRecipes: [Recipe]
+    var userPrompt: String? = nil
+}
+
 extension Recipe {
     var isLegacySeedRecipe: Bool {
         let looksLikeSeedID = id.range(of: #"^[a-z]{2}-\d{3}$"#, options: .regularExpression) != nil
         return looksLikeSeedID && cardImageURLString == nil && heroImageURLString == nil
+    }
+
+    var isKnownSampleRecipe: Bool {
+        let normalizedTitle = title
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let exactSamples: Set<String> = [
+            "chipotle chicken burrito bowls",
+            "bbq chicken sweet potato skillet",
+            "sheet pan lemon chicken"
+        ]
+
+        if exactSamples.contains(normalizedTitle) {
+            return true
+        }
+
+        if normalizedTitle.contains("roasted")
+            && normalizedTitle.contains("quinoa")
+            && normalizedTitle.contains("chicken")
+        {
+            return true
+        }
+
+        return false
     }
 
     var isImagePoor: Bool {
@@ -1156,6 +1208,12 @@ struct PlannedRecipe: Identifiable, Codable, Hashable {
     var carriedFromPreviousPlan: Bool
 }
 
+struct GroceryItemSource: Codable, Hashable {
+    var recipeID: String
+    var ingredientName: String
+    var unit: String
+}
+
 struct GroceryItem: Identifiable, Codable, Hashable {
     var id: String {
         "\(name.lowercased())::\(unit.lowercased())"
@@ -1165,6 +1223,73 @@ struct GroceryItem: Identifiable, Codable, Hashable {
     var amount: Double
     var unit: String
     var estimatedPrice: Double
+    var sourceIngredients: [GroceryItemSource]
+
+    init(
+        name: String,
+        amount: Double,
+        unit: String,
+        estimatedPrice: Double,
+        sourceIngredients: [GroceryItemSource] = []
+    ) {
+        self.name = name
+        self.amount = amount
+        self.unit = unit
+        self.estimatedPrice = estimatedPrice
+        self.sourceIngredients = sourceIngredients
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case amount
+        case unit
+        case estimatedPrice
+        case sourceIngredients
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        amount = try container.decode(Double.self, forKey: .amount)
+        unit = try container.decode(String.self, forKey: .unit)
+        estimatedPrice = try container.decode(Double.self, forKey: .estimatedPrice)
+        sourceIngredients = try container.decodeIfPresent([GroceryItemSource].self, forKey: .sourceIngredients) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(amount, forKey: .amount)
+        try container.encode(unit, forKey: .unit)
+        try container.encode(estimatedPrice, forKey: .estimatedPrice)
+        try container.encode(sourceIngredients, forKey: .sourceIngredients)
+    }
+}
+
+struct ProviderCartReviewItem: Identifiable, Codable, Hashable {
+    var id: String {
+        [
+            requested.lowercased(),
+            status.lowercased(),
+            matched?.lowercased() ?? "",
+            matchedStore?.lowercased() ?? ""
+        ].joined(separator: "::")
+    }
+
+    var requested: String
+    var normalizedQuery: String?
+    var matched: String?
+    var quantityRequested: Int?
+    var quantityAdded: Int?
+    var quantity: Double?
+    var status: String
+    var matchedStore: String?
+    var decision: String?
+    var matchType: String?
+    var needsReview: Bool
+    var reason: String?
+    var substituteReason: String?
+    var refinedQuery: String?
 }
 
 struct ProviderQuote: Identifiable, Codable, Hashable {
@@ -1179,6 +1304,10 @@ struct ProviderQuote: Identifiable, Codable, Hashable {
     var providerStatus: ProviderQuoteStatus
     /// Instacart shoppable links expire after ~24 hrs
     var expiresAt: Date?
+    var selectedStore: ProviderStoreSelection?
+    var storeOptions: [ProviderStoreSelection]
+    var partialSuccess: Bool
+    var reviewItems: [ProviderCartReviewItem]
 
     init(
         provider: ShoppingProvider,
@@ -1188,7 +1317,11 @@ struct ProviderQuote: Identifiable, Codable, Hashable {
         etaDays: Int,
         orderURL: URL,
         providerStatus: ProviderQuoteStatus = .deepLink,
-        expiresAt: Date? = nil
+        expiresAt: Date? = nil,
+        selectedStore: ProviderStoreSelection? = nil,
+        storeOptions: [ProviderStoreSelection] = [],
+        partialSuccess: Bool = false,
+        reviewItems: [ProviderCartReviewItem] = []
     ) {
         self.provider = provider
         self.subtotal = subtotal
@@ -1198,7 +1331,22 @@ struct ProviderQuote: Identifiable, Codable, Hashable {
         self.orderURL = orderURL
         self.providerStatus = providerStatus
         self.expiresAt = expiresAt
+        self.selectedStore = selectedStore
+        self.storeOptions = storeOptions
+        self.partialSuccess = partialSuccess
+        self.reviewItems = reviewItems
     }
+}
+
+struct ProviderStoreSelection: Codable, Hashable {
+    let storeName: String
+    let score: Double
+    let matchedCount: Int
+    let totalProbes: Int
+    let distanceKm: Double?
+    let deliveryText: String?
+    let sourceUrl: String?
+    let coverageRatio: Double?
 }
 
 enum ProviderQuoteStatus: String, Codable, Hashable {

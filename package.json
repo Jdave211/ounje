@@ -10,9 +10,16 @@
     "recipes:export-corpus": "python3 server/scripts/export_recipe_training_corpus.py",
     "recipes:create-finetune": "node server/scripts/create_recipe_finetune_job.mjs",
     "recipes:status": "node -e \"import('./server/lib/recipe-model-registry.js').then(async (m) => { const r = await m.refreshRecipeFineTuneStatus(); console.log(JSON.stringify(r, null, 2)); process.exit(0); })\"",
-    "recipes:classify-discover": "node server/scripts/classify_discover_brackets.mjs"
+    "recipes:classify-discover": "node server/scripts/classify_discover_brackets.mjs",
+    "recipes:backfill-measurements": "node server/scripts/backfill_recipe_measurements.mjs",
+    "recipes:ingestion-worker": "node server/scripts/recipe_ingestion_worker.mjs",
+    "recipes:ingestion-once": "node server/scripts/recipe_ingestion_worker.mjs --once",
+    "instacart:test-cart": "node server/scripts/test-instacart-cart.mjs watermelon",
+    "instacart:clear-cart": "node server/scripts/clear-instacart-cart.mjs",
+    "instacart:add-current-plan": "node server/scripts/add-current-plan-to-instacart.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.101.1",
     "axios": "^1.6.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -21,6 +28,8 @@
     "mongoose": "^9.3.2",
     "nanoid": "^5.0.7",
     "openai": "^4.24.1",
+    "playwright": "^1.59.1",
+    "tesseract.js": "^7.0.0",
     "youtube-dl-exec": "^3.1.4"
   },
   "nodemonConfig": {

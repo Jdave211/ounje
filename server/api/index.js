@@ -3,9 +3,10 @@ import express from "express";
 import v1_inventory_router from "./v1/inventory.js";
 import v1_recipe_router from "./v1/recipe.js";
 import v1_grocery_router from "./v1/grocery.js";
+import v1_provider_connect_router from "./v1/provider-connect.js";
 
 const app_router = express.Router();
-const v1_routers = [v1_inventory_router, v1_recipe_router, v1_grocery_router];
+const v1_routers = [v1_inventory_router, v1_recipe_router, v1_grocery_router, v1_provider_connect_router];
 
 v1_routers.forEach((router) => {
   app_router.use("/v1", router);

@@ -13,6 +13,13 @@ struct GroceryCartRequest: Encodable {
         let amount: Double
         let unit: String
         let estimatedPrice: Double
+        let sourceIngredients: [GroceryItemSourcePayload]
+    }
+
+    struct GroceryItemSourcePayload: Encodable {
+        let recipeID: String
+        let ingredientName: String
+        let unit: String
     }
 
     struct RecipeContext: Encodable {
@@ -30,6 +37,61 @@ struct GroceryCartRequest: Encodable {
     }
 }
 
+struct GroceryShoppingSpecRequest: Encodable {
+    let items: [GroceryCartRequest.GroceryItemPayload]
+}
+
+struct GroceryShoppingSpecResponse: Decodable {
+    let items: [ShoppingSpecItem]
+    let coverageSummary: CoverageSummary
+
+    struct ShoppingSpecItem: Decodable, Hashable {
+        let name: String
+        let originalName: String?
+        let canonicalName: String?
+        let amount: Double
+        let unit: String
+        let estimatedPrice: Double?
+        let sourceIngredients: [GroceryItemSource]
+        let sourceRecipes: [String]
+        let shoppingContext: ShoppingContext?
+        let confidence: Double?
+        let reason: String?
+    }
+
+    struct ShoppingContext: Decodable, Hashable {
+        let canonicalName: String?
+        let role: String?
+        let exactness: String?
+        let preferredForms: [String]
+        let avoidForms: [String]
+        let alternateQueries: [String]
+        let requiredDescriptors: [String]
+        let substitutionPolicy: String?
+        let isPantryStaple: Bool
+        let isOptional: Bool
+        let packageRule: PackageRule?
+        let storeFitWeight: Double?
+        let sourceIngredientNames: [String]
+        let recipeTitles: [String]
+        let cuisines: [String]
+        let tags: [String]
+        let recipeSignals: [String]
+        let neighborIngredients: [String]
+
+        struct PackageRule: Decodable, Hashable {
+            let packageUnit: String
+            let packageSize: Double
+        }
+    }
+
+    struct CoverageSummary: Decodable, Hashable {
+        let totalBaseUses: Int
+        let accountedBaseUses: Int
+        let uncoveredBaseLabels: [String]
+    }
+}
+
 /// Used by Instacart / Kroger / Walmart — returns a single cart URL
 struct GroceryCartURLResponse: Decodable {
     let provider: String
@@ -39,6 +101,11 @@ struct GroceryCartURLResponse: Decodable {
     let providerStatus: String
     let note: String?
     let resolvedProducts: [ResolvedProduct]?
+    let selectedStore: ProviderStoreSelection?
+    let storeOptions: [ProviderStoreSelection]?
+    let partialSuccess: Bool?
+    let addedItems: [ProviderCartReviewItem]?
+    let unresolvedItems: [ProviderCartReviewItem]?
 
     struct ResolvedProduct: Decodable {
         let requested: String
@@ -48,6 +115,7 @@ struct GroceryCartURLResponse: Decodable {
         let imageUrl: String?
         let upc: String?
     }
+
 }
 
 struct ProviderStatusResponse: Decodable {
@@ -69,8 +137,6 @@ final class GroceryService {
 
     static let shared = GroceryService()
 
-    private let baseURL = OunjeDevelopmentServer.baseURL
-
     private let session = URLSession.shared
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -84,6 +150,25 @@ final class GroceryService {
     }()
 
     private init() {}
+
+    func fetchShoppingSpec(items: [GroceryItem]) async throws -> GroceryShoppingSpecResponse {
+        let payload = GroceryShoppingSpecRequest(
+            items: items.map {
+                .init(
+                    name: $0.name,
+                    amount: $0.amount,
+                    unit: $0.unit,
+                    estimatedPrice: $0.estimatedPrice,
+                    sourceIngredients: $0.sourceIngredients.map {
+                        .init(recipeID: $0.recipeID, ingredientName: $0.ingredientName, unit: $0.unit)
+                    }
+                )
+            }
+        )
+
+        let data = try await post(path: "/v1/grocery/spec", body: payload, timeout: 15)
+        return try decoder.decode(GroceryShoppingSpecResponse.self, from: data)
+    }
 
     // MARK: - MealMe: search grocery cart
 
@@ -100,7 +185,17 @@ final class GroceryService {
 
         let payload = GroceryCartRequest(
             provider: "mealme",
-            items: items.map { .init(name: $0.name, amount: $0.amount, unit: $0.unit, estimatedPrice: $0.estimatedPrice) },
+            items: items.map {
+                .init(
+                    name: $0.name,
+                    amount: $0.amount,
+                    unit: $0.unit,
+                    estimatedPrice: $0.estimatedPrice,
+                    sourceIngredients: $0.sourceIngredients.map {
+                        .init(recipeID: $0.recipeID, ingredientName: $0.ingredientName, unit: $0.unit)
+                    }
+                )
+            },
             recipeContext: (recipeTitle != nil || recipeID != nil) ? .init(
                 title: recipeTitle ?? "Recipe Ingredients",
                 imageUrl: recipeImageURL,
@@ -122,20 +217,21 @@ final class GroceryService {
         address: DeliveryAddress?,
         location: MealMeLocation?
     ) async throws -> [MealMeQuote] {
-        var components = URLComponents(string: "\(baseURL)/v1/grocery/quotes")!
-        components.queryItems = [
-            .init(name: "storeId", value: storeId),
-            .init(name: "lat",     value: "\(location?.latitude  ?? 37.7786357)"),
-            .init(name: "lng",     value: "\(location?.longitude ?? -122.3918135)"),
-            .init(name: "line1",   value: address?.line1      ?? ""),
-            .init(name: "city",    value: address?.city        ?? ""),
-            .init(name: "region",  value: address?.region      ?? ""),
-            .init(name: "postalCode", value: address?.postalCode ?? ""),
-        ]
-        guard let url = components.url else { throw GroceryServiceError.invalidURL }
-        let (data, response) = try await session.data(from: url)
-        try validateHTTP(response, data: data)
-        return try decoder.decode(MealMeQuotesResponse.self, from: data).quotes
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchMealMeQuotes(
+                    baseURL: baseURL,
+                    storeId: storeId,
+                    address: address,
+                    location: location
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? GroceryServiceError.invalidURL
     }
 
     // MARK: - MealMe: create cart
@@ -172,7 +268,9 @@ final class GroceryService {
         recipeTitle: String? = nil,
         recipeImageURL: String? = nil,
         recipeID: String? = nil,
-        deliveryAddress: DeliveryAddress? = nil
+        deliveryAddress: DeliveryAddress? = nil,
+        userID: String? = nil,
+        accessToken: String? = nil
     ) async throws -> ProviderQuote {
         guard provider != .mealme else {
             throw GroceryServiceError.useMealMeFlow
@@ -181,7 +279,17 @@ final class GroceryService {
         let addr = deliveryAddress?.isComplete == true ? deliveryAddress : nil
         let payload = GroceryCartRequest(
             provider: provider.rawValue,
-            items: items.map { .init(name: $0.name, amount: $0.amount, unit: $0.unit, estimatedPrice: $0.estimatedPrice) },
+            items: items.map {
+                .init(
+                    name: $0.name,
+                    amount: $0.amount,
+                    unit: $0.unit,
+                    estimatedPrice: $0.estimatedPrice,
+                    sourceIngredients: $0.sourceIngredients.map {
+                        .init(recipeID: $0.recipeID, ingredientName: $0.ingredientName, unit: $0.unit)
+                    }
+                )
+            },
             recipeContext: (recipeTitle != nil || recipeID != nil) ? .init(
                 title: recipeTitle ?? "Recipe Ingredients",
                 imageUrl: recipeImageURL,
@@ -192,7 +300,13 @@ final class GroceryService {
             }
         )
 
-        let data = try await post(path: "/v1/grocery/cart", body: payload, timeout: 15)
+        let data = try await post(
+            path: "/v1/grocery/cart",
+            body: payload,
+            timeout: 15,
+            userID: userID,
+            accessToken: accessToken
+        )
         let cartResponse = try decoder.decode(GroceryCartURLResponse.self, from: data)
 
         guard let cartURL = URL(string: cartResponse.cartUrl) else {
@@ -201,6 +315,10 @@ final class GroceryService {
 
         let subtotal    = items.reduce(0) { $0 + $1.estimatedPrice }
         let deliveryFee = provider.deliveryFee
+        let combinedReviewItems = deduplicatedReviewItems(
+            (cartResponse.addedItems ?? []).filter { $0.status.caseInsensitiveCompare("exact") != .orderedSame || $0.needsReview }
+            + (cartResponse.unresolvedItems ?? [])
+        )
 
         return ProviderQuote(
             provider: provider,
@@ -210,7 +328,11 @@ final class GroceryService {
             etaDays: provider.etaDays,
             orderURL: cartURL,
             providerStatus: cartResponse.providerStatus == "live" ? .live : .deepLink,
-            expiresAt: cartResponse.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) }
+            expiresAt: cartResponse.expiresAt.flatMap { ISO8601DateFormatter().date(from: $0) },
+            selectedStore: cartResponse.selectedStore,
+            storeOptions: cartResponse.storeOptions ?? [],
+            partialSuccess: cartResponse.partialSuccess ?? false,
+            reviewItems: combinedReviewItems
         )
     }
 
@@ -221,7 +343,9 @@ final class GroceryService {
         profile: UserProfile,
         recipeTitle: String? = nil,
         recipeImageURL: String? = nil,
-        recipeID: String? = nil
+        recipeID: String? = nil,
+        userID: String? = nil,
+        accessToken: String? = nil
     ) async -> [ProviderQuote] {
         let legacyProviders = profile.preferredProviders.filter { $0 != .mealme }
         let address = profile.deliveryAddress.isComplete ? profile.deliveryAddress : nil
@@ -235,7 +359,9 @@ final class GroceryService {
                         recipeTitle: recipeTitle,
                         recipeImageURL: recipeImageURL,
                         recipeID: recipeID,
-                        deliveryAddress: address
+                        deliveryAddress: address,
+                        userID: userID,
+                        accessToken: accessToken
                     )
                 }
             }
@@ -250,28 +376,102 @@ final class GroceryService {
     // MARK: - Provider statuses
 
     func fetchProviderStatuses() async throws -> [ProviderStatusResponse.ProviderInfo] {
-        guard let url = URL(string: "\(baseURL)/v1/grocery/providers") else {
-            throw GroceryServiceError.invalidURL
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await fetchProviderStatuses(baseURL: baseURL)
+            } catch {
+                lastError = error
+            }
         }
-        let (data, _) = try await session.data(from: url)
-        return try decoder.decode(ProviderStatusResponse.self, from: data).providers
+
+        throw lastError ?? GroceryServiceError.invalidURL
     }
 
     // MARK: - Private helpers
 
-    private func post<B: Encodable>(path: String, body: B, timeout: TimeInterval) async throws -> Data {
+    private func post<B: Encodable>(
+        path: String,
+        body: B,
+        timeout: TimeInterval,
+        userID: String? = nil,
+        accessToken: String? = nil
+    ) async throws -> Data {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await post(
+                    baseURL: baseURL,
+                    path: path,
+                    body: body,
+                    timeout: timeout,
+                    userID: userID,
+                    accessToken: accessToken
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? GroceryServiceError.invalidURL
+    }
+
+    private func post<B: Encodable>(
+        baseURL: String,
+        path: String,
+        body: B,
+        timeout: TimeInterval,
+        userID: String? = nil,
+        accessToken: String? = nil
+    ) async throws -> Data {
         guard let url = URL(string: "\(baseURL)\(path)") else {
             throw GroceryServiceError.invalidURL
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let userID, !userID.isEmpty {
+            request.setValue(userID, forHTTPHeaderField: "x-user-id")
+        }
+        if let accessToken, !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try encoder.encode(body)
         request.timeoutInterval = timeout
 
         let (data, response) = try await session.data(for: request)
         try validateHTTP(response, data: data)
         return data
+    }
+
+    private func fetchMealMeQuotes(
+        baseURL: String,
+        storeId: String,
+        address: DeliveryAddress?,
+        location: MealMeLocation?
+    ) async throws -> [MealMeQuote] {
+        var components = URLComponents(string: "\(baseURL)/v1/grocery/quotes")!
+        components.queryItems = [
+            .init(name: "storeId", value: storeId),
+            .init(name: "lat", value: "\(location?.latitude ?? 37.7786357)"),
+            .init(name: "lng", value: "\(location?.longitude ?? -122.3918135)"),
+            .init(name: "line1", value: address?.line1 ?? ""),
+            .init(name: "city", value: address?.city ?? ""),
+            .init(name: "region", value: address?.region ?? ""),
+            .init(name: "postalCode", value: address?.postalCode ?? "")
+        ]
+        guard let url = components.url else { throw GroceryServiceError.invalidURL }
+        let (data, response) = try await session.data(from: url)
+        try validateHTTP(response, data: data)
+        return try decoder.decode(MealMeQuotesResponse.self, from: data).quotes
+    }
+
+    private func fetchProviderStatuses(baseURL: String) async throws -> [ProviderStatusResponse.ProviderInfo] {
+        guard let url = URL(string: "\(baseURL)/v1/grocery/providers") else {
+            throw GroceryServiceError.invalidURL
+        }
+        let (data, _) = try await session.data(from: url)
+        return try decoder.decode(ProviderStatusResponse.self, from: data).providers
     }
 
     private func validateHTTP(_ response: URLResponse, data: Data) throws {
@@ -281,6 +481,13 @@ final class GroceryService {
         guard (200..<300).contains(http.statusCode) else {
             let msg = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw GroceryServiceError.serverError(http.statusCode, msg)
+        }
+    }
+
+    private func deduplicatedReviewItems(_ items: [ProviderCartReviewItem]) -> [ProviderCartReviewItem] {
+        var seen = Set<String>()
+        return items.filter { item in
+            seen.insert(item.id).inserted
         }
     }
 }

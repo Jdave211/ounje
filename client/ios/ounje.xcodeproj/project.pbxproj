@@ -9,9 +9,11 @@
 /* Begin PBXBuildFile section */
 		07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
-		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000002 /* Biro_Script_reduced.ttf */; };
-		EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000004 /* Slee_handwritting-Regular.otf */; };
+		3E461D99554A48A4959DE609 /* OunjeLaunch.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */; };
+		A10000000000000000000001 /* SharedRecipeImportCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SharedRecipeImportCore.swift */; };
+		A10000000000000000000002 /* SharedRecipeImportCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SharedRecipeImportCore.swift */; };
+		A10000000000000000000003 /* OunjeShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* OunjeShareViewController.swift */; };
+		A10000000000000000000004 /* OunjeShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* OunjeShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C1D2E3F40100000100000001 /* ounje/OunjeAgenticApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000001 /* ounje/OunjeAgenticApp.swift */; };
 		C1D2E3F40100000100000002 /* ounje/MealPlanningAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000002 /* ounje/MealPlanningAppStore.swift */; };
 		C1D2E3F40100000100000003 /* ounje/MealPlanningAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */; };
@@ -20,16 +22,47 @@
 		C1D2E3F40100000100000006 /* ounje/GroceryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000006 /* ounje/GroceryService.swift */; };
 		C1D2E3F40100000100000007 /* ounje/MealMeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */; };
 		C1D2E3F40100000100000008 /* ounje/MealMeCartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */; };
+		EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000002 /* Biro_Script_reduced.ttf */; };
+		EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000004 /* Slee_handwritting-Regular.otf */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A70000000000000000000001;
+			remoteInfo = OunjeShareExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A40000000000000000000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000004 /* OunjeShareExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		13B07F961A680F5B00A75B9A /* ounje.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ounje.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = ounje/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = ounje/Info.plist; sourceTree = "<group>"; };
 		2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = ounje/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = ounje/SplashScreen.storyboard; sourceTree = "<group>"; };
+		AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = OunjeLaunch.storyboard; path = ounje/OunjeLaunch.storyboard; sourceTree = "<group>"; };
+		A20000000000000000000001 /* SharedRecipeImportCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/SharedRecipeImportCore.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* OunjeShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OunjeShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000003 /* OunjeShareExtension/Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000004 /* OunjeShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OunjeShareViewController.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* OunjeShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OunjeShareExtension.entitlements; sourceTree = "<group>"; };
 		EA0100010000000000000002 /* Biro_Script_reduced.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = Biro_Script_reduced.ttf; path = ounje/Supporting/Fonts/Biro_Script_reduced.ttf; sourceTree = "<group>"; };
-		EA0100010000000000000004 /* Slee_handwritting-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; name = Slee_handwritting-Regular.otf; path = ounje/Supporting/Fonts/Slee_handwritting-Regular.otf; sourceTree = "<group>"; };
+		EA0100010000000000000004 /* Slee_handwritting-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "Slee_handwritting-Regular.otf"; path = "ounje/Supporting/Fonts/Slee_handwritting-Regular.otf"; sourceTree = "<group>"; };
 		F1A2B3C40100000100000001 /* ounje/OunjeAgenticApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/OunjeAgenticApp.swift; sourceTree = "<group>"; };
 		F1A2B3C40100000100000002 /* ounje/MealPlanningAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAppStore.swift; sourceTree = "<group>"; };
 		F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAgent.swift; sourceTree = "<group>"; };
@@ -42,6 +75,13 @@
 
 /* Begin PBXFrameworksBuildPhase section */
 		13B07F8C1A680F5B00A75B9A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A50000000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -62,9 +102,10 @@
 				F1A2B3C40100000100000006 /* ounje/GroceryService.swift */,
 				F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */,
 				F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */,
+				A20000000000000000000001 /* SharedRecipeImportCore.swift */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
-				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
+				AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */,
 				2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */,
 				EA0100010000000000000002 /* Biro_Script_reduced.ttf */,
 				EA0100010000000000000004 /* Slee_handwritting-Regular.otf */,
@@ -76,6 +117,7 @@
 			isa = PBXGroup;
 			children = (
 				13B07FAE1A68108700A75B9A /* ounje */,
+				A60000000000000000000001 /* OunjeShareExtension */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 			);
 			indentWidth = 2;
@@ -83,10 +125,21 @@
 			tabWidth = 2;
 			usesTabs = 0;
 		};
+		A60000000000000000000001 /* OunjeShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000004 /* OunjeShareViewController.swift */,
+				A20000000000000000000003 /* OunjeShareExtension/Info.plist */,
+				A20000000000000000000005 /* OunjeShareExtension.entitlements */,
+			);
+			path = OunjeShareExtension;
+			sourceTree = "<group>";
+		};
 		83CBBA001A601CBA00E9B192 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* ounje.app */,
+				A20000000000000000000002 /* OunjeShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -100,16 +153,35 @@
 			buildPhases = (
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
+				A40000000000000000000001 /* Embed App Extensions */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A80000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = ounje;
 			productName = ounje;
 			productReference = 13B07F961A680F5B00A75B9A /* ounje.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A70000000000000000000001 /* OunjeShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A90000000000000000000003 /* Build configuration list for PBXNativeTarget "OunjeShareExtension" */;
+			buildPhases = (
+				A50000000000000000000002 /* Sources */,
+				A50000000000000000000001 /* Frameworks */,
+				A50000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OunjeShareExtension;
+			productName = OunjeShareExtension;
+			productReference = A20000000000000000000002 /* OunjeShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -117,9 +189,14 @@
 		83CBB9F71A601CBA00E9B192 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastUpgradeCheck = 1600;
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
+						CreatedOnToolsVersion = 16.0;
+						LastSwiftMigration = 1600;
+					};
+					A70000000000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
 						LastSwiftMigration = 1600;
 					};
@@ -139,6 +216,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* ounje */,
+				A70000000000000000000001 /* OunjeShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -149,10 +227,17 @@
 			buildActionMask = 2147483647;
 			files = (
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
-				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
+				3E461D99554A48A4959DE609 /* OunjeLaunch.storyboard in Resources */,
 				07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */,
 				EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */,
 				EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A50000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -171,10 +256,28 @@
 				C1D2E3F40100000100000006 /* ounje/GroceryService.swift in Sources */,
 				C1D2E3F40100000100000007 /* ounje/MealMeModels.swift in Sources */,
 				C1D2E3F40100000100000008 /* ounje/MealMeCartView.swift in Sources */,
+				A10000000000000000000001 /* SharedRecipeImportCore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A50000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000002 /* SharedRecipeImportCore.swift in Sources */,
+				A10000000000000000000003 /* OunjeShareViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A80000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A70000000000000000000001 /* OunjeShareExtension */;
+			targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
@@ -184,8 +287,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ounje/ounje.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEVELOPMENT_TEAM = U8FPZXV6X6;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = ounje/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ounje;
@@ -195,7 +297,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 1.1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -213,8 +315,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ounje/ounje.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEVELOPMENT_TEAM = U8FPZXV6X6;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = ounje/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ounje;
@@ -224,13 +325,67 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 1.1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		A90000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = U8FPZXV6X6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
+				PRODUCT_NAME = OunjeShareExtension;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A90000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = U8FPZXV6X6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.3;
+				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
+				PRODUCT_NAME = OunjeShareExtension;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -253,14 +408,20 @@
 				CLANG_WARN_INFINITE_RECURSION = YES;
 				CLANG_WARN_INT_CONVERSION = YES;
 				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				DEVELOPMENT_TEAM = U8FPZXV6X6;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -283,6 +444,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 			};
 			name = Debug;
 		};
@@ -305,14 +467,20 @@
 				CLANG_WARN_INFINITE_RECURSION = YES;
 				CLANG_WARN_INT_CONVERSION = YES;
 				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = YES;
+				DEVELOPMENT_TEAM = U8FPZXV6X6;
 				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -328,6 +496,8 @@
 				);
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -340,6 +510,15 @@
 			buildConfigurations = (
 				13B07F941A680F5B00A75B9A /* Debug */,
 				13B07F951A680F5B00A75B9A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A90000000000000000000003 /* Build configuration list for PBXNativeTarget "OunjeShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A90000000000000000000001 /* Debug */,
+				A90000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

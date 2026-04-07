@@ -29,6 +29,11 @@ struct MealMeStoreOption: Identifiable, Decodable, Hashable {
     let pickupEnabled: Bool
     let matchedCount: Int
     let totalItems: Int
+    let requestedItemCount: Int?
+    let requestedMatchCount: Int?
+    let requestedCoverage: Double?
+    let matchedRequestedItems: [String]?
+    let missingRequestedItems: [String]?
     let products: [MealMeProduct]
     let subtotalEstimate: Double
     let quoteIds: [String]
@@ -56,6 +61,12 @@ struct MealMeStoreOption: Identifiable, Decodable, Hashable {
 
 /// A matched grocery product inside a store
 struct MealMeProduct: Identifiable, Decodable, Hashable {
+    struct RequestedItem: Decodable, Hashable {
+        let query: String
+        let quantity: Int?
+        let originalNames: [String]?
+    }
+
     let productId: String
     let name: String
     let brand: String?
@@ -64,6 +75,8 @@ struct MealMeProduct: Identifiable, Decodable, Hashable {
     let unit: String?
     let quantity: Int
     let queryMatch: String?
+    let requestedItem: RequestedItem?
+    let matchConfidence: Double?
     let inStock: Bool
 
     var id: String { productId }

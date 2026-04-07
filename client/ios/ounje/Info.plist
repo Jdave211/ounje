@@ -37,7 +37,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>4</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -54,13 +54,13 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your microphone</string>
 	<key>OunjeDevServerHost</key>
-	<string>10.100.58.12</string>
+	<string>192.168.2.57</string>
 	<key>OunjeDevServerPort</key>
 	<string>8080</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Let Oúnje access your photos to generate recipes.</string>
 	<key>UILaunchStoryboardName</key>
-	<string>SplashScreen</string>
+	<string>OunjeLaunch</string>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>arm64</string>

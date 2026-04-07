@@ -20,6 +20,7 @@ import {
   getStoreQuotes,
   createCart,
   shapeStoreOptions,
+  normalizeIngredientName,
 } from "./providers/mealme.js";
 import { createInstacartShoppableLink }                              from "./providers/instacart.js";
 import { buildKrogerSearchUrl, findNearestKrogerStore, searchKrogerProduct } from "./providers/kroger.js";
@@ -82,7 +83,7 @@ router.post("/grocery/cart", async (req, res) => {
     }
 
     // ── Legacy fallback providers ───────────────────────────────────────────
-    const normalizedItems = items.map((item) => ({ ...item, name: normalizeForSearch(item.name) }));
+    const normalizedItems = items.map((item) => ({ ...item, name: normalizeIngredientName(item.name) }));
     switch (provider) {
       case "instacart":   return await handleInstacart(req, res, normalizedItems, recipeContext);
       case "kroger":      return await handleKroger(req, res, normalizedItems, deliveryAddress);
@@ -222,7 +223,7 @@ async function handleMealMe(req, res, items, deliveryAddress, recipeContext) {
   if (!MEALME_API_KEY) {
     // No key yet — gracefully fall back to Instacart or Walmart deep-link
     console.warn("[grocery/cart] MEALME_API_KEY not set, falling back to deep-link");
-    const normalizedItems = items.map((i) => ({ ...i, name: normalizeForSearch(i.name) }));
+    const normalizedItems = items.map((i) => ({ ...i, name: normalizeIngredientName(i.name) }));
     if (INSTACART_API_KEY) return handleInstacart(req, res, normalizedItems, recipeContext);
     return handleWalmart(req, res, normalizedItems);
   }
@@ -240,7 +241,7 @@ async function handleMealMe(req, res, items, deliveryAddress, recipeContext) {
   }
 
   // 2. Search grocery cart across nearby stores
-  const rawStores = await searchGroceryCart({
+  const searchResult = await searchGroceryCart({
     items,
     latitude,
     longitude,
@@ -250,11 +251,11 @@ async function handleMealMe(req, res, items, deliveryAddress, recipeContext) {
     apiKey: MEALME_API_KEY,
   });
 
-  const storeOptions = shapeStoreOptions(rawStores, 5);
+  const storeOptions = shapeStoreOptions(searchResult.stores, 5, searchResult.queryItems);
 
   if (storeOptions.length === 0) {
     // No stores found — fall back to Instacart deep-link
-    const normalizedItems = items.map((i) => ({ ...i, name: normalizeForSearch(i.name) }));
+    const normalizedItems = items.map((i) => ({ ...i, name: normalizeIngredientName(i.name) }));
     return handleWalmart(req, res, normalizedItems);
   }
 
@@ -372,22 +373,271 @@ function handleAmazonFresh(req, res, items) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// BROWSER-AGENT ORDERING (New Pipeline)
+// ══════════════════════════════════════════════════════════════════════════════
+
+import * as orchestrator from "../../lib/grocery-orchestrator.js";
+import * as browserAgent from "./providers/browser-agent.js";
+
+const BROWSER_USE_API_KEY = process.env.BROWSER_USE_API_KEY ?? "";
+
+// ── POST /v1/grocery/orders ────────────────────────────────────────────────────
+/**
+ * Create a new grocery order for browser-agent processing.
+ *
+ * Request body:
+ * {
+ *   provider: "walmart" | "amazonFresh" | "target",
+ *   items: GroceryItem[],
+ *   deliveryAddress: { line1, city, region, postalCode },
+ *   mealPlanId?: string
+ * }
+ *
+ * Response:
+ * {
+ *   orderId: string,
+ *   status: "pending",
+ *   provider: string
+ * }
+ */
+router.post("/grocery/orders", async (req, res) => {
+  const { provider, items, deliveryAddress, mealPlanId } = req.body ?? {};
+  const userId = req.headers["x-user-id"];  // From auth middleware
+
+  if (!userId) {
+    return res.status(401).json({ error: "User ID required" });
+  }
+
+  if (!provider || !browserAgent.SUPPORTED_PROVIDERS.includes(provider)) {
+    return res.status(400).json({
+      error: `Invalid provider. Supported: ${browserAgent.SUPPORTED_PROVIDERS.join(", ")}`,
+    });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: "items array is required" });
+  }
+
+  if (!deliveryAddress?.line1 || !deliveryAddress?.postalCode) {
+    return res.status(400).json({ error: "deliveryAddress is required" });
+  }
+
+  try {
+    const order = await orchestrator.createOrder({
+      userId,
+      provider,
+      items,
+      deliveryAddress,
+      mealPlanId,
+    });
+
+    return res.status(201).json({
+      orderId: order.id,
+      status: order.status,
+      provider: order.provider,
+    });
+  } catch (err) {
+    console.error("[grocery/orders] create error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/grocery/orders/:id/start ──────────────────────────────────────────
+/**
+ * Start processing an order.
+ * Kicks off browser-use session and begins cart building.
+ */
+router.post("/grocery/orders/:id/start", async (req, res) => {
+  const { id } = req.params;
+
+  if (!BROWSER_USE_API_KEY) {
+    return res.status(503).json({ error: "Browser automation not configured" });
+  }
+
+  try {
+    const result = await orchestrator.startOrder(id);
+    return res.json(result);
+  } catch (err) {
+    console.error("[grocery/orders/start] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /v1/grocery/orders/:id ─────────────────────────────────────────────────
+/**
+ * Get order summary for review.
+ */
+router.get("/grocery/orders/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const summary = await orchestrator.getOrderSummary(id);
+    return res.json(summary);
+  } catch (err) {
+    console.error("[grocery/orders] get error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /v1/grocery/orders/:id/slots ───────────────────────────────────────────
+/**
+ * Get available delivery slots.
+ */
+router.get("/grocery/orders/:id/slots", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const slots = await orchestrator.getDeliverySlots(id);
+    return res.json(slots);
+  } catch (err) {
+    console.error("[grocery/orders/slots] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/grocery/orders/:id/slot ───────────────────────────────────────────
+/**
+ * Select a delivery slot.
+ */
+router.post("/grocery/orders/:id/slot", async (req, res) => {
+  const { id } = req.params;
+  const { date, timeRange } = req.body ?? {};
+
+  if (!date || !timeRange) {
+    return res.status(400).json({ error: "date and timeRange required" });
+  }
+
+  try {
+    const result = await orchestrator.selectDeliverySlot(id, { date, timeRange });
+    return res.json(result);
+  } catch (err) {
+    console.error("[grocery/orders/slot] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/grocery/orders/:id/approve ────────────────────────────────────────
+/**
+ * User approves the order - proceed to checkout.
+ * Returns checkout URL for user to complete payment.
+ *
+ * This is the HUMAN-IN-THE-LOOP gate.
+ */
+router.post("/grocery/orders/:id/approve", async (req, res) => {
+  const { id } = req.params;
+  const { tipCents = 0 } = req.body ?? {};
+
+  try {
+    const result = await orchestrator.approveOrder(id, { tipCents });
+    return res.json(result);
+  } catch (err) {
+    console.error("[grocery/orders/approve] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/grocery/orders/:id/complete ───────────────────────────────────────
+/**
+ * Mark order as completed after user confirms payment.
+ */
+router.post("/grocery/orders/:id/complete", async (req, res) => {
+  const { id } = req.params;
+  const { providerOrderId } = req.body ?? {};
+
+  try {
+    const result = await orchestrator.completeOrder(id, { providerOrderId });
+    return res.json(result);
+  } catch (err) {
+    console.error("[grocery/orders/complete] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/grocery/orders/:id/cancel ─────────────────────────────────────────
+/**
+ * Cancel an order.
+ */
+router.post("/grocery/orders/:id/cancel", async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body ?? {};
+
+  try {
+    const result = await orchestrator.cancelOrder(id, { reason });
+    return res.json(result);
+  } catch (err) {
+    console.error("[grocery/orders/cancel] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/grocery/orders/:id/retry ──────────────────────────────────────────
+/**
+ * Retry a failed order.
+ */
+router.post("/grocery/orders/:id/retry", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await orchestrator.retryOrder(id);
+    return res.json(result);
+  } catch (err) {
+    console.error("[grocery/orders/retry] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /v1/grocery/orders ─────────────────────────────────────────────────────
+/**
+ * List user's orders.
+ */
+router.get("/grocery/orders", async (req, res) => {
+  const userId = req.headers["x-user-id"];
+
+  if (!userId) {
+    return res.status(401).json({ error: "User ID required" });
+  }
+
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+
+    const { data: orders, error } = await supabase
+      .from("grocery_orders")
+      .select("id, provider, status, status_message, total_cents, created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) throw error;
+
+    return res.json({ orders });
+  } catch (err) {
+    console.error("[grocery/orders] list error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /v1/grocery/agent/providers ────────────────────────────────────────────
+/**
+ * Get browser-agent supported providers.
+ */
+router.get("/grocery/agent/providers", (req, res) => {
+  const providers = browserAgent.SUPPORTED_PROVIDERS.map((id) => {
+    const config = browserAgent.getProviderConfig(id);
+    return {
+      id,
+      name: config?.name ?? id,
+      status: BROWSER_USE_API_KEY ? "available" : "not_configured",
+      type: "browser_agent",
+    };
+  });
+
+  return res.json({ providers });
+});
+
 // ── Normalization ─────────────────────────────────────────────────────────────
-const STRIP_WORDS = new Set([
-  "fresh","dried","frozen","canned","organic","raw","cooked",
-  "large","medium","small","extra","very","ripe",
-  "chopped","sliced","diced","minced","grated","shredded",
-  "ground","whole","boneless","skinless","peeled","deveined",
-  "room","temperature","softened","melted","divided",
-]);
-
-function normalizeForSearch(name) {
-  return name
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => !STRIP_WORDS.has(w))
-    .join(" ")
-    .trim();
-}
-
 export default router;

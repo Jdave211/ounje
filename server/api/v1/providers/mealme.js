@@ -69,12 +69,18 @@ export async function searchGroceryCart({
   sort = "cheapest",
   apiKey,
 }) {
-  // Build the query dict: {"Long Grain Rice": 2, "Chicken Drumsticks": 6, ...}
+  // Build the query dict: {"long grain rice": 2, "chicken drumsticks": 6, ...}
   const queryDict = {};
+  const queryMeta = new Map();
   for (const item of items) {
     const key = normalizeIngredientName(item.name);
     if (key) {
-      queryDict[key] = Math.max(1, Math.round(item.amount || 1));
+      const quantity = Math.max(1, Math.round(item.amount || 1));
+      queryDict[key] = (queryDict[key] ?? 0) + quantity;
+      const existing = queryMeta.get(key) ?? { query: key, quantity: 0, originalNames: [] };
+      existing.quantity += quantity;
+      existing.originalNames.push(String(item.name ?? "").trim());
+      queryMeta.set(key, existing);
     }
   }
 
@@ -108,7 +114,14 @@ export async function searchGroceryCart({
   }
 
   const data = await resp.json();
-  return data.stores ?? [];
+  return {
+    stores: data.stores ?? [],
+    queryItems: [...queryMeta.values()].map((entry) => ({
+      query: entry.query,
+      quantity: entry.quantity,
+      originalNames: [...new Set(entry.originalNames.filter(Boolean))],
+    })),
+  };
 }
 
 // ── 3. Get delivery quotes for a store ────────────────────────────────────────
@@ -232,11 +245,20 @@ export async function finalizeOrder({ cartId, paymentMethodId, tipCents = 0, api
  * Transforms raw MealMe store results into a cleaner shape for the Ounje API response.
  * Returns top N store options with matched products + estimated totals.
  */
-export function shapeStoreOptions(rawStores, maxStores = 4) {
+export function shapeStoreOptions(rawStores, maxStores = 4, requestedQueryItems = []) {
+  const requestedQueryLookup = new Map(
+    (requestedQueryItems ?? [])
+      .map((entry) => ({ ...entry, normalizedQuery: normalizeQueryValue(entry?.query ?? "") }))
+      .filter((entry) => entry.normalizedQuery)
+      .map((entry) => [entry.normalizedQuery, entry])
+  );
+
   return rawStores
     .slice(0, maxStores)
     .map((store) => {
+      const matchedRequestedSet = new Set();
       const products = (store.cart ?? store.products ?? []).map((p) => ({
+        requestedItem: resolveRequestedQuery(p.query, requestedQueryLookup),
         productId:    p.product_id ?? p._id,
         name:         p.name,
         brand:        p.brand ?? null,
@@ -245,10 +267,25 @@ export function shapeStoreOptions(rawStores, maxStores = 4) {
         unit:         p.unit_size ?? p.unit ?? null,
         quantity:     p.quantity ?? 1,
         queryMatch:   p.query ?? null,
+        matchConfidence: scoreQueryProductMatch(p.query, p.name, p.brand),
         inStock:      p.is_available ?? true,
-      }));
+      }))
+        .map((product) => {
+          if (product.requestedItem?.query && product.inStock) {
+            matchedRequestedSet.add(product.requestedItem.query);
+          }
+          return product;
+        });
 
       const subtotal = products.reduce((sum, p) => sum + (p.price ?? 0) * p.quantity, 0);
+      const requestedItems = requestedQueryItems.map((entry) => entry.query);
+      const matchedRequestedItems = [...matchedRequestedSet];
+      const missingRequestedItems = requestedItems.filter((query) => !matchedRequestedSet.has(query));
+      const requestedMatchCount = matchedRequestedItems.length;
+      const requestedItemCount = requestedItems.length;
+      const requestedCoverage = requestedItemCount > 0
+        ? requestedMatchCount / requestedItemCount
+        : 0;
 
       return {
         storeId:       store._id,
@@ -264,13 +301,23 @@ export function shapeStoreOptions(rawStores, maxStores = 4) {
         pickupEnabled:   store.pickup_enabled   ?? false,
         matchedCount:  products.filter((p) => p.inStock).length,
         totalItems:    products.length,
+        requestedItemCount,
+        requestedMatchCount,
+        requestedCoverage,
+        matchedRequestedItems,
+        missingRequestedItems,
         products,
         subtotalEstimate: subtotal,
         quoteIds:      (store.quotes ?? []).map((q) => q.quote_id ?? q),
       };
     })
     .filter((s) => s.matchedCount > 0)
-    .sort((a, b) => b.matchedCount - a.matchedCount || a.subtotalEstimate - b.subtotalEstimate);
+    .sort((a, b) =>
+      b.requestedCoverage - a.requestedCoverage
+      || b.requestedMatchCount - a.requestedMatchCount
+      || b.matchedCount - a.matchedCount
+      || a.subtotalEstimate - b.subtotalEstimate
+    );
 }
 
 // ── String utilities ──────────────────────────────────────────────────────────
@@ -278,17 +325,85 @@ const STRIP = new Set([
   "fresh","dried","frozen","canned","organic","raw","cooked","ground","whole",
   "large","medium","small","extra","ripe","boneless","skinless","peeled",
   "chopped","sliced","diced","minced","grated","shredded","divided","softened",
-  "melted","room","temperature","optional",
+  "melted","room","temperature","optional","lean","low","fat","unsalted",
+  "reduced","sodium","halved","crushed",
 ]);
 
 export function normalizeIngredientName(name) {
-  return name
+  const normalized = String(name ?? "")
     .toLowerCase()
+    .replace(/[\d\/.,()-]+/g, " ")
     .split(/\s+/)
-    .filter((w) => !STRIP.has(w) && w.length > 1)
+    .map((word) => singularize(word))
+    .filter((w) => !STRIP.has(w) && !UNIT_TOKENS.has(w) && w.length > 1)
     .join(" ")
     .trim();
+
+  return INGREDIENT_ALIASES[normalized] ?? normalized;
 }
+
+function normalizeQueryValue(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function resolveRequestedQuery(query, requestedQueryLookup) {
+  const normalized = normalizeQueryValue(query);
+  if (!normalized) return null;
+  return requestedQueryLookup.get(normalized) ?? { query: normalized, quantity: 1, originalNames: [] };
+}
+
+function scoreQueryProductMatch(query, productName, brand) {
+  const queryTokens = new Set(normalizeQueryValue(query).split(" ").filter(Boolean));
+  if (!queryTokens.size) return 0;
+
+  const haystackTokens = new Set(
+    normalizeQueryValue(`${brand ?? ""} ${productName ?? ""}`)
+      .split(" ")
+      .filter(Boolean)
+  );
+  if (!haystackTokens.size) return 0;
+
+  let overlap = 0;
+  for (const token of queryTokens) {
+    if (haystackTokens.has(token)) overlap += 1;
+  }
+  return Number((overlap / queryTokens.size).toFixed(3));
+}
+
+function singularize(value) {
+  if (!value || value.length < 3) return value;
+  if (value.endsWith("ies") && value.length > 4) return `${value.slice(0, -3)}y`;
+  if (value.endsWith("oes") && value.length > 4) return value.slice(0, -2);
+  if (value.endsWith("s") && !value.endsWith("ss") && value.length > 3) return value.slice(0, -1);
+  return value;
+}
+
+const UNIT_TOKENS = new Set([
+  "lb","lbs","pound","pounds","oz","ounce","ounces","cup","cups","tbsp","tablespoon","tablespoons",
+  "tsp","teaspoon","teaspoons","clove","cloves","bunch","bunches","can","cans","package","packages",
+  "bag","bags","slice","slices","piece","pieces",
+]);
+
+const INGREDIENT_ALIASES = {
+  "red onion": "onion",
+  "yellow onion": "onion",
+  "white onion": "onion",
+  "sweet onion": "onion",
+  "cherry tomato": "tomato",
+  "roma tomato": "tomato",
+  "tomatoes": "tomato",
+  "scallion": "green onion",
+  "scallions": "green onion",
+  "spring onion": "green onion",
+  "green onions": "green onion",
+  "garbanzo bean": "chickpea",
+  "garbanzo beans": "chickpea",
+  "chickpeas": "chickpea",
+  "bell peppers": "bell pepper",
+};
 
 function extractStreetNum(line1) {
   return line1.match(/^\d+/)?.[0] ?? "";
