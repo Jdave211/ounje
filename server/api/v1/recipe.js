@@ -692,15 +692,14 @@ recipe_router.post("/recipe/discover", async (req, res) => {
     offset = 0,
     feedContext = null,
   } = req.body ?? {};
+  const trimmedQuery = String(query ?? "").trim();
+  const normalizedFilter = String(filter ?? "All").trim().toLowerCase();
+  const isBaseDiscover = normalizedFilter === "all";
+  const requestedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 30;
+  const requestedOffset = Number.isFinite(Number(offset)) ? Math.max(0, Number(offset)) : 0;
+  const requestedWindowLimit = Math.max(requestedLimit + requestedOffset, requestedLimit);
 
   try {
-    const trimmedQuery = String(query ?? "").trim();
-    const normalizedFilter = String(filter ?? "All").trim().toLowerCase();
-    const isBaseDiscover = normalizedFilter === "all";
-    const requestedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 30;
-    const requestedOffset = Number.isFinite(Number(offset)) ? Math.max(0, Number(offset)) : 0;
-    const requestedWindowLimit = Math.max(requestedLimit + requestedOffset, requestedLimit);
-
     if (trimmedQuery) {
       const searchCacheKey = buildDiscoverSearchCacheKey({
         query: trimmedQuery,
@@ -876,10 +875,16 @@ recipe_router.post("/recipe/discover", async (req, res) => {
 
     try {
       if (trimmedQuery) {
-        return res.status(500).json({
-          error: error.message,
-          rankingMode: "search_semantic_failed",
+        const payload = await buildLexicalSearchFallbackPayload({
+          query: trimmedQuery,
+          profile,
+          filter,
+          feedContext,
+          requestedLimit,
+          requestedOffset,
+          requestedWindowLimit,
         });
+        return res.json(payload);
       }
 
       const recipes = isBaseDiscover
@@ -3621,6 +3626,128 @@ async function fetchSearchRecipesByIds(ids) {
 
   const byId = new Map(data.map((recipe) => [recipe.id, recipe]));
   return orderedIds.map((id) => byId.get(id)).filter(Boolean);
+}
+
+function safeLexicalTerm(term) {
+  return String(term ?? "")
+    .replace(/[*,()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function buildLexicalSearchTerms(query) {
+  const extracted = extractQueryTerms(query);
+  return uniqueStrings([
+    normalizeExactPhrase(query),
+    ...extracted,
+    ...expandQueryTerms(extracted),
+  ].map(safeLexicalTerm), 8);
+}
+
+async function fetchRecipesByLexicalTerm(term, limit = 48) {
+  const safeTerm = safeLexicalTerm(term);
+  if (!safeTerm) return [];
+
+  const select = CANONICAL_RECIPE_SELECT_FIELDS.join(",");
+  const orClause = [
+    `title.ilike.*${safeTerm}*`,
+    `description.ilike.*${safeTerm}*`,
+    `ingredients_text.ilike.*${safeTerm}*`,
+    `category.ilike.*${safeTerm}*`,
+    `recipe_type.ilike.*${safeTerm}*`,
+  ].join(",");
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 48, 120));
+  const url = `${SUPABASE_URL}/rest/v1/recipes?select=${encodeURIComponent(select)}&or=${encodeURIComponent(`(${orClause})`)}&order=${encodeURIComponent("published_date.desc.nullslast")}&limit=${safeLimit}`;
+
+  try {
+    return await fetchRecipesFromUrl(url);
+  } catch (error) {
+    if (!isMissingRecipeColumnError(error.message)) {
+      throw error;
+    }
+
+    const fallbackSelect = LEGACY_RECIPE_SELECT_FIELDS.join(",");
+    const fallbackUrl = `${SUPABASE_URL}/rest/v1/recipes?select=${encodeURIComponent(fallbackSelect)}&or=${encodeURIComponent(`(${orClause})`)}&order=${encodeURIComponent("published_date.desc.nullslast")}&limit=${safeLimit}`;
+    return fetchRecipesFromUrl(fallbackUrl);
+  }
+}
+
+function lexicalRecipeSurface(recipe) {
+  return [
+    recipe?.title,
+    recipe?.description,
+    recipe?.recipe_type,
+    recipe?.category,
+    recipe?.subcategory,
+    recipe?.main_protein,
+    recipe?.ingredients_text,
+    ...(Array.isArray(recipe?.dietary_tags) ? recipe.dietary_tags : []),
+    ...(Array.isArray(recipe?.flavor_tags) ? recipe.flavor_tags : []),
+    ...(Array.isArray(recipe?.cuisine_tags) ? recipe.cuisine_tags : []),
+    ...(Array.isArray(recipe?.occasion_tags) ? recipe.occasion_tags : []),
+    ...(Array.isArray(recipe?.discover_brackets) ? recipe.discover_brackets : []),
+  ].map((value) => String(value ?? "")).join(" ");
+}
+
+function scoreLexicalSearchRecipe(recipe, terms, query) {
+  const title = normalizeSearchSurface(recipe?.title);
+  const surface = normalizeSearchSurface(lexicalRecipeSurface(recipe));
+  const exactPhrase = safeLexicalTerm(query).toLowerCase();
+  let score = stableJitter(`lexical|${query}|${recipe?.id ?? recipe?.title ?? ""}`) * 0.5;
+
+  if (exactPhrase && title.includes(` ${exactPhrase} `)) score += 12;
+  if (exactPhrase && surface.includes(` ${exactPhrase} `)) score += 6;
+
+  for (const term of terms) {
+    const normalized = normalizeSearchSurface(term).trim();
+    if (!normalized) continue;
+    if (title.includes(` ${normalized} `)) score += 5;
+    if (surface.includes(` ${normalized} `)) score += 2;
+  }
+
+  return score;
+}
+
+async function buildLexicalSearchFallbackPayload({
+  query,
+  profile,
+  filter,
+  feedContext,
+  requestedLimit,
+  requestedOffset,
+  requestedWindowLimit,
+}) {
+  const terms = buildLexicalSearchTerms(query);
+  const fetchLimit = Math.max(requestedWindowLimit * 8, 72);
+  const fetched = (await Promise.all(
+    terms.slice(0, 5).map((term) => fetchRecipesByLexicalTerm(term, fetchLimit).catch((error) => {
+      console.warn("[recipe/discover] lexical fallback term failed:", term, error.message);
+      return [];
+    }))
+  )).flat();
+
+  let recipes = dedupeRecipesById(fetched);
+  if (recipes.length === 0) {
+    recipes = await fetchRandomDiscoverRecipes({
+      limit: Math.max(requestedWindowLimit * 4, 72),
+      seed: `${feedContext?.sessionSeed ?? "discover"}|lexical-empty|${query}`,
+      filter,
+    });
+  }
+
+  recipes = recipes
+    .filter((recipe) => terms.length === 0 || terms.some((term) => containsSearchTerm(lexicalRecipeSurface(recipe), term)))
+    .sort((left, right) => scoreLexicalSearchRecipe(right, terms, query) - scoreLexicalSearchRecipe(left, terms, query));
+  recipes = filterRecipesByAllergies(recipes, profile);
+  recipes = applyPresetCategoryGate(recipes, filter);
+  recipes = applyPresetHardConstraints(recipes, filter);
+
+  return pageDiscoverResults({
+    recipes,
+    filters: deriveSearchFilters(recipes),
+    rankingMode: "lexical_search_fallback",
+  }, requestedOffset, requestedLimit);
 }
 
 async function fetchRecipesByIdBatches(ids, batchSize = 70) {
