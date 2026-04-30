@@ -2397,7 +2397,7 @@ final class MealPlanningAppStore: ObservableObject {
                 $0.lastCartSyncPlanID = latestPlan.id
                 $0.lastCartSignature = cartSignature
                 $0.lastInstacartRunID = response.runID
-                $0.lastInstacartRunStatus = response.success ? "completed" : (response.partialSuccess ? "partial" : "failed")
+                $0.lastInstacartRunStatus = response.normalizedStatus
                 $0.lastGeneratedReason = needsConfirmationPass ? "confirm:\(trigger)" : trigger
             }
             clearPendingCartSyncIntentIfMatched(
@@ -2497,7 +2497,10 @@ final class MealPlanningAppStore: ObservableObject {
             automationState = updatedAutomationState {
                 $0.lastCartSignature = automationCartSignature(for: retryItems)
                 $0.lastInstacartRunID = response.runID
-                if response.success {
+                if response.normalizedStatus == "queued" || response.normalizedStatus == "running" {
+                    $0.lastInstacartRunStatus = "partial_retry_queued"
+                    $0.lastGeneratedReason = "partial_retry_queued:\(trigger)"
+                } else if response.success {
                     $0.lastInstacartRunStatus = "completed"
                     $0.lastGeneratedReason = "partial_retry_completed:\(trigger)"
                 } else if response.partialSuccess {

@@ -22,35 +22,9 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>161.35.129.11</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-		</dict>
 	</dict>
-	<key>OunjeDevServerHost</key>
-		<string>192.168.2.57</string>
-	<key>OunjeDevServerPort</key>
-	<string>80</string>
-	<key>OunjePrimaryServerHost</key>
-		<string>192.168.2.57</string>
-	<key>OunjePrimaryServerPort</key>
-		<string>80</string>
-	<key>OunjeWorkerServerHost</key>
-	<string>161.35.129.11</string>
-	<key>OunjeWorkerServerPort</key>
-	<string>80</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

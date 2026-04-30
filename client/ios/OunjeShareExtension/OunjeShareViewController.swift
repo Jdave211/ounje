@@ -587,20 +587,33 @@ private struct RecipeImportJobPayload: Decodable {
 }
 
 private enum ImportSubmissionServer {
-    static let productionBaseURL = "https://api.ounje.app"
-    private static let dropletBaseURL = "http://161.35.129.11"
+    static let productionBaseURL = "https://ounje-idbl.onrender.com"
 
     static var candidateBaseURLs: [String] {
-        [dropletBaseURL]
+        deduplicated(
+            [
+                explicitWorkerBaseURL,
+                explicitPrimaryBaseURL,
+                productionBaseURL
+            ].compactMap { $0 }
+        )
     }
 
     private static var explicitPrimaryBaseURL: String? {
+#if DEBUG
         explicitBaseURL(hostKey: "OunjePrimaryServerHost", portKey: "OunjePrimaryServerPort", defaultPort: "8080")
+#else
+        nil
+#endif
     }
 
     private static var explicitWorkerBaseURL: String? {
+#if DEBUG
         explicitBaseURL(hostKey: "OunjeWorkerServerHost", portKey: "OunjeWorkerServerPort", defaultPort: "80")
             ?? explicitBaseURL(hostKey: "OunjeDevServerHost", portKey: "OunjeDevServerPort", defaultPort: "80")
+#else
+        nil
+#endif
     }
 
     private static func explicitBaseURL(hostKey: String, portKey: String, defaultPort: String) -> String? {

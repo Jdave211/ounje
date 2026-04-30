@@ -5444,6 +5444,7 @@ export async function addItemsToInstacartCart({
   accessToken = null,
   mealPlanID = null,
   groceryOrderID = null,
+  runId: requestedRunID = null,
   deliveryAddress = null,
   preferredStore = null,
   strictStore = false,
@@ -5527,7 +5528,7 @@ export async function addItemsToInstacartCart({
   let storeOptions = [];
   let selectedStore = null;
   const storeUrlCache = new Map();
-  const runId = [
+  const runId = String(requestedRunID ?? "").trim() || [
     new Date().toISOString().replace(/[:.]/g, "-"),
     slugifyTracePart(userId, "anon"),
     slugifyTracePart(preferredStore, "instacart"),

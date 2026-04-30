@@ -9,7 +9,7 @@
     "jobId": "ftjob-rkjvKzLIOUJU5CpohoHIvq30",
     "status": "succeeded",
     "fineTunedModel": "ft:gpt-4.1-mini-2025-04-14:dave:ounje-recipe-style:DNfMYZW3",
-    "lastCheckedAt": "2026-04-30T20:04:38.188Z",
+    "lastCheckedAt": "2026-04-30T22:05:38.365Z",
     "completedAt": "2026-03-26T14:01:28.901Z",
     "error": null,
     "trainingFile": "file-6ZKF4N7VFZz5h8tft3gz2W",

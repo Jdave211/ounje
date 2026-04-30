@@ -1,7 +1,9 @@
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { addItemsToInstacartCart } from "../../lib/instacart-cart.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
+import { createAutomationJob } from "../../lib/automation-jobs.js";
 import {
   getInstacartRunLog,
   getInstacartRunLogSummary,
@@ -25,6 +27,24 @@ function extractBearerToken(authorizationHeader) {
 
 function normalizeText(value) {
   return String(value ?? "").trim();
+}
+
+function slugifyRunPart(value, fallback = "instacart") {
+  const slug = normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36);
+  return slug || fallback;
+}
+
+function makeQueuedRunID(userID, preferredStore = null) {
+  return [
+    new Date().toISOString().replace(/[:.]/g, "-"),
+    slugifyRunPart(userID, "user"),
+    slugifyRunPart(preferredStore, "instacart"),
+    randomUUID().slice(0, 8),
+  ].join("__");
 }
 
 function normalizeIncomingItems(items = []) {
@@ -620,110 +640,233 @@ async function launchPartialRetryPass({
     },
   }).catch(() => {});
 
-  setImmediate(async () => {
-    const startedAt = new Date().toISOString();
-    try {
-      await updateRunRetryState(normalizedRootRunID, {
-        userID,
-        accessToken,
-        updates: {
-          retryState: "running",
-          retryStartedAt: startedAt,
-          retryItemCount: retryItems.length,
-        },
-      }).catch(() => {});
+  const retryRunID = makeQueuedRunID(userID, preferredStore);
+  const retryContext = {
+    kind: "partial_retry",
+    rootRunID: normalizedRootRunID,
+    attempt: 1,
+  };
 
-      await appendRunBackedOrderStepEvent({
-        groceryOrderID,
-        userID,
-        status: "building_cart",
-        kind: "retry_running",
-        title: "Retrying unfinished items",
-        body: "We started another pass for the unfinished items only.",
-        metadata: {
-          rootRunID: normalizedRootRunID,
-          retryItemCount: retryItems.length,
-        },
-        updates: {
-          tracking_title: "Retrying unfinished items",
-          tracking_detail: "We started another pass for the unfinished items only.",
-          last_tracked_at: startedAt,
-        },
-      }).catch(() => {});
+  await createAutomationJob({
+    userID,
+    kind: "instacart_run",
+    runID: retryRunID,
+    groceryOrderID,
+    payload: {
+      runID: retryRunID,
+      userID,
+      mealPlanID,
+      groceryOrderID,
+      items: retryItems,
+      requestedItemCount: retryItems.length,
+      resolvedItemCount: retryItems.length,
+      deliveryAddress,
+      preferredStore,
+      strictStore: Boolean(strictStore),
+      retryContext,
+      rootRunID: normalizedRootRunID,
+    },
+  });
+}
 
-      const retryResult = await addItemsToInstacartCart({
-        items: retryItems,
-        userId: userID,
-        accessToken,
-        mealPlanID,
-        groceryOrderID,
-        deliveryAddress,
-        preferredStore,
-        strictStore: Boolean(strictStore),
-        retryContext: {
-          kind: "partial_retry",
-          rootRunID: normalizedRootRunID,
-          attempt: 1,
-        },
-        headless: true,
-        logger: console,
-      });
+function buildQueuedRunTrace({
+  runID,
+  userID,
+  mealPlanID,
+  groceryOrderID,
+  resolvedItems,
+  deliveryAddress,
+  preferredStore,
+  strictStore,
+  retryContext = null,
+  jobID = null,
+}) {
+  const queuedAt = new Date().toISOString();
+  const event = {
+    at: queuedAt,
+    kind: "queued",
+    title: "Instacart run queued",
+    body: "Ounje queued this cart for the automation worker.",
+    metadata: {
+      jobID,
+      itemCount: Array.isArray(resolvedItems) ? resolvedItems.length : 0,
+    },
+  };
 
-      await syncRunToGroceryOrder({
-        groceryOrderID,
-        userID,
-        mealPlanID,
-        items: retryItems,
-        deliveryAddress,
-        preferredStore,
-        result: retryResult,
-      }).catch((syncError) => {
-        console.error("[instacart/runs] retry grocery order sync error:", syncError.message);
-      });
+  return {
+    runId: runID,
+    startedAt: queuedAt,
+    userId: userID,
+    mealPlanID: normalizeText(mealPlanID) || null,
+    groceryOrderID: normalizeText(groceryOrderID) || null,
+    deliveryAddress: deliveryAddress ?? null,
+    preferredStore: preferredStore ?? null,
+    strictStore: Boolean(strictStore),
+    runKind: String(retryContext?.kind ?? "").trim() || "primary",
+    rootRunID: String(retryContext?.rootRunID ?? "").trim() || null,
+    retryAttempt: Number.isFinite(Number(retryContext?.attempt)) ? Number(retryContext.attempt) : null,
+    retryState: null,
+    retryQueuedAt: queuedAt,
+    selectedStore: null,
+    selectedStoreReason: null,
+    storeOptions: [],
+    cartSummary: {
+      totalItems: Array.isArray(resolvedItems) ? resolvedItems.length : 0,
+    },
+    items: (Array.isArray(resolvedItems) ? resolvedItems : []).map((item) => ({
+      requested: normalizeText(item?.name ?? item?.originalName),
+      canonicalName: normalizeText(item?.canonicalName ?? item?.name),
+      normalizedQuery: normalizeText(item?.shoppingContext?.canonicalName ?? item?.name),
+      sourceIngredients: Array.isArray(item?.sourceIngredients) ? item.sourceIngredients : [],
+      attempts: [],
+      finalStatus: {
+        status: "queued",
+      },
+    })),
+    events: [event],
+    latestEvent: event,
+    latestEventAt: queuedAt,
+    automationJobID: jobID,
+  };
+}
 
-      await updateRunRetryState(normalizedRootRunID, {
+async function resolveRunItems({ normalizedItems, plan }) {
+  const snapshotItems = buildRunItemsFromMainShopSnapshot(plan, normalizedItems);
+  if (snapshotItems.length > 0) return snapshotItems;
+
+  const shoppingSpec = await buildShoppingSpecEntries({
+    originalItems: normalizedItems,
+    plan,
+  });
+  return Array.isArray(shoppingSpec?.items) && shoppingSpec.items.length > 0
+    ? shoppingSpec.items
+    : normalizedItems;
+}
+
+export async function executeInstacartAutomationJob(job, { logger = console } = {}) {
+  const payload = job?.payload && typeof job.payload === "object" ? job.payload : job ?? {};
+  const runID = normalizeText(payload.runID ?? payload.runId ?? job?.runID);
+  const userID = normalizeText(payload.userID ?? payload.user_id ?? job?.userID);
+  const mealPlanID = normalizeText(payload.mealPlanID ?? payload.meal_plan_id) || null;
+  const groceryOrderID = normalizeText(payload.groceryOrderID ?? payload.grocery_order_id ?? job?.groceryOrderID) || null;
+  const resolvedItems = normalizeIncomingItems(payload.items);
+  const deliveryAddress = payload.deliveryAddress ?? payload.delivery_address ?? null;
+  const preferredStore = payload.preferredStore ?? payload.preferred_store ?? null;
+  const strictStore = Boolean(payload.strictStore ?? payload.strict_store);
+  const retryContext = normalizeRetryContext(payload.retryContext ?? payload.retry_context);
+
+  if (!runID) throw new Error("queued Instacart job is missing runID");
+  if (!userID) throw new Error("queued Instacart job is missing userID");
+  if (!resolvedItems.length) throw new Error("queued Instacart job is missing items");
+
+  const startedAt = new Date().toISOString();
+  if (retryContext?.rootRunID) {
+    await updateRunRetryState(retryContext.rootRunID, {
+      userID,
+      updates: {
+        retryState: "running",
+        retryStartedAt: startedAt,
+        retryItemCount: resolvedItems.length,
+      },
+    }).catch(() => {});
+  }
+
+  await appendRunBackedOrderStepEvent({
+    groceryOrderID,
+    userID,
+    status: "building_cart",
+    kind: retryContext ? "retry_running" : "run_running",
+    title: retryContext ? "Retrying unfinished items" : "Building Instacart cart",
+    body: retryContext ? "The automation worker started another pass." : "The automation worker started building your cart.",
+    metadata: {
+      jobID: job?.id ?? null,
+      runID,
+      itemCount: resolvedItems.length,
+    },
+    updates: {
+      tracking_title: retryContext ? "Retrying unfinished items" : "Building Instacart cart",
+      tracking_detail: retryContext ? "The automation worker started another pass." : "The automation worker started building your cart.",
+      last_tracked_at: startedAt,
+    },
+  }).catch(() => {});
+
+  let result;
+  try {
+    result = await addItemsToInstacartCart({
+      items: resolvedItems,
+      userId: userID,
+      runId: runID,
+      mealPlanID,
+      groceryOrderID,
+      deliveryAddress,
+      preferredStore,
+      strictStore,
+      retryContext,
+      headless: true,
+      logger,
+    });
+  } catch (error) {
+    await failRunBackedGroceryOrder(groceryOrderID, error.message).catch(() => {});
+    if (retryContext?.rootRunID) {
+      await updateRunRetryState(retryContext.rootRunID, {
         userID,
-        accessToken,
-        updates: {
-          retryState: retryResult.success ? "completed" : (retryResult.partialSuccess ? "partial" : "failed"),
-          retryStartedAt: startedAt,
-          retryCompletedAt: new Date().toISOString(),
-          retryRunID: normalizeText(retryResult.runId) || null,
-          retryItemCount: retryItems.length,
-        },
-      }).catch(() => {});
-    } catch (error) {
-      await updateRunRetryState(normalizedRootRunID, {
-        userID,
-        accessToken,
         updates: {
           retryState: "failed",
           retryStartedAt: startedAt,
           retryCompletedAt: new Date().toISOString(),
-          retryItemCount: retryItems.length,
-        },
-      }).catch(() => {});
-
-      await appendRunBackedOrderStepEvent({
-        groceryOrderID,
-        userID,
-        status: "building_cart",
-        kind: "retry_failed",
-        title: "Retry needs attention",
-        body: "We started another pass for the unfinished items, but it still needs review.",
-        metadata: {
-          rootRunID: normalizedRootRunID,
-          retryItemCount: retryItems.length,
-          error: error.message,
-        },
-        updates: {
-          tracking_title: "Retry needs attention",
-          tracking_detail: "We started another pass for the unfinished items, but it still needs review.",
-          last_tracked_at: new Date().toISOString(),
+          retryItemCount: resolvedItems.length,
         },
       }).catch(() => {});
     }
+    throw error;
+  }
+
+  await syncRunToGroceryOrder({
+    groceryOrderID,
+    userID,
+    mealPlanID,
+    items: resolvedItems,
+    deliveryAddress,
+    preferredStore,
+    result,
+  }).catch((syncError) => {
+    logger.error?.("[instacart/worker] grocery order sync error:", syncError.message);
   });
+
+  if (retryContext?.rootRunID) {
+    await updateRunRetryState(retryContext.rootRunID, {
+      userID,
+      updates: {
+        retryState: result.success ? "completed" : (result.partialSuccess ? "partial" : "failed"),
+        retryStartedAt: startedAt,
+        retryCompletedAt: new Date().toISOString(),
+        retryRunID: normalizeText(result.runId) || runID,
+        retryItemCount: resolvedItems.length,
+      },
+    }).catch(() => {});
+  } else if (result?.partialSuccess) {
+    await launchPartialRetryPass({
+      rootRunID: result.runId,
+      userID,
+      mealPlanID,
+      groceryOrderID,
+      resolvedItems,
+      deliveryAddress,
+      preferredStore,
+      strictStore,
+      result,
+    }).catch((retryError) => {
+      logger.error?.("[instacart/worker] partial retry queue error:", retryError.message);
+    });
+  }
+
+  return {
+    ...result,
+    runId: result?.runId ?? runID,
+    groceryOrderID,
+    mealPlanID,
+    retryQueued: Boolean(result?.partialSuccess && !retryContext),
+  };
 }
 
 router.get("/instacart/runs", async (req, res) => {
@@ -911,17 +1054,7 @@ router.post("/instacart/runs", async (req, res) => {
       return res.status(400).json({ error: "deliveryAddress is required before starting Instacart" });
     }
 
-    const snapshotItems = buildRunItemsFromMainShopSnapshot(plan, normalizedItems);
-    let resolvedItems = snapshotItems;
-    if (resolvedItems.length === 0) {
-      const shoppingSpec = await buildShoppingSpecEntries({
-        originalItems: normalizedItems,
-        plan,
-      });
-      resolvedItems = Array.isArray(shoppingSpec?.items) && shoppingSpec.items.length > 0
-        ? shoppingSpec.items
-        : normalizedItems;
-    }
+    const resolvedItems = await resolveRunItems({ normalizedItems, plan });
 
     groceryOrderID = await createRunBackedGroceryOrder({
       userID,
@@ -932,58 +1065,72 @@ router.post("/instacart/runs", async (req, res) => {
       retryContext,
     });
 
-    const result = await addItemsToInstacartCart({
-      items: resolvedItems,
-      userId: userID,
-      accessToken,
+    const runID = makeQueuedRunID(userID, preferredStore);
+    const job = await createAutomationJob({
+      userID,
+      kind: "instacart_run",
+      runID,
+      groceryOrderID,
+      payload: {
+        runID,
+        userID,
+        mealPlanID,
+        groceryOrderID,
+        items: resolvedItems,
+        requestedItemCount: normalizedItems.length,
+        resolvedItemCount: resolvedItems.length,
+        deliveryAddress,
+        preferredStore,
+        strictStore: Boolean(strictStore),
+        retryContext,
+      },
+    });
+
+    const queuedTrace = buildQueuedRunTrace({
+      runID,
+      userID,
       mealPlanID,
       groceryOrderID,
+      resolvedItems,
       deliveryAddress,
       preferredStore,
-      strictStore: Boolean(strictStore),
+      strictStore,
       retryContext,
-      headless: true,
-      logger: console,
+      jobID: job.id,
     });
-    try {
-      await syncRunToGroceryOrder({
-        groceryOrderID,
-        userID,
-        mealPlanID,
-        items: resolvedItems,
-        deliveryAddress,
-        preferredStore,
-        result,
-      });
-    } catch (syncError) {
-      console.error("[instacart/runs] grocery order sync error:", syncError.message);
-    }
+    await persistInstacartRunLog(queuedTrace);
+    await appendRunBackedOrderStepEvent({
+      groceryOrderID,
+      userID,
+      status: "building_cart",
+      kind: "run_queued",
+      title: "Instacart run queued",
+      body: "Ounje queued this cart for the automation worker.",
+      metadata: {
+        jobID: job.id,
+        runID,
+        itemCount: resolvedItems.length,
+      },
+      updates: {
+        tracking_title: "Instacart run queued",
+        tracking_detail: "Ounje queued this cart for the automation worker.",
+        last_tracked_at: new Date().toISOString(),
+      },
+    }).catch(() => {});
 
-    if (result?.partialSuccess && !retryContext) {
-      await launchPartialRetryPass({
-        rootRunID: result.runId,
-        userID,
-        accessToken,
-        mealPlanID,
-        groceryOrderID,
-        resolvedItems,
-        deliveryAddress,
-        preferredStore,
-        strictStore,
-        result,
-      }).catch((retryError) => {
-        console.error("[instacart/runs] partial retry queue error:", retryError.message);
-      });
-    }
-
-    return res.json({
-      ...result,
+    return res.status(202).json({
+      runId: runID,
+      jobID: job.id,
+      status: "queued",
+      success: false,
+      partialSuccess: false,
+      cartUrl: null,
       mealPlanID,
       deliveryAddress,
       groceryOrderID,
       requestedItemCount: normalizedItems.length,
       resolvedItemCount: resolvedItems.length,
-      retryQueued: Boolean(result?.partialSuccess && !retryContext),
+      retryQueued: false,
     });
   } catch (error) {
     await failRunBackedGroceryOrder(groceryOrderID, error.message).catch(() => {});

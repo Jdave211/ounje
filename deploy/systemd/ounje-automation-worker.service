@@ -1,5 +1,5 @@
 [Unit]
-Description=Ounje recipe ingestion worker
+Description=Ounje private automation worker
 After=network-online.target
 Wants=network-online.target
 
@@ -8,8 +8,9 @@ Type=simple
 User=ounje
 WorkingDirectory=/opt/ounje
 Environment=NODE_ENV=production
+Environment=OUNJE_RUNTIME_ENV=production
 EnvironmentFile=-/etc/ounje/ounje.env
-ExecStart=/usr/bin/env node /opt/ounje/server/scripts/recipe_ingestion_worker.mjs --worker-id droplet_recipe_ingest
+ExecStart=/usr/bin/env node /opt/ounje/server/scripts/automation_worker.mjs --worker-id vm_automation_worker --lock-seconds 900
 Restart=always
 RestartSec=5
 

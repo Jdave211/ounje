@@ -38241,6 +38241,8 @@ private struct InstacartAutomationDeliveryAddressPayload: Encodable {
 
 struct InstacartAutomationRunResponse: Decodable {
     let runID: String
+    let jobID: String?
+    let status: String?
     let success: Bool
     let partialSuccess: Bool
     let cartURL: String?
@@ -38251,6 +38253,8 @@ struct InstacartAutomationRunResponse: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case runID = "runId"
+        case jobID
+        case status
         case success
         case partialSuccess
         case cartURL = "cartUrl"
@@ -38258,6 +38262,14 @@ struct InstacartAutomationRunResponse: Decodable {
         case requestedItemCount
         case resolvedItemCount
         case retryQueued
+    }
+
+    var normalizedStatus: String {
+        let rawStatus = status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if !rawStatus.isEmpty { return rawStatus }
+        if success { return "completed" }
+        if partialSuccess { return "partial" }
+        return "failed"
     }
 }
 
@@ -39156,29 +39168,27 @@ private struct RecipeDetailChromeRevealModifier: ViewModifier {
 }
 
 enum OunjeDevelopmentServer {
-    static let productionBaseURL = "https://api.ounje.app"
-    private static let dropletBaseURL = "http://161.35.129.11"
+    static let productionBaseURL = "https://ounje-idbl.onrender.com"
 
     static var baseURL: String {
-        explicitPrimaryBaseURL ?? dropletBaseURL
+        explicitPrimaryBaseURL ?? productionBaseURL
     }
 
     static var candidateBaseURLs: [String] {
         deduplicated(
             [
                 explicitPrimaryBaseURL,
-                productionBaseURL,
-                dropletBaseURL
+                productionBaseURL
             ].compactMap { $0 }
         )
     }
 
     static var primaryBaseURL: String {
-        explicitPrimaryBaseURL ?? dropletBaseURL
+        explicitPrimaryBaseURL ?? productionBaseURL
     }
 
     static var workerBaseURL: String {
-        explicitWorkerBaseURL ?? explicitPrimaryBaseURL ?? dropletBaseURL
+        explicitWorkerBaseURL ?? explicitPrimaryBaseURL ?? productionBaseURL
     }
 
     static var interactiveCandidateBaseURLs: [String] {
@@ -39190,19 +39200,26 @@ enum OunjeDevelopmentServer {
             [
                 explicitWorkerBaseURL,
                 explicitPrimaryBaseURL,
-                productionBaseURL,
-                dropletBaseURL
+                productionBaseURL
             ].compactMap { $0 }
         )
     }
 
     private static var explicitPrimaryBaseURL: String? {
+#if DEBUG
         explicitBaseURL(hostKey: "OunjePrimaryServerHost", portKey: "OunjePrimaryServerPort", defaultPort: "8080")
+#else
+        nil
+#endif
     }
 
     private static var explicitWorkerBaseURL: String? {
+#if DEBUG
         explicitBaseURL(hostKey: "OunjeWorkerServerHost", portKey: "OunjeWorkerServerPort", defaultPort: "80")
             ?? explicitBaseURL(hostKey: "OunjeDevServerHost", portKey: "OunjeDevServerPort", defaultPort: "80")
+#else
+        nil
+#endif
     }
 
     private static func explicitBaseURL(hostKey: String, portKey: String, defaultPort: String) -> String? {
