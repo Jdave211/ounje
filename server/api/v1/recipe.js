@@ -854,6 +854,29 @@ recipe_router.post("/recipe/discover", async (req, res) => {
     });
     recipes = applyPresetHardConstraints(recipes, filter);
 
+    if (recipes.length === 0) {
+      const fallbackPayload = await buildLexicalSearchFallbackPayload({
+        query: trimmedQuery,
+        profile,
+        filter,
+        feedContext,
+        requestedLimit,
+        requestedOffset,
+        requestedWindowLimit,
+      });
+      searchResponseCache.set(
+        buildDiscoverSearchCacheKey({
+          query: trimmedQuery,
+          filter,
+          limit: requestedLimit,
+          offset: requestedOffset,
+          profile,
+        }),
+        { value: fallbackPayload, createdAt: Date.now() }
+      );
+      return res.json(fallbackPayload);
+    }
+
     const payload = pageDiscoverResults({
       recipes,
       filters: deriveSearchFilters(recipes),
@@ -1095,7 +1118,8 @@ recipe_router.post("/recipe/prep-candidates", async (req, res) => {
     recipes = rerankPrepCandidateRecipes(recipes, profile, regenerationContext, regenerationIntent);
 
     if (!fastRegeneration && openai && recipes.length > 1) {
-      recipes = await curateDiscoverRecipesWithLLM({
+      const preCurationRecipes = recipes;
+      const curatedRecipes = await curateDiscoverRecipesWithLLM({
         recipes,
         profile,
         filter: "All",
@@ -1107,14 +1131,23 @@ recipe_router.post("/recipe/prep-candidates", async (req, res) => {
         feedContext,
         limit: recipes.length,
       });
+      recipes = curatedRecipes.length > 0 ? curatedRecipes : preCurationRecipes;
     }
 
     const normalizationPool = recipes.slice(0, Math.max(limit * 2, limit + 48));
     const hydratedNormalizationPool = await hydrateRecipesWithIngredientRows(normalizationPool);
-    const normalized = hydratedNormalizationPool
+    let normalized = hydratedNormalizationPool
       .map(normalizePrepCandidateRecipe)
       .filter((recipe) => Array.isArray(recipe.ingredients) && recipe.ingredients.length >= 3)
       .slice(0, limit);
+
+    if (normalized.length === 0) {
+      const fallbackPool = await hydrateRecipesWithIngredientRows(await fetchLatestRecipes(Math.max(limit * 4, 48)));
+      normalized = fallbackPool
+        .map(normalizePrepCandidateRecipe)
+        .filter((recipe) => Array.isArray(recipe.ingredients) && recipe.ingredients.length >= 3)
+        .slice(0, limit);
+    }
 
     const rankingMode = [
       `${rankedPayload.rankingMode}_prep_candidates`,
