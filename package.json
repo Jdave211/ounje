@@ -4,8 +4,10 @@
   "description": "Ounje — Nigerian food app. Swift iOS client + Node.js API server.",
   "type": "module",
   "scripts": {
-    "server": "nodemon server/server.js",
-    "start": "node server/server.js",
+    "server": "nodemon --watch server --ext js,mjs,json --exec \"bash server/scripts/start-server.sh\"",
+    "start": "bash server/scripts/start-server.sh",
+    "start:vm": "node server/scripts/vm-bootstrap.mjs",
+    "sync:ios-host": "bash server/scripts/start-server.sh --sync-only",
     "flavorgraph:index": "python3 server/scripts/build_flavorgraph_index.py",
     "recipes:export-corpus": "python3 server/scripts/export_recipe_training_corpus.py",
     "recipes:create-finetune": "node server/scripts/create_recipe_finetune_job.mjs",
@@ -13,10 +15,13 @@
     "recipes:classify-discover": "node server/scripts/classify_discover_brackets.mjs",
     "recipes:backfill-measurements": "node server/scripts/backfill_recipe_measurements.mjs",
     "recipes:ingestion-worker": "node server/scripts/recipe_ingestion_worker.mjs",
+    "recipes:ingestion-worker:vm": "NODE_ENV=production node server/scripts/recipe_ingestion_worker.mjs --worker-id droplet_recipe_ingest",
     "recipes:ingestion-once": "node server/scripts/recipe_ingestion_worker.mjs --once",
     "instacart:test-cart": "node server/scripts/test-instacart-cart.mjs watermelon",
     "instacart:clear-cart": "node server/scripts/clear-instacart-cart.mjs",
-    "instacart:add-current-plan": "node server/scripts/add-current-plan-to-instacart.mjs"
+    "instacart:add-current-plan": "node server/scripts/add-current-plan-to-instacart.mjs",
+    "instacart:add-current-plan:cloud": "INSTACART_USE_BROWSER_USE=1 node server/scripts/add-current-plan-to-instacart-browseruse.mjs",
+    "instacart:cleanup-logs": "node server/scripts/cleanup_instacart_run_logs.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
@@ -43,5 +48,20 @@
     "@babel/core": "^7.24.7",
     "@babel/preset-env": "^7.24.7",
     "nodemon": "^3.1.4"
-  }
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jdave211/ounje.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Jdave211/ounje/issues"
+  },
+  "homepage": "https://github.com/Jdave211/ounje#readme"
 }

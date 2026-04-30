@@ -19,9 +19,11 @@ struct SharedRecipeImportAttachment: Codable, Identifiable, Hashable {
 struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     let id: String
     let createdAt: Date
+    let jobID: String?
     let targetState: String
     let sourceText: String?
     let sourceURLString: String?
+    var canonicalSourceURLString: String?
     let sourceApp: String?
     let attachments: [SharedRecipeImportAttachment]
     let processingState: String?
@@ -66,7 +68,17 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     }
 
     var shouldAutoProcess: Bool {
-        normalizedProcessingState == "queued" && (attemptCount ?? 0) == 0 && lastAttemptAt == nil
+        let state = normalizedProcessingState
+        if state == "failed" || isTerminalLocalState {
+            return false
+        }
+
+        if state == "queued" && (attemptCount ?? 0) == 0 && lastAttemptAt == nil {
+            return true
+        }
+
+        let referenceDate = lastAttemptAt ?? updatedAt ?? createdAt
+        return Date().timeIntervalSince(referenceDate) >= 3
     }
 
     var isTerminalLocalState: Bool {
@@ -143,9 +155,11 @@ enum SharedRecipeImportInbox {
             let failed = SharedRecipeImportEnvelope(
                 id: envelope.id,
                 createdAt: envelope.createdAt,
+                jobID: envelope.jobID,
                 targetState: envelope.targetState,
                 sourceText: envelope.sourceText,
                 sourceURLString: envelope.sourceURLString,
+                canonicalSourceURLString: envelope.canonicalSourceURLString,
                 sourceApp: envelope.sourceApp,
                 attachments: envelope.attachments,
                 processingState: "failed",

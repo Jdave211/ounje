@@ -1,12 +1,645 @@
 {
-  "generated_at": "2026-04-02T19:53:07.920Z",
+  "generated_at": "2026-04-11T00:42:55.568Z",
   "model": "gpt-4.1-mini",
   "by_recipe_id": {
+    "006fa69f-fe30-4a42-95e0-4ddae0042cea": {
+      "title": "Mongolian Beef with Glass Noodles",
+      "brackets": [
+        "lunch",
+        "dinner",
+        "beginner",
+        "steak"
+      ]
+    },
+    "0088c5f7-ff8a-450e-a3a2-441fee166df3": {
+      "title": "Fiery Chilli Garlic Prawns",
+      "brackets": [
+        "dinner",
+        "beginner",
+        "under500"
+      ]
+    },
+    "00a176a0-5382-4cd4-8aaf-21deb9d6f25a": {
+      "title": "Garlic-Coconut Shrimp and Green Beans",
+      "brackets": [
+        "lunch",
+        "fish",
+        "beginner",
+        "dinner",
+        "beans",
+        "under500"
+      ]
+    },
+    "00a718c9-0789-4d9a-98df-c22badf10ce8": {
+      "title": "Restaurant-Quality Scrambled Eggs",
+      "brackets": [
+        "breakfast",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "00b52b34-fce7-489a-8b5e-84e95617708b": {
+      "title": "Creamy Chipotle Beef Ragu Pasta",
+      "brackets": [
+        "dinner",
+        "pasta",
+        "beginner",
+        "steak"
+      ]
+    },
+    "00c573ab-8d09-4392-a39d-9bd822804f56": {
+      "title": "Honey Mustard Chicken Power Bowl",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "beginner",
+        "salad"
+      ]
+    },
+    "00efe59e-4f33-4095-9ffc-253f98c35e82": {
+      "title": "Crepes Di Zucchine",
+      "brackets": [
+        "vegetarian",
+        "lunch",
+        "beginner",
+        "dinner",
+        "under500"
+      ]
+    },
+    "012eba3b-4c0a-4839-a5e4-7fea566738f8": {
+      "title": "Browned Butter Madeleines",
+      "brackets": [
+        "dessert",
+        "vegetarian",
+        "under500"
+      ]
+    },
+    "01ab2e6d-439e-4bc9-960f-62410a2fc2aa": {
+      "title": "Pasta E Fagioli",
+      "brackets": [
+        "dinner",
+        "pasta",
+        "beans",
+        "under500"
+      ]
+    },
+    "021cd1a4-d984-4880-af05-d646212e7060": {
+      "title": "Magic Bar Cookies",
+      "brackets": [
+        "vegan",
+        "vegetarian",
+        "beginner",
+        "dessert",
+        "under500"
+      ]
+    },
+    "0231ba2d-32dc-474f-bc29-5fccc5abdeba": {
+      "title": "Rosca De Palomitas Con Chocolate",
+      "brackets": [
+        "dessert",
+        "vegetarian",
+        "under500"
+      ]
+    },
+    "02472f9d-267f-474b-914c-8376ad5fa666": {
+      "title": "Creamy Rigatoni And Calabrian Chilies",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "dinner"
+      ]
+    },
+    "0255876c-9762-4295-86a0-d01948439b3a": {
+      "title": "Sausage With Charred Cabbage And Giardiniera",
+      "brackets": [
+        "dinner",
+        "dessert",
+        "under500"
+      ]
+    },
+    "025a9a4f-41c8-40e8-83b7-6fa8c2b9574a": {
+      "title": "Crispy Gnocchi Ham & Leek Soup",
+      "brackets": [
+        "lunch",
+        "under500"
+      ]
+    },
+    "02b27382-7d86-4495-9328-479232d872ca": {
+      "title": "Butternut Squash And Italian Chicken Sausage Skillet Dinner",
+      "brackets": [
+        "dinner",
+        "chicken",
+        "beginner",
+        "under500"
+      ]
+    },
+    "02c5a1fd-b169-4887-842a-9ae65462f44e": {
+      "title": "Homemade Chicken Noodle Soup",
+      "brackets": [
+        "dinner",
+        "chicken",
+        "beginner",
+        "lunch",
+        "pasta",
+        "under500"
+      ]
+    },
+    "030060ad-686c-441d-b8c4-e7a80dc85b56": {
+      "title": "Strawberry Matcha Crepe Cake",
+      "brackets": [
+        "dessert",
+        "beginner",
+        "under500"
+      ]
+    },
+    "032bf293-a196-45dd-b160-be455d260e0c": {
+      "title": "Brown Butter Blondies",
+      "brackets": [
+        "dessert",
+        "beginner",
+        "under500"
+      ]
+    },
+    "033d1d7a-6dcd-4a71-aa53-8c5ad7d5f3be": {
+      "title": "French Onion Soup",
+      "brackets": [
+        "lunch",
+        "under500"
+      ]
+    },
+    "0384f60e-af0e-4404-98b8-7c71572df127": {
+      "title": "Crispy Salmon Bites",
+      "brackets": [
+        "lunch",
+        "salmon",
+        "beginner",
+        "fish",
+        "under500"
+      ]
+    },
+    "03c807bd-f277-4ecd-ab03-f0ff20ddb53c": {
+      "title": "Spicy Garlic Bok Choy",
+      "brackets": [
+        "vegetarian",
+        "dinner",
+        "beginner",
+        "under500"
+      ]
+    },
+    "03d65208-7f9a-4056-aaef-462ce00183a8": {
+      "title": "Caramelized Cottage Cheese And Peaches With Crunchy Topping",
+      "brackets": [
+        "lunch",
+        "beginner",
+        "dessert"
+      ]
+    },
+    "03f66b93-c8ca-405d-a336-d96e1fa14b60": {
+      "title": "Italian Grinder White Bean Salad",
+      "brackets": [
+        "lunch",
+        "vegetarian",
+        "salad",
+        "beginner",
+        "beans",
+        "under500"
+      ]
+    },
+    "04314ad7-972c-416b-9a1a-8457b5173353": {
+      "title": "Creamy Garlic Butter Orzo With Shrimp",
+      "brackets": [
+        "lunch",
+        "fish",
+        "beginner",
+        "dinner"
+      ]
+    },
+    "047482c1-0920-49f0-a2b9-195186a74a24": {
+      "title": "Peach and Prosciutto Salad with Burrata",
+      "brackets": [
+        "lunch",
+        "salad",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0490768f-501f-4422-a4fa-3213da53464b": {
+      "title": "Spicy Lemon Basil Chicken",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "under500"
+      ]
+    },
+    "0496c06d-1778-41da-bf74-693fdda9f4b0": {
+      "title": "Asian Pear Salad With Crispy Shallots",
+      "brackets": [
+        "dinner",
+        "vegetarian",
+        "salad",
+        "beginner",
+        "potatoes",
+        "under500"
+      ]
+    },
+    "049ae0d5-4816-4f10-a61c-b7efc42c2c5d": {
+      "title": "Greek Orange Syrup Cake",
+      "brackets": [
+        "dessert",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "049bd628-6a4e-4aa7-b285-e1902c42d485": {
+      "title": "Greek Chicken Slaw",
+      "brackets": [
+        "dinner",
+        "chicken",
+        "salad",
+        "under500"
+      ]
+    },
+    "049d1ef8-866b-4e81-9d8b-8e4254ead3f6": {
+      "title": "Kung Pao Cabbage With Tofu",
+      "brackets": [
+        "dinner",
+        "vegan",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "04a2b9fb-2fea-43a0-8bc4-0d82111cbba0": {
+      "title": "Caramel Pecan Cheesecake",
+      "brackets": [
+        "dessert",
+        "vegetarian"
+      ]
+    },
+    "04e3ae56-a6ed-4a45-81ef-2a5658e97b8d": {
+      "title": "Steak Bites With Garlic Butter Rice",
+      "brackets": [
+        "dinner",
+        "steak"
+      ]
+    },
+    "04fd6fe5-dbba-43c4-bde4-ac1a88099828": {
+      "title": "Pasta Con Pesto Di Ricotta E Noci",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "vegetarian",
+        "beginner"
+      ]
+    },
+    "054bf2cf-b21c-4e05-a3b8-127435782b32": {
+      "title": "Pasta and Pickles Salad",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "beginner",
+        "salad",
+        "under500"
+      ]
+    },
+    "0559960d-512a-42e9-bdeb-bf703dbe5c9b": {
+      "title": "Cavatelli With Pesto And Roasted Broccoli",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "vegetarian",
+        "beginner"
+      ]
+    },
+    "056650d6-7520-4cb0-a351-fcc6a39b1583": {
+      "title": "Salmon Rice Bowl",
+      "brackets": [
+        "lunch",
+        "salmon",
+        "beginner",
+        "fish"
+      ]
+    },
+    "056ce13b-a5fd-4aa2-83f9-5772eb16c8db": {
+      "title": "Pumpkin Overnight Oats",
+      "brackets": [
+        "breakfast",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "05728c5c-be55-4938-b1b2-67d62c355aef": {
+      "title": "Blackened Shrimp Alfredo Pasta",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "fish"
+      ]
+    },
+    "0578fd6e-7ccd-4ff5-8dac-b0f68bdc0dbc": {
+      "title": "Caramel Date Fluffy Coffee",
+      "brackets": [
+        "drinks",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "05839125-96ee-4694-adc4-3cff7854e673": {
+      "title": "Teriyaki Chicken Noodles",
+      "brackets": [
+        "dinner",
+        "chicken",
+        "beginner",
+        "under500"
+      ]
+    },
+    "05ad736e-ec28-48b7-a9ad-f4de06270fb5": {
+      "title": "Animal Style Sweet Potatoes",
+      "brackets": [
+        "lunch",
+        "vegetarian",
+        "potatoes",
+        "beginner"
+      ]
+    },
+    "05fe1502-b34a-4785-b3ea-3e9bae949afe": {
+      "title": "Kemos Creamy Egg Sandwich",
+      "brackets": [
+        "lunch",
+        "sandwich",
+        "beginner",
+        "under500"
+      ]
+    },
+    "060a9c0e-bbd7-4d52-a65f-73bb652afd8a": {
+      "title": "Spring Crisp Salad",
+      "brackets": [
+        "lunch",
+        "salad",
+        "vegan",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "063bc809-fb53-43c0-a9e0-8815ed6ef9be": {
+      "title": "Back-Pocket Caper-Butter Chicken",
+      "brackets": [
+        "chicken",
+        "dinner",
+        "beginner",
+        "under500"
+      ]
+    },
+    "065cfb6e-3ddc-41b6-8cca-d9193bcb5439": {
+      "title": "Fritos Cowboy Cabbage",
+      "brackets": [
+        "dinner",
+        "salad",
+        "vegetarian",
+        "steak",
+        "beginner"
+      ]
+    },
+    "06e8f0a0-a702-4502-b9c3-e7275691b1de": {
+      "title": "Cinnamon Swirl Banana Bread",
+      "brackets": [
+        "dessert",
+        "vegetarian",
+        "under500"
+      ]
+    },
     "0731be24-3dae-49fb-a431-08d649c5155d": {
       "title": "Mexican Corn Casserole",
       "brackets": [
         "dinner",
         "beginner"
+      ]
+    },
+    "07ea177c-338c-41cc-bcce-720ed9b2e1a6": {
+      "title": "Hot Lemon and Bay Pudding",
+      "brackets": [
+        "dessert",
+        "beginner",
+        "under500"
+      ]
+    },
+    "07fc9c44-6bfd-4b29-8f7a-09db1179ca7c": {
+      "title": "Chicken Nourish Bowl",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "beginner",
+        "salad"
+      ]
+    },
+    "082f4a21-7818-47fb-95c6-c18f3acd7fa5": {
+      "title": "Golden Saffron Sauce",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "beginner"
+      ]
+    },
+    "086aa4a0-6ead-44b5-b25c-a7c68fd0d0ec": {
+      "title": "Strawberry Cold Foam Matcha Latte",
+      "brackets": [
+        "dessert",
+        "drinks",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "089cb498-3cc4-4fc1-9b8a-d9f22ac58efe": {
+      "title": "Pesto Broccoli Pasta with Bacon and Peas",
+      "brackets": [
+        "pasta",
+        "beginner"
+      ]
+    },
+    "089ef2fa-79c2-476e-8d87-56dcbfb8082a": {
+      "title": "Tortellini Salad with Arugula",
+      "brackets": [
+        "lunch",
+        "salad",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "08a82a48-524f-4399-9048-6ade797902a4": {
+      "title": "Matcha Cheesecake Chia Pudding",
+      "brackets": [
+        "dessert",
+        "vegan",
+        "beginner",
+        "under500"
+      ]
+    },
+    "08a9062b-3716-442c-b9a4-9f57fc4cf31d": {
+      "title": "Habichuelas Guisadas",
+      "brackets": [
+        "dinner",
+        "beans",
+        "beginner",
+        "under500"
+      ]
+    },
+    "092eb7b8-b9e9-445d-82bf-0f87ab759715": {
+      "title": "Sizzling Ginger-Scallion White Bean Salad",
+      "brackets": [
+        "lunch",
+        "salad",
+        "vegan",
+        "vegetarian",
+        "beans",
+        "beginner",
+        "under500"
+      ]
+    },
+    "093a5983-d2be-4634-91ec-7747f2da0a75": {
+      "title": "Barbecue Ranch Enchiladas",
+      "brackets": [
+        "dinner",
+        "chicken",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0971673c-8351-41d6-bf40-e4eac606e66f": {
+      "title": "Spinach & Artichoke Stuffed Shells",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "beginner"
+      ]
+    },
+    "0988048d-196d-4098-b629-942f3561686e": {
+      "title": "Quick 20-Minute Soup Dumplings",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "beginner",
+        "under500"
+      ]
+    },
+    "09893e2f-029b-4f30-b5fe-ba4685aae0b2": {
+      "title": "Chickpea Salad With Fresh Herbs and Scallions",
+      "brackets": [
+        "lunch",
+        "salad",
+        "vegetarian",
+        "beans",
+        "beginner",
+        "potatoes",
+        "under500"
+      ]
+    },
+    "09d20323-506a-4d67-8767-a634a9f70363": {
+      "title": "Brown Butter Vegan Pistachio Sweet Rolls",
+      "brackets": [
+        "dessert",
+        "vegan"
+      ]
+    },
+    "0a776cd1-b264-4dc7-938a-5a9406b3faed": {
+      "title": "Garlic Miso Udon",
+      "brackets": [
+        "lunch",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0a896a9c-3092-4440-8eb5-cb7867833f77": {
+      "title": "Brisket Chili",
+      "brackets": [
+        "dinner",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0aa35aa5-e9d7-4a45-bc7d-426948889df9": {
+      "title": "Crispy Smashed Potatoes on Beetroot Beans",
+      "brackets": [
+        "vegetarian",
+        "beans",
+        "potatoes",
+        "dinner",
+        "under500"
+      ]
+    },
+    "0ab8a428-de38-4702-aaa9-f41467383b04": {
+      "title": "Lemon Brioche Buns",
+      "brackets": [
+        "beginner",
+        "under500"
+      ]
+    },
+    "0ade280c-1d30-4b57-b00e-05d68ad1e0fd": {
+      "title": "Chicken Sliders",
+      "brackets": [
+        "chicken",
+        "lunch"
+      ]
+    },
+    "0af11631-ff41-4674-b1e9-ea8c5cfd6521": {
+      "title": "Vegan Zucchini Toast",
+      "brackets": [
+        "breakfast",
+        "vegan",
+        "vegetarian",
+        "beginner",
+        "lunch",
+        "under500"
+      ]
+    },
+    "0afcecb8-8ce7-4a30-bdf1-059504196ee3": {
+      "title": "Fiesta Caesar Salad with Cilantro-Lime Caesar Dressing",
+      "brackets": [
+        "lunch",
+        "salad",
+        "beginner",
+        "chicken",
+        "steak",
+        "under500"
+      ]
+    },
+    "0afd493a-ab59-40d3-b191-e2ff17aa2493": {
+      "title": "Almond Croissant Overnight Oats",
+      "brackets": [
+        "breakfast",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0afed5f8-5ae4-48cf-bf48-0bb5e875df42": {
+      "title": "Avocado Peach & Burrata Summer Toast",
+      "brackets": [
+        "lunch",
+        "vegetarian",
+        "beginner"
+      ]
+    },
+    "0b019a8f-8ac2-44f6-aca5-73227d2279d3": {
+      "title": "Crisped Chicken With Tomatoes And Shallot Sofrito",
+      "brackets": [
+        "dinner",
+        "chicken",
+        "pasta"
+      ]
+    },
+    "0b046555-ade9-489c-b33a-9e30376b999e": {
+      "title": "Maple & Brown Sugar Apple Crisp",
+      "brackets": [
+        "dessert",
+        "vegetarian",
+        "under500"
       ]
     },
     "0b9ec1c2-c717-4e5a-9012-5ea6cc933dca": {
@@ -16,1147 +649,834 @@
         "pasta"
       ]
     },
+    "0bb95950-c011-4682-80e8-8fc2693dea21": {
+      "title": "Gnocchi Piccata",
+      "brackets": [
+        "dinner",
+        "pasta",
+        "potatoes",
+        "beginner",
+        "chicken",
+        "under500"
+      ]
+    },
+    "0c07b55f-543e-4fd9-9da4-28f2b22209eb": {
+      "title": "Green Beans With Tahini Sbagliato",
+      "brackets": [
+        "dinner",
+        "vegetarian",
+        "beginner",
+        "beans",
+        "under500"
+      ]
+    },
+    "0c1ea355-9739-41c3-a836-857a2ee52761": {
+      "title": "Sun-Dried Tomato Avocado Grilled Cheese",
+      "brackets": [
+        "lunch",
+        "vegan",
+        "vegetarian",
+        "sandwich",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0c2c4589-adbd-42e9-bc9f-55c70e699ddb": {
+      "title": "Honey-Chili Glazed Sweet Potatoes with Whipped Ricotta & Lime",
+      "brackets": [
+        "vegetarian",
+        "dinner",
+        "potatoes",
+        "under500"
+      ]
+    },
+    "0c394925-eba9-4285-93a9-eeeba78f9c80": {
+      "title": "Easy Spicy Broccoli Cheddar Potato Soup",
+      "brackets": [
+        "lunch",
+        "vegetarian",
+        "potatoes",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0c4e90be-8254-4aac-8235-38d0e2e85111": {
+      "title": "Fried Squash Blossom \"Mozzarella Sticks\"",
+      "brackets": [
+        "lunch",
+        "under500"
+      ]
+    },
+    "0c73004a-b794-4189-93ee-3b48be4ca1e4": {
+      "title": "Grandpa’s Eggy Rice",
+      "brackets": [
+        "lunch",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0c94d09b-c9b3-4ba6-904f-5e392a5135e5": {
+      "title": "Cannellini Bean and Tuna Salad",
+      "brackets": [
+        "lunch",
+        "salad",
+        "fish",
+        "beans",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0ca6ad8b-19df-430d-9e99-795f9dc1d78e": {
+      "title": "Chicken Tzatziki Avocado Salad",
+      "brackets": [
+        "lunch",
+        "salad",
+        "chicken"
+      ]
+    },
+    "0d02bbeb-6376-4216-a52a-2517d5a74672": {
+      "title": "Apple Pie Spring Rolls",
+      "brackets": [
+        "lunch",
+        "dessert",
+        "under500"
+      ]
+    },
+    "0d48b744-3284-41c3-b1dd-1e7ecc7a57de": {
+      "title": "Zucchini Squash Pancakes",
+      "brackets": [
+        "breakfast",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0d5614f4-9417-48ad-8990-e62fb0c4fef8": {
+      "title": "Mexican Street Corn Pasta Salad",
+      "brackets": [
+        "lunch",
+        "pasta",
+        "beginner",
+        "salad",
+        "under500"
+      ]
+    },
+    "0d71d893-f770-45f2-8dc5-5dcfb00c692c": {
+      "title": "Carrot Cake Pudding Cake",
+      "brackets": [
+        "dessert",
+        "under500"
+      ]
+    },
+    "0d7ad92f-bc00-4a17-94eb-d2b5ad11578b": {
+      "title": "Korean BBQ Chicken Bowls with Cucumber Salad",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "beginner",
+        "salad"
+      ]
+    },
+    "0dc005c2-d281-4aed-9a7e-52761012a4b4": {
+      "title": "Mashed Sweet Potatoes With Aleppo Pepper And Crème Fraîche",
+      "brackets": [
+        "vegetarian",
+        "potatoes",
+        "under500"
+      ]
+    },
+    "0ddf9c31-35b1-46c9-82c3-b11f48a8020c": {
+      "title": "Chicken and Green Bean Stir-Fry",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "beginner",
+        "dinner",
+        "beans",
+        "under500"
+      ]
+    },
+    "0e24918d-9c7d-4452-8795-f99fadb68bfe": {
+      "title": "Coconut-Date Power Breakfast Bars",
+      "brackets": [
+        "vegetarian",
+        "under500"
+      ]
+    },
+    "0e8b5d97-c96d-425e-8758-93612ea93610": {
+      "title": "Thai Watermelon Lime Peanut Prawn Salad",
+      "brackets": [
+        "lunch",
+        "fish",
+        "salad",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0eb51f42-57d6-43d4-9c0c-2d156100e57c": {
+      "title": "Gambas Al Ajillo",
+      "brackets": [
+        "dinner",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0eb91145-9aad-4227-99ad-1c3a4b76c10e": {
+      "title": "Apple Snacking Cake",
+      "brackets": [
+        "dessert",
+        "beginner",
+        "lunch",
+        "under500"
+      ]
+    },
+    "0edafc9d-164d-4a62-a544-8929749682db": {
+      "title": "Cajun Seafood Ravioli Alfredo",
+      "brackets": [
+        "dinner",
+        "pasta",
+        "fish"
+      ]
+    },
+    "0f19be59-d1b5-49b0-a199-4ce83836f532": {
+      "title": "Spicy Feta Butterbean & Chicken Prepable Salad",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "beans",
+        "beginner",
+        "salad",
+        "under500"
+      ]
+    },
+    "0f3b1733-c599-4c4d-ad13-a50a979c7b4a": {
+      "title": "Marinated Roasted Bell Pepper Bean Salad with Crispy Capers",
+      "brackets": [
+        "lunch",
+        "vegetarian",
+        "beans",
+        "beginner",
+        "salad",
+        "under500"
+      ]
+    },
+    "0f4d8d13-979e-4706-9992-3d83218f8840": {
+      "title": "Garlic Butter Shrimp Scampi",
+      "brackets": [
+        "lunch",
+        "fish",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0f8eb35d-a6ea-440d-aca8-ed67b5834e1b": {
+      "title": "Easy Blueberry Puff Pastries",
+      "brackets": [
+        "dessert",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0f949fdb-1161-4515-80ab-d56ea57ca1a9": {
+      "title": "Green Coconut Shrimp",
+      "brackets": [
+        "dinner",
+        "fish",
+        "beginner",
+        "under500"
+      ]
+    },
+    "0faffa01-3f04-4377-bb44-e248ab30ab44": {
+      "title": "Ceviche Estilo \"Thai\" Con Jengibre, Mango Y Coco",
+      "brackets": [
+        "vegetarian",
+        "under500",
+        "fish"
+      ]
+    },
+    "0fc47126-e1c4-4b26-a628-731125a5b7d4": {
+      "title": "Creamy Baked Eggs",
+      "brackets": [
+        "lunch",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "10713624-0cbb-4a03-a5c9-1d67c55cd7bd": {
+      "title": "Garlic Herb Chicken With Honey Butter Carrots & Creamy Mashed Potatoes",
+      "brackets": [
+        "dinner",
+        "chicken",
+        "potatoes",
+        "beginner"
+      ]
+    },
+    "1074907f-03b5-4d47-b207-fac6e429ad6c": {
+      "title": "One Pan Creamy Lemon Garlic Chicken Gnocchi",
+      "brackets": [
+        "lunch",
+        "chicken",
+        "beginner",
+        "under500"
+      ]
+    },
+    "10824502-1f24-4668-8132-5e12d23c10a5": {
+      "title": "Tomato Salad with Burrata, Peach, and Iberian Ham",
+      "brackets": [
+        "lunch",
+        "salad",
+        "vegetarian",
+        "beginner",
+        "under500"
+      ]
+    },
+    "10a1927c-8aeb-4fd2-82ee-30d9ab60bc92": {
+      "title": "Salted Caramel Apple Pie Cookies",
+      "brackets": [
+        "dessert",
+        "under500"
+      ]
+    },
     "10b7eb98-13aa-4fee-87f5-158d270e742f": {
       "title": "Fall Boursin Soup",
       "brackets": [
         "lunch"
       ]
     },
-    "1501b0e3-b26d-4005-9086-923149cb27c7": {
-      "title": "Buffalo Chicken Tacos With Cilantro Lime Crema",
-      "brackets": [
-        "lunch",
-        "chicken"
-      ]
-    },
-    "18a144f8-cb2a-46a5-9b70-71c7b4cf11f4": {
-      "title": "One Pot Lazy Lasagna Soup",
-      "brackets": [
-        "dinner"
-      ]
-    },
-    "19584378-4aa8-4f5e-9f06-414e71961951": {
-      "title": "Pistachio Halibut With Corn-Basil Dressing",
-      "brackets": [
-        "lunch",
-        "fish"
-      ]
-    },
-    "1988837b-fc08-4ebb-9667-be0d20b5d15a": {
-      "title": "Butternut Bakery Pumpkin Bread",
+    "1104ebe8-d65b-4a52-a7a1-7646baa0f1a4": {
+      "title": "Blueberry Cobbler Scones",
       "brackets": [
         "dessert",
-        "beginner"
+        "under500"
       ]
     },
-    "1a0580d4-bc23-45d6-8b5f-8957dab8a665": {
-      "title": "Slow Cooker Harissa Sausage Penne",
-      "brackets": [
-        "dinner",
-        "pasta",
-        "beginner"
-      ]
-    },
-    "1f13ed45-5c5e-4d7a-8d66-d0c93c543643": {
-      "title": "Grandma's Creamy Mushroom Orzo",
-      "brackets": [
-        "dinner"
-      ]
-    },
-    "20d97c29-5fed-42ef-9f8c-82749a358352": {
-      "title": "Crispy Beef Tacos With Pico De Gallo And Cream Taco Sauce",
-      "brackets": [
-        "lunch",
-        "steak"
-      ]
-    },
-    "2408d343-97dc-47a9-998d-fd7ea80ad97a": {
-      "title": "Crispy Garlic Parmesan Chicken Bites",
-      "brackets": [
-        "lunch",
-        "chicken"
-      ]
-    },
-    "24c69875-6856-43c8-ae13-e102390f0d86": {
-      "title": "Creamy Tuscan Tortellini",
-      "brackets": [
-        "dinner",
-        "pasta",
-        "vegetarian",
-        "beginner"
-      ]
-    },
-    "24c95089-937f-4b73-bd16-cd1f14a77924": {
-      "title": "Chai Spiced Rice Pudding with Cardamom Cream",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "24f24950-b71d-47c3-b35f-bb15cbf68fbe": {
-      "title": "Chicken Pad See Ew",
+    "110c880e-f896-48ff-b057-511ce2a0d66a": {
+      "title": "Apple Walnut Chicken Salad",
       "brackets": [
         "dinner",
         "chicken",
-        "pasta"
-      ]
-    },
-    "26392aa5-649c-47bc-b687-3f5990ead122": {
-      "title": "Honey Mustard & Feta Spring Orzo Salad With Buttery Garlic Shrimp",
-      "brackets": [
-        "lunch",
-        "fish",
-        "salad"
-      ]
-    },
-    "28477212-0859-4906-8f95-80e442ea921f": {
-      "title": "Orange Cake",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "2a4686eb-414c-4cc7-bde7-35951599f738": {
-      "title": "Butternut Squash And Feta Pasta",
-      "brackets": [
-        "lunch",
-        "pasta"
-      ]
-    },
-    "2d5eb627-6727-41bf-9ed6-be993b36055b": {
-      "title": "Spicy Shrimp Tacos",
-      "brackets": [
-        "lunch",
-        "fish",
-        "beginner",
-        "dinner",
-        "salad"
-      ]
-    },
-    "2dc01850-5f80-458a-92a4-2c8a22c3d1e8": {
-      "title": "Gazpacho Verde with Ginger Vinaigrette",
-      "brackets": [
-        "breakfast",
-        "vegan",
-        "beginner",
-        "dinner"
-      ]
-    },
-    "2f09d42d-4030-40d2-91fb-c8e3ccad1deb": {
-      "title": "Venezuelan Cachapas",
-      "brackets": [
-        "lunch",
-        "breakfast",
-        "beginner",
-        "dinner"
-      ]
-    },
-    "2f4643be-1339-4e94-a26f-cc6155d6da39": {
-      "title": "Hot Chocolate Cookies",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "34093e4b-2897-428e-bfa7-0892092c6aa4": {
-      "title": "Creamy French Onion Crispy Pasta Bake",
-      "brackets": [
-        "dinner",
-        "pasta",
-        "chicken"
-      ]
-    },
-    "36bdc6d9-d5f7-4472-bef9-5d1c8ce7c202": {
-      "title": "Easy Pumpkin Hummus",
-      "brackets": [
-        "lunch",
-        "vegetarian",
-        "vegan",
-        "beans",
-        "beginner"
-      ]
-    },
-    "38bbeb90-6520-4882-a28c-5c37507950d4": {
-      "title": "Crispy Chicken Cutlets with Summery Tomato, Nectarine, Mozzarella, and Olive Salad",
-      "brackets": [
-        "lunch",
-        "chicken",
-        "salad"
-      ]
-    },
-    "39abe4c5-2462-4b8c-a763-3509af3bc681": {
-      "title": "Korean Garlic Salt Bread",
-      "brackets": [
-        "lunch",
-        "beginner"
-      ]
-    },
-    "3d7b6721-38c9-4efa-a28b-5c93d9f2af97": {
-      "title": "Pumpkin Overnight Oats",
-      "brackets": [
-        "breakfast",
-        "vegetarian",
-        "beginner"
-      ]
-    },
-    "43784faf-363f-4d65-b598-3375ee107e50": {
-      "title": "Roasted Vegetables Soup",
-      "brackets": [
-        "lunch",
-        "vegetarian",
-        "vegan",
-        "beginner",
-        "dinner"
-      ]
-    },
-    "4424bd0d-228c-4493-bf79-d4bc1ea8527b": {
-      "title": "Chicken Alfredo Lasagna",
-      "brackets": [
-        "breakfast",
-        "pasta",
-        "chicken"
-      ]
-    },
-    "45eb8a57-8fe0-4639-b95a-0c9414eadcdb": {
-      "title": "Honey Cake",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "4b10b316-146c-4ac9-8a8a-a699359da322": {
-      "title": "Broccoli Cheddar Lasagna Soup",
-      "brackets": [
-        "lunch",
-        "vegetarian"
-      ]
-    },
-    "4b8122bc-d4bd-4908-94c6-bc84f43e8750": {
-      "title": "Low-Carb Shrimp & Broccoli Alfredo",
-      "brackets": [
-        "dinner",
-        "fish",
-        "beginner"
-      ]
-    },
-    "4de44f1c-d329-4375-9a6b-3b7c6cd3fe5f": {
-      "title": "Protein Spinach Artichoke Pizza",
-      "brackets": [
-        "lunch",
-        "vegetarian",
-        "beginner"
-      ]
-    },
-    "50a38e2c-e7f4-451c-b959-0bbf5014cbe0": {
-      "title": "Breakfast Enchiladas And Sausage Gravy",
-      "brackets": [
-        "breakfast",
-        "beginner"
-      ]
-    },
-    "5736c5b2-2bee-44e6-b3a6-aec2243329c2": {
-      "title": "Pumpkin French Toast Bites",
-      "brackets": [
-        "dessert",
-        "breakfast",
-        "beginner"
-      ]
-    },
-    "57d19e1a-d89c-42ae-8451-1a9f0b5699c0": {
-      "title": "Sweet Potato Casserole",
-      "brackets": [
-        "dessert",
-        "potatoes"
-      ]
-    },
-    "5b49e52a-a784-42a7-91a1-8f10541904c2": {
-      "title": "Festive Brown Butter Rice Krispie Treats",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "5f0d2e4a-d0d7-494c-89ed-73a53bae4428": {
-      "title": "Chicken Shawarma",
-      "brackets": [
-        "lunch",
-        "chicken"
-      ]
-    },
-    "6486b4dc-5c69-4250-8ddd-bebcc42f9ff5": {
-      "title": "Sticky Sesame Cashew Chicken",
-      "brackets": [
-        "dinner",
-        "chicken",
-        "beginner"
-      ]
-    },
-    "6a0b1772-943f-4ab7-9f42-38f87ef9d39b": {
-      "title": "Maple-Roasted Cinnamon Apples with Vanilla Ice Cream",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "6bd085fe-866d-4f29-acf8-5ee6c5e9c8c8": {
-      "title": "Short Rib Pasta",
-      "brackets": [
-        "dinner",
-        "pasta",
-        "beans"
-      ]
-    },
-    "6e151893-cf10-4379-8916-3d1ce9fe363d": {
-      "title": "Creamy Chicken & Gnocchi Soup",
-      "brackets": [
-        "lunch",
-        "chicken"
-      ]
-    },
-    "75efb151-5b4b-48c5-ad53-9e514a5db8fb": {
-      "title": "Vanilla Almond Cheesecake Toast",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "7b3773be-1c64-457d-8425-cc9cbfc4c72f": {
-      "title": "Grilled Chicken With Green Sauce",
-      "brackets": [
-        "dinner",
-        "chicken",
-        "beginner"
-      ]
-    },
-    "7b830d08-9a5f-4983-a779-fc75da47e5b0": {
-      "title": "Mango Sticky Rice",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "7e08a76d-8680-46ba-a7ee-c755077d6207": {
-      "title": "Banana Bread Brownies",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "7fca80e6-d400-4ecb-aad0-7260c0c80e95": {
-      "title": "A Simple & Easy Farro Salad",
-      "brackets": [
-        "dinner",
-        "salad"
-      ]
-    },
-    "87c539f8-6068-4028-b67b-50104150ca95": {
-      "title": "Kale Caesar Salad With Crispy Chickpea-Ciabatta Crumble",
-      "brackets": [
-        "lunch",
         "salad",
-        "vegetarian",
-        "beans"
-      ]
-    },
-    "882cbc83-06c1-4f82-b93e-fd111178c362": {
-      "title": "Cranberry Whipped Feta Dip",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "897dcc3c-0948-4085-97ae-43239f875f85": {
-      "title": "Caramel Apple Pudding Cake",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "8ae3bcab-0dc4-48ea-add5-0096788ba0a7": {
-      "title": "Spaghetti with Sweet Corn Pesto",
-      "brackets": [
-        "lunch",
-        "pasta",
-        "beginner"
-      ]
-    },
-    "8d35a434-dbc0-490a-ad73-4efeb1834653": {
-      "title": "Bananas Foster French Toast",
-      "brackets": [
-        "breakfast",
-        "beginner"
-      ]
-    },
-    "8deb0bcb-109a-4ce0-8395-f14baa260b1d": {
-      "title": "Peanut Butter Miso Cookie",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "8e954a1e-a83f-4ad8-9957-4e227760533b": {
-      "title": "Warm Broccoli Caesar",
-      "brackets": [
-        "lunch",
-        "salad",
-        "beginner"
-      ]
-    },
-    "9214ba74-e218-4a64-8004-e3473d8f940c": {
-      "title": "Lemon Blueberry Loaf",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "9687b88c-8d70-435c-aa37-25f4468f9f2f": {
-      "title": "Peach & Kefir Custard Pie",
-      "brackets": [
-        "dessert",
-        "vegan"
-      ]
-    },
-    "96a7229a-a810-48e8-946f-5659dcaa8c4e": {
-      "title": "Roasted Beet and Citrus Salad with Goat Cheese and Pistachios",
-      "brackets": [
-        "lunch",
-        "salad",
-        "vegetarian"
-      ]
-    },
-    "973ec19e-fdca-4aa7-8457-b5d6f016f70c": {
-      "title": "Classic Crème Brûlée",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "976fc7f8-5f4b-44eb-8ae5-9b744ceb4aa3": {
-      "title": "Thai Green Curry",
-      "brackets": [
-        "dinner",
-        "chicken"
-      ]
-    },
-    "98b7cd61-4323-4d07-8c5f-88b3804f197e": {
-      "title": "Rich & Creamy Tomato Soup",
-      "brackets": [
-        "lunch",
-        "beginner"
-      ]
-    },
-    "997b5c00-b5b1-467a-8b74-03731af7b31e": {
-      "title": "Gooey Pecan Pie Bars",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "9a397e11-749c-4f0d-a32e-cc1b90d4ffa0": {
-      "title": "Pull-Apart Cheesesteak Sliders",
-      "brackets": [
-        "lunch",
-        "dinner",
-        "steak",
-        "beginner"
-      ]
-    },
-    "9a5d80b0-04a5-47e9-864c-27336c9c6f7b": {
-      "title": "Butternut Squash Risotto",
-      "brackets": [
-        "dinner",
-        "vegetarian"
-      ]
-    },
-    "9f83021d-618f-47fa-973e-0b36119e1c48": {
-      "title": "Coconut Curry Dumpling Soup",
-      "brackets": [
-        "lunch",
         "beginner",
-        "dinner"
+        "lunch",
+        "under500"
       ]
     },
-    "a85ff03a-7026-4263-aea5-1e6e1b879f05": {
-      "title": "Chicken Milanese With Apple, Celery & Arugula Salad",
+    "116178fa-242d-4bd8-9d88-531f13bd6b82": {
+      "title": "One-Pan Baked Butter Chicken",
       "brackets": [
         "lunch",
         "chicken",
-        "salad"
+        "under500"
       ]
     },
-    "aad45c44-77fc-44fa-8b72-dcd027a882c0": {
-      "title": "Sweet Soy Pork",
-      "brackets": [
-        "dinner",
-        "beginner"
-      ]
-    },
-    "ac531a70-5f03-4a2c-a734-d9782e9181c5": {
-      "title": "Chai-Spiced Eggnog Custard Tart",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "ad5bf1f4-66ff-49a3-8b48-4a001fa3c72f": {
-      "title": "Rice Cake Snack with Chocolate, Peanut Butter and Blueberries",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "b380c402-7ba2-4be2-8ece-6aa4abe69ba6": {
-      "title": "Creamy Chicken Gnocchi Soup",
-      "brackets": [
-        "lunch",
-        "chicken"
-      ]
-    },
-    "b4608a0e-1115-4747-ad4d-d5884ef60bc0": {
-      "title": "Cinnamon PB Banana Roll-Ups",
+    "116c1a64-e6a3-4059-a2a6-180fb54c6a2c": {
+      "title": "Carrot Cake Baked Oats",
       "brackets": [
         "breakfast",
+        "vegetarian",
+        "beginner",
         "dessert",
-        "beginner"
+        "under500"
       ]
     },
-    "b977fed4-8eb9-4a61-9108-0f0579d4c718": {
-      "title": "Sausage Gravy And Egg Sliders",
+    "11a3fbe3-9e40-4b36-9310-823588268199": {
+      "title": "Grilled Zucchini with Feta & Basil",
       "brackets": [
+        "vegetarian",
+        "salad",
+        "beginner",
+        "under500"
+      ]
+    },
+    "11dbefc3-3996-441f-ac02-b059007d7dc8": {
+      "title": "Smashed Peas on Toast",
+      "brackets": [
+        "vegetarian",
         "breakfast",
         "sandwich",
-        "beginner"
-      ]
-    },
-    "b994a725-2c20-406b-a499-63130bfa8a84": {
-      "title": "Buffalo Chicken Flatbread",
-      "brackets": [
-        "dinner",
-        "chicken",
-        "beginner"
-      ]
-    },
-    "bc69a21a-96b4-4cc1-94ea-0a7a031b3f0f": {
-      "title": "Crispy Brussels With Whipped Ricotta & Hazelnuts",
-      "brackets": [
-        "lunch",
-        "vegetarian"
-      ]
-    },
-    "bdf3a4b4-201a-4330-83fd-a4b5453c2960": {
-      "title": "Cinnamon Roll Bread Pudding with Maple Cream Sauce",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "bf9a37d0-7ebc-47c3-8491-be347ce4d2ec": {
-      "title": "Coconut Curry Shrimp with Ginger Jasmine Rice",
-      "brackets": [
-        "dinner",
-        "fish"
-      ]
-    },
-    "c0fab7b2-9463-4db3-b9c9-8cc4202f20fd": {
-      "title": "Eggnog Cheesecake With Gingerbread Crust",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "c1478941-0fc5-46a2-97b3-36189594d87c": {
-      "title": "Matcha Tiramisu with White Chocolate Layers",
-      "brackets": [
-        "dessert",
-        "drinks"
-      ]
-    },
-    "c6161e68-3782-4c01-baf2-9fb3439026d0": {
-      "title": "Cornbread Cake",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "c8e2340e-2992-41fe-b769-55985b61274b": {
-      "title": "High-Protein Cottage Cheese Carrot Cake Pancakes",
-      "brackets": [
-        "breakfast",
-        "dessert"
-      ]
-    },
-    "c99a8427-617f-4eca-a859-60dfc8821677": {
-      "title": "Spicy Chicken Caesar Wrap",
-      "brackets": [
-        "lunch",
-        "chicken",
-        "salad",
-        "sandwich"
-      ]
-    },
-    "cc351973-4b22-486c-93ac-5b2e3e6cf291": {
-      "title": "Red Curry Wonton Soup",
-      "brackets": [
-        "lunch",
         "beginner",
-        "dinner"
-      ]
-    },
-    "cc7b9924-41de-4967-9da9-d0518a7032e0": {
-      "title": "Pecan Pie Oatmeal",
-      "brackets": [
-        "breakfast",
-        "dessert",
-        "vegan",
-        "beginner"
-      ]
-    },
-    "ced10dcb-6b81-4dfa-952a-aad61a649f81": {
-      "title": "Cranberry Pecan Chicken Salad",
-      "brackets": [
-        "lunch",
-        "chicken",
-        "beginner",
-        "salad"
-      ]
-    },
-    "cf502199-7c93-415d-9cef-b073d8eca747": {
-      "title": "Pumpkin Basque Cheesecake",
-      "brackets": [
-        "lunch",
-        "dessert"
-      ]
-    },
-    "d12c8412-cd03-4bbe-8061-e979c6b0d741": {
-      "title": "Freezer Cookies",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "d1b85d91-aa8e-4a5a-be5c-4bf9d5be63ee": {
-      "title": "Sweet Potato Tart with Marshmallow Meringue",
-      "brackets": [
-        "dessert",
-        "potatoes"
-      ]
-    },
-    "d2fb7a98-f721-449e-a15a-9121f29d8521": {
-      "title": "Spiced Pear and Almond Tart",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "d7a480c0-38d5-448d-b0fb-7ba02027b507": {
-      "title": "Roasted Garlic & Whipped Ricotta Agnolotti",
-      "brackets": [
-        "lunch",
-        "pasta"
-      ]
-    },
-    "dc826dbe-ae7d-47d9-b26c-a255cab93cd1": {
-      "title": "Miso Ginger & Orange Chuck Roast",
-      "brackets": [
-        "dinner",
-        "steak",
-        "beginner"
-      ]
-    },
-    "dcf7b5f4-0ae4-4e5a-a131-46c607c30e01": {
-      "title": "Cheesy Beef Rigatoni",
-      "brackets": [
-        "dinner",
-        "pasta",
-        "beginner",
-        "steak"
-      ]
-    },
-    "dd6099f8-d84f-4ad9-b33c-25473ae4a5ac": {
-      "title": "Arroz con Leche",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "def0f5bc-a3c2-471a-8eb6-e6d9be3cb0b9": {
-      "title": "Coconut Lemongrass Chicken With Bok Choy",
-      "brackets": [
-        "dinner",
-        "chicken"
-      ]
-    },
-    "e060392b-43ee-410f-94c1-b4d72fb42ce5": {
-      "title": "Apple Pie Cookies",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "e0ad6b56-7bcc-406f-ac0d-9cbdffa83327": {
-      "title": "White Chocolate Raspberry Blondies",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "e1e246b0-45b6-443f-ae5d-7af36f92b923": {
-      "title": "Brothy Pasta",
-      "brackets": [
-        "lunch",
-        "pasta",
-        "beginner"
-      ]
-    },
-    "e35515b4-1a0a-4a18-b978-a443e96a8dc3": {
-      "title": "Milk Banana Bread",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "e69885fb-3077-4ae1-85e6-6eccc988d878": {
-      "title": "Easy Baked Apples With Yogurt And Granola",
-      "brackets": [
-        "breakfast",
-        "dessert",
-        "beginner"
-      ]
-    },
-    "e6a56906-0ec0-4235-8163-bcd4c121f14f": {
-      "title": "Cardamom Pistachio Baklava Tart with Rose Water Syrup",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "e6ed45f8-2758-4442-8802-0a8f0234482b": {
-      "title": "Breakfast Fried Rice With Spicy Maple Drizzle",
-      "brackets": [
-        "breakfast",
-        "chicken"
-      ]
-    },
-    "e801bc78-6d98-4594-b882-a5eab422ef16": {
-      "title": "Walnut And Kale Pesto",
-      "brackets": [
-        "lunch",
-        "vegetarian"
-      ]
-    },
-    "ead670eb-ecf8-42cc-b6a9-3260fa489fa5": {
-      "title": "Classic Crème Brûlée",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "eb5f2d21-971f-4360-827f-9740841d975c": {
-      "title": "Street Corn Beef Bowls With Sweet Potatoes",
-      "brackets": [
-        "lunch",
-        "dinner",
-        "potatoes",
-        "beans",
-        "beginner",
-        "steak"
-      ]
-    },
-    "ef671319-30b0-4b02-838a-ba697f253769": {
-      "title": "Warm Lentil and Roasted Vegetable Salad with Feta and Herbs",
-      "brackets": [
-        "lunch",
-        "salad",
-        "vegetarian",
-        "beginner",
-        "beans"
-      ]
-    },
-    "f01732d3-7eff-49b5-be51-14af239969ac": {
-      "title": "Blueberry Baked Oats",
-      "brackets": [
-        "breakfast",
-        "dessert",
-        "vegetarian",
-        "beginner"
-      ]
-    },
-    "f55eafe3-cb91-451e-9ad8-11e4f59cb672": {
-      "title": "Squash And Spinach Lasagne",
-      "brackets": [
-        "lunch",
-        "dinner",
-        "vegetarian",
-        "pasta"
-      ]
-    },
-    "f57ae611-8fa3-40f5-b5ac-139a2f6cbc5a": {
-      "title": "Roasted Fall Harvest Salad",
-      "brackets": [
-        "lunch",
-        "salad",
-        "vegan",
-        "vegetarian",
-        "beans"
-      ]
-    },
-    "f60d9010-5407-4aec-bf29-5025e466cb80": {
-      "title": "Revamped Tortellini Soup",
-      "brackets": [
-        "lunch",
-        "pasta",
-        "vegetarian"
-      ]
-    },
-    "f6397528-d25f-4845-aaa7-ee69c4bd25a6": {
-      "title": "Avocado And Pickle Salad",
-      "brackets": [
-        "lunch",
-        "salad",
-        "vegetarian",
-        "vegan",
-        "beginner"
-      ]
-    },
-    "f9e9262f-4e23-4441-9116-19a280141278": {
-      "title": "Pumpkin Munchkins",
-      "brackets": [
-        "dessert",
-        "beginner"
-      ]
-    },
-    "fa1450b1-67a9-487c-9459-a7a1de2e511f": {
-      "title": "Peppermint Hot Chocolate Cheesecake Bars",
-      "brackets": [
-        "dessert"
-      ]
-    },
-    "fc5ffaf5-39d5-4530-b8ab-a9fdf4298884": {
-      "title": "Gingerbread Overnight French Toast",
-      "brackets": [
-        "breakfast",
-        "beginner"
-      ]
-    },
-    "fcc5e7e0-b13b-4bb2-bd48-d46dacfc8483": {
-      "title": "Zopa Azteca, The Ultimate Comfort Soup",
-      "brackets": [
-        "lunch",
-        "dinner",
-        "chicken",
-        "beginner"
-      ]
-    },
-    "fe823abc-3c76-46f8-a623-7c8e0d5a6b1b": {
-      "title": "Creamy Chicken Pasta Bake With Sundried Tomato And Chorizo",
-      "brackets": [
-        "lunch",
-        "dinner",
-        "chicken",
-        "pasta",
-        "beginner"
+        "under500"
       ]
     }
   },
   "by_bracket": {
+    "lunch": [
+      "006fa69f-fe30-4a42-95e0-4ddae0042cea",
+      "00a176a0-5382-4cd4-8aaf-21deb9d6f25a",
+      "00c573ab-8d09-4392-a39d-9bd822804f56",
+      "00efe59e-4f33-4095-9ffc-253f98c35e82",
+      "02472f9d-267f-474b-914c-8376ad5fa666",
+      "025a9a4f-41c8-40e8-83b7-6fa8c2b9574a",
+      "02c5a1fd-b169-4887-842a-9ae65462f44e",
+      "033d1d7a-6dcd-4a71-aa53-8c5ad7d5f3be",
+      "0384f60e-af0e-4404-98b8-7c71572df127",
+      "03d65208-7f9a-4056-aaef-462ce00183a8",
+      "03f66b93-c8ca-405d-a336-d96e1fa14b60",
+      "04314ad7-972c-416b-9a1a-8457b5173353",
+      "047482c1-0920-49f0-a2b9-195186a74a24",
+      "0490768f-501f-4422-a4fa-3213da53464b",
+      "04fd6fe5-dbba-43c4-bde4-ac1a88099828",
+      "054bf2cf-b21c-4e05-a3b8-127435782b32",
+      "0559960d-512a-42e9-bdeb-bf703dbe5c9b",
+      "056650d6-7520-4cb0-a351-fcc6a39b1583",
+      "05728c5c-be55-4938-b1b2-67d62c355aef",
+      "05ad736e-ec28-48b7-a9ad-f4de06270fb5",
+      "05fe1502-b34a-4785-b3ea-3e9bae949afe",
+      "060a9c0e-bbd7-4d52-a65f-73bb652afd8a",
+      "07fc9c44-6bfd-4b29-8f7a-09db1179ca7c",
+      "082f4a21-7818-47fb-95c6-c18f3acd7fa5",
+      "089ef2fa-79c2-476e-8d87-56dcbfb8082a",
+      "092eb7b8-b9e9-445d-82bf-0f87ab759715",
+      "0971673c-8351-41d6-bf40-e4eac606e66f",
+      "0988048d-196d-4098-b629-942f3561686e",
+      "09893e2f-029b-4f30-b5fe-ba4685aae0b2",
+      "0a776cd1-b264-4dc7-938a-5a9406b3faed",
+      "0ade280c-1d30-4b57-b00e-05d68ad1e0fd",
+      "0af11631-ff41-4674-b1e9-ea8c5cfd6521",
+      "0afcecb8-8ce7-4a30-bdf1-059504196ee3",
+      "0afed5f8-5ae4-48cf-bf48-0bb5e875df42",
+      "0b9ec1c2-c717-4e5a-9012-5ea6cc933dca",
+      "0c1ea355-9739-41c3-a836-857a2ee52761",
+      "0c394925-eba9-4285-93a9-eeeba78f9c80",
+      "0c4e90be-8254-4aac-8235-38d0e2e85111",
+      "0c73004a-b794-4189-93ee-3b48be4ca1e4",
+      "0c94d09b-c9b3-4ba6-904f-5e392a5135e5",
+      "0ca6ad8b-19df-430d-9e99-795f9dc1d78e",
+      "0d02bbeb-6376-4216-a52a-2517d5a74672",
+      "0d5614f4-9417-48ad-8990-e62fb0c4fef8",
+      "0d7ad92f-bc00-4a17-94eb-d2b5ad11578b",
+      "0ddf9c31-35b1-46c9-82c3-b11f48a8020c",
+      "0e8b5d97-c96d-425e-8758-93612ea93610",
+      "0eb91145-9aad-4227-99ad-1c3a4b76c10e",
+      "0f19be59-d1b5-49b0-a199-4ce83836f532",
+      "0f3b1733-c599-4c4d-ad13-a50a979c7b4a",
+      "0f4d8d13-979e-4706-9992-3d83218f8840",
+      "0fc47126-e1c4-4b26-a628-731125a5b7d4",
+      "1074907f-03b5-4d47-b207-fac6e429ad6c",
+      "10824502-1f24-4668-8132-5e12d23c10a5",
+      "10b7eb98-13aa-4fee-87f5-158d270e742f",
+      "110c880e-f896-48ff-b057-511ce2a0d66a",
+      "116178fa-242d-4bd8-9d88-531f13bd6b82"
+    ],
     "dinner": [
+      "006fa69f-fe30-4a42-95e0-4ddae0042cea",
+      "0088c5f7-ff8a-450e-a3a2-441fee166df3",
+      "00a176a0-5382-4cd4-8aaf-21deb9d6f25a",
+      "00b52b34-fce7-489a-8b5e-84e95617708b",
+      "00efe59e-4f33-4095-9ffc-253f98c35e82",
+      "01ab2e6d-439e-4bc9-960f-62410a2fc2aa",
+      "02472f9d-267f-474b-914c-8376ad5fa666",
+      "0255876c-9762-4295-86a0-d01948439b3a",
+      "02b27382-7d86-4495-9328-479232d872ca",
+      "02c5a1fd-b169-4887-842a-9ae65462f44e",
+      "03c807bd-f277-4ecd-ab03-f0ff20ddb53c",
+      "04314ad7-972c-416b-9a1a-8457b5173353",
+      "0496c06d-1778-41da-bf74-693fdda9f4b0",
+      "049bd628-6a4e-4aa7-b285-e1902c42d485",
+      "049d1ef8-866b-4e81-9d8b-8e4254ead3f6",
+      "04e3ae56-a6ed-4a45-81ef-2a5658e97b8d",
+      "05839125-96ee-4694-adc4-3cff7854e673",
+      "063bc809-fb53-43c0-a9e0-8815ed6ef9be",
+      "065cfb6e-3ddc-41b6-8cca-d9193bcb5439",
       "0731be24-3dae-49fb-a431-08d649c5155d",
-      "18a144f8-cb2a-46a5-9b70-71c7b4cf11f4",
-      "1a0580d4-bc23-45d6-8b5f-8957dab8a665",
-      "1f13ed45-5c5e-4d7a-8d66-d0c93c543643",
-      "24c69875-6856-43c8-ae13-e102390f0d86",
-      "24f24950-b71d-47c3-b35f-bb15cbf68fbe",
-      "2d5eb627-6727-41bf-9ed6-be993b36055b",
-      "2dc01850-5f80-458a-92a4-2c8a22c3d1e8",
-      "2f09d42d-4030-40d2-91fb-c8e3ccad1deb",
-      "34093e4b-2897-428e-bfa7-0892092c6aa4",
-      "43784faf-363f-4d65-b598-3375ee107e50",
-      "4b8122bc-d4bd-4908-94c6-bc84f43e8750",
-      "6486b4dc-5c69-4250-8ddd-bebcc42f9ff5",
-      "6bd085fe-866d-4f29-acf8-5ee6c5e9c8c8",
-      "7b3773be-1c64-457d-8425-cc9cbfc4c72f",
-      "7fca80e6-d400-4ecb-aad0-7260c0c80e95",
-      "976fc7f8-5f4b-44eb-8ae5-9b744ceb4aa3",
-      "9a397e11-749c-4f0d-a32e-cc1b90d4ffa0",
-      "9a5d80b0-04a5-47e9-864c-27336c9c6f7b",
-      "9f83021d-618f-47fa-973e-0b36119e1c48",
-      "aad45c44-77fc-44fa-8b72-dcd027a882c0",
-      "b994a725-2c20-406b-a499-63130bfa8a84",
-      "bf9a37d0-7ebc-47c3-8491-be347ce4d2ec",
-      "cc351973-4b22-486c-93ac-5b2e3e6cf291",
-      "dc826dbe-ae7d-47d9-b26c-a255cab93cd1",
-      "dcf7b5f4-0ae4-4e5a-a131-46c607c30e01",
-      "def0f5bc-a3c2-471a-8eb6-e6d9be3cb0b9",
-      "eb5f2d21-971f-4360-827f-9740841d975c",
-      "f55eafe3-cb91-451e-9ad8-11e4f59cb672",
-      "fcc5e7e0-b13b-4bb2-bd48-d46dacfc8483",
-      "fe823abc-3c76-46f8-a623-7c8e0d5a6b1b"
+      "08a9062b-3716-442c-b9a4-9f57fc4cf31d",
+      "093a5983-d2be-4634-91ec-7747f2da0a75",
+      "0a896a9c-3092-4440-8eb5-cb7867833f77",
+      "0aa35aa5-e9d7-4a45-bc7d-426948889df9",
+      "0b019a8f-8ac2-44f6-aca5-73227d2279d3",
+      "0bb95950-c011-4682-80e8-8fc2693dea21",
+      "0c07b55f-543e-4fd9-9da4-28f2b22209eb",
+      "0c2c4589-adbd-42e9-bc9f-55c70e699ddb",
+      "0ddf9c31-35b1-46c9-82c3-b11f48a8020c",
+      "0eb51f42-57d6-43d4-9c0c-2d156100e57c",
+      "0edafc9d-164d-4a62-a544-8929749682db",
+      "0f949fdb-1161-4515-80ab-d56ea57ca1a9",
+      "10713624-0cbb-4a03-a5c9-1d67c55cd7bd",
+      "110c880e-f896-48ff-b057-511ce2a0d66a"
     ],
     "beginner": [
+      "006fa69f-fe30-4a42-95e0-4ddae0042cea",
+      "0088c5f7-ff8a-450e-a3a2-441fee166df3",
+      "00a176a0-5382-4cd4-8aaf-21deb9d6f25a",
+      "00a718c9-0789-4d9a-98df-c22badf10ce8",
+      "00b52b34-fce7-489a-8b5e-84e95617708b",
+      "00c573ab-8d09-4392-a39d-9bd822804f56",
+      "00efe59e-4f33-4095-9ffc-253f98c35e82",
+      "021cd1a4-d984-4880-af05-d646212e7060",
+      "02b27382-7d86-4495-9328-479232d872ca",
+      "02c5a1fd-b169-4887-842a-9ae65462f44e",
+      "030060ad-686c-441d-b8c4-e7a80dc85b56",
+      "032bf293-a196-45dd-b160-be455d260e0c",
+      "0384f60e-af0e-4404-98b8-7c71572df127",
+      "03c807bd-f277-4ecd-ab03-f0ff20ddb53c",
+      "03d65208-7f9a-4056-aaef-462ce00183a8",
+      "03f66b93-c8ca-405d-a336-d96e1fa14b60",
+      "04314ad7-972c-416b-9a1a-8457b5173353",
+      "047482c1-0920-49f0-a2b9-195186a74a24",
+      "0496c06d-1778-41da-bf74-693fdda9f4b0",
+      "049ae0d5-4816-4f10-a61c-b7efc42c2c5d",
+      "049d1ef8-866b-4e81-9d8b-8e4254ead3f6",
+      "04fd6fe5-dbba-43c4-bde4-ac1a88099828",
+      "054bf2cf-b21c-4e05-a3b8-127435782b32",
+      "0559960d-512a-42e9-bdeb-bf703dbe5c9b",
+      "056650d6-7520-4cb0-a351-fcc6a39b1583",
+      "056ce13b-a5fd-4aa2-83f9-5772eb16c8db",
+      "0578fd6e-7ccd-4ff5-8dac-b0f68bdc0dbc",
+      "05839125-96ee-4694-adc4-3cff7854e673",
+      "05ad736e-ec28-48b7-a9ad-f4de06270fb5",
+      "05fe1502-b34a-4785-b3ea-3e9bae949afe",
+      "060a9c0e-bbd7-4d52-a65f-73bb652afd8a",
+      "063bc809-fb53-43c0-a9e0-8815ed6ef9be",
+      "065cfb6e-3ddc-41b6-8cca-d9193bcb5439",
       "0731be24-3dae-49fb-a431-08d649c5155d",
-      "1988837b-fc08-4ebb-9667-be0d20b5d15a",
-      "1a0580d4-bc23-45d6-8b5f-8957dab8a665",
-      "24c69875-6856-43c8-ae13-e102390f0d86",
-      "2d5eb627-6727-41bf-9ed6-be993b36055b",
-      "2dc01850-5f80-458a-92a4-2c8a22c3d1e8",
-      "2f09d42d-4030-40d2-91fb-c8e3ccad1deb",
-      "2f4643be-1339-4e94-a26f-cc6155d6da39",
-      "36bdc6d9-d5f7-4472-bef9-5d1c8ce7c202",
-      "39abe4c5-2462-4b8c-a763-3509af3bc681",
-      "3d7b6721-38c9-4efa-a28b-5c93d9f2af97",
-      "43784faf-363f-4d65-b598-3375ee107e50",
-      "4b8122bc-d4bd-4908-94c6-bc84f43e8750",
-      "4de44f1c-d329-4375-9a6b-3b7c6cd3fe5f",
-      "50a38e2c-e7f4-451c-b959-0bbf5014cbe0",
-      "5736c5b2-2bee-44e6-b3a6-aec2243329c2",
-      "5b49e52a-a784-42a7-91a1-8f10541904c2",
-      "6486b4dc-5c69-4250-8ddd-bebcc42f9ff5",
-      "6a0b1772-943f-4ab7-9f42-38f87ef9d39b",
-      "75efb151-5b4b-48c5-ad53-9e514a5db8fb",
-      "7b3773be-1c64-457d-8425-cc9cbfc4c72f",
-      "7b830d08-9a5f-4983-a779-fc75da47e5b0",
-      "7e08a76d-8680-46ba-a7ee-c755077d6207",
-      "882cbc83-06c1-4f82-b93e-fd111178c362",
-      "897dcc3c-0948-4085-97ae-43239f875f85",
-      "8ae3bcab-0dc4-48ea-add5-0096788ba0a7",
-      "8d35a434-dbc0-490a-ad73-4efeb1834653",
-      "8deb0bcb-109a-4ce0-8395-f14baa260b1d",
-      "8e954a1e-a83f-4ad8-9957-4e227760533b",
-      "98b7cd61-4323-4d07-8c5f-88b3804f197e",
-      "997b5c00-b5b1-467a-8b74-03731af7b31e",
-      "9a397e11-749c-4f0d-a32e-cc1b90d4ffa0",
-      "9f83021d-618f-47fa-973e-0b36119e1c48",
-      "aad45c44-77fc-44fa-8b72-dcd027a882c0",
-      "ad5bf1f4-66ff-49a3-8b48-4a001fa3c72f",
-      "b4608a0e-1115-4747-ad4d-d5884ef60bc0",
-      "b977fed4-8eb9-4a61-9108-0f0579d4c718",
-      "b994a725-2c20-406b-a499-63130bfa8a84",
-      "cc351973-4b22-486c-93ac-5b2e3e6cf291",
-      "cc7b9924-41de-4967-9da9-d0518a7032e0",
-      "ced10dcb-6b81-4dfa-952a-aad61a649f81",
-      "d12c8412-cd03-4bbe-8061-e979c6b0d741",
-      "dc826dbe-ae7d-47d9-b26c-a255cab93cd1",
-      "dcf7b5f4-0ae4-4e5a-a131-46c607c30e01",
-      "e0ad6b56-7bcc-406f-ac0d-9cbdffa83327",
-      "e1e246b0-45b6-443f-ae5d-7af36f92b923",
-      "e35515b4-1a0a-4a18-b978-a443e96a8dc3",
-      "e69885fb-3077-4ae1-85e6-6eccc988d878",
-      "eb5f2d21-971f-4360-827f-9740841d975c",
-      "ef671319-30b0-4b02-838a-ba697f253769",
-      "f01732d3-7eff-49b5-be51-14af239969ac",
-      "f6397528-d25f-4845-aaa7-ee69c4bd25a6",
-      "f9e9262f-4e23-4441-9116-19a280141278",
-      "fc5ffaf5-39d5-4530-b8ab-a9fdf4298884",
-      "fcc5e7e0-b13b-4bb2-bd48-d46dacfc8483",
-      "fe823abc-3c76-46f8-a623-7c8e0d5a6b1b"
-    ],
-    "lunch": [
-      "0b9ec1c2-c717-4e5a-9012-5ea6cc933dca",
-      "10b7eb98-13aa-4fee-87f5-158d270e742f",
-      "1501b0e3-b26d-4005-9086-923149cb27c7",
-      "19584378-4aa8-4f5e-9f06-414e71961951",
-      "20d97c29-5fed-42ef-9f8c-82749a358352",
-      "2408d343-97dc-47a9-998d-fd7ea80ad97a",
-      "26392aa5-649c-47bc-b687-3f5990ead122",
-      "2a4686eb-414c-4cc7-bde7-35951599f738",
-      "2d5eb627-6727-41bf-9ed6-be993b36055b",
-      "2f09d42d-4030-40d2-91fb-c8e3ccad1deb",
-      "36bdc6d9-d5f7-4472-bef9-5d1c8ce7c202",
-      "38bbeb90-6520-4882-a28c-5c37507950d4",
-      "39abe4c5-2462-4b8c-a763-3509af3bc681",
-      "43784faf-363f-4d65-b598-3375ee107e50",
-      "4b10b316-146c-4ac9-8a8a-a699359da322",
-      "4de44f1c-d329-4375-9a6b-3b7c6cd3fe5f",
-      "5f0d2e4a-d0d7-494c-89ed-73a53bae4428",
-      "6e151893-cf10-4379-8916-3d1ce9fe363d",
-      "87c539f8-6068-4028-b67b-50104150ca95",
-      "8ae3bcab-0dc4-48ea-add5-0096788ba0a7",
-      "8e954a1e-a83f-4ad8-9957-4e227760533b",
-      "96a7229a-a810-48e8-946f-5659dcaa8c4e",
-      "98b7cd61-4323-4d07-8c5f-88b3804f197e",
-      "9a397e11-749c-4f0d-a32e-cc1b90d4ffa0",
-      "9f83021d-618f-47fa-973e-0b36119e1c48",
-      "a85ff03a-7026-4263-aea5-1e6e1b879f05",
-      "b380c402-7ba2-4be2-8ece-6aa4abe69ba6",
-      "bc69a21a-96b4-4cc1-94ea-0a7a031b3f0f",
-      "c99a8427-617f-4eca-a859-60dfc8821677",
-      "cc351973-4b22-486c-93ac-5b2e3e6cf291",
-      "ced10dcb-6b81-4dfa-952a-aad61a649f81",
-      "cf502199-7c93-415d-9cef-b073d8eca747",
-      "d7a480c0-38d5-448d-b0fb-7ba02027b507",
-      "e1e246b0-45b6-443f-ae5d-7af36f92b923",
-      "e801bc78-6d98-4594-b882-a5eab422ef16",
-      "eb5f2d21-971f-4360-827f-9740841d975c",
-      "ef671319-30b0-4b02-838a-ba697f253769",
-      "f55eafe3-cb91-451e-9ad8-11e4f59cb672",
-      "f57ae611-8fa3-40f5-b5ac-139a2f6cbc5a",
-      "f60d9010-5407-4aec-bf29-5025e466cb80",
-      "f6397528-d25f-4845-aaa7-ee69c4bd25a6",
-      "fcc5e7e0-b13b-4bb2-bd48-d46dacfc8483",
-      "fe823abc-3c76-46f8-a623-7c8e0d5a6b1b"
-    ],
-    "pasta": [
-      "0b9ec1c2-c717-4e5a-9012-5ea6cc933dca",
-      "1a0580d4-bc23-45d6-8b5f-8957dab8a665",
-      "24c69875-6856-43c8-ae13-e102390f0d86",
-      "24f24950-b71d-47c3-b35f-bb15cbf68fbe",
-      "2a4686eb-414c-4cc7-bde7-35951599f738",
-      "34093e4b-2897-428e-bfa7-0892092c6aa4",
-      "4424bd0d-228c-4493-bf79-d4bc1ea8527b",
-      "6bd085fe-866d-4f29-acf8-5ee6c5e9c8c8",
-      "8ae3bcab-0dc4-48ea-add5-0096788ba0a7",
-      "d7a480c0-38d5-448d-b0fb-7ba02027b507",
-      "dcf7b5f4-0ae4-4e5a-a131-46c607c30e01",
-      "e1e246b0-45b6-443f-ae5d-7af36f92b923",
-      "f55eafe3-cb91-451e-9ad8-11e4f59cb672",
-      "f60d9010-5407-4aec-bf29-5025e466cb80",
-      "fe823abc-3c76-46f8-a623-7c8e0d5a6b1b"
-    ],
-    "chicken": [
-      "1501b0e3-b26d-4005-9086-923149cb27c7",
-      "2408d343-97dc-47a9-998d-fd7ea80ad97a",
-      "24f24950-b71d-47c3-b35f-bb15cbf68fbe",
-      "34093e4b-2897-428e-bfa7-0892092c6aa4",
-      "38bbeb90-6520-4882-a28c-5c37507950d4",
-      "4424bd0d-228c-4493-bf79-d4bc1ea8527b",
-      "5f0d2e4a-d0d7-494c-89ed-73a53bae4428",
-      "6486b4dc-5c69-4250-8ddd-bebcc42f9ff5",
-      "6e151893-cf10-4379-8916-3d1ce9fe363d",
-      "7b3773be-1c64-457d-8425-cc9cbfc4c72f",
-      "976fc7f8-5f4b-44eb-8ae5-9b744ceb4aa3",
-      "a85ff03a-7026-4263-aea5-1e6e1b879f05",
-      "b380c402-7ba2-4be2-8ece-6aa4abe69ba6",
-      "b994a725-2c20-406b-a499-63130bfa8a84",
-      "c99a8427-617f-4eca-a859-60dfc8821677",
-      "ced10dcb-6b81-4dfa-952a-aad61a649f81",
-      "def0f5bc-a3c2-471a-8eb6-e6d9be3cb0b9",
-      "e6ed45f8-2758-4442-8802-0a8f0234482b",
-      "fcc5e7e0-b13b-4bb2-bd48-d46dacfc8483",
-      "fe823abc-3c76-46f8-a623-7c8e0d5a6b1b"
-    ],
-    "fish": [
-      "19584378-4aa8-4f5e-9f06-414e71961951",
-      "26392aa5-649c-47bc-b687-3f5990ead122",
-      "2d5eb627-6727-41bf-9ed6-be993b36055b",
-      "4b8122bc-d4bd-4908-94c6-bc84f43e8750",
-      "bf9a37d0-7ebc-47c3-8491-be347ce4d2ec"
-    ],
-    "dessert": [
-      "1988837b-fc08-4ebb-9667-be0d20b5d15a",
-      "24c95089-937f-4b73-bd16-cd1f14a77924",
-      "28477212-0859-4906-8f95-80e442ea921f",
-      "2f4643be-1339-4e94-a26f-cc6155d6da39",
-      "45eb8a57-8fe0-4639-b95a-0c9414eadcdb",
-      "5736c5b2-2bee-44e6-b3a6-aec2243329c2",
-      "57d19e1a-d89c-42ae-8451-1a9f0b5699c0",
-      "5b49e52a-a784-42a7-91a1-8f10541904c2",
-      "6a0b1772-943f-4ab7-9f42-38f87ef9d39b",
-      "75efb151-5b4b-48c5-ad53-9e514a5db8fb",
-      "7b830d08-9a5f-4983-a779-fc75da47e5b0",
-      "7e08a76d-8680-46ba-a7ee-c755077d6207",
-      "882cbc83-06c1-4f82-b93e-fd111178c362",
-      "897dcc3c-0948-4085-97ae-43239f875f85",
-      "8deb0bcb-109a-4ce0-8395-f14baa260b1d",
-      "9214ba74-e218-4a64-8004-e3473d8f940c",
-      "9687b88c-8d70-435c-aa37-25f4468f9f2f",
-      "973ec19e-fdca-4aa7-8457-b5d6f016f70c",
-      "997b5c00-b5b1-467a-8b74-03731af7b31e",
-      "ac531a70-5f03-4a2c-a734-d9782e9181c5",
-      "ad5bf1f4-66ff-49a3-8b48-4a001fa3c72f",
-      "b4608a0e-1115-4747-ad4d-d5884ef60bc0",
-      "bdf3a4b4-201a-4330-83fd-a4b5453c2960",
-      "c0fab7b2-9463-4db3-b9c9-8cc4202f20fd",
-      "c1478941-0fc5-46a2-97b3-36189594d87c",
-      "c6161e68-3782-4c01-baf2-9fb3439026d0",
-      "c8e2340e-2992-41fe-b769-55985b61274b",
-      "cc7b9924-41de-4967-9da9-d0518a7032e0",
-      "cf502199-7c93-415d-9cef-b073d8eca747",
-      "d12c8412-cd03-4bbe-8061-e979c6b0d741",
-      "d1b85d91-aa8e-4a5a-be5c-4bf9d5be63ee",
-      "d2fb7a98-f721-449e-a15a-9121f29d8521",
-      "dd6099f8-d84f-4ad9-b33c-25473ae4a5ac",
-      "e060392b-43ee-410f-94c1-b4d72fb42ce5",
-      "e0ad6b56-7bcc-406f-ac0d-9cbdffa83327",
-      "e35515b4-1a0a-4a18-b978-a443e96a8dc3",
-      "e69885fb-3077-4ae1-85e6-6eccc988d878",
-      "e6a56906-0ec0-4235-8163-bcd4c121f14f",
-      "ead670eb-ecf8-42cc-b6a9-3260fa489fa5",
-      "f01732d3-7eff-49b5-be51-14af239969ac",
-      "f9e9262f-4e23-4441-9116-19a280141278",
-      "fa1450b1-67a9-487c-9459-a7a1de2e511f"
+      "07ea177c-338c-41cc-bcce-720ed9b2e1a6",
+      "07fc9c44-6bfd-4b29-8f7a-09db1179ca7c",
+      "082f4a21-7818-47fb-95c6-c18f3acd7fa5",
+      "086aa4a0-6ead-44b5-b25c-a7c68fd0d0ec",
+      "089cb498-3cc4-4fc1-9b8a-d9f22ac58efe",
+      "089ef2fa-79c2-476e-8d87-56dcbfb8082a",
+      "08a82a48-524f-4399-9048-6ade797902a4",
+      "08a9062b-3716-442c-b9a4-9f57fc4cf31d",
+      "092eb7b8-b9e9-445d-82bf-0f87ab759715",
+      "093a5983-d2be-4634-91ec-7747f2da0a75",
+      "0971673c-8351-41d6-bf40-e4eac606e66f",
+      "0988048d-196d-4098-b629-942f3561686e",
+      "09893e2f-029b-4f30-b5fe-ba4685aae0b2",
+      "0a776cd1-b264-4dc7-938a-5a9406b3faed",
+      "0a896a9c-3092-4440-8eb5-cb7867833f77",
+      "0ab8a428-de38-4702-aaa9-f41467383b04",
+      "0af11631-ff41-4674-b1e9-ea8c5cfd6521",
+      "0afcecb8-8ce7-4a30-bdf1-059504196ee3",
+      "0afd493a-ab59-40d3-b191-e2ff17aa2493",
+      "0afed5f8-5ae4-48cf-bf48-0bb5e875df42",
+      "0bb95950-c011-4682-80e8-8fc2693dea21",
+      "0c07b55f-543e-4fd9-9da4-28f2b22209eb",
+      "0c1ea355-9739-41c3-a836-857a2ee52761",
+      "0c394925-eba9-4285-93a9-eeeba78f9c80",
+      "0c73004a-b794-4189-93ee-3b48be4ca1e4",
+      "0c94d09b-c9b3-4ba6-904f-5e392a5135e5",
+      "0d48b744-3284-41c3-b1dd-1e7ecc7a57de",
+      "0d5614f4-9417-48ad-8990-e62fb0c4fef8",
+      "0d7ad92f-bc00-4a17-94eb-d2b5ad11578b",
+      "0ddf9c31-35b1-46c9-82c3-b11f48a8020c",
+      "0e8b5d97-c96d-425e-8758-93612ea93610",
+      "0eb51f42-57d6-43d4-9c0c-2d156100e57c",
+      "0eb91145-9aad-4227-99ad-1c3a4b76c10e",
+      "0f19be59-d1b5-49b0-a199-4ce83836f532",
+      "0f3b1733-c599-4c4d-ad13-a50a979c7b4a",
+      "0f4d8d13-979e-4706-9992-3d83218f8840",
+      "0f8eb35d-a6ea-440d-aca8-ed67b5834e1b",
+      "0f949fdb-1161-4515-80ab-d56ea57ca1a9",
+      "0fc47126-e1c4-4b26-a628-731125a5b7d4",
+      "10713624-0cbb-4a03-a5c9-1d67c55cd7bd",
+      "1074907f-03b5-4d47-b207-fac6e429ad6c",
+      "10824502-1f24-4668-8132-5e12d23c10a5",
+      "110c880e-f896-48ff-b057-511ce2a0d66a",
+      "116c1a64-e6a3-4059-a2a6-180fb54c6a2c",
+      "11a3fbe3-9e40-4b36-9310-823588268199",
+      "11dbefc3-3996-441f-ac02-b059007d7dc8"
     ],
     "steak": [
-      "20d97c29-5fed-42ef-9f8c-82749a358352",
-      "9a397e11-749c-4f0d-a32e-cc1b90d4ffa0",
-      "dc826dbe-ae7d-47d9-b26c-a255cab93cd1",
-      "dcf7b5f4-0ae4-4e5a-a131-46c607c30e01",
-      "eb5f2d21-971f-4360-827f-9740841d975c"
+      "006fa69f-fe30-4a42-95e0-4ddae0042cea",
+      "00b52b34-fce7-489a-8b5e-84e95617708b",
+      "04e3ae56-a6ed-4a45-81ef-2a5658e97b8d",
+      "065cfb6e-3ddc-41b6-8cca-d9193bcb5439",
+      "0afcecb8-8ce7-4a30-bdf1-059504196ee3"
     ],
-    "vegetarian": [
-      "24c69875-6856-43c8-ae13-e102390f0d86",
-      "36bdc6d9-d5f7-4472-bef9-5d1c8ce7c202",
-      "3d7b6721-38c9-4efa-a28b-5c93d9f2af97",
-      "43784faf-363f-4d65-b598-3375ee107e50",
-      "4b10b316-146c-4ac9-8a8a-a699359da322",
-      "4de44f1c-d329-4375-9a6b-3b7c6cd3fe5f",
-      "87c539f8-6068-4028-b67b-50104150ca95",
-      "96a7229a-a810-48e8-946f-5659dcaa8c4e",
-      "9a5d80b0-04a5-47e9-864c-27336c9c6f7b",
-      "bc69a21a-96b4-4cc1-94ea-0a7a031b3f0f",
-      "e801bc78-6d98-4594-b882-a5eab422ef16",
-      "ef671319-30b0-4b02-838a-ba697f253769",
-      "f01732d3-7eff-49b5-be51-14af239969ac",
-      "f55eafe3-cb91-451e-9ad8-11e4f59cb672",
-      "f57ae611-8fa3-40f5-b5ac-139a2f6cbc5a",
-      "f60d9010-5407-4aec-bf29-5025e466cb80",
-      "f6397528-d25f-4845-aaa7-ee69c4bd25a6"
+    "under500": [
+      "0088c5f7-ff8a-450e-a3a2-441fee166df3",
+      "00a176a0-5382-4cd4-8aaf-21deb9d6f25a",
+      "00a718c9-0789-4d9a-98df-c22badf10ce8",
+      "00efe59e-4f33-4095-9ffc-253f98c35e82",
+      "012eba3b-4c0a-4839-a5e4-7fea566738f8",
+      "01ab2e6d-439e-4bc9-960f-62410a2fc2aa",
+      "021cd1a4-d984-4880-af05-d646212e7060",
+      "0231ba2d-32dc-474f-bc29-5fccc5abdeba",
+      "0255876c-9762-4295-86a0-d01948439b3a",
+      "025a9a4f-41c8-40e8-83b7-6fa8c2b9574a",
+      "02b27382-7d86-4495-9328-479232d872ca",
+      "02c5a1fd-b169-4887-842a-9ae65462f44e",
+      "030060ad-686c-441d-b8c4-e7a80dc85b56",
+      "032bf293-a196-45dd-b160-be455d260e0c",
+      "033d1d7a-6dcd-4a71-aa53-8c5ad7d5f3be",
+      "0384f60e-af0e-4404-98b8-7c71572df127",
+      "03c807bd-f277-4ecd-ab03-f0ff20ddb53c",
+      "03f66b93-c8ca-405d-a336-d96e1fa14b60",
+      "047482c1-0920-49f0-a2b9-195186a74a24",
+      "0490768f-501f-4422-a4fa-3213da53464b",
+      "0496c06d-1778-41da-bf74-693fdda9f4b0",
+      "049ae0d5-4816-4f10-a61c-b7efc42c2c5d",
+      "049bd628-6a4e-4aa7-b285-e1902c42d485",
+      "049d1ef8-866b-4e81-9d8b-8e4254ead3f6",
+      "054bf2cf-b21c-4e05-a3b8-127435782b32",
+      "056ce13b-a5fd-4aa2-83f9-5772eb16c8db",
+      "0578fd6e-7ccd-4ff5-8dac-b0f68bdc0dbc",
+      "05839125-96ee-4694-adc4-3cff7854e673",
+      "05fe1502-b34a-4785-b3ea-3e9bae949afe",
+      "060a9c0e-bbd7-4d52-a65f-73bb652afd8a",
+      "063bc809-fb53-43c0-a9e0-8815ed6ef9be",
+      "06e8f0a0-a702-4502-b9c3-e7275691b1de",
+      "07ea177c-338c-41cc-bcce-720ed9b2e1a6",
+      "086aa4a0-6ead-44b5-b25c-a7c68fd0d0ec",
+      "089ef2fa-79c2-476e-8d87-56dcbfb8082a",
+      "08a82a48-524f-4399-9048-6ade797902a4",
+      "08a9062b-3716-442c-b9a4-9f57fc4cf31d",
+      "092eb7b8-b9e9-445d-82bf-0f87ab759715",
+      "093a5983-d2be-4634-91ec-7747f2da0a75",
+      "0988048d-196d-4098-b629-942f3561686e",
+      "09893e2f-029b-4f30-b5fe-ba4685aae0b2",
+      "0a776cd1-b264-4dc7-938a-5a9406b3faed",
+      "0a896a9c-3092-4440-8eb5-cb7867833f77",
+      "0aa35aa5-e9d7-4a45-bc7d-426948889df9",
+      "0ab8a428-de38-4702-aaa9-f41467383b04",
+      "0af11631-ff41-4674-b1e9-ea8c5cfd6521",
+      "0afcecb8-8ce7-4a30-bdf1-059504196ee3",
+      "0afd493a-ab59-40d3-b191-e2ff17aa2493",
+      "0b046555-ade9-489c-b33a-9e30376b999e",
+      "0bb95950-c011-4682-80e8-8fc2693dea21",
+      "0c07b55f-543e-4fd9-9da4-28f2b22209eb",
+      "0c1ea355-9739-41c3-a836-857a2ee52761",
+      "0c2c4589-adbd-42e9-bc9f-55c70e699ddb",
+      "0c394925-eba9-4285-93a9-eeeba78f9c80",
+      "0c4e90be-8254-4aac-8235-38d0e2e85111",
+      "0c73004a-b794-4189-93ee-3b48be4ca1e4",
+      "0c94d09b-c9b3-4ba6-904f-5e392a5135e5",
+      "0d02bbeb-6376-4216-a52a-2517d5a74672",
+      "0d48b744-3284-41c3-b1dd-1e7ecc7a57de",
+      "0d5614f4-9417-48ad-8990-e62fb0c4fef8",
+      "0d71d893-f770-45f2-8dc5-5dcfb00c692c",
+      "0dc005c2-d281-4aed-9a7e-52761012a4b4",
+      "0ddf9c31-35b1-46c9-82c3-b11f48a8020c",
+      "0e24918d-9c7d-4452-8795-f99fadb68bfe",
+      "0e8b5d97-c96d-425e-8758-93612ea93610",
+      "0eb51f42-57d6-43d4-9c0c-2d156100e57c",
+      "0eb91145-9aad-4227-99ad-1c3a4b76c10e",
+      "0f19be59-d1b5-49b0-a199-4ce83836f532",
+      "0f3b1733-c599-4c4d-ad13-a50a979c7b4a",
+      "0f4d8d13-979e-4706-9992-3d83218f8840",
+      "0f8eb35d-a6ea-440d-aca8-ed67b5834e1b",
+      "0f949fdb-1161-4515-80ab-d56ea57ca1a9",
+      "0faffa01-3f04-4377-bb44-e248ab30ab44",
+      "0fc47126-e1c4-4b26-a628-731125a5b7d4",
+      "1074907f-03b5-4d47-b207-fac6e429ad6c",
+      "10824502-1f24-4668-8132-5e12d23c10a5",
+      "10a1927c-8aeb-4fd2-82ee-30d9ab60bc92",
+      "1104ebe8-d65b-4a52-a7a1-7646baa0f1a4",
+      "110c880e-f896-48ff-b057-511ce2a0d66a",
+      "116178fa-242d-4bd8-9d88-531f13bd6b82",
+      "116c1a64-e6a3-4059-a2a6-180fb54c6a2c",
+      "11a3fbe3-9e40-4b36-9310-823588268199",
+      "11dbefc3-3996-441f-ac02-b059007d7dc8"
     ],
-    "salad": [
-      "26392aa5-649c-47bc-b687-3f5990ead122",
-      "2d5eb627-6727-41bf-9ed6-be993b36055b",
-      "38bbeb90-6520-4882-a28c-5c37507950d4",
-      "7fca80e6-d400-4ecb-aad0-7260c0c80e95",
-      "87c539f8-6068-4028-b67b-50104150ca95",
-      "8e954a1e-a83f-4ad8-9957-4e227760533b",
-      "96a7229a-a810-48e8-946f-5659dcaa8c4e",
-      "a85ff03a-7026-4263-aea5-1e6e1b879f05",
-      "c99a8427-617f-4eca-a859-60dfc8821677",
-      "ced10dcb-6b81-4dfa-952a-aad61a649f81",
-      "ef671319-30b0-4b02-838a-ba697f253769",
-      "f57ae611-8fa3-40f5-b5ac-139a2f6cbc5a",
-      "f6397528-d25f-4845-aaa7-ee69c4bd25a6"
-    ],
-    "breakfast": [
-      "2dc01850-5f80-458a-92a4-2c8a22c3d1e8",
-      "2f09d42d-4030-40d2-91fb-c8e3ccad1deb",
-      "3d7b6721-38c9-4efa-a28b-5c93d9f2af97",
-      "4424bd0d-228c-4493-bf79-d4bc1ea8527b",
-      "50a38e2c-e7f4-451c-b959-0bbf5014cbe0",
-      "5736c5b2-2bee-44e6-b3a6-aec2243329c2",
-      "8d35a434-dbc0-490a-ad73-4efeb1834653",
-      "b4608a0e-1115-4747-ad4d-d5884ef60bc0",
-      "b977fed4-8eb9-4a61-9108-0f0579d4c718",
-      "c8e2340e-2992-41fe-b769-55985b61274b",
-      "cc7b9924-41de-4967-9da9-d0518a7032e0",
-      "e69885fb-3077-4ae1-85e6-6eccc988d878",
-      "e6ed45f8-2758-4442-8802-0a8f0234482b",
-      "f01732d3-7eff-49b5-be51-14af239969ac",
-      "fc5ffaf5-39d5-4530-b8ab-a9fdf4298884"
-    ],
-    "vegan": [
-      "2dc01850-5f80-458a-92a4-2c8a22c3d1e8",
-      "36bdc6d9-d5f7-4472-bef9-5d1c8ce7c202",
-      "43784faf-363f-4d65-b598-3375ee107e50",
-      "9687b88c-8d70-435c-aa37-25f4468f9f2f",
-      "cc7b9924-41de-4967-9da9-d0518a7032e0",
-      "f57ae611-8fa3-40f5-b5ac-139a2f6cbc5a",
-      "f6397528-d25f-4845-aaa7-ee69c4bd25a6"
+    "fish": [
+      "00a176a0-5382-4cd4-8aaf-21deb9d6f25a",
+      "0384f60e-af0e-4404-98b8-7c71572df127",
+      "04314ad7-972c-416b-9a1a-8457b5173353",
+      "056650d6-7520-4cb0-a351-fcc6a39b1583",
+      "05728c5c-be55-4938-b1b2-67d62c355aef",
+      "0c94d09b-c9b3-4ba6-904f-5e392a5135e5",
+      "0e8b5d97-c96d-425e-8758-93612ea93610",
+      "0edafc9d-164d-4a62-a544-8929749682db",
+      "0f4d8d13-979e-4706-9992-3d83218f8840",
+      "0f949fdb-1161-4515-80ab-d56ea57ca1a9",
+      "0faffa01-3f04-4377-bb44-e248ab30ab44"
     ],
     "beans": [
-      "36bdc6d9-d5f7-4472-bef9-5d1c8ce7c202",
-      "6bd085fe-866d-4f29-acf8-5ee6c5e9c8c8",
-      "87c539f8-6068-4028-b67b-50104150ca95",
-      "eb5f2d21-971f-4360-827f-9740841d975c",
-      "ef671319-30b0-4b02-838a-ba697f253769",
-      "f57ae611-8fa3-40f5-b5ac-139a2f6cbc5a"
+      "00a176a0-5382-4cd4-8aaf-21deb9d6f25a",
+      "01ab2e6d-439e-4bc9-960f-62410a2fc2aa",
+      "03f66b93-c8ca-405d-a336-d96e1fa14b60",
+      "08a9062b-3716-442c-b9a4-9f57fc4cf31d",
+      "092eb7b8-b9e9-445d-82bf-0f87ab759715",
+      "09893e2f-029b-4f30-b5fe-ba4685aae0b2",
+      "0aa35aa5-e9d7-4a45-bc7d-426948889df9",
+      "0c07b55f-543e-4fd9-9da4-28f2b22209eb",
+      "0c94d09b-c9b3-4ba6-904f-5e392a5135e5",
+      "0ddf9c31-35b1-46c9-82c3-b11f48a8020c",
+      "0f19be59-d1b5-49b0-a199-4ce83836f532",
+      "0f3b1733-c599-4c4d-ad13-a50a979c7b4a"
+    ],
+    "breakfast": [
+      "00a718c9-0789-4d9a-98df-c22badf10ce8",
+      "056ce13b-a5fd-4aa2-83f9-5772eb16c8db",
+      "0af11631-ff41-4674-b1e9-ea8c5cfd6521",
+      "0afd493a-ab59-40d3-b191-e2ff17aa2493",
+      "0d48b744-3284-41c3-b1dd-1e7ecc7a57de",
+      "116c1a64-e6a3-4059-a2a6-180fb54c6a2c",
+      "11dbefc3-3996-441f-ac02-b059007d7dc8"
+    ],
+    "vegetarian": [
+      "00a718c9-0789-4d9a-98df-c22badf10ce8",
+      "00efe59e-4f33-4095-9ffc-253f98c35e82",
+      "012eba3b-4c0a-4839-a5e4-7fea566738f8",
+      "021cd1a4-d984-4880-af05-d646212e7060",
+      "0231ba2d-32dc-474f-bc29-5fccc5abdeba",
+      "03c807bd-f277-4ecd-ab03-f0ff20ddb53c",
+      "03f66b93-c8ca-405d-a336-d96e1fa14b60",
+      "0496c06d-1778-41da-bf74-693fdda9f4b0",
+      "049ae0d5-4816-4f10-a61c-b7efc42c2c5d",
+      "049d1ef8-866b-4e81-9d8b-8e4254ead3f6",
+      "04a2b9fb-2fea-43a0-8bc4-0d82111cbba0",
+      "04fd6fe5-dbba-43c4-bde4-ac1a88099828",
+      "0559960d-512a-42e9-bdeb-bf703dbe5c9b",
+      "056ce13b-a5fd-4aa2-83f9-5772eb16c8db",
+      "0578fd6e-7ccd-4ff5-8dac-b0f68bdc0dbc",
+      "05ad736e-ec28-48b7-a9ad-f4de06270fb5",
+      "060a9c0e-bbd7-4d52-a65f-73bb652afd8a",
+      "065cfb6e-3ddc-41b6-8cca-d9193bcb5439",
+      "06e8f0a0-a702-4502-b9c3-e7275691b1de",
+      "086aa4a0-6ead-44b5-b25c-a7c68fd0d0ec",
+      "089ef2fa-79c2-476e-8d87-56dcbfb8082a",
+      "092eb7b8-b9e9-445d-82bf-0f87ab759715",
+      "09893e2f-029b-4f30-b5fe-ba4685aae0b2",
+      "0aa35aa5-e9d7-4a45-bc7d-426948889df9",
+      "0af11631-ff41-4674-b1e9-ea8c5cfd6521",
+      "0afd493a-ab59-40d3-b191-e2ff17aa2493",
+      "0afed5f8-5ae4-48cf-bf48-0bb5e875df42",
+      "0b046555-ade9-489c-b33a-9e30376b999e",
+      "0c07b55f-543e-4fd9-9da4-28f2b22209eb",
+      "0c1ea355-9739-41c3-a836-857a2ee52761",
+      "0c2c4589-adbd-42e9-bc9f-55c70e699ddb",
+      "0c394925-eba9-4285-93a9-eeeba78f9c80",
+      "0c73004a-b794-4189-93ee-3b48be4ca1e4",
+      "0d48b744-3284-41c3-b1dd-1e7ecc7a57de",
+      "0dc005c2-d281-4aed-9a7e-52761012a4b4",
+      "0e24918d-9c7d-4452-8795-f99fadb68bfe",
+      "0f3b1733-c599-4c4d-ad13-a50a979c7b4a",
+      "0f8eb35d-a6ea-440d-aca8-ed67b5834e1b",
+      "0faffa01-3f04-4377-bb44-e248ab30ab44",
+      "0fc47126-e1c4-4b26-a628-731125a5b7d4",
+      "10824502-1f24-4668-8132-5e12d23c10a5",
+      "116c1a64-e6a3-4059-a2a6-180fb54c6a2c",
+      "11a3fbe3-9e40-4b36-9310-823588268199",
+      "11dbefc3-3996-441f-ac02-b059007d7dc8"
+    ],
+    "pasta": [
+      "00b52b34-fce7-489a-8b5e-84e95617708b",
+      "01ab2e6d-439e-4bc9-960f-62410a2fc2aa",
+      "02472f9d-267f-474b-914c-8376ad5fa666",
+      "02c5a1fd-b169-4887-842a-9ae65462f44e",
+      "04fd6fe5-dbba-43c4-bde4-ac1a88099828",
+      "054bf2cf-b21c-4e05-a3b8-127435782b32",
+      "0559960d-512a-42e9-bdeb-bf703dbe5c9b",
+      "05728c5c-be55-4938-b1b2-67d62c355aef",
+      "082f4a21-7818-47fb-95c6-c18f3acd7fa5",
+      "089cb498-3cc4-4fc1-9b8a-d9f22ac58efe",
+      "0971673c-8351-41d6-bf40-e4eac606e66f",
+      "0b019a8f-8ac2-44f6-aca5-73227d2279d3",
+      "0b9ec1c2-c717-4e5a-9012-5ea6cc933dca",
+      "0bb95950-c011-4682-80e8-8fc2693dea21",
+      "0d5614f4-9417-48ad-8990-e62fb0c4fef8",
+      "0edafc9d-164d-4a62-a544-8929749682db"
+    ],
+    "chicken": [
+      "00c573ab-8d09-4392-a39d-9bd822804f56",
+      "02b27382-7d86-4495-9328-479232d872ca",
+      "02c5a1fd-b169-4887-842a-9ae65462f44e",
+      "0490768f-501f-4422-a4fa-3213da53464b",
+      "049bd628-6a4e-4aa7-b285-e1902c42d485",
+      "05839125-96ee-4694-adc4-3cff7854e673",
+      "063bc809-fb53-43c0-a9e0-8815ed6ef9be",
+      "07fc9c44-6bfd-4b29-8f7a-09db1179ca7c",
+      "093a5983-d2be-4634-91ec-7747f2da0a75",
+      "0988048d-196d-4098-b629-942f3561686e",
+      "0ade280c-1d30-4b57-b00e-05d68ad1e0fd",
+      "0afcecb8-8ce7-4a30-bdf1-059504196ee3",
+      "0b019a8f-8ac2-44f6-aca5-73227d2279d3",
+      "0bb95950-c011-4682-80e8-8fc2693dea21",
+      "0ca6ad8b-19df-430d-9e99-795f9dc1d78e",
+      "0d7ad92f-bc00-4a17-94eb-d2b5ad11578b",
+      "0ddf9c31-35b1-46c9-82c3-b11f48a8020c",
+      "0f19be59-d1b5-49b0-a199-4ce83836f532",
+      "10713624-0cbb-4a03-a5c9-1d67c55cd7bd",
+      "1074907f-03b5-4d47-b207-fac6e429ad6c",
+      "110c880e-f896-48ff-b057-511ce2a0d66a",
+      "116178fa-242d-4bd8-9d88-531f13bd6b82"
+    ],
+    "salad": [
+      "00c573ab-8d09-4392-a39d-9bd822804f56",
+      "03f66b93-c8ca-405d-a336-d96e1fa14b60",
+      "047482c1-0920-49f0-a2b9-195186a74a24",
+      "0496c06d-1778-41da-bf74-693fdda9f4b0",
+      "049bd628-6a4e-4aa7-b285-e1902c42d485",
+      "054bf2cf-b21c-4e05-a3b8-127435782b32",
+      "060a9c0e-bbd7-4d52-a65f-73bb652afd8a",
+      "065cfb6e-3ddc-41b6-8cca-d9193bcb5439",
+      "07fc9c44-6bfd-4b29-8f7a-09db1179ca7c",
+      "089ef2fa-79c2-476e-8d87-56dcbfb8082a",
+      "092eb7b8-b9e9-445d-82bf-0f87ab759715",
+      "09893e2f-029b-4f30-b5fe-ba4685aae0b2",
+      "0afcecb8-8ce7-4a30-bdf1-059504196ee3",
+      "0c94d09b-c9b3-4ba6-904f-5e392a5135e5",
+      "0ca6ad8b-19df-430d-9e99-795f9dc1d78e",
+      "0d5614f4-9417-48ad-8990-e62fb0c4fef8",
+      "0d7ad92f-bc00-4a17-94eb-d2b5ad11578b",
+      "0e8b5d97-c96d-425e-8758-93612ea93610",
+      "0f19be59-d1b5-49b0-a199-4ce83836f532",
+      "0f3b1733-c599-4c4d-ad13-a50a979c7b4a",
+      "10824502-1f24-4668-8132-5e12d23c10a5",
+      "110c880e-f896-48ff-b057-511ce2a0d66a",
+      "11a3fbe3-9e40-4b36-9310-823588268199"
+    ],
+    "dessert": [
+      "012eba3b-4c0a-4839-a5e4-7fea566738f8",
+      "021cd1a4-d984-4880-af05-d646212e7060",
+      "0231ba2d-32dc-474f-bc29-5fccc5abdeba",
+      "0255876c-9762-4295-86a0-d01948439b3a",
+      "030060ad-686c-441d-b8c4-e7a80dc85b56",
+      "032bf293-a196-45dd-b160-be455d260e0c",
+      "03d65208-7f9a-4056-aaef-462ce00183a8",
+      "049ae0d5-4816-4f10-a61c-b7efc42c2c5d",
+      "04a2b9fb-2fea-43a0-8bc4-0d82111cbba0",
+      "06e8f0a0-a702-4502-b9c3-e7275691b1de",
+      "07ea177c-338c-41cc-bcce-720ed9b2e1a6",
+      "086aa4a0-6ead-44b5-b25c-a7c68fd0d0ec",
+      "08a82a48-524f-4399-9048-6ade797902a4",
+      "09d20323-506a-4d67-8767-a634a9f70363",
+      "0b046555-ade9-489c-b33a-9e30376b999e",
+      "0d02bbeb-6376-4216-a52a-2517d5a74672",
+      "0d71d893-f770-45f2-8dc5-5dcfb00c692c",
+      "0eb91145-9aad-4227-99ad-1c3a4b76c10e",
+      "0f8eb35d-a6ea-440d-aca8-ed67b5834e1b",
+      "10a1927c-8aeb-4fd2-82ee-30d9ab60bc92",
+      "1104ebe8-d65b-4a52-a7a1-7646baa0f1a4",
+      "116c1a64-e6a3-4059-a2a6-180fb54c6a2c"
+    ],
+    "vegan": [
+      "021cd1a4-d984-4880-af05-d646212e7060",
+      "049d1ef8-866b-4e81-9d8b-8e4254ead3f6",
+      "060a9c0e-bbd7-4d52-a65f-73bb652afd8a",
+      "08a82a48-524f-4399-9048-6ade797902a4",
+      "092eb7b8-b9e9-445d-82bf-0f87ab759715",
+      "09d20323-506a-4d67-8767-a634a9f70363",
+      "0af11631-ff41-4674-b1e9-ea8c5cfd6521",
+      "0c1ea355-9739-41c3-a836-857a2ee52761"
+    ],
+    "salmon": [
+      "0384f60e-af0e-4404-98b8-7c71572df127",
+      "056650d6-7520-4cb0-a351-fcc6a39b1583"
     ],
     "potatoes": [
-      "57d19e1a-d89c-42ae-8451-1a9f0b5699c0",
-      "d1b85d91-aa8e-4a5a-be5c-4bf9d5be63ee",
-      "eb5f2d21-971f-4360-827f-9740841d975c"
-    ],
-    "sandwich": [
-      "b977fed4-8eb9-4a61-9108-0f0579d4c718",
-      "c99a8427-617f-4eca-a859-60dfc8821677"
+      "0496c06d-1778-41da-bf74-693fdda9f4b0",
+      "05ad736e-ec28-48b7-a9ad-f4de06270fb5",
+      "09893e2f-029b-4f30-b5fe-ba4685aae0b2",
+      "0aa35aa5-e9d7-4a45-bc7d-426948889df9",
+      "0bb95950-c011-4682-80e8-8fc2693dea21",
+      "0c2c4589-adbd-42e9-bc9f-55c70e699ddb",
+      "0c394925-eba9-4285-93a9-eeeba78f9c80",
+      "0dc005c2-d281-4aed-9a7e-52761012a4b4",
+      "10713624-0cbb-4a03-a5c9-1d67c55cd7bd"
     ],
     "drinks": [
-      "c1478941-0fc5-46a2-97b3-36189594d87c"
+      "0578fd6e-7ccd-4ff5-8dac-b0f68bdc0dbc",
+      "086aa4a0-6ead-44b5-b25c-a7c68fd0d0ec"
+    ],
+    "sandwich": [
+      "05fe1502-b34a-4785-b3ea-3e9bae949afe",
+      "0c1ea355-9739-41c3-a836-857a2ee52761",
+      "11dbefc3-3996-441f-ac02-b059007d7dc8"
     ]
   }
 }

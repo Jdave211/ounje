@@ -3,18 +3,37 @@
  * Load the latest Ounje meal plan from the iOS simulator container and push
  * its grocery items into Instacart using a Browser Use Cloud browser instead
  * of local Playwright Chromium.
+ *
+ * This script is intentionally opt-in so the free local Playwright runner stays
+ * the default for testing. Run it only with:
+ *   INSTACART_USE_BROWSER_USE=1 node server/scripts/add-current-plan-to-instacart-browseruse.mjs
  */
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
-import "dotenv/config";
-import { addItemsToInstacartCart } from "../lib/instacart-cart.js";
-import { buildShoppingSpecEntries } from "../lib/instacart-intent.js";
-import { loadPreferredProviderSession } from "../lib/provider-session-store.js";
+import { config as loadDotenv } from "dotenv";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+loadDotenv({ path: path.resolve(SCRIPT_DIR, "..", ".env") });
+const { addItemsToInstacartCart } = await import("../lib/instacart-cart.js");
+const { buildShoppingSpecEntries } = await import("../lib/instacart-intent.js");
+const { loadPreferredProviderSession } = await import("../lib/provider-session-store.js");
 
 const BROWSER_USE_API_KEY = process.env.BROWSER_USE_API_KEY ?? "";
 const BROWSER_USE_BASE = "https://api.browser-use.com/api/v3";
+const USE_BROWSER_USE = ["1", "true", "yes"].includes(String(process.env.INSTACART_USE_BROWSER_USE ?? "").toLowerCase())
+  || process.argv.includes("--browser-use");
+
+if (!USE_BROWSER_USE) {
+  console.error([
+    "Browser Use cloud is opt-in.",
+    "Use `npm run instacart:add-current-plan` for the free local Playwright default,",
+    "or set INSTACART_USE_BROWSER_USE=1 / pass --browser-use to this script.",
+  ].join(" "));
+  process.exit(1);
+}
 
 function run(command, args) {
   return execFileSync(command, args, { encoding: "utf8" }).trim();
@@ -43,6 +62,7 @@ def decode_bytes(value):
     return value
 
 auth = json.loads(decode_bytes(data.get("agentic-auth-session-v1") or b"{}"))
+profile = json.loads(decode_bytes(data.get("agentic-meal-profile-v1") or b"{}"))
 user_id = auth.get("userID")
 preferred_keys = []
 if user_id:
@@ -58,6 +78,7 @@ history = json.loads(decode_bytes(data[history_key]))
 plan = history[0] if isinstance(history, list) and history else history
 print(json.dumps({
     "auth": auth,
+    "profile": profile,
     "historyKey": history_key,
     "plan": plan,
 }, separators=(",", ":")))
@@ -121,11 +142,15 @@ async function createBrowserUseBrowser() {
 const source = loadCurrentMealPlan();
 const plan = summarizePlan(source.plan);
 const recipeTitleByID = new Map((Array.isArray(source.plan?.recipes) ? source.plan.recipes : []).map((entry) => [entry?.recipe?.id, entry?.recipe?.title]));
+const accessToken = source.auth?.accessToken ?? null;
+const userID = source.auth?.userID ?? null;
+const deliveryAddress = source.profile?.deliveryAddress ?? null;
 const originalItems = plan.groceryItems;
-const refinedItems = await buildShoppingSpecEntries({
+const shoppingSpec = await buildShoppingSpecEntries({
   originalItems,
   plan: source.plan,
 });
+const refinedItems = Array.isArray(shoppingSpec?.items) ? shoppingSpec.items : [];
 const providerSession = await loadPreferredProviderSession("instacart");
 
 if (!providerSession?.cookies?.length) {
@@ -139,6 +164,9 @@ console.log(`historyKey: ${source.historyKey}`);
 console.log(`generatedAt: ${plan.generatedAt}`);
 console.log(`recipes: ${plan.recipeCount}`);
 console.log(`groceryItems: ${plan.groceryCount}`);
+if (shoppingSpec?.reconciliationSummary) {
+  console.log(`reconciliationSummary: ${JSON.stringify(shoppingSpec.reconciliationSummary)}`);
+}
 console.log(`browserUseBrowserId: ${cloudBrowser.id}`);
 console.log(`browserUseLiveUrl: ${cloudBrowser.liveUrl}`);
 console.log(`browserUseCdpUrl: ${cloudBrowser.cdpUrl}`);
@@ -163,6 +191,9 @@ refinedItems.forEach((entry, index) => {
 });
 
 const result = await addItemsToInstacartCart({
+  userId: userID,
+  accessToken,
+  mealPlanID: source.plan?.id ?? null,
   items: refinedItems.map((entry) => ({
     name: entry.name,
     originalName: entry.originalName ?? entry.name,
@@ -172,6 +203,7 @@ const result = await addItemsToInstacartCart({
     sourceRecipes: compactSourceRecipeTitles(entry, recipeTitleByID),
     shoppingContext: entry.shoppingContext ?? null,
   })),
+  deliveryAddress,
   providerSession,
   cdpUrl: cloudBrowser.cdpUrl,
   logger: console,

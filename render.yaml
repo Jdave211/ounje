@@ -1,0 +1,102 @@
+services:
+  - name: ounje-api
+    type: web
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - package.json
+        - render.yaml
+        - server/**
+        - supabase/migrations/**
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OUNJE_RUNTIME_ENV
+        value: production
+      - key: OUNJE_ENABLE_RECIPE_INGESTION_POLLING
+        value: "false"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: MEALME_API_KEY
+        sync: false
+      - key: INSTACART_API_KEY
+        sync: false
+      - key: KROGER_CLIENT_ID
+        sync: false
+      - key: KROGER_CLIENT_SECRET
+        sync: false
+      - key: BROWSER_USE_API_KEY
+        sync: false
+      - key: LUMBOX_API_KEY
+        sync: false
+      - key: AGENTSIM_API_KEY
+        sync: false
+      - key: IFRAMELY_API_KEY
+        sync: false
+      - key: TWO_CAPTCHA_API_KEY
+        sync: false
+      - key: RECIPE_IMAGE_BUCKET
+        sync: false
+
+  - name: ounje-recipe-ingestion
+    type: worker
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest
+    autoDeploy: true
+    maxShutdownDelaySeconds: 120
+    buildFilter:
+      paths:
+        - package.json
+        - render.yaml
+        - server/**
+        - supabase/migrations/**
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OUNJE_RUNTIME_ENV
+        value: production
+      - key: RECIPE_INGESTION_BATCH_SIZE
+        value: "4"
+      - key: RECIPE_INGESTION_POLL_MS
+        value: "4000"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: MEALME_API_KEY
+        sync: false
+      - key: INSTACART_API_KEY
+        sync: false
+      - key: KROGER_CLIENT_ID
+        sync: false
+      - key: KROGER_CLIENT_SECRET
+        sync: false
+      - key: BROWSER_USE_API_KEY
+        sync: false
+      - key: LUMBOX_API_KEY
+        sync: false
+      - key: AGENTSIM_API_KEY
+        sync: false
+      - key: IFRAMELY_API_KEY
+        sync: false
+      - key: TWO_CAPTCHA_API_KEY
+        sync: false
+      - key: RECIPE_IMAGE_BUCKET
+        sync: false

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import dotenv from "dotenv";
+import OpenAI from "openai";
+import { chromium } from "playwright";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { scrapeJulienneRecipe, normalizeKey, normalizeText } from "./julienne_scraper.mjs";
+import { parseIngredientObjects, parseInstructionSteps, sanitizeRecipeText } from "../lib/recipe-detail-utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,11 +12,15 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
+const RECIPE_MEASUREMENT_FILL_MODEL = process.env.RECIPE_MEASUREMENT_FILL_MODEL ?? "gpt-4o-mini";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY in server/.env");
   process.exit(1);
 }
+
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
 
 const HEADERS = {
   apikey: SUPABASE_ANON_KEY,
@@ -44,6 +50,20 @@ const VAGUE_QUANTITY_PATTERNS = [
 
 const ABBREVIATION_DISPLAY_NAMES = new Set(["ls", "cr", "tbsp", "tsp", "oz", "ml", "g", "kg", "lb", "pkg"]);
 
+function normalizeText(value) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeKey(value) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseArgs(argv) {
   const args = {
     recipeId: null,
@@ -52,7 +72,6 @@ function parseArgs(argv) {
     batchSize: DEFAULT_BATCH_SIZE,
     headless: true,
     idleSleepMs: DEFAULT_IDLE_SLEEP_MS,
-    allowNonJulienne: false,
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -64,7 +83,6 @@ function parseArgs(argv) {
     else if (token === "--recipe-id") args.recipeId = argv[++i] ?? null;
     else if (token === "--batch-size") args.batchSize = Math.max(1, parseInt(argv[++i] ?? "", 10) || DEFAULT_BATCH_SIZE);
     else if (token === "--idle-sleep-ms") args.idleSleepMs = Math.max(10_000, parseInt(argv[++i] ?? "", 10) || DEFAULT_IDLE_SLEEP_MS);
-    else if (token === "--allow-non-julienne") args.allowNonJulienne = true;
   }
 
   return args;
@@ -298,12 +316,241 @@ function buildIngredientIndex(rows) {
   return { byId, byName };
 }
 
-function buildScrapedIndexes(scraped) {
+function parseSchemaRecipeInstructions(recipeInstructions) {
+  if (Array.isArray(recipeInstructions)) {
+    return recipeInstructions
+      .map((entry) => {
+        if (typeof entry === "string") return normalizeText(entry);
+        if (!entry || typeof entry !== "object") return "";
+        if (Array.isArray(entry.itemListElement)) {
+          return entry.itemListElement.map((value) => {
+            if (typeof value === "string") return normalizeText(value);
+            return normalizeText(value?.text ?? value?.name ?? "");
+          }).filter(Boolean);
+        }
+        return normalizeText(entry.text ?? entry.name ?? "");
+      })
+      .flat()
+      .filter(Boolean);
+  }
+
+  if (typeof recipeInstructions === "string") {
+    return [...new Set(
+      sanitizeRecipeText(recipeInstructions)
+        .split(/\n+/)
+        .map(normalizeText)
+        .filter(Boolean)
+    )];
+  }
+
+  return [];
+}
+
+function pickBestSchemaRecipe(jsonLdRecipes) {
+  const flattened = [];
+
+  const visit = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value !== "object") return;
+
+    const graph = Array.isArray(value["@graph"]) ? value["@graph"] : [];
+    if (graph.length) graph.forEach(visit);
+
+    const type = value["@type"];
+    const types = Array.isArray(type) ? type : [type];
+    if (types.some((entry) => String(entry ?? "").toLowerCase() === "recipe")) {
+      flattened.push(value);
+    }
+  };
+
+  visit(jsonLdRecipes);
+
+  return flattened
+    .map((recipe) => ({
+      recipe,
+      score:
+        (Array.isArray(recipe.recipeIngredient) ? recipe.recipeIngredient.length : 0) * 5
+        + parseSchemaRecipeInstructions(recipe.recipeInstructions).length * 7
+        + (normalizeText(recipe.name) ? 10 : 0)
+        + (normalizeText(recipe.description) ? 4 : 0),
+    }))
+    .sort((left, right) => right.score - left.score)[0]?.recipe ?? null;
+}
+
+async function createBrowserContext({ headless = true } = {}) {
+  const browser = await chromium.launch({ headless });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1600 },
+    locale: "en-US",
+    userAgent:
+      process.env.USER_AGENT ||
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+  });
+  return { browser, context };
+}
+
+async function crawlSourceRecipe(sourceURL, { headless = true } = {}) {
+  const { browser, context } = await createBrowserContext({ headless });
+  const page = await context.newPage();
+  try {
+    await page.goto(sourceURL, { waitUntil: "domcontentloaded", timeout: 45000 });
+    await page.waitForTimeout(3000);
+
+    const pageData = await page.evaluate(() => {
+      const normalize = (value) =>
+        String(value ?? "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+      const meta = (name) =>
+        document.querySelector(`meta[name="${name}"], meta[property="${name}"]`)?.getAttribute("content")
+        || "";
+
+      const parseJsonLd = () => Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
+        .map((node) => node.textContent || "")
+        .map((raw) => {
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+
+      const findSectionItems = (labels, selectors = ["li", "p"]) => {
+        const heading = Array.from(document.querySelectorAll("h1,h2,h3,h4,strong"))
+          .find((node) => labels.includes(normalize(node.textContent).toLowerCase()));
+        if (!heading) return [];
+
+        const containers = [];
+        let node = heading.parentElement;
+        let depth = 0;
+        while (node && depth < 4) {
+          containers.push(node);
+          node = node.parentElement;
+          depth += 1;
+        }
+
+        const lines = [];
+        for (const container of containers) {
+          for (const selector of selectors) {
+            for (const item of Array.from(container.querySelectorAll(selector))) {
+              const text = normalize(item.textContent);
+              if (text) lines.push(text);
+            }
+          }
+          if (lines.length >= 4) break;
+        }
+        return [...new Set(lines)].slice(0, 80);
+      };
+
+      const ingredientCandidates = [...new Set([
+        ...Array.from(document.querySelectorAll('[itemprop="recipeIngredient"]')).map((node) => node.textContent || ""),
+        ...Array.from(document.querySelectorAll('li[class*="ingredient"], [class*="ingredient"] li, [data-ingredient]')).map((node) => node.textContent || ""),
+        ...findSectionItems(["ingredients"], ["li", "p", "span"]),
+      ])].slice(0, 120);
+
+      const instructionCandidates = [...new Set([
+        ...Array.from(document.querySelectorAll('[itemprop="recipeInstructions"] li, [itemprop="recipeInstructions"] p')).map((node) => node.textContent || ""),
+        ...Array.from(document.querySelectorAll('li[class*="instruction"], li[class*="direction"], [class*="instructions"] li')).map((node) => node.textContent || ""),
+        ...findSectionItems(["instructions", "method", "directions"], ["li", "p"]),
+      ])].slice(0, 120);
+
+      const pageImageURLs = [...new Set([
+        meta("og:image"),
+        meta("twitter:image"),
+        ...Array.from(document.images)
+          .map((node) => node.getAttribute("src") || node.getAttribute("data-src") || node.currentSrc || "")
+          .filter(Boolean),
+      ])]
+        .filter((url) => /^https?:\/\//i.test(url))
+        .slice(0, 24);
+
+      return {
+        source_url: window.location.href,
+        canonical_url: document.querySelector('link[rel="canonical"]')?.getAttribute("href") || window.location.href,
+        title: normalize(document.querySelector("h1")?.textContent) || normalize(document.title),
+        meta_title: normalize(meta("og:title") || meta("twitter:title") || document.title),
+        meta_description: normalize(meta("description") || meta("og:description") || meta("twitter:description")),
+        meta_image_url: meta("og:image") || meta("twitter:image") || null,
+        meta_video_url: meta("og:video") || meta("og:video:url") || null,
+        site_name: normalize(meta("og:site_name")),
+        author_name: normalize(meta("author")),
+        body_text: normalize(document.body?.innerText || "").slice(0, 120000),
+        ingredient_candidates: ingredientCandidates,
+        instruction_candidates: instructionCandidates,
+        page_image_urls: pageImageURLs,
+        json_ld: parseJsonLd(),
+      };
+    });
+
+    const structuredRecipe = pickBestSchemaRecipe(pageData.json_ld);
+    const instructions = parseSchemaRecipeInstructions(structuredRecipe?.recipeInstructions);
+
+    return {
+      source_type: "web",
+      platform: "web",
+      source_url: normalizeText(pageData.source_url) || null,
+      canonical_url: normalizeText(pageData.canonical_url) || normalizeText(sourceURL) || null,
+      title: normalizeText(pageData.title) || normalizeText(pageData.meta_title) || null,
+      meta_title: normalizeText(pageData.meta_title) || null,
+      meta_description: normalizeText(pageData.meta_description) || null,
+      hero_image_url: normalizeText(pageData.meta_image_url) || null,
+      attached_video_url: normalizeText(pageData.meta_video_url) || null,
+      site_name: normalizeText(pageData.site_name) || null,
+      author_name: normalizeText(pageData.author_name) || null,
+      ingredient_candidates: pageData.ingredient_candidates ?? [],
+      instruction_candidates: pageData.instruction_candidates ?? [],
+      page_image_urls: pageData.page_image_urls ?? [],
+      body_text: pageData.body_text ?? "",
+      structured_recipe: structuredRecipe
+        ? {
+            ...structuredRecipe,
+            recipeIngredient: Array.isArray(structuredRecipe.recipeIngredient) ? structuredRecipe.recipeIngredient : [],
+            recipeInstructions: instructions,
+          }
+        : null,
+    };
+  } finally {
+    await page.close().catch(() => {});
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+}
+
+function buildSourceIndexes(source) {
   const ingredientsByName = new Map();
   const stepRefsByName = new Map();
   const stepRefsByStep = new Map();
-  const ingredientCards = Array.isArray(scraped.ingredients) ? scraped.ingredients : [];
-  const steps = Array.isArray(scraped.steps) ? scraped.steps : [];
+  const structuredIngredients = parseIngredientObjects(source?.structured_recipe?.recipeIngredient ?? []);
+  const ingredientCards = structuredIngredients.length
+    ? structuredIngredients.map((ingredient) => ({
+        displayName: ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? null,
+        quantityText: ingredient.quantity_text ?? ingredient.quantity ?? null,
+      }))
+    : parseIngredientObjects(source?.ingredient_candidates ?? []).map((ingredient) => ({
+        displayName: ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? null,
+        quantityText: ingredient.quantity_text ?? ingredient.quantity ?? null,
+      }));
+  const steps = parseInstructionSteps(
+    source?.structured_recipe?.recipeInstructions ?? source?.instruction_candidates ?? [],
+    structuredIngredients
+  ).map((step) => ({
+    stepNumber: step.number ?? null,
+    text: step.text ?? null,
+    ingredientRefs: (Array.isArray(step.ingredients) ? step.ingredients : []).map((ingredient) => ({
+      displayName: ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? null,
+      quantityText: ingredient.quantity_text ?? ingredient.quantity ?? null,
+      sortOrder: ingredient.sort_order ?? null,
+    })),
+  }));
 
   for (const card of ingredientCards) {
     const key = normalizeKey(card.displayName);
@@ -329,6 +576,8 @@ function buildScrapedIndexes(scraped) {
   }
 
   return {
+    ingredientCards,
+    steps,
     ingredientsByName,
     stepRefsByName,
     stepRefsByStep,
@@ -414,7 +663,7 @@ function buildRecipeResultShape(recipe, ingredientRows, stepRows, stepIngredient
     recipe_id: recipe.id,
     title: recipe.title,
     source: recipe.source ?? null,
-    julienne_recipe_url: recipe.recipe_url ?? null,
+    source_recipe_url: recipe.recipe_url ?? recipe.original_recipe_url ?? recipe.attached_video_url ?? null,
     status: "matched",
     inspected_tables: {
       recipes: 1,
@@ -427,6 +676,190 @@ function buildRecipeResultShape(recipe, ingredientRows, stepRows, stepIngredient
     backfill_updates: [],
     notes: [],
   };
+}
+
+function serializeRecipeForQuantityInference(recipe, relatedRows, ingredientIndex, scrapedIndexes) {
+  const { recipeIngredients, recipeSteps, stepIngredients } = relatedRows;
+  const stepById = new Map(recipeSteps.map((row) => [row.id, row]));
+
+  return {
+    recipe: {
+      id: recipe.id,
+      title: recipe.title ?? null,
+      description: recipe.description ?? null,
+      source: recipe.source ?? null,
+      recipe_url: recipe.recipe_url ?? null,
+      servings_text: recipe.servings_text ?? null,
+      recipe_type: recipe.recipe_type ?? null,
+      main_protein: recipe.main_protein ?? null,
+      cook_method: recipe.cook_method ?? null,
+      cuisine_tags: recipe.cuisine_tags ?? null,
+      ingredients_json: recipe.ingredients_json ?? null,
+      steps_json: recipe.steps_json ?? null,
+    },
+    ingredients: recipeIngredients.map((row) => ({
+      row_id: row.id,
+      ingredient_id: row.ingredient_id ?? null,
+      display_name: row.display_name ?? null,
+      quantity_text: row.quantity_text ?? null,
+      image_url: row.image_url ?? null,
+      sort_order: row.sort_order ?? null,
+      ingredient_name: row.ingredient_id ? (ingredientIndex.byId.get(row.ingredient_id)?.display_name ?? null) : null,
+    })),
+    step_ingredients: stepIngredients.map((row) => ({
+      row_id: row.id,
+      recipe_step_id: row.recipe_step_id ?? null,
+      step_number: stepById.get(row.recipe_step_id)?.step_number ?? null,
+      ingredient_id: row.ingredient_id ?? null,
+      display_name: row.display_name ?? null,
+      quantity_text: row.quantity_text ?? null,
+      sort_order: row.sort_order ?? null,
+    })),
+    steps: recipeSteps.map((row) => ({
+      step_id: row.id,
+      step_number: row.step_number ?? null,
+      instruction_text: row.instruction_text ?? null,
+      tip_text: row.tip_text ?? null,
+    })),
+  };
+}
+
+function buildSourceInferenceContext(sourceIndexes) {
+  const ingredientCards = Array.isArray(sourceIndexes?.ingredientCards) ? sourceIndexes.ingredientCards : [];
+  const stepRefsByName = Array.from(sourceIndexes?.stepRefsByName?.entries?.() ?? []);
+  const steps = Array.isArray(sourceIndexes?.steps) ? sourceIndexes.steps : [];
+
+  return {
+    ingredients: ingredientCards.slice(0, 24).map((card) => ({
+      display_name: card.displayName ?? null,
+      quantity_text: card.quantityText ?? null,
+    })),
+    step_refs: stepRefsByName.slice(0, 30).map(([displayName, refs]) => ({
+      display_name: displayName,
+      refs: (Array.isArray(refs) ? refs : []).slice(0, 3).map((ref) => ({
+        step_number: ref.stepNumber ?? null,
+        display_name: ref.displayName ?? null,
+        quantity_text: ref.quantityText ?? null,
+      })),
+    })),
+    steps: steps.slice(0, 24).map((step) => ({
+      step_number: step.stepNumber ?? null,
+      text: step.text ?? null,
+      ingredient_refs: (Array.isArray(step.ingredientRefs) ? step.ingredientRefs : []).slice(0, 8).map((ref) => ({
+        display_name: ref.displayName ?? null,
+        quantity_text: ref.quantityText ?? null,
+      })),
+    })),
+  };
+}
+
+function isSafeQuantityGuess(value) {
+  const text = normalizeText(value);
+  if (!text) return false;
+  return !isVagueQuantity(text);
+}
+
+async function inferMissingQuantitiesWithLLM(recipe, relatedRows, ingredientIndex, sourceIndexes, sourceEvidence = null) {
+  if (!openai) return [];
+
+  const payload = {
+    ...serializeRecipeForQuantityInference(recipe, relatedRows, ingredientIndex, sourceIndexes),
+    source_evidence: sourceEvidence
+      ? {
+          source_url: sourceEvidence.source_url ?? null,
+          canonical_url: sourceEvidence.canonical_url ?? null,
+          title: sourceEvidence.title ?? null,
+          meta_description: sourceEvidence.meta_description ?? null,
+          hero_image_url: sourceEvidence.hero_image_url ?? null,
+          page_image_urls: Array.isArray(sourceEvidence.page_image_urls) ? sourceEvidence.page_image_urls.slice(0, 12) : [],
+          structured_recipe: sourceEvidence.structured_recipe
+            ? {
+                name: sourceEvidence.structured_recipe.name ?? null,
+                recipeCategory: sourceEvidence.structured_recipe.recipeCategory ?? null,
+                recipeCuisine: sourceEvidence.structured_recipe.recipeCuisine ?? null,
+                recipeYield: sourceEvidence.structured_recipe.recipeYield ?? null,
+                recipeIngredient: (sourceEvidence.structured_recipe.recipeIngredient ?? []).slice(0, 24),
+                recipeInstructions: (sourceEvidence.structured_recipe.recipeInstructions ?? []).slice(0, 18),
+              }
+            : null,
+          ingredient_candidates: Array.isArray(sourceEvidence.ingredient_candidates) ? sourceEvidence.ingredient_candidates.slice(0, 24) : [],
+          instruction_candidates: Array.isArray(sourceEvidence.instruction_candidates) ? sourceEvidence.instruction_candidates.slice(0, 24) : [],
+          body_text: normalizeText(sourceEvidence.body_text ?? "").slice(0, 12000),
+        }
+      : null,
+    source_context: buildSourceInferenceContext(sourceIndexes),
+  };
+
+  const hasTargets = [
+    ...(Array.isArray(payload.ingredients) ? payload.ingredients : []).filter((row) => needsBackfill(row)),
+    ...(Array.isArray(payload.step_ingredients) ? payload.step_ingredients : []).filter((row) => needsBackfill(row)),
+  ];
+  if (!hasTargets.length) {
+    return [];
+  }
+
+  const response = await openai.chat.completions.create({
+    model: RECIPE_MEASUREMENT_FILL_MODEL,
+    temperature: 0.08,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You infer missing ingredient measurements for a recipe backfill job.",
+          "Return JSON only.",
+          "Only update quantity_text fields.",
+          "Be conservative. If a value is not strongly implied by the recipe context, return null for that row.",
+          "Use the recipe title, description, steps, other ingredient measurements, and any crawled source-page evidence as context.",
+          "Do not invent new ingredients or rewrite display names.",
+          "Prefer concise grocery-ready quantities like '1 cup', '2', '1 tablespoon', '6 thighs', or '1 bunch'.",
+          "If the row already has a clear quantity, leave it unchanged.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          "Fill the missing ingredient measurements only for these rows.",
+          "",
+          JSON.stringify(payload),
+          "",
+          "Return JSON like:",
+          JSON.stringify({
+            updates: [
+              {
+                table: "recipe_ingredients",
+                row_id: "string",
+                quantity_text: "string|null",
+                confidence: 0.0,
+                reason: "string",
+              },
+            ],
+            unresolved: [
+              {
+                table: "recipe_ingredients",
+                row_id: "string",
+                reason: "string",
+              },
+            ],
+          }),
+        ].join("\n"),
+      },
+    ],
+  });
+
+  const rawContent = response.choices?.[0]?.message?.content ?? "{}";
+  const parsed = JSON.parse(rawContent);
+  const updates = Array.isArray(parsed.updates) ? parsed.updates : [];
+
+  return updates
+    .map((entry) => ({
+      table: normalizeText(entry.table).toLowerCase(),
+      row_id: normalizeText(entry.row_id),
+      quantity_text: normalizeText(entry.quantity_text),
+      confidence: Number(entry.confidence ?? 0) || 0,
+      reason: normalizeText(entry.reason),
+    }))
+    .filter((entry) => entry.row_id && entry.quantity_text && isSafeQuantityGuess(entry.quantity_text));
 }
 
 async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
@@ -446,24 +879,25 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
     return result;
   }
 
-  const recipeUrl = normalizeText(recipe.recipe_url);
-  const searchTitle = normalizeText(recipe.title);
-  let scraped = null;
+  const sourceURLs = unique([
+    recipe.recipe_url,
+    recipe.original_recipe_url,
+    recipe.attached_video_url,
+  ].map((value) => normalizeText(value)).filter((value) => /^https?:\/\//i.test(value)));
 
-  try {
-    scraped = await scrapeJulienneRecipe({
-      title: searchTitle,
-      recipeUrl: recipeUrl && /withjulienne\.com/i.test(recipeUrl) ? recipeUrl : null,
-      headless: args.headless,
-    });
-  } catch (error) {
-    result.status = "not_found";
-    result.notes.push(`Julienne scrape failed: ${error.message}`);
-    return result;
+  let sourceEvidence = null;
+  for (const sourceURL of sourceURLs) {
+    try {
+      sourceEvidence = await crawlSourceRecipe(sourceURL, { headless: args.headless });
+      if (sourceEvidence) break;
+    } catch (error) {
+      result.notes.push(`Source crawl failed for ${sourceURL}: ${error.message}`);
+    }
   }
 
-  const scrapedIndexes = buildScrapedIndexes(scraped);
+  const sourceIndexes = buildSourceIndexes(sourceEvidence);
   const matchedTopLevel = new Set();
+  const updatedRowIDs = new Set();
   let updatedTop = 0;
   let updatedStep = 0;
   let ambiguousCount = 0;
@@ -471,8 +905,8 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
   for (const row of recipeIngredients) {
     if (!needsBackfill(row)) continue;
 
-    const displayName = chooseDisplayName(row, ingredientIndex, scrapedIndexes);
-    const quantityText = resolveTopLevelQuantity(row, ingredientIndex, scrapedIndexes);
+    const displayName = chooseDisplayName(row, ingredientIndex, sourceIndexes);
+    const quantityText = resolveTopLevelQuantity(row, ingredientIndex, sourceIndexes);
     if (!quantityText && !displayName) {
       ambiguousCount += 1;
       result.missing_ingredients.push({
@@ -483,10 +917,10 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
         current_display_name: row.display_name ?? null,
         current_quantity_text: row.quantity_text ?? null,
         problem_type: "ambiguous",
-        matched_julienne_name: null,
-        matched_julienne_quantity: null,
+        matched_source_name: null,
+        matched_source_quantity: null,
         confidence: 0.2,
-        reason: "Could not confidently map the Ounje row to a Julienne ingredient quantity.",
+        reason: "Could not confidently map the Ounje row to a source recipe quantity.",
       });
       continue;
     }
@@ -509,10 +943,10 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
       current_display_name: row.display_name ?? null,
       current_quantity_text: row.quantity_text ?? null,
       problem_type: normalizeText(row.display_name) !== normalizeText(displayName) ? "bad_display_name" : "missing_quantity",
-      matched_julienne_name: displayName ?? row.display_name ?? null,
-      matched_julienne_quantity: quantityText ?? null,
+      matched_source_name: displayName ?? row.display_name ?? null,
+      matched_source_quantity: quantityText ?? null,
       confidence: quantityText ? 0.88 : 0.6,
-      reason: "Matched against Julienne ingredient cards and step ingredients.",
+      reason: "Matched against source-page ingredient cards and step ingredients.",
     });
 
     result.backfill_updates.push({
@@ -520,10 +954,11 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
       row_id: row.id,
       display_name: payload.display_name ?? row.display_name ?? null,
       quantity_text: payload.quantity_text ?? row.quantity_text ?? null,
-      reason: "Backfilled from Julienne source recipe.",
+      reason: "Backfilled from source recipe evidence.",
     });
     updatedTop += 1;
     matchedTopLevel.add(row.id);
+    updatedRowIDs.add(row.id);
 
     if (!args.dryRun) {
       await patchRow("recipe_ingredients", row.id, payload);
@@ -535,8 +970,8 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
     const step = recipeSteps.find((candidate) => candidate.id === row.recipe_step_id);
     if (!step) continue;
 
-    const displayName = chooseDisplayName(row, ingredientIndex, scrapedIndexes);
-    const quantityText = resolveStepQuantity(row, step, ingredientIndex, scrapedIndexes);
+    const displayName = chooseDisplayName(row, ingredientIndex, sourceIndexes);
+    const quantityText = resolveStepQuantity(row, step, ingredientIndex, sourceIndexes);
     if (!quantityText && !displayName) {
       ambiguousCount += 1;
       result.missing_ingredients.push({
@@ -547,10 +982,10 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
         current_display_name: row.display_name ?? null,
         current_quantity_text: row.quantity_text ?? null,
         problem_type: "ambiguous",
-        matched_julienne_name: null,
-        matched_julienne_quantity: null,
+        matched_source_name: null,
+        matched_source_quantity: null,
         confidence: 0.2,
-        reason: "Could not confidently map the step ingredient to a Julienne step ref.",
+        reason: "Could not confidently map the step ingredient to a source step ref.",
       });
       continue;
     }
@@ -573,10 +1008,10 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
       current_display_name: row.display_name ?? null,
       current_quantity_text: row.quantity_text ?? null,
       problem_type: normalizeText(row.display_name) !== normalizeText(displayName) ? "bad_display_name" : "missing_quantity",
-      matched_julienne_name: displayName ?? row.display_name ?? null,
-      matched_julienne_quantity: quantityText ?? null,
+      matched_source_name: displayName ?? row.display_name ?? null,
+      matched_source_quantity: quantityText ?? null,
       confidence: quantityText ? 0.99 : 0.6,
-      reason: `Matched against Julienne step ${step.step_number}.`,
+      reason: `Matched against source step ${step.step_number}.`,
     });
 
     result.backfill_updates.push({
@@ -584,27 +1019,71 @@ async function inspectRecipe(recipe, relatedRows, ingredientIndex, args) {
       row_id: row.id,
       display_name: payload.display_name ?? row.display_name ?? null,
       quantity_text: payload.quantity_text ?? row.quantity_text ?? null,
-      reason: `Backfilled from Julienne step ${step.step_number}.`,
+      reason: `Backfilled from source step ${step.step_number}.`,
     });
     updatedStep += 1;
+    updatedRowIDs.add(row.id);
 
     if (!args.dryRun) {
       await patchRow("recipe_step_ingredients", row.id, payload);
     }
   }
 
+  const remainingTargets = [
+    ...recipeIngredients.filter((row) => needsBackfill(row) && !updatedRowIDs.has(row.id)),
+    ...stepIngredients.filter((row) => needsBackfill(row) && !updatedRowIDs.has(row.id)),
+  ];
+
+  if (remainingTargets.length && openai) {
+    try {
+      const llmUpdates = await inferMissingQuantitiesWithLLM(recipe, relatedRows, ingredientIndex, sourceIndexes, sourceEvidence);
+      for (const update of llmUpdates) {
+        const targetRow = recipeIngredients.find((row) => row.id === update.row_id && update.table === "recipe_ingredients")
+          ?? stepIngredients.find((row) => row.id === update.row_id && update.table === "recipe_step_ingredients");
+        if (!targetRow || updatedRowIDs.has(targetRow.id)) continue;
+
+        const inferredQuantity = normalizeText(update.quantity_text);
+        if (!inferredQuantity || normalizeText(targetRow.quantity_text) === inferredQuantity) continue;
+
+        const tableName = update.table === "recipe_step_ingredients" ? "recipe_step_ingredients" : "recipe_ingredients";
+        const payload = { quantity_text: inferredQuantity };
+
+        result.backfill_updates.push({
+          table: tableName,
+          row_id: targetRow.id,
+          display_name: targetRow.display_name ?? null,
+          quantity_text: inferredQuantity,
+          reason: update.reason || "Backfilled from LLM recipe context.",
+        });
+
+        if (tableName === "recipe_ingredients") {
+          updatedTop += 1;
+        } else {
+          updatedStep += 1;
+        }
+        updatedRowIDs.add(targetRow.id);
+
+        if (!args.dryRun) {
+          await patchRow(tableName, targetRow.id, payload);
+        }
+      }
+    } catch (error) {
+      result.notes.push(`LLM quantity backfill skipped: ${error.message}`);
+    }
+  }
+
   if (updatedTop === 0 && updatedStep === 0) {
     result.status = ambiguousCount > 0 ? "ambiguous" : "partial";
-    result.notes.push("Julienne match was found, but no safe updates could be applied.");
+    result.notes.push("Source recipe match was found, but no safe updates could be applied.");
     return result;
   }
 
   result.status = ambiguousCount > 0 ? "partial" : "matched";
   if (updatedTop > 0) {
-    result.notes.push("Recipe-level quantities were backfilled from Julienne ingredient cards and step refs.");
+    result.notes.push("Recipe-level quantities were backfilled from source ingredient cards and step refs.");
   }
   if (updatedStep > 0) {
-    result.notes.push("Step-level quantities were backfilled directly from Julienne step ingredient refs.");
+    result.notes.push("Step-level quantities were backfilled directly from source step ingredient refs.");
   }
   return result;
 }
@@ -699,7 +1178,7 @@ async function fetchRecipesByIds(ids) {
   if (!ids.length) return [];
   return fetchRowsByIds(
     "recipes",
-    "id,title,source,recipe_url,servings_text,created_at,updated_at",
+    "id,title,description,source,recipe_url,original_recipe_url,attached_video_url,servings_text,recipe_type,main_protein,cook_method,cuisine_tags,ingredients_json,steps_json,created_at,updated_at",
     "id",
     ids,
     ["created_at.asc"]
@@ -712,12 +1191,6 @@ function sortRecipeCandidates(recipes) {
     const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
     return aTime - bTime;
   });
-}
-
-function isLikelyJulienneRecipe(recipe) {
-  const source = normalizeText(recipe?.source).toLowerCase();
-  const recipeURL = normalizeText(recipe?.recipe_url).toLowerCase();
-  return source.includes("julienne") || recipeURL.includes("withjulienne.com");
 }
 
 function buildMissingCountsByRecipe(allRows) {
@@ -739,20 +1212,15 @@ function buildMissingCountsByRecipe(allRows) {
   return counts;
 }
 
-function hasDirectJulienneURL(recipe) {
-  const recipeURL = normalizeText(recipe?.recipe_url).toLowerCase();
-  return recipeURL.includes("withjulienne.com");
-}
-
 function sortRecipesByPriority(recipes, missingCountsByRecipe) {
   return [...recipes].sort((a, b) => {
     const aMissing = missingCountsByRecipe.get(a.id) ?? 0;
     const bMissing = missingCountsByRecipe.get(b.id) ?? 0;
     if (aMissing !== bMissing) return bMissing - aMissing;
 
-    const aDirect = hasDirectJulienneURL(a) ? 1 : 0;
-    const bDirect = hasDirectJulienneURL(b) ? 1 : 0;
-    if (aDirect !== bDirect) return bDirect - aDirect;
+    const aSource = unique([a.recipe_url, a.original_recipe_url, a.attached_video_url].map((value) => normalizeText(value)).filter(Boolean)).length > 0 ? 1 : 0;
+    const bSource = unique([b.recipe_url, b.original_recipe_url, b.attached_video_url].map((value) => normalizeText(value)).filter(Boolean)).length > 0 ? 1 : 0;
+    if (aSource !== bSource) return bSource - aSource;
 
     const aUpdated = new Date(a.updated_at || a.created_at || 0).getTime();
     const bUpdated = new Date(b.updated_at || b.created_at || 0).getTime();
@@ -868,9 +1336,8 @@ async function selectBatchRecipeIds(allRows, args, cooldownMap) {
   }
 
   const recipes = await fetchRecipesByIds(filtered);
-  const julienneScoped = args.allowNonJulienne ? recipes : recipes.filter(isLikelyJulienneRecipe);
   const missingCountsByRecipe = buildMissingCountsByRecipe(allRows);
-  const sortedRecipes = sortRecipesByPriority(julienneScoped, missingCountsByRecipe);
+  const sortedRecipes = sortRecipesByPriority(recipes, missingCountsByRecipe);
   const sortedRecipeIds = sortedRecipes.map((recipe) => recipe.id);
   return sortedRecipeIds.slice(0, args.batchSize);
 }
@@ -882,13 +1349,13 @@ async function main() {
 
   console.log(
     JSON.stringify(
-      {
-        mode: args.recipeId ? "single" : args.once ? "once" : "daemon",
-        batch_size: args.batchSize,
-        headless: args.headless,
-        dry_run: args.dryRun,
-        allow_non_julienne: args.allowNonJulienne,
-      },
+        {
+          mode: args.recipeId ? "single" : args.once ? "once" : "daemon",
+          batch_size: args.batchSize,
+          headless: args.headless,
+          dry_run: args.dryRun,
+          source_crawl: true,
+        },
       null,
       2
     )

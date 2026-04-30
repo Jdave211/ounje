@@ -37,6 +37,25 @@ function headers() {
 // ── Provider Configs ───────────────────────────────────────────────────────────
 
 const PROVIDER_CONFIGS = {
+  instacart: {
+    name: "Instacart",
+    startUrl: "https://www.instacart.ca/store/s",
+    domains: ["*.instacart.ca"],
+    addressPrompt: (addr) => `
+      Set delivery address to: ${addr.line1}, ${addr.city}, ${addr.region} ${addr.postalCode}
+      If the address selector appears, confirm the matching saved address before continuing.
+    `,
+    searchPrompt: (items) => `
+      Review the current Instacart cart and continue building it with these grocery items:
+      ${items.map((i, idx) => `${idx + 1}. ${i.name} (quantity: ${Math.ceil(i.amount || 1)})`).join("\n")}
+
+      For each item:
+      - Search for the best product match
+      - Prefer the correct grocery form for the recipe context
+      - Add the product only if it is a safe match
+      - Leave obviously wrong products out and note any unresolved items
+    `,
+  },
   walmart: {
     name: "Walmart",
     startUrl: "https://www.walmart.com/grocery",
@@ -425,7 +444,7 @@ export async function selectDeliverySlot({ sessionId, provider, date, timeRange 
  * Prepare checkout - navigate to final review before payment.
  * This is where we stop for human confirmation.
  */
-export async function prepareCheckout({ sessionId, provider }) {
+export async function prepareCheckout({ sessionId, provider, startUrl }) {
   const config = PROVIDER_CONFIGS[provider];
 
   const task = `
@@ -451,6 +470,7 @@ export async function prepareCheckout({ sessionId, provider }) {
   const result = await runTask({
     sessionId,
     task,
+    startUrl: startUrl ?? config.startUrl,
     allowedDomains: config.domains,
     outputSchema: {
       type: "object",

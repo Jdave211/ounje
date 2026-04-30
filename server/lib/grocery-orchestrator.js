@@ -19,6 +19,11 @@
 
 import { createClient } from "@supabase/supabase-js";
 import * as browserAgent from "../api/v1/providers/browser-agent.js";
+import {
+  createNotificationEvent,
+  fetchOrderingAutonomy,
+  fetchOrderingGuardrails,
+} from "./notification-events.js";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -36,6 +41,172 @@ function getSupabase() {
     throw new Error("Supabase not configured");
   }
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+}
+
+function normalizeText(value) {
+  return String(value ?? "").trim();
+}
+
+function parseDateValue(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isoDay(value) {
+  const parsed = value instanceof Date ? value : parseDateValue(value);
+  if (!parsed) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
+const AUTONOMY_MODES = new Set(["autoOrderWithinBudget", "fullyAutonomousGuardrails"]);
+const MANUAL_REVIEW_MODES = new Set(["suggestOnly", "approvalRequired"]);
+
+function effectiveOrderingAutonomy(orderingAutonomy, pricingTier) {
+  const autonomy = normalizeText(orderingAutonomy);
+  const tier = normalizeText(pricingTier).toLowerCase();
+
+  if (!autonomy) {
+    return null;
+  }
+
+  switch (tier) {
+  case "free":
+    return autonomy === "fullyAutonomousGuardrails" || autonomy === "autoOrderWithinBudget"
+      ? "approvalRequired"
+      : autonomy;
+  case "plus":
+    return autonomy === "fullyAutonomousGuardrails"
+      ? "autoOrderWithinBudget"
+      : autonomy;
+  case "autopilot":
+  case "foundinglifetime":
+  case "founding_lifetime":
+    return autonomy;
+  default:
+    return autonomy;
+  }
+}
+
+async function resolveTargetDeliveryDay(order, supabase = getSupabase()) {
+  if (!normalizeText(order?.meal_plan_id)) {
+    return null;
+  }
+
+  const { data: cycle } = await supabase
+    .from("meal_prep_cycles")
+    .select("plan")
+    .eq("user_id", order.user_id)
+    .eq("plan_id", order.meal_plan_id)
+    .order("generated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return (
+    isoDay(cycle?.plan?.periodStart)
+    ?? isoDay(cycle?.plan?.deliveryAnchorDate)
+    ?? isoDay(cycle?.plan?.periodEnd)
+  );
+}
+
+function parseSlotStartMinutes(timeRange) {
+  const normalized = normalizeText(timeRange).toLowerCase();
+  if (!normalized) return null;
+
+  const startLabel = normalized.split("-")[0]?.trim() ?? normalized;
+  const match = startLabel.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (!match) return null;
+
+  let hour = Number(match[1] ?? 0);
+  const minute = Number(match[2] ?? 0);
+  const meridiem = normalizeText(match[3]).toLowerCase();
+
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return (hour * 60) + minute;
+}
+
+function dayDifference(fromISO, toISO) {
+  const from = parseDateValue(fromISO);
+  const to = parseDateValue(toISO);
+  if (!from || !to) return null;
+  const startOfFrom = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
+  const startOfTo = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
+  return Math.round((startOfTo - startOfFrom) / (24 * 60 * 60 * 1000));
+}
+
+function pickRecommendedDeliverySlot({ slots, targetDeliveryDay, preferredTimeMinutes }) {
+  const availableSlots = (Array.isArray(slots) ? slots : []).filter((slot) => slot?.available !== false);
+  if (!availableSlots.length) {
+    return { recommendedSlot: null, recommendationReason: null };
+  }
+
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const cheapestFee = availableSlots.reduce((lowest, slot) => {
+    const fee = Number(slot?.fee ?? 0);
+    return Number.isFinite(fee) ? Math.min(lowest, fee) : lowest;
+  }, Number.POSITIVE_INFINITY);
+
+  let bestSlot = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const slot of availableSlots) {
+    const fee = Number(slot?.fee ?? 0);
+    const startMinutes = parseSlotStartMinutes(slot?.timeRange);
+    const daysUntilSlot = dayDifference(todayISO, slot?.date) ?? 0;
+    const targetDelta = targetDeliveryDay ? dayDifference(slot?.date, targetDeliveryDay) : null;
+    const timePenalty = preferredTimeMinutes != null && startMinutes != null
+      ? Math.abs(startMinutes - preferredTimeMinutes) * 0.45
+      : 0;
+    const feePenalty = Number.isFinite(fee) ? fee * 450 : 0;
+    const latenessPenalty = targetDelta != null && targetDelta < 0
+      ? (Math.abs(targetDelta) * 9000) + 30000
+      : 0;
+    const earlinessPenalty = targetDelta != null && targetDelta > 0
+      ? targetDelta * 700
+      : 0;
+    const speedPenalty = Math.max(0, daysUntilSlot) * 120;
+
+    const score = feePenalty + timePenalty + latenessPenalty + earlinessPenalty + speedPenalty;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestSlot = slot;
+    }
+  }
+
+  if (!bestSlot) {
+    return { recommendedSlot: null, recommendationReason: null };
+  }
+
+  const reasons = [];
+  const chosenFee = Number(bestSlot?.fee ?? 0);
+  const chosenStartMinutes = parseSlotStartMinutes(bestSlot?.timeRange);
+  const chosenTargetDelta = targetDeliveryDay ? dayDifference(bestSlot?.date, targetDeliveryDay) : null;
+
+  if (Number.isFinite(chosenFee) && Math.abs(chosenFee - cheapestFee) < 0.001) {
+    reasons.push("lowest fee");
+  }
+  if (chosenTargetDelta === 0) {
+    reasons.push("matches the prep day");
+  } else if (chosenTargetDelta != null && chosenTargetDelta > 0) {
+    reasons.push("lands before the prep day");
+  }
+  if (preferredTimeMinutes != null && chosenStartMinutes != null) {
+    const minuteGap = Math.abs(chosenStartMinutes - preferredTimeMinutes);
+    if (minuteGap <= 90) {
+      reasons.push("close to your preferred time");
+    } else if (chosenStartMinutes < preferredTimeMinutes) {
+      reasons.push("earlier to keep delivery fees down");
+    }
+  }
+
+  return {
+    recommendedSlot: bestSlot,
+    recommendationReason: reasons.slice(0, 2).join(" · ") || "Best fee and timing balance for this prep",
+  };
 }
 
 // ── Order State Machine ────────────────────────────────────────────────────────
@@ -99,11 +270,86 @@ export async function createOrder({
   return order;
 }
 
+function estimateSelectedSlotFeeCents(order, date, timeRange) {
+  const availableSlots = Array.isArray(order?.available_slots) ? order.available_slots : [];
+  const selectedSlot = availableSlots.find((slot) => {
+    const slotDate = normalizeText(slot?.date);
+    const slotRange = normalizeText(slot?.timeRange ?? slot?.time_range);
+    return slotDate === normalizeText(date) && slotRange === normalizeText(timeRange);
+  }) ?? order?.delivery_slot ?? null;
+
+  const fee = Number(selectedSlot?.fee ?? 0);
+  if (!Number.isFinite(fee) || fee <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round(fee * 100));
+}
+
+function estimateCheckoutSpendCents(order, selectedSlotFeeCents = 0) {
+  const subtotalCents = Math.max(0, Math.round(Number(order?.subtotal_cents ?? 0)));
+  return subtotalCents + Math.max(0, Math.round(selectedSlotFeeCents));
+}
+
+async function loadCheckoutPolicy(order, { date, timeRange } = {}) {
+  const guardrails = await fetchOrderingGuardrails(order.user_id).catch(() => ({
+    orderingAutonomy: null,
+    budgetPerCycle: null,
+    budgetWindow: null,
+    pricingTier: null,
+  }));
+  const supabase = getSupabase();
+  const targetDeliveryDay = await resolveTargetDeliveryDay(order, supabase);
+  const requestedAutonomy = guardrails.orderingAutonomy || await fetchOrderingAutonomy(order.user_id).catch(() => null);
+  const autonomy = effectiveOrderingAutonomy(requestedAutonomy, guardrails.pricingTier);
+  const budgetPerCycle = Number(guardrails.budgetPerCycle ?? 0) || null;
+  const budgetCents = budgetPerCycle ? Math.round(budgetPerCycle * 100) : 0;
+  const selectedSlotFeeCents = estimateSelectedSlotFeeCents(order, date, timeRange);
+  const estimatedSpendCents = estimateCheckoutSpendCents(order, selectedSlotFeeCents);
+  const missingCount = Array.isArray(order.missing_items) ? order.missing_items.length : 0;
+  const substitutionCount = Array.isArray(order.substitutions) ? order.substitutions.length : 0;
+  const withinBudget = budgetCents > 0 ? estimatedSpendCents <= budgetCents : false;
+  const selectedSlotDay = isoDay(date ?? order?.delivery_slot?.date);
+  const withinTimeline = targetDeliveryDay && selectedSlotDay
+    ? selectedSlotDay <= targetDeliveryDay
+    : null;
+  const shouldAutoAdvance =
+    AUTONOMY_MODES.has(autonomy) &&
+    withinBudget &&
+    withinTimeline !== false &&
+    missingCount === 0 &&
+    substitutionCount === 0;
+  const requiresHumanReview =
+    MANUAL_REVIEW_MODES.has(autonomy) ||
+    !withinBudget ||
+    withinTimeline === false ||
+    missingCount > 0 ||
+    substitutionCount > 0;
+
+  return {
+    autonomy,
+    requestedAutonomy,
+    pricingTier: guardrails.pricingTier ?? null,
+    budgetPerCycle,
+    budgetCents,
+    selectedSlotFeeCents,
+    estimatedSpendCents,
+    missingCount,
+    substitutionCount,
+    withinBudget,
+    withinTimeline,
+    targetDeliveryDay,
+    selectedSlotDay,
+    shouldAutoAdvance,
+    requiresHumanReview,
+  };
+}
+
 /**
  * Start processing an order.
  * This kicks off the browser-use session and begins cart building.
  */
-export async function startOrder(orderId) {
+export async function startOrder(orderId, { deliveryAddress: deliveryAddressOverride } = {}) {
   const supabase = getSupabase();
 
   // Get order with provider account
@@ -122,6 +368,24 @@ export async function startOrder(orderId) {
   // Validate state
   if (order.status !== "pending" && order.status !== "failed") {
     throw new Error(`Cannot start order in status: ${order.status}`);
+  }
+
+  const resolvedDeliveryAddress = isCompleteDeliveryAddress(deliveryAddressOverride)
+    ? deliveryAddressOverride
+    : order.delivery_address;
+
+  if (!isCompleteDeliveryAddress(resolvedDeliveryAddress)) {
+    throw new Error("A complete deliveryAddress is required before starting this order");
+  }
+
+  if (JSON.stringify(order.delivery_address ?? null) !== JSON.stringify(resolvedDeliveryAddress ?? null)) {
+    await supabase
+      .from("grocery_orders")
+      .update({
+        delivery_address: resolvedDeliveryAddress,
+      })
+      .eq("id", orderId);
+    order.delivery_address = resolvedDeliveryAddress;
   }
 
   try {
@@ -144,6 +408,20 @@ export async function startOrder(orderId) {
       })
       .eq("id", orderId);
 
+    await emitOrderNotification(orderId, {
+      kind: "grocery_cart_ready",
+      dedupeKey: `grocery-order-started-${order.user_id}-${orderId}`,
+      title: "Our agents started shopping",
+      body: "We’re building your cart now.",
+      actionUrl: liveUrl ?? null,
+      actionLabel: "Open cart",
+      orderId,
+      metadata: {
+        provider: order.provider,
+        status: "session_started",
+      },
+    }).catch(() => {});
+
     // Transition to building_cart
     await updateOrderStatus(orderId, "building_cart", {
       status_message: "Adding items to cart...",
@@ -153,7 +431,7 @@ export async function startOrder(orderId) {
     const cartResult = await browserAgent.buildCart({
       provider: order.provider,
       items: order.requested_items,
-      address: order.delivery_address,
+      address: resolvedDeliveryAddress,
       profileId: order.provider_account?.browser_profile_id,
     });
 
@@ -198,15 +476,60 @@ export async function startOrder(orderId) {
       cart_ready_at: new Date().toISOString(),
     });
 
+    await emitOrderNotification(orderId, {
+      kind: "grocery_cart_ready",
+      dedupeKey: `grocery-cart-ready-${order.user_id}-${orderId}`,
+      title: matchedItems.length > 0
+        ? `Cart built with ${matchedItems.length} items`
+        : "Your Instacart cart is ready",
+      body: missingItems.length > 0
+        ? `${missingItems.length} item${missingItems.length === 1 ? "" : "s"} still need attention before checkout.`
+        : "Your grocery cart is set and ready for the next step.",
+      actionUrl: cartResult.cartUrl ?? null,
+      actionLabel: "Open cart",
+      orderId,
+      metadata: {
+        matchedItems: matchedItems.length,
+        substitutions: substitutions.length,
+        missingItems: missingItems.length,
+        provider: order.provider,
+      },
+    }).catch(() => {});
+
+    let autoSlotSelection = null;
+    try {
+      const slotsPayload = await getDeliverySlots(orderId);
+      const recommendedSlot = slotsPayload?.recommendedSlot ?? null;
+
+      if (recommendedSlot?.date && recommendedSlot?.timeRange) {
+        autoSlotSelection = await selectDeliverySlot(orderId, {
+          date: recommendedSlot.date,
+          timeRange: recommendedSlot.timeRange,
+        });
+      }
+    } catch (slotError) {
+      console.warn?.(`[grocery-orchestrator] slot recommendation failed for ${orderId}: ${slotError.message}`);
+    }
+
     return {
       orderId,
-      status: "cart_ready",
+      status: autoSlotSelection?.autoApproved
+        ? "checkout_started"
+        : autoSlotSelection
+          ? "awaiting_review"
+          : "cart_ready",
       sessionId,
       liveUrl,
       matchedItems: matchedItems.length,
       substitutions: substitutions.length,
       missingItems: missingItems.length,
       subtotal: cartResult.subtotal,
+      deliverySlot: autoSlotSelection?.policy?.selectedDate && autoSlotSelection?.policy?.selectedTimeRange
+        ? {
+            date: autoSlotSelection.policy.selectedDate,
+            timeRange: autoSlotSelection.policy.selectedTimeRange,
+          }
+        : null,
     };
   } catch (err) {
     await failOrder(orderId, err.message);
@@ -236,9 +559,20 @@ export async function getDeliverySlots(orderId) {
   });
 
   try {
+    const guardrails = await fetchOrderingGuardrails(order.user_id).catch(() => ({
+      deliveryTimeMinutes: null,
+      pricingTier: null,
+      orderingAutonomy: null,
+    }));
     const slots = await browserAgent.getDeliverySlots({
       sessionId: order.browser_session_id,
       provider: order.provider,
+    });
+    const targetDeliveryDay = await resolveTargetDeliveryDay(order, supabase);
+    const { recommendedSlot, recommendationReason } = pickRecommendedDeliverySlot({
+      slots: slots.slots,
+      targetDeliveryDay,
+      preferredTimeMinutes: Number(guardrails.deliveryTimeMinutes ?? 0) || null,
     });
 
     await supabase
@@ -246,7 +580,12 @@ export async function getDeliverySlots(orderId) {
       .update({ available_slots: slots.slots })
       .eq("id", orderId);
 
-    return slots;
+    return {
+      ...slots,
+      recommendedSlot,
+      recommendationReason,
+      targetDeliveryDay,
+    };
   } catch (err) {
     await failOrder(orderId, err.message);
     throw err;
@@ -278,7 +617,12 @@ export async function selectDeliverySlot(orderId, { date, timeRange }) {
     await supabase
       .from("grocery_orders")
       .update({
-        delivery_slot: { date, timeRange, selected: result.selected },
+        delivery_slot: {
+          date,
+          timeRange,
+          selected: result.selected,
+          selectedBy: "ounje",
+        },
       })
       .eq("id", orderId);
 
@@ -287,7 +631,62 @@ export async function selectDeliverySlot(orderId, { date, timeRange }) {
       status_message: "Ready for your review",
     });
 
-    return result;
+    const policy = await loadCheckoutPolicy(order, { date, timeRange });
+    if (policy.shouldAutoAdvance) {
+      const checkoutResult = await approveOrder(orderId, {
+        tipCents: order.tip_cents ?? 0,
+        approvalMode: "auto",
+        policy: {
+          ...policy,
+          selectedDate: date,
+          selectedTimeRange: timeRange,
+        },
+      });
+
+      return {
+        ...result,
+        autoApproved: true,
+        checkout: checkoutResult,
+        policy,
+      };
+    }
+
+    await emitOrderNotification(orderId, {
+      kind: policy.requiresHumanReview ? "checkout_approval_required" : "cart_review_required",
+      dedupeKey: `grocery-awaiting-review-${order.user_id}-${orderId}-${date}-${timeRange}`,
+      title: policy.requiresHumanReview ? "Final checkout needs your go-ahead" : "Groceries are lined up",
+      body: policy.requiresHumanReview
+        ? (
+            policy.withinTimeline === false
+              ? `The selected delivery time lands after your prep window${timeRange ? ` (${timeRange})` : ""}, so checkout needs your review.`
+              : policy.withinBudget
+                ? `Instacart is ready for your final review${timeRange ? ` for ${timeRange}` : ""}.`
+                : `The cart is over budget${timeRange ? ` for ${timeRange}` : ""}, so checkout needs your review.`
+          )
+        : "Cart, delivery time, and totals are ready to be confirmed.",
+      actionUrl: order.browser_live_url ?? order.provider_cart_url ?? null,
+      actionLabel: policy.requiresHumanReview ? "Review checkout" : "Open order",
+      orderId,
+      metadata: {
+        provider: order.provider,
+        selectedDate: date,
+        selectedTimeRange: timeRange,
+        approvalRequired: policy.requiresHumanReview,
+        autonomy: policy.autonomy,
+        withinBudget: policy.withinBudget,
+        withinTimeline: policy.withinTimeline,
+        targetDeliveryDay: policy.targetDeliveryDay,
+        selectedSlotDay: policy.selectedSlotDay,
+        estimatedSpendCents: policy.estimatedSpendCents,
+        budgetCents: policy.budgetCents,
+      },
+    }).catch(() => {});
+
+    return {
+      ...result,
+      autoApproved: false,
+      policy,
+    };
   } catch (err) {
     await failOrder(orderId, err.message);
     throw err;
@@ -315,6 +714,7 @@ export async function getOrderSummary(orderId) {
     id: order.id,
     provider: order.provider,
     status: order.status,
+    stepLog: order.step_log ?? [],
     
     items: {
       matched: order.matched_items ?? [],
@@ -345,7 +745,7 @@ export async function getOrderSummary(orderId) {
 /**
  * User approves the order - proceed to checkout.
  */
-export async function approveOrder(orderId, { tipCents = 0 } = {}) {
+export async function approveOrder(orderId, { tipCents = 0, approvalMode = "user", policy = null } = {}) {
   const supabase = getSupabase();
 
   const { data: order, error } = await supabase
@@ -360,25 +760,151 @@ export async function approveOrder(orderId, { tipCents = 0 } = {}) {
     throw new Error(`Order must be awaiting_review, is: ${order.status}`);
   }
 
+  const normalizedApprovalMode = normalizeText(approvalMode).toLowerCase() === "auto" ? "auto" : "user";
+  const approvalStatusMessage = normalizedApprovalMode === "auto"
+    ? "Auto-approved within budget"
+    : "Approved by user";
+
   // Update with tip and approval
   await supabase
     .from("grocery_orders")
     .update({
       tip_cents: tipCents,
-      user_approved_at: new Date().toISOString(),
+      ...(normalizedApprovalMode === "user" ? { user_approved_at: new Date().toISOString() } : {}),
     })
     .eq("id", orderId);
 
   await updateOrderStatus(orderId, "user_approved", {
-    status_message: "Approved by user",
+    status_message: approvalStatusMessage,
+  }, {
+    approvalMode: normalizedApprovalMode,
+    policy,
   });
 
   // Prepare checkout
   await updateOrderStatus(orderId, "checkout_started", {
-    status_message: "Navigating to checkout...",
+    status_message: normalizedApprovalMode === "auto"
+      ? "Auto-advancing to checkout..."
+      : "Navigating to checkout...",
+  }, {
+    approvalMode: normalizedApprovalMode,
+    policy,
   });
 
   try {
+    if (!order.browser_session_id) {
+      const { data: providerAccount } = await supabase
+        .from("user_provider_accounts")
+        .select("browser_profile_id, login_status")
+        .eq("id", order.provider_account_id)
+        .maybeSingle();
+
+      const fallbackCheckoutUrl = normalizeText(order.provider_checkout_url) || normalizeText(order.provider_cart_url);
+      if (!fallbackCheckoutUrl && order.provider !== "instacart") {
+        throw new Error("No Instacart checkout URL available for this order");
+      }
+
+      if (order.provider === "instacart" && providerAccount?.browser_profile_id) {
+        try {
+          const checkoutSession = await browserAgent.createSession({
+            provider: "instacart",
+            profileId: providerAccount.browser_profile_id,
+          });
+          const checkoutResult = await browserAgent.prepareCheckout({
+            sessionId: checkoutSession.sessionId,
+            provider: "instacart",
+            startUrl: fallbackCheckoutUrl || order.browser_live_url || "https://www.instacart.ca/store/cart",
+          });
+
+          await supabase
+            .from("grocery_orders")
+            .update({
+              browser_session_id: checkoutSession.sessionId,
+              browser_live_url: checkoutSession.liveUrl ?? order.browser_live_url ?? null,
+              subtotal_cents: Math.round((checkoutResult.subtotal ?? 0) * 100),
+              delivery_fee_cents: Math.round((checkoutResult.deliveryFee ?? 0) * 100),
+              service_fee_cents: Math.round((checkoutResult.serviceFee ?? 0) * 100),
+              tax_cents: Math.round((checkoutResult.tax ?? 0) * 100),
+              total_cents: Math.round((checkoutResult.total ?? 0) * 100),
+              provider_checkout_url: checkoutResult.checkoutUrl,
+            })
+            .eq("id", orderId);
+
+          await emitOrderNotification(orderId, {
+            kind: "grocery_order_confirmed",
+            dedupeKey: `grocery-checkout-started-${order.user_id}-${orderId}-${normalizedApprovalMode}`,
+            title: normalizedApprovalMode === "auto"
+              ? "Groceries are confirmed"
+              : "Checkout is ready",
+            body: normalizedApprovalMode === "auto"
+              ? "Ounje moved the Instacart cart to checkout and kept the process in one order workflow."
+              : "Instacart has the final totals ready. Complete the provider checkout to place the order.",
+            actionUrl: checkoutResult.checkoutUrl ?? checkoutSession.liveUrl ?? fallbackCheckoutUrl ?? null,
+            actionLabel: "Open checkout",
+            orderId,
+            metadata: {
+              provider: order.provider,
+              approvalMode: normalizedApprovalMode,
+              budgetCents: policy?.budgetCents ?? null,
+              estimatedSpendCents: policy?.estimatedSpendCents ?? null,
+              withinBudget: policy?.withinBudget ?? null,
+            },
+          }).catch(() => {});
+
+          return {
+            checkoutUrl: checkoutResult.checkoutUrl,
+            liveUrl: checkoutSession.liveUrl ?? order.browser_live_url ?? null,
+            total: checkoutResult.total,
+            readyToSubmit: checkoutResult.readyToSubmit,
+            approvalMode: normalizedApprovalMode,
+          };
+        } catch (fallbackError) {
+          console.warn?.(`[grocery-orchestrator] browser-use Instacart checkout fallback failed: ${fallbackError.message}`);
+        }
+      }
+
+      if (!fallbackCheckoutUrl) {
+        throw new Error("No Instacart checkout URL available for this order");
+      }
+
+      await supabase
+        .from("grocery_orders")
+        .update({
+          provider_checkout_url: fallbackCheckoutUrl,
+        })
+        .eq("id", orderId);
+
+      await emitOrderNotification(orderId, {
+        kind: "grocery_order_confirmed",
+        dedupeKey: `grocery-checkout-started-${order.user_id}-${orderId}-${normalizedApprovalMode}`,
+        title: normalizedApprovalMode === "auto"
+          ? "Groceries are confirmed"
+          : "Checkout is ready",
+        body: normalizedApprovalMode === "auto"
+          ? "Ounje moved the Instacart cart to checkout and kept the process in one order workflow."
+          : "Instacart checkout is ready. Open the cart to finish placing the order.",
+        actionUrl: fallbackCheckoutUrl,
+        actionLabel: "Open checkout",
+        orderId,
+        metadata: {
+          provider: order.provider,
+          approvalMode: normalizedApprovalMode,
+          budgetCents: policy?.budgetCents ?? null,
+          estimatedSpendCents: policy?.estimatedSpendCents ?? null,
+          withinBudget: policy?.withinBudget ?? null,
+          externalCheckout: true,
+        },
+      }).catch(() => {});
+
+      return {
+        checkoutUrl: fallbackCheckoutUrl,
+        liveUrl: order.browser_live_url ?? fallbackCheckoutUrl,
+        total: (order.total_cents ?? order.subtotal_cents ?? 0) / 100,
+        readyToSubmit: false,
+        approvalMode: normalizedApprovalMode,
+      };
+    }
+
     const checkoutResult = await browserAgent.prepareCheckout({
       sessionId: order.browser_session_id,
       provider: order.provider,
@@ -403,11 +929,34 @@ export async function approveOrder(orderId, { tipCents = 0 } = {}) {
 
     // Return checkout URL for user to complete payment
     // We stop here - user completes payment in provider's UI
+    await emitOrderNotification(orderId, {
+      kind: "grocery_order_confirmed",
+      dedupeKey: `grocery-checkout-started-${order.user_id}-${orderId}-${normalizedApprovalMode}`,
+      title: normalizedApprovalMode === "auto"
+        ? "Groceries are confirmed"
+        : "Checkout is ready",
+      body: normalizedApprovalMode === "auto"
+        ? "Ounje kept the cart within budget and moved it to provider checkout."
+        : "Instacart has the final totals ready. Complete the provider checkout to place the order.",
+      actionUrl: checkoutResult.checkoutUrl ?? order.browser_live_url ?? null,
+      actionLabel: "Open checkout",
+      orderId,
+      metadata: {
+        provider: order.provider,
+        total: checkoutResult.total ?? null,
+        approvalMode: normalizedApprovalMode,
+        budgetCents: policy?.budgetCents ?? null,
+        estimatedSpendCents: policy?.estimatedSpendCents ?? null,
+        withinBudget: policy?.withinBudget ?? null,
+      },
+    }).catch(() => {});
+
     return {
       checkoutUrl: checkoutResult.checkoutUrl,
       liveUrl: order.browser_live_url,
       total: checkoutResult.total,
       readyToSubmit: checkoutResult.readyToSubmit,
+      approvalMode: normalizedApprovalMode,
     };
   } catch (err) {
     await failOrder(orderId, err.message);
@@ -423,7 +972,7 @@ export async function completeOrder(orderId, { providerOrderId } = {}) {
 
   const { data: order, error } = await supabase
     .from("grocery_orders")
-    .select("browser_session_id")
+    .select("*")
     .eq("id", orderId)
     .single();
 
@@ -450,6 +999,20 @@ export async function completeOrder(orderId, { providerOrderId } = {}) {
   await updateOrderStatus(orderId, "completed", {
     status_message: "Order placed successfully",
   });
+
+  await emitOrderNotification(orderId, {
+    kind: "grocery_order_confirmed",
+    dedupeKey: `grocery-order-confirmed-${order.user_id}-${orderId}-${normalizeText(providerOrderId) || "submitted"}`,
+    title: "Groceries are confirmed",
+    body: "Instacart accepted the order and delivery tracking can start now.",
+    actionUrl: order.provider_checkout_url ?? order.provider_cart_url ?? null,
+    actionLabel: "Open Instacart",
+    orderId,
+    metadata: {
+      provider: order.provider,
+      providerOrderId: normalizeText(providerOrderId) || null,
+    },
+  }).catch(() => {});
 
   return { success: true };
 }
@@ -485,6 +1048,26 @@ export async function cancelOrder(orderId, { reason } = {}) {
   await updateOrderStatus(orderId, "cancelled", {
     status_message: reason ?? "Cancelled by user",
   });
+
+  const { data: cancelledOrder } = await supabase
+    .from("grocery_orders")
+    .select("user_id, provider")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (cancelledOrder?.user_id) {
+    await emitOrderNotification(orderId, {
+      kind: "grocery_issue",
+      dedupeKey: `grocery-cancelled-${cancelledOrder.user_id}-${orderId}`,
+      title: "Instacart order cancelled",
+      body: reason ?? "This grocery order was cancelled before checkout completed.",
+      orderId,
+      metadata: {
+        provider: cancelledOrder.provider,
+        cancelled: true,
+      },
+    }).catch(() => {});
+  }
 
   return { success: true };
 }
@@ -532,7 +1115,16 @@ export async function retryOrder(orderId) {
 
 // ── Helper Functions ───────────────────────────────────────────────────────────
 
-async function updateOrderStatus(orderId, newStatus, extraFields = {}) {
+function isCompleteDeliveryAddress(address) {
+  return Boolean(
+    address?.line1?.trim() &&
+    address?.city?.trim() &&
+    address?.region?.trim() &&
+    address?.postalCode?.trim()
+  );
+}
+
+async function updateOrderStatus(orderId, newStatus, extraFields = {}, stepLogExtra = {}) {
   const supabase = getSupabase();
 
   const { data: order } = await supabase
@@ -548,16 +1140,93 @@ async function updateOrderStatus(orderId, newStatus, extraFields = {}) {
     }
   }
 
+  const { data: currentOrder } = await supabase
+    .from("grocery_orders")
+    .select("step_log")
+    .eq("id", orderId)
+    .single();
+
+  const fallbackTrackingCopy = (() => {
+    switch (newStatus) {
+      case "session_started":
+        return {
+          title: "Starting shopping session",
+          body: "We opened the shopping session and are getting the cart ready.",
+        };
+      case "building_cart":
+        return {
+          title: "Building your cart",
+          body: "We’re matching products and filling the cart now.",
+        };
+      case "cart_ready":
+        return {
+          title: "Cart is lined up",
+          body: "The cart is ready for delivery timing and checkout review.",
+        };
+      case "selecting_slot":
+        return {
+          title: "Checking delivery times",
+          body: "We’re looking for a delivery time that fits the prep schedule.",
+        };
+      case "awaiting_review":
+        return {
+          title: "Checkout review ready",
+          body: "The cart, delivery time, and totals are ready for review.",
+        };
+      case "user_approved":
+        return {
+          title: "Checkout approved",
+          body: "The order is approved and moving to Instacart checkout.",
+        };
+      case "checkout_started":
+        return {
+          title: "Opening Instacart checkout",
+          body: "We’re moving the cart into the provider checkout flow.",
+        };
+      case "completed":
+        return {
+          title: "Order placed",
+          body: "Instacart accepted the order and delivery tracking can begin.",
+        };
+      case "failed":
+        return {
+          title: "Shopping paused",
+          body: normalizeText(extraFields.status_message) || "The shopping flow hit a snag and needs another pass.",
+        };
+      case "cancelled":
+        return {
+          title: "Order cancelled",
+          body: normalizeText(extraFields.status_message) || "This shopping flow was cancelled.",
+        };
+      default:
+        return {
+          title: normalizeText(extraFields.status_message ?? newStatus.replace(/_/g, " ")) || "Order update",
+          body: normalizeText(extraFields.status_message ?? `Order status changed to ${newStatus}.`) || "A grocery order update was recorded.",
+        };
+    }
+  })();
+
+  const stepLogEntry = {
+    status: newStatus,
+    kind: newStatus,
+    title: normalizeText(stepLogExtra.title ?? fallbackTrackingCopy.title) || "Order update",
+    body: normalizeText(stepLogExtra.body ?? fallbackTrackingCopy.body) || "A grocery order update was recorded.",
+    metadata: stepLogExtra.metadata && typeof stepLogExtra.metadata === "object" ? stepLogExtra.metadata : {},
+    at: new Date().toISOString(),
+    ...extraFields,
+    ...stepLogExtra,
+  };
+
+  const existingStepLog = Array.isArray(currentOrder?.step_log) ? currentOrder.step_log : [];
   const { error } = await supabase
     .from("grocery_orders")
     .update({
       status: newStatus,
+      tracking_title: stepLogEntry.title,
+      tracking_detail: stepLogEntry.body,
+      last_tracked_at: stepLogEntry.at,
       ...extraFields,
-      step_log: supabase.sql`step_log || ${JSON.stringify([{
-        status: newStatus,
-        at: new Date().toISOString(),
-        ...extraFields,
-      }])}::jsonb`,
+      step_log: [...existingStepLog, stepLogEntry],
     })
     .eq("id", orderId);
 
@@ -567,14 +1236,72 @@ async function updateOrderStatus(orderId, newStatus, extraFields = {}) {
 async function failOrder(orderId, errorMessage) {
   const supabase = getSupabase();
 
+  const { data: order } = await supabase
+    .from("grocery_orders")
+    .select("user_id, provider, provider_cart_url, provider_checkout_url")
+    .eq("id", orderId)
+    .maybeSingle();
+
   await supabase
     .from("grocery_orders")
     .update({
       status: "failed",
       error_message: errorMessage,
       status_message: `Failed: ${errorMessage}`,
+      tracking_title: "Shopping paused",
+      tracking_detail: normalizeText(errorMessage) || "The shopping flow hit a snag and needs another pass.",
+      last_tracked_at: new Date().toISOString(),
     })
     .eq("id", orderId);
+
+  if (order?.user_id) {
+    const friendlyBody = (() => {
+      const text = normalizeText(errorMessage).toLowerCase();
+      if (text.includes("invalid transition")) {
+        return "The shopping flow got out of sync and needs another pass.";
+      }
+      if (text.includes("supabase.sql is not a function")) {
+        return "The shopping flow hit a database sync issue and will retry.";
+      }
+      if (text.includes("session timed out") || text.includes("invalid jwt")) {
+        return "The shopping session expired and needs a fresh sign-in.";
+      }
+      return "The shopping flow hit a snag and needs another pass.";
+    })();
+
+    await emitOrderNotification(orderId, {
+      kind: "grocery_issue",
+      dedupeKey: `grocery-failed-${order.user_id}-${orderId}-${normalizeText(errorMessage).toLowerCase()}`,
+      title: "Shopping paused",
+      body: friendlyBody,
+      actionUrl: order.provider_checkout_url ?? order.provider_cart_url ?? null,
+      actionLabel: "Open order",
+      orderId,
+      metadata: {
+        provider: order.provider,
+        failed: true,
+      },
+    }).catch(() => {});
+  }
+}
+
+async function emitOrderNotification(orderId, payload) {
+  const supabase = getSupabase();
+  const { data: order, error } = await supabase
+    .from("grocery_orders")
+    .select("id,user_id")
+    .eq("id", orderId)
+    .single();
+
+  if (error || !order?.user_id) {
+    return null;
+  }
+
+  return await createNotificationEvent({
+    userId: order.user_id,
+    orderId,
+    ...payload,
+  });
 }
 
 // ── Verification Infrastructure ────────────────────────────────────────────────

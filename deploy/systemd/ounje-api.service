@@ -1,0 +1,19 @@
+[Unit]
+Description=Ounje API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ounje
+WorkingDirectory=/opt/ounje
+Environment=NODE_ENV=production
+Environment=OUNJE_SKIP_IOS_HOST_SYNC=1
+Environment=OUNJE_ENABLE_RECIPE_INGESTION_POLLING=0
+EnvironmentFile=-/etc/ounje/ounje.env
+ExecStart=/usr/bin/env node /opt/ounje/server/scripts/vm-bootstrap.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

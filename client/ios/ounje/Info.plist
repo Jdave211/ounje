@@ -19,7 +19,7 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.3</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>UIAppFonts</key>
@@ -37,26 +37,51 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>4</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>instagram</string>
+		<string>instagram-stories</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>161.35.129.11</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Allow Ounje to connect to your local development server while testing on your iPhone.</string>
+	<string>Allow Ounje to connect to the Ounje backend while testing on your iPhone.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Let Oúnje access your camera so we can generate recipes.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your microphone</string>
 	<key>OunjeDevServerHost</key>
-	<string>192.168.2.57</string>
+	<string>161.35.129.11</string>
 	<key>OunjeDevServerPort</key>
-	<string>8080</string>
+	<string>80</string>
+	<key>OunjePrimaryServerHost</key>
+	<string>161.35.129.11</string>
+	<key>OunjePrimaryServerPort</key>
+	<string>80</string>
+	<key>OunjeWorkerServerHost</key>
+	<string>161.35.129.11</string>
+	<key>OunjeWorkerServerPort</key>
+	<string>80</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Let Oúnje access your photos to generate recipes.</string>
 	<key>UILaunchStoryboardName</key>

@@ -39,6 +39,34 @@ struct GroceryCartRequest: Encodable {
 
 struct GroceryShoppingSpecRequest: Encodable {
     let items: [GroceryCartRequest.GroceryItemPayload]
+    let plan: PlanPayload?
+    let refreshToken: String?
+
+    struct PlanPayload: Encodable {
+        let recipes: [RecipePayload]
+
+        struct RecipePayload: Encodable {
+            let recipe: EmbeddedRecipePayload
+        }
+
+        struct EmbeddedRecipePayload: Encodable {
+            let id: String
+            let title: String
+            let cuisine: String
+            let tags: [String]
+            let ingredients: [IngredientPayload]
+            let cookMethod: String
+            let recipeType: String
+            let category: String
+            let mainProtein: String
+
+            struct IngredientPayload: Encodable {
+                let name: String
+                let amount: Double
+                let unit: String
+            }
+        }
+    }
 }
 
 struct GroceryShoppingSpecResponse: Decodable {
@@ -49,10 +77,14 @@ struct GroceryShoppingSpecResponse: Decodable {
         let name: String
         let originalName: String?
         let canonicalName: String?
+        let canonicalKey: String?
         let amount: Double
         let unit: String
         let estimatedPrice: Double?
         let sourceIngredients: [GroceryItemSource]
+        let sourceEdgeIDs: [String]?
+        let alternativeNames: [String]?
+        let coverageState: String?
         let sourceRecipes: [String]
         let shoppingContext: ShoppingContext?
         let confidence: Double?
@@ -61,11 +93,15 @@ struct GroceryShoppingSpecResponse: Decodable {
 
     struct ShoppingContext: Decodable, Hashable {
         let canonicalName: String?
+        let canonicalKey: String?
         let role: String?
         let exactness: String?
         let preferredForms: [String]
         let avoidForms: [String]
         let alternateQueries: [String]
+        let alternativeNames: [String]?
+        let sourceEdgeIDs: [String]?
+        let coverageState: String?
         let requiredDescriptors: [String]
         let substitutionPolicy: String?
         let isPantryStaple: Bool
@@ -151,7 +187,55 @@ final class GroceryService {
 
     private init() {}
 
-    func fetchShoppingSpec(items: [GroceryItem]) async throws -> GroceryShoppingSpecResponse {
+    func fetchShoppingSpec(items: [GroceryItem], plan: MealPlan? = nil) async throws -> GroceryShoppingSpecResponse {
+        try await fetchShoppingSpec(items: items, plan: plan, refreshToken: nil)
+    }
+
+    func fetchShoppingSpec(
+        items: [GroceryItem],
+        plan: MealPlan? = nil,
+        refreshToken: String?
+    ) async throws -> GroceryShoppingSpecResponse {
+        if items.isEmpty {
+            return GroceryShoppingSpecResponse(
+                items: [],
+                coverageSummary: GroceryShoppingSpecResponse.CoverageSummary(
+                    totalBaseUses: 0,
+                    accountedBaseUses: 0,
+                    uncoveredBaseLabels: []
+                )
+            )
+        }
+
+        let planPayload: GroceryShoppingSpecRequest.PlanPayload?
+        if let mealPlan = plan {
+            planPayload = GroceryShoppingSpecRequest.PlanPayload(
+                recipes: mealPlan.recipes.map { plannedRecipe in
+                    GroceryShoppingSpecRequest.PlanPayload.RecipePayload(
+                        recipe: GroceryShoppingSpecRequest.PlanPayload.EmbeddedRecipePayload(
+                            id: plannedRecipe.recipe.id,
+                            title: plannedRecipe.recipe.title,
+                            cuisine: plannedRecipe.recipe.cuisine.rawValue,
+                            tags: plannedRecipe.recipe.tags,
+                            ingredients: plannedRecipe.recipe.ingredients.map { ingredient in
+                                GroceryShoppingSpecRequest.PlanPayload.EmbeddedRecipePayload.IngredientPayload(
+                                    name: ingredient.name,
+                                    amount: ingredient.amount,
+                                    unit: ingredient.unit
+                                )
+                            },
+                            cookMethod: "",
+                            recipeType: "",
+                            category: "",
+                            mainProtein: ""
+                        )
+                    )
+                }
+            )
+        } else {
+            planPayload = nil
+        }
+
         let payload = GroceryShoppingSpecRequest(
             items: items.map {
                 .init(
@@ -163,103 +247,16 @@ final class GroceryService {
                         .init(recipeID: $0.recipeID, ingredientName: $0.ingredientName, unit: $0.unit)
                     }
                 )
-            }
+            },
+            plan: planPayload,
+            refreshToken: refreshToken
         )
 
-        let data = try await post(path: "/v1/grocery/spec", body: payload, timeout: 15)
+        let data = try await post(path: "/v1/grocery/spec", body: payload, timeout: 45)
         return try decoder.decode(GroceryShoppingSpecResponse.self, from: data)
     }
 
-    // MARK: - MealMe: search grocery cart
-
-    /// Primary path — calls POST /v1/grocery/cart with provider=mealme.
-    /// Returns store options ranked by match count + price.
-    func searchMealMeCart(
-        items: [GroceryItem],
-        deliveryAddress: DeliveryAddress?,
-        recipeTitle: String? = nil,
-        recipeImageURL: String? = nil,
-        recipeID: String? = nil
-    ) async throws -> MealMeCartResponse {
-        let addr = deliveryAddress?.isComplete == true ? deliveryAddress : nil
-
-        let payload = GroceryCartRequest(
-            provider: "mealme",
-            items: items.map {
-                .init(
-                    name: $0.name,
-                    amount: $0.amount,
-                    unit: $0.unit,
-                    estimatedPrice: $0.estimatedPrice,
-                    sourceIngredients: $0.sourceIngredients.map {
-                        .init(recipeID: $0.recipeID, ingredientName: $0.ingredientName, unit: $0.unit)
-                    }
-                )
-            },
-            recipeContext: (recipeTitle != nil || recipeID != nil) ? .init(
-                title: recipeTitle ?? "Recipe Ingredients",
-                imageUrl: recipeImageURL,
-                recipeId: recipeID
-            ) : nil,
-            deliveryAddress: addr.map {
-                .init(line1: $0.line1, city: $0.city, region: $0.region, postalCode: $0.postalCode, country: "US")
-            }
-        )
-
-        let data = try await post(path: "/v1/grocery/cart", body: payload, timeout: 20)
-        return try decoder.decode(MealMeCartResponse.self, from: data)
-    }
-
-    // MARK: - MealMe: fetch live quotes for a chosen store
-
-    func fetchMealMeQuotes(
-        storeId: String,
-        address: DeliveryAddress?,
-        location: MealMeLocation?
-    ) async throws -> [MealMeQuote] {
-        var lastError: Error?
-        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
-            do {
-                return try await fetchMealMeQuotes(
-                    baseURL: baseURL,
-                    storeId: storeId,
-                    address: address,
-                    location: location
-                )
-            } catch {
-                lastError = error
-            }
-        }
-
-        throw lastError ?? GroceryServiceError.invalidURL
-    }
-
-    // MARK: - MealMe: create cart
-
-    /// Finalises a MealMe cart for a chosen store + quote.
-    /// Returns cart_id + real totals. Call this before showing the checkout CTA.
-    func createMealMeCart(
-        storeId: String,
-        quoteId: String,
-        products: [MealMeProduct],
-        fulfillment: String = "delivery",
-        deliveryAddress: DeliveryAddress?
-    ) async throws -> MealMeCreateCartResponse {
-        let request = MealMeCreateCartRequest(
-            storeId: storeId,
-            quoteId: quoteId,
-            cartItems: products.map { .init(productId: $0.productId, quantity: $0.quantity) },
-            fulfillment: fulfillment,
-            customer: nil,
-            deliveryAddress: deliveryAddress.map {
-                .init(line1: $0.line1, city: $0.city, region: $0.region, postalCode: $0.postalCode)
-            }
-        )
-        let data = try await post(path: "/v1/grocery/cart/create", body: request, timeout: 15)
-        return try decoder.decode(MealMeCreateCartResponse.self, from: data)
-    }
-
-    // MARK: - Legacy: build cart URL for non-MealMe providers
+    // MARK: - Build cart URL for supported providers
 
     /// Returns a ProviderQuote with a cart URL (opens in SFSafariViewController).
     func buildCartURL(
@@ -272,8 +269,21 @@ final class GroceryService {
         userID: String? = nil,
         accessToken: String? = nil
     ) async throws -> ProviderQuote {
-        guard provider != .mealme else {
-            throw GroceryServiceError.useMealMeFlow
+        guard !items.isEmpty else {
+            return ProviderQuote(
+                provider: provider,
+                subtotal: 0,
+                deliveryFee: 0,
+                estimatedTotal: 0,
+                etaDays: 0,
+                orderURL: URL(string: "about:blank")!,
+                providerStatus: .deepLink,
+                expiresAt: nil,
+                selectedStore: nil,
+                storeOptions: [],
+                partialSuccess: false,
+                reviewItems: []
+            )
         }
 
         let addr = deliveryAddress?.isComplete == true ? deliveryAddress : nil
@@ -347,11 +357,11 @@ final class GroceryService {
         userID: String? = nil,
         accessToken: String? = nil
     ) async -> [ProviderQuote] {
-        let legacyProviders = profile.preferredProviders.filter { $0 != .mealme }
+        guard !items.isEmpty else { return [] }
         let address = profile.deliveryAddress.isComplete ? profile.deliveryAddress : nil
 
         return await withTaskGroup(of: ProviderQuote?.self) { group in
-            for provider in legacyProviders {
+            for provider in profile.preferredProviders {
                 group.addTask {
                     try? await self.buildCartURL(
                         provider: provider,
@@ -444,28 +454,6 @@ final class GroceryService {
         return data
     }
 
-    private func fetchMealMeQuotes(
-        baseURL: String,
-        storeId: String,
-        address: DeliveryAddress?,
-        location: MealMeLocation?
-    ) async throws -> [MealMeQuote] {
-        var components = URLComponents(string: "\(baseURL)/v1/grocery/quotes")!
-        components.queryItems = [
-            .init(name: "storeId", value: storeId),
-            .init(name: "lat", value: "\(location?.latitude ?? 37.7786357)"),
-            .init(name: "lng", value: "\(location?.longitude ?? -122.3918135)"),
-            .init(name: "line1", value: address?.line1 ?? ""),
-            .init(name: "city", value: address?.city ?? ""),
-            .init(name: "region", value: address?.region ?? ""),
-            .init(name: "postalCode", value: address?.postalCode ?? "")
-        ]
-        guard let url = components.url else { throw GroceryServiceError.invalidURL }
-        let (data, response) = try await session.data(from: url)
-        try validateHTTP(response, data: data)
-        return try decoder.decode(MealMeQuotesResponse.self, from: data).quotes
-    }
-
     private func fetchProviderStatuses(baseURL: String) async throws -> [ProviderStatusResponse.ProviderInfo] {
         guard let url = URL(string: "\(baseURL)/v1/grocery/providers") else {
             throw GroceryServiceError.invalidURL
@@ -499,7 +487,6 @@ enum GroceryServiceError: LocalizedError {
     case invalidResponse
     case serverError(Int, String)
     case invalidCartURL(String)
-    case useMealMeFlow
 
     var errorDescription: String? {
         switch self {
@@ -507,7 +494,6 @@ enum GroceryServiceError: LocalizedError {
         case .invalidResponse:           return "Invalid response from server"
         case .serverError(let c, let m): return "Server error \(c): \(m)"
         case .invalidCartURL(let u):     return "Invalid cart URL: \(u)"
-        case .useMealMeFlow:             return "Use searchMealMeCart() for MealMe"
         }
     }
 }

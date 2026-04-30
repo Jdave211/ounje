@@ -19,6 +19,16 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
     case westAfrican
     case ethiopian
     case brazilian
+    case vietnamese
+    case turkish
+    case moroccan
+    case persian
+    case filipino
+    case southern
+    case cajun
+    case portuguese
+    case german
+    case british
     case vegan
 
     var id: String { rawValue }
@@ -51,6 +61,16 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
         case "westafrican", "nigerian": self = .westAfrican
         case "ethiopian": self = .ethiopian
         case "brazilian": self = .brazilian
+        case "vietnamese": self = .vietnamese
+        case "turkish": self = .turkish
+        case "moroccan": self = .moroccan
+        case "persian", "iranian": self = .persian
+        case "filipino": self = .filipino
+        case "southern", "southernamerican": self = .southern
+        case "cajun", "creole", "cajuncreole": self = .cajun
+        case "portuguese": self = .portuguese
+        case "german": self = .german
+        case "british", "uk": self = .british
         case "vegan": self = .vegan
         default:
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported cuisine value: \(rawValue)")
@@ -66,11 +86,11 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .italian: return "Italian"
         case .mexican: return "Mexican"
-        case .mediterranean: return "Mediter."
-        case .asian: return "Asian"
+        case .mediterranean: return "Mediterranean"
+        case .asian: return "Pan-Asian"
         case .indian: return "Indian"
         case .american: return "American"
-        case .middleEastern: return "Levantine"
+        case .middleEastern: return "Middle Eastern"
         case .japanese: return "Japanese"
         case .thai: return "Thai"
         case .korean: return "Korean"
@@ -79,9 +99,19 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
         case .french: return "French"
         case .spanish: return "Spanish"
         case .caribbean: return "Caribbean"
-        case .westAfrican: return "Nigerian"
+        case .westAfrican: return "West African"
         case .ethiopian: return "Ethiopian"
         case .brazilian: return "Brazilian"
+        case .vietnamese: return "Vietnamese"
+        case .turkish: return "Turkish"
+        case .moroccan: return "Moroccan"
+        case .persian: return "Persian"
+        case .filipino: return "Filipino"
+        case .southern: return "Southern"
+        case .cajun: return "Cajun"
+        case .portuguese: return "Portuguese"
+        case .german: return "German"
+        case .british: return "British"
         case .vegan: return "Vegan"
         }
     }
@@ -106,7 +136,119 @@ enum CuisinePreference: String, CaseIterable, Codable, Identifiable {
         case .westAfrican: return "🇳🇬"
         case .ethiopian: return "🇪🇹"
         case .brazilian: return "🇧🇷"
+        case .vietnamese: return "🇻🇳"
+        case .turkish: return "🇹🇷"
+        case .moroccan: return "🇲🇦"
+        case .persian: return "🇮🇷"
+        case .filipino: return "🇵🇭"
+        case .southern: return "🇺🇸"
+        case .cajun: return "🇺🇸"
+        case .portuguese: return "🇵🇹"
+        case .german: return "🇩🇪"
+        case .british: return "🇬🇧"
         case .vegan: return nil
+        }
+    }
+
+    var flagCode: String? {
+        switch self {
+        case .italian: return "IT"
+        case .mexican: return "MX"
+        case .mediterranean: return "GR"
+        case .asian: return "AS"
+        case .indian: return "IN"
+        case .american: return "US"
+        case .middleEastern: return "LB"
+        case .japanese: return "JP"
+        case .thai: return "TH"
+        case .korean: return "KR"
+        case .chinese: return "CN"
+        case .greek: return "GR"
+        case .french: return "FR"
+        case .spanish: return "ES"
+        case .caribbean: return "JM"
+        case .westAfrican: return "NG"
+        case .ethiopian: return "ET"
+        case .brazilian: return "BR"
+        case .vietnamese: return "VN"
+        case .turkish: return "TR"
+        case .moroccan: return "MA"
+        case .persian: return "IR"
+        case .filipino: return "PH"
+        case .southern: return "US"
+        case .cajun: return "US"
+        case .portuguese: return "PT"
+        case .german: return "DE"
+        case .british: return "GB"
+        case .vegan: return nil
+        }
+    }
+
+    var badgeText: String {
+        switch self {
+        case .italian: return "IT"
+        case .mexican: return "MX"
+        case .mediterranean: return "MED"
+        case .asian: return "AS"
+        case .indian: return "IN"
+        case .american: return "US"
+        case .middleEastern: return "ME"
+        case .japanese: return "JP"
+        case .thai: return "TH"
+        case .korean: return "KR"
+        case .chinese: return "CN"
+        case .greek: return "GR"
+        case .french: return "FR"
+        case .spanish: return "ES"
+        case .caribbean: return "CAR"
+        case .westAfrican: return "WA"
+        case .ethiopian: return "ET"
+        case .brazilian: return "BR"
+        case .vietnamese: return "VN"
+        case .turkish: return "TR"
+        case .moroccan: return "MA"
+        case .persian: return "IR"
+        case .filipino: return "PH"
+        case .southern: return "SO"
+        case .cajun: return "CAJ"
+        case .portuguese: return "PT"
+        case .german: return "DE"
+        case .british: return "UK"
+        case .vegan: return "VG"
+        }
+    }
+
+    var badgeHex: String {
+        switch self {
+        case .italian: return "E4512F"
+        case .mexican: return "E95B3C"
+        case .mediterranean: return "4A90A4"
+        case .asian: return "8F63FF"
+        case .indian: return "F08A24"
+        case .american: return "5C7CFA"
+        case .middleEastern: return "D97706"
+        case .japanese: return "E11D48"
+        case .thai: return "14B8A6"
+        case .korean: return "EF4444"
+        case .chinese: return "DC2626"
+        case .greek: return "2563EB"
+        case .french: return "6366F1"
+        case .spanish: return "F59E0B"
+        case .caribbean: return "10B981"
+        case .westAfrican: return "84CC16"
+        case .ethiopian: return "CA8A04"
+        case .brazilian: return "22C55E"
+        case .vietnamese: return "FB7185"
+        case .turkish: return "EF4444"
+        case .moroccan: return "B91C1C"
+        case .persian: return "0EA5A4"
+        case .filipino: return "3B82F6"
+        case .southern: return "A16207"
+        case .cajun: return "EA580C"
+        case .portuguese: return "16A34A"
+        case .german: return "52525B"
+        case .british: return "1D4ED8"
+        case .vegan: return "16A34A"
         }
     }
 }
@@ -127,7 +269,7 @@ enum MealCadence: String, CaseIterable, Codable, Identifiable {
         case .everyFewDays: return "Every few days"
         case .twiceWeekly: return "Twice weekly"
         case .weekly: return "Every week"
-        case .biweekly: return "Every 2 weeks"
+        case .biweekly: return "Every two weeks"
         case .monthly: return "Every month"
         }
     }
@@ -193,6 +335,19 @@ enum DeliveryAnchorDay: String, CaseIterable, Codable, Identifiable {
         case .saturday: return 7
         }
     }
+
+    static func from(date: Date, calendar: Calendar = .current) -> DeliveryAnchorDay {
+        switch calendar.component(.weekday, from: date) {
+        case 1: return .sunday
+        case 2: return .monday
+        case 3: return .tuesday
+        case 4: return .wednesday
+        case 5: return .thursday
+        case 6: return .friday
+        case 7: return .saturday
+        default: return .sunday
+        }
+    }
 }
 
 enum RecipeRotationPreference: String, CaseIterable, Codable, Identifiable {
@@ -241,7 +396,6 @@ enum MealExplorationLevel: String, CaseIterable, Codable, Identifiable {
 }
 
 enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
-    case mealme
     case walmart
     case instacart
     case kroger
@@ -249,9 +403,46 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var id: String { rawValue }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        switch rawValue {
+        case "mealme", "instacart":
+            self = .instacart
+        case "walmart":
+            self = .walmart
+        case "kroger":
+            self = .kroger
+        case "amazonfresh", "amazon_fresh", "amazon-fresh":
+            self = .amazonFresh
+        default:
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported shopping provider value: \(rawValue)")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    var marketingTitle: String {
+        switch self {
+        case .instacart:
+            return "Instacart"
+        case .walmart:
+            return "Walmart"
+        case .kroger:
+            return "Kroger"
+        case .amazonFresh:
+            return "Amazon Fresh"
+        }
+    }
+
     var title: String {
         switch self {
-        case .mealme:      return "MealMe"
         case .walmart:     return "Walmart"
         case .instacart:   return "Instacart"
         case .kroger:      return "Kroger"
@@ -261,7 +452,6 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .mealme:      return "Best price across 1M+ stores"
         case .walmart:     return "Everyday low prices"
         case .instacart:   return "Same-day from local stores"
         case .kroger:      return "Kroger, Ralphs, Fred Meyer & more"
@@ -271,7 +461,6 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var logoSystemName: String {
         switch self {
-        case .mealme:      return "bag.fill"
         case .walmart:     return "cart.fill"
         case .instacart:   return "leaf.fill"
         case .kroger:      return "storefront.fill"
@@ -281,7 +470,6 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var priceMultiplier: Double {
         switch self {
-        case .mealme:      return 1.00
         case .walmart:     return 0.96
         case .instacart:   return 1.08
         case .kroger:      return 1.00
@@ -291,7 +479,6 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var deliveryFee: Double {
         switch self {
-        case .mealme:      return 0.00   // varies per store — fetched live
         case .walmart:     return 8.95
         case .instacart:   return 9.99
         case .kroger:      return 10.95
@@ -301,7 +488,6 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var etaDays: Int {
         switch self {
-        case .mealme:      return 0   // typically same-day
         case .walmart:     return 2
         case .instacart:   return 1
         case .kroger:      return 2
@@ -311,8 +497,6 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var deliveryWindowReference: String {
         switch self {
-        case .mealme:
-            return "MealMe shows real-time windows from your nearest store."
         case .walmart, .kroger:
             return "Based on delivery coverage spanning 6 AM to 10:30 PM."
         case .instacart:
@@ -324,7 +508,7 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
     var deliveryWindowOptions: [DeliveryWindowOption] {
         switch self {
-        case .mealme, .instacart:
+        case .instacart:
             return [
                 .init(startMinutes: 9 * 60, endMinutes: 11 * 60),
                 .init(startMinutes: 11 * 60, endMinutes: 13 * 60),
@@ -400,8 +584,6 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
 
         let rawURL: String
         switch self {
-        case .mealme:
-            rawURL = "https://app.mealme.ai"
         case .walmart:
             rawURL = "https://www.walmart.com/search?q=\(query)"
         case .instacart:
@@ -468,7 +650,7 @@ struct ConsumptionProfile: Codable, Hashable {
     var mealsPerWeek: Int
     var includeLeftovers: Bool
 
-    static let starter = ConsumptionProfile(adults: 2, kids: 0, mealsPerWeek: 5, includeLeftovers: true)
+    static let starter = ConsumptionProfile(adults: 2, kids: 0, mealsPerWeek: 4, includeLeftovers: true)
 
     var householdMultiplier: Double {
         Double(adults) + (Double(kids) * 0.6)
@@ -595,6 +777,310 @@ enum OrderingAutonomyLevel: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
+    case free
+    case plus
+    case autopilot
+    case foundingLifetime
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .free:
+            return "Free"
+        case .plus:
+            return "Plus"
+        case .autopilot:
+            return "Autopilot"
+        case .foundingLifetime:
+            return "Founding lifetime"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .free:
+            return "Discovery, saved recipes, and guided planning."
+        case .plus:
+            return "Planner-first access for recurring meal prep."
+        case .autopilot:
+            return "Live ordering, slot selection, and execution."
+        case .foundingLifetime:
+            return "One-time founder access with full autopilot."
+        }
+    }
+
+    var priceText: String {
+        switch self {
+        case .free:
+            return "Free"
+        case .plus:
+            return "$14.99"
+        case .autopilot:
+            return "$29.99"
+        case .foundingLifetime:
+            return "$150"
+        }
+    }
+
+    var originalPriceText: String? {
+        switch self {
+        case .foundingLifetime:
+            return "$300"
+        default:
+            return nil
+        }
+    }
+
+    var cadenceText: String {
+        switch self {
+        case .free:
+            return "starter"
+        case .plus, .autopilot:
+            return "/month"
+        case .foundingLifetime:
+            return "one-time"
+        }
+    }
+
+    var badgeText: String? {
+        switch self {
+        case .free:
+            return "No card"
+        case .plus:
+            return "Best value"
+        case .autopilot:
+            return "Automation"
+        case .foundingLifetime:
+            return "40 spots"
+        }
+    }
+
+    var economicsText: String {
+        switch self {
+        case .free:
+            return "Planning only"
+        case .plus:
+            return "Planner and profile automation"
+        case .autopilot:
+            return "Adds ordering, slot selection, and tracking"
+        case .foundingLifetime:
+            return "Full access without monthly renewal"
+        }
+    }
+
+    var maxOrderingAutonomy: OrderingAutonomyLevel {
+        switch self {
+        case .free:
+            return .approvalRequired
+        case .plus:
+            return .autoOrderWithinBudget
+        case .autopilot, .foundingLifetime:
+            return .fullyAutonomousGuardrails
+        }
+    }
+
+    func supports(_ autonomy: OrderingAutonomyLevel) -> Bool {
+        switch autonomy {
+        case .suggestOnly, .approvalRequired:
+            return true
+        case .autoOrderWithinBudget:
+            return self == .plus || self == .autopilot || self == .foundingLifetime
+        case .fullyAutonomousGuardrails:
+            return self == .autopilot || self == .foundingLifetime
+        }
+    }
+
+    static func minimumTier(for autonomy: OrderingAutonomyLevel) -> OunjePricingTier {
+        switch autonomy {
+        case .suggestOnly, .approvalRequired:
+            return .free
+        case .autoOrderWithinBudget:
+            return .plus
+        case .fullyAutonomousGuardrails:
+            return .autopilot
+        }
+    }
+}
+
+enum OunjeMembershipBillingCadence: String, CaseIterable, Codable, Identifiable {
+    case monthly
+    case yearly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .monthly:
+            return "Monthly"
+        case .yearly:
+            return "Yearly"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .monthly:
+            return "Billed every month."
+        case .yearly:
+            return "Billed once a year."
+        }
+    }
+
+    var cadenceSuffix: String {
+        switch self {
+        case .monthly:
+            return "/month"
+        case .yearly:
+            return "/year"
+        }
+    }
+}
+
+struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
+    let tier: OunjePricingTier
+    let cadence: OunjeMembershipBillingCadence
+
+    var id: String { "\(tier.rawValue)-\(cadence.rawValue)" }
+
+    var title: String { tier.title }
+    var subtitle: String { tier.subtitle }
+
+    var productID: String {
+        switch (tier, cadence) {
+        case (.plus, .monthly):
+            return "net.ounje.plus.monthly"
+        case (.plus, .yearly):
+            return "net.ounje.plus.yearly"
+        case (.autopilot, .monthly):
+            return "net.ounje.autopilot.monthly"
+        case (.autopilot, .yearly):
+            return "net.ounje.autopilot.yearly"
+        case (.free, .monthly):
+            return "net.ounje.free.monthly"
+        case (.free, .yearly):
+            return "net.ounje.free.yearly"
+        case (.foundingLifetime, .monthly):
+            return "net.ounje.founding.monthly"
+        case (.foundingLifetime, .yearly):
+            return "net.ounje.founding.yearly"
+        }
+    }
+
+    var displayPriceText: String {
+        switch (tier, cadence) {
+        case (.plus, .monthly):
+            return "$9.99"
+        case (.plus, .yearly):
+            return "$99"
+        case (.autopilot, .monthly):
+            return "$19.99"
+        case (.autopilot, .yearly):
+            return "$199"
+        case (.free, _):
+            return "Free"
+        case (.foundingLifetime, _):
+            return "$399"
+        }
+    }
+
+    var displayPriceLine: String {
+        switch tier {
+        case .free:
+            return displayPriceText
+        default:
+            return "\(displayPriceText)\(cadence.cadenceSuffix)"
+        }
+    }
+
+    var savingsText: String? {
+        guard cadence == .yearly else { return nil }
+        switch tier {
+        case .plus:
+            return "Save 45%"
+        case .autopilot:
+            return "Save 44%"
+        case .free, .foundingLifetime:
+            return nil
+        }
+    }
+
+    var badgeText: String? {
+        switch (tier, cadence) {
+        case (.plus, .yearly):
+            return "Best value"
+        case (.plus, .monthly):
+            return "Most picked"
+        case (.autopilot, .monthly):
+            return "Hands-off"
+        case (.autopilot, .yearly):
+            return "Best annual"
+        case (.free, _):
+            return "Starter"
+        case (.foundingLifetime, _):
+            return "Founding offer"
+        }
+    }
+
+    static let defaultMonthlyPlans: [OunjeMembershipPlan] = [
+        .init(tier: .plus, cadence: .monthly),
+        .init(tier: .autopilot, cadence: .monthly)
+    ]
+
+    static let defaultYearlyPlans: [OunjeMembershipPlan] = [
+        .init(tier: .plus, cadence: .yearly),
+        .init(tier: .autopilot, cadence: .yearly)
+    ]
+}
+
+enum AppEntitlementStatus: String, Codable, Hashable {
+    case active
+    case expired
+    case revoked
+    case inactive
+}
+
+enum AppEntitlementSource: String, Codable, Hashable {
+    case appStore = "app_store"
+    case manual
+    case system
+}
+
+struct AppUserEntitlement: Codable, Hashable {
+    var userID: String
+    var tier: OunjePricingTier
+    var status: AppEntitlementStatus
+    var source: AppEntitlementSource
+    var productID: String?
+    var transactionID: String?
+    var originalTransactionID: String?
+    var expiresAt: Date?
+    var updatedAt: Date?
+    var metadata: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case tier
+        case status
+        case source
+        case productID = "product_id"
+        case transactionID = "transaction_id"
+        case originalTransactionID = "original_transaction_id"
+        case expiresAt = "expires_at"
+        case updatedAt = "updated_at"
+        case metadata
+    }
+
+    var isActive: Bool {
+        status == .active
+    }
+
+    var effectiveTier: OunjePricingTier {
+        isActive ? tier : .free
+    }
+}
+
 struct MealPrepSummarySection: Identifiable, Codable, Hashable {
     var id: String { title }
     var title: String
@@ -606,6 +1092,7 @@ struct UserProfile: Codable, Hashable {
     var preferredCuisines: [CuisinePreference]
     var cadence: MealCadence
     var deliveryAnchorDay: DeliveryAnchorDay
+    var deliveryAnchorDate: Date?
     var deliveryTimeMinutes: Int
     var rotationPreference: RecipeRotationPreference
     var maxRepeatsPerCycle: Int
@@ -613,6 +1100,7 @@ struct UserProfile: Codable, Hashable {
     var consumption: ConsumptionProfile
     var preferredProviders: [ShoppingProvider]
     var pantryStaples: [String]
+    var ownedMainShopItems: [String]
     var allergies: [String]
     var budgetPerCycle: Double
     var explorationLevel: MealExplorationLevel
@@ -630,12 +1118,14 @@ struct UserProfile: Codable, Hashable {
     var budgetFlexibility: BudgetFlexibility
     var purchasingBehavior: PurchasingBehavior
     var orderingAutonomy: OrderingAutonomyLevel
+    var pricingTier: OunjePricingTier
 
     init(
         preferredName: String? = nil,
         preferredCuisines: [CuisinePreference],
         cadence: MealCadence,
         deliveryAnchorDay: DeliveryAnchorDay = .sunday,
+        deliveryAnchorDate: Date? = nil,
         deliveryTimeMinutes: Int = 18 * 60,
         rotationPreference: RecipeRotationPreference,
         maxRepeatsPerCycle: Int,
@@ -643,6 +1133,7 @@ struct UserProfile: Codable, Hashable {
         consumption: ConsumptionProfile,
         preferredProviders: [ShoppingProvider],
         pantryStaples: [String],
+        ownedMainShopItems: [String] = [],
         allergies: [String],
         budgetPerCycle: Double,
         explorationLevel: MealExplorationLevel,
@@ -659,19 +1150,22 @@ struct UserProfile: Codable, Hashable {
         budgetWindow: BudgetWindow = .weekly,
         budgetFlexibility: BudgetFlexibility = .strict,
         purchasingBehavior: PurchasingBehavior = .healthier,
-        orderingAutonomy: OrderingAutonomyLevel = .autoOrderWithinBudget
+        orderingAutonomy: OrderingAutonomyLevel = .autoOrderWithinBudget,
+        pricingTier: OunjePricingTier = .free
     ) {
         self.preferredName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredCuisines = preferredCuisines
         self.cadence = cadence
         self.deliveryAnchorDay = deliveryAnchorDay
+        self.deliveryAnchorDate = deliveryAnchorDate
         self.deliveryTimeMinutes = max(0, min(deliveryTimeMinutes, 23 * 60 + 59))
         self.rotationPreference = rotationPreference
         self.maxRepeatsPerCycle = maxRepeatsPerCycle
         self.storage = storage
         self.consumption = consumption
-        self.preferredProviders = preferredProviders
+        self.preferredProviders = Self.normalizedPreferredProviders(preferredProviders)
         self.pantryStaples = pantryStaples
+        self.ownedMainShopItems = ownedMainShopItems
         self.allergies = allergies
         self.budgetPerCycle = budgetPerCycle
         self.explorationLevel = explorationLevel
@@ -689,13 +1183,15 @@ struct UserProfile: Codable, Hashable {
         self.budgetFlexibility = budgetFlexibility
         self.purchasingBehavior = purchasingBehavior
         self.orderingAutonomy = orderingAutonomy
+        self.pricingTier = pricingTier
     }
 
     static let starter = UserProfile(
         preferredName: nil,
         preferredCuisines: [.american, .chinese, .westAfrican],
-        cadence: .weekly,
+        cadence: .biweekly,
         deliveryAnchorDay: .sunday,
+        deliveryAnchorDate: .now,
         deliveryTimeMinutes: 18 * 60,
         rotationPreference: .dynamic,
         maxRepeatsPerCycle: 2,
@@ -703,6 +1199,7 @@ struct UserProfile: Codable, Hashable {
         consumption: .starter,
         preferredProviders: [.walmart, .instacart],
         pantryStaples: ["olive oil", "salt", "black pepper", "garlic"],
+        ownedMainShopItems: [],
         allergies: [],
         budgetPerCycle: 140,
         explorationLevel: .balanced,
@@ -725,11 +1222,16 @@ struct UserProfile: Codable, Hashable {
         budgetWindow: .weekly,
         budgetFlexibility: .slightlyFlexible,
         purchasingBehavior: .healthier,
-        orderingAutonomy: .autoOrderWithinBudget
+        orderingAutonomy: .approvalRequired,
+        pricingTier: .free
     )
 
+    var isPlanningReady: Bool {
+        !preferredCuisines.isEmpty && budgetPerCycle >= 25
+    }
+
     var isAutomationReady: Bool {
-        !preferredCuisines.isEmpty && deliveryAddress.isComplete && budgetPerCycle >= 25
+        isPlanningReady && deliveryAddress.isComplete
     }
 
     var absoluteRestrictions: [String] {
@@ -747,18 +1249,7 @@ struct UserProfile: Codable, Hashable {
     }
 
     var cadenceScheduleSummary: String {
-        switch cadence {
-        case .daily:
-            return cadence.title
-        case .everyFewDays, .twiceWeekly:
-            return "\(cadence.title) · starting \(deliveryAnchorDay.pluralTitle.lowercased())"
-        case .weekly:
-            return "\(cadence.title) · on \(deliveryAnchorDay.pluralTitle.lowercased())"
-        case .biweekly:
-            return "\(cadence.title) · every other \(deliveryAnchorDay.title.lowercased())"
-        case .monthly:
-            return "\(cadence.title) · first \(deliveryAnchorDay.title.lowercased())"
-        }
+        cadence.title
     }
 
     var cadenceTitleOnly: String {
@@ -776,49 +1267,100 @@ struct UserProfile: Codable, Hashable {
         let hour = deliveryTimeMinutes / 60
         let minute = deliveryTimeMinutes % 60
 
-        func nextWeeklyOccurrence(weekday: Int) -> Date {
-            let components = DateComponents(hour: hour, minute: minute, weekday: weekday)
-            return calendar.nextDate(
-                after: reference.addingTimeInterval(-60),
-                matching: components,
-                matchingPolicy: .nextTime,
-                repeatedTimePolicy: .first,
-                direction: .forward
-            ) ?? reference
+        if deliveryAnchorDate == nil {
+            func nextWeeklyOccurrence(weekday: Int) -> Date {
+                let components = DateComponents(hour: hour, minute: minute, weekday: weekday)
+                return calendar.nextDate(
+                    after: reference.addingTimeInterval(-60),
+                    matching: components,
+                    matchingPolicy: .nextTime,
+                    repeatedTimePolicy: .first,
+                    direction: .forward
+                ) ?? reference
+            }
+
+            switch cadence {
+            case .daily:
+                let todayAtTime = calendar.date(
+                    bySettingHour: hour,
+                    minute: minute,
+                    second: 0,
+                    of: reference
+                ) ?? reference
+                if todayAtTime.timeIntervalSince(reference) > 0 {
+                    return todayAtTime
+                }
+                return calendar.date(byAdding: .day, value: 1, to: todayAtTime) ?? todayAtTime
+            case .everyFewDays:
+                let future = calendar.date(byAdding: .day, value: cadence.dayInterval, to: reference) ?? reference
+                return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: future) ?? future
+            case .twiceWeekly, .weekly:
+                return nextWeeklyOccurrence(weekday: deliveryAnchorDay.weekdayIndex)
+            case .biweekly:
+                let nextAnchor = nextWeeklyOccurrence(weekday: deliveryAnchorDay.weekdayIndex)
+                let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: reference), to: calendar.startOfDay(for: nextAnchor)).day ?? 0
+                if days >= 7 {
+                    return nextAnchor
+                }
+                return calendar.date(byAdding: .day, value: 7, to: nextAnchor) ?? nextAnchor
+            case .monthly:
+                let nextMonth = calendar.date(byAdding: .month, value: 1, to: reference) ?? reference
+                let monthInterval = calendar.dateInterval(of: .month, for: nextMonth) ?? DateInterval(start: nextMonth, duration: 30 * 24 * 60 * 60)
+                var candidate = monthInterval.start
+                while calendar.component(.weekday, from: candidate) != deliveryAnchorDay.weekdayIndex {
+                    candidate = calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+                }
+                return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: candidate) ?? candidate
+            }
+        }
+
+        let anchorStartOfDay = calendar.startOfDay(for: deliveryAnchorDate ?? reference)
+
+        func dateAtDeliveryTime(on day: Date) -> Date {
+            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: day) ?? day
+        }
+
+        func nextAnchoredIntervalDate(intervalDays: Int) -> Date {
+            let clampedInterval = max(1, intervalDays)
+            let anchorAtTime = dateAtDeliveryTime(on: anchorStartOfDay)
+            if reference <= anchorAtTime {
+                return anchorAtTime
+            }
+
+            let referenceDay = calendar.startOfDay(for: reference)
+            let elapsedDays = max(0, calendar.dateComponents([.day], from: anchorStartOfDay, to: referenceDay).day ?? 0)
+            let completedIntervals = elapsedDays / clampedInterval
+
+            var candidateDay = calendar.date(
+                byAdding: .day,
+                value: completedIntervals * clampedInterval,
+                to: anchorStartOfDay
+            ) ?? anchorStartOfDay
+            var candidate = dateAtDeliveryTime(on: candidateDay)
+
+            if candidate <= reference {
+                candidateDay = calendar.date(byAdding: .day, value: clampedInterval, to: candidateDay) ?? candidateDay
+                candidate = dateAtDeliveryTime(on: candidateDay)
+            }
+
+            return candidate
         }
 
         switch cadence {
         case .daily:
-            let todayAtTime = calendar.date(
-                bySettingHour: hour,
-                minute: minute,
-                second: 0,
-                of: reference
-            ) ?? reference
-            if todayAtTime.timeIntervalSince(reference) > 0 {
-                return todayAtTime
-            }
-            return calendar.date(byAdding: .day, value: 1, to: todayAtTime) ?? todayAtTime
-        case .everyFewDays:
-            let future = calendar.date(byAdding: .day, value: cadence.dayInterval, to: reference) ?? reference
-            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: future) ?? future
-        case .twiceWeekly, .weekly:
-            return nextWeeklyOccurrence(weekday: deliveryAnchorDay.weekdayIndex)
-        case .biweekly:
-            let nextAnchor = nextWeeklyOccurrence(weekday: deliveryAnchorDay.weekdayIndex)
-            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: reference), to: calendar.startOfDay(for: nextAnchor)).day ?? 0
-            if days >= 7 {
-                return nextAnchor
-            }
-            return calendar.date(byAdding: .day, value: 7, to: nextAnchor) ?? nextAnchor
+            return nextAnchoredIntervalDate(intervalDays: 1)
+        case .everyFewDays, .twiceWeekly, .weekly, .biweekly:
+            return nextAnchoredIntervalDate(intervalDays: cadence.dayInterval)
         case .monthly:
-            let nextMonth = calendar.date(byAdding: .month, value: 1, to: reference) ?? reference
-            let monthInterval = calendar.dateInterval(of: .month, for: nextMonth) ?? DateInterval(start: nextMonth, duration: 30 * 24 * 60 * 60)
-            var candidate = monthInterval.start
-            while calendar.component(.weekday, from: candidate) != deliveryAnchorDay.weekdayIndex {
-                candidate = calendar.date(byAdding: .day, value: 1, to: candidate) ?? candidate
+            var candidate = dateAtDeliveryTime(on: anchorStartOfDay)
+            if candidate > reference {
+                return candidate
             }
-            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: candidate) ?? candidate
+
+            while candidate <= reference {
+                candidate = calendar.date(byAdding: .month, value: 1, to: candidate) ?? candidate.addingTimeInterval(30 * 24 * 60 * 60)
+            }
+            return candidate
         }
     }
 
@@ -1001,6 +1543,7 @@ struct UserProfile: Codable, Hashable {
         case preferredCuisines
         case cadence
         case deliveryAnchorDay
+        case deliveryAnchorDate
         case deliveryTimeMinutes
         case rotationPreference
         case maxRepeatsPerCycle
@@ -1008,6 +1551,7 @@ struct UserProfile: Codable, Hashable {
         case consumption
         case preferredProviders
         case pantryStaples
+        case ownedMainShopItems
         case allergies
         case budgetPerCycle
         case explorationLevel
@@ -1025,6 +1569,7 @@ struct UserProfile: Codable, Hashable {
         case budgetFlexibility
         case purchasingBehavior
         case orderingAutonomy
+        case pricingTier
     }
 
     init(from decoder: Decoder) throws {
@@ -1033,13 +1578,17 @@ struct UserProfile: Codable, Hashable {
         preferredCuisines = try container.decode([CuisinePreference].self, forKey: .preferredCuisines)
         cadence = try container.decode(MealCadence.self, forKey: .cadence)
         deliveryAnchorDay = try container.decodeIfPresent(DeliveryAnchorDay.self, forKey: .deliveryAnchorDay) ?? .sunday
+        deliveryAnchorDate = try container.decodeIfPresent(Date.self, forKey: .deliveryAnchorDate)
         deliveryTimeMinutes = try container.decodeIfPresent(Int.self, forKey: .deliveryTimeMinutes) ?? UserProfile.starter.deliveryTimeMinutes
         rotationPreference = try container.decode(RecipeRotationPreference.self, forKey: .rotationPreference)
         maxRepeatsPerCycle = try container.decode(Int.self, forKey: .maxRepeatsPerCycle)
         storage = try container.decode(StorageProfile.self, forKey: .storage)
         consumption = try container.decode(ConsumptionProfile.self, forKey: .consumption)
-        preferredProviders = try container.decode([ShoppingProvider].self, forKey: .preferredProviders)
+        preferredProviders = Self.normalizedPreferredProviders(
+            try container.decode([ShoppingProvider].self, forKey: .preferredProviders)
+        )
         pantryStaples = try container.decode([String].self, forKey: .pantryStaples)
+        ownedMainShopItems = try container.decodeIfPresent([String].self, forKey: .ownedMainShopItems) ?? []
         allergies = try container.decodeIfPresent([String].self, forKey: .allergies) ?? []
         budgetPerCycle = try container.decodeIfPresent(Double.self, forKey: .budgetPerCycle) ?? UserProfile.starter.budgetPerCycle
         explorationLevel = try container.decodeIfPresent(MealExplorationLevel.self, forKey: .explorationLevel) ?? .balanced
@@ -1057,11 +1606,17 @@ struct UserProfile: Codable, Hashable {
         budgetFlexibility = try container.decodeIfPresent(BudgetFlexibility.self, forKey: .budgetFlexibility) ?? .slightlyFlexible
         purchasingBehavior = try container.decodeIfPresent(PurchasingBehavior.self, forKey: .purchasingBehavior) ?? .healthier
         orderingAutonomy = try container.decodeIfPresent(OrderingAutonomyLevel.self, forKey: .orderingAutonomy) ?? .autoOrderWithinBudget
+        pricingTier = try container.decodeIfPresent(OunjePricingTier.self, forKey: .pricingTier) ?? .plus
     }
 
     private func joinedOrFallback(_ values: [String], fallback: String) -> String {
         let filtered = normalizedUnique(values)
         return filtered.isEmpty ? fallback : filtered.joined(separator: ", ")
+    }
+
+    private static func normalizedPreferredProviders(_ providers: [ShoppingProvider]) -> [ShoppingProvider] {
+        var seen = Set<ShoppingProvider>()
+        return providers.filter { seen.insert($0).inserted }
     }
 
     private func normalizedUnique(_ values: [String]) -> [String] {
@@ -1097,6 +1652,7 @@ struct AuthSession: Codable, Hashable {
     var displayName: String?
     var signedInAt: Date
     var accessToken: String? = nil
+    var refreshToken: String? = nil
 }
 
 struct RecipeIngredient: Codable, Hashable {
@@ -1139,19 +1695,33 @@ enum PrepRegenerationFocus: String, CaseIterable, Hashable, Identifiable {
     case savedRecipeRefresh
 
     var id: String { rawValue }
+
+    static var allCases: [PrepRegenerationFocus] {
+        [
+            .balanced,
+            .closerToFavorites,
+            .moreVariety,
+            .lessPrepTime,
+            .tighterOverlap
+        ]
+    }
 }
 
 struct PrepGenerationOptions: Hashable {
     var focus: PrepRegenerationFocus = .balanced
+    var targetRecipeCount: Int? = nil
     var userPrompt: String? = nil
+    var rerollNonce: String? = nil
 
     static let standard = PrepGenerationOptions()
 }
 
 struct PrepRegenerationContext: Hashable {
     var focus: PrepRegenerationFocus
+    var targetRecipeCount: Int? = nil
     var currentRecipes: [Recipe]
     var userPrompt: String? = nil
+    var rerollNonce: String? = nil
 }
 
 extension Recipe {
@@ -1393,10 +1963,95 @@ struct MealPlan: Identifiable, Codable, Hashable {
     var groceryItems: [GroceryItem]
     var providerQuotes: [ProviderQuote]
     var pipeline: [PipelineDecision]
+    var mainShopSnapshot: MainShopSnapshot? = nil
+    var recurringRecipeIDs: [String]? = nil
 
     var bestQuote: ProviderQuote? {
         providerQuotes.first
     }
+}
+
+struct MainShopSnapshot: Codable, Hashable {
+    var signature: String
+    var generatedAt: Date
+    var items: [MainShopSnapshotItem]
+    var coverageSummary: MainShopCoverageSummary?
+}
+
+struct MainShopSnapshotItem: Identifiable, Codable, Hashable {
+    var id: String {
+        "\(name.lowercased())::\(quantityText.lowercased())::\(supportingText?.lowercased() ?? "")"
+    }
+
+    var name: String
+    var quantityText: String
+    var supportingText: String?
+    var imageURLString: String?
+    var estimatedPriceText: String?
+    var estimatedPriceValue: Double
+    var sectionKindRawValue: Int?
+    var removalKey: String?
+    var canonicalKey: String? = nil
+    var sourceIngredients: [GroceryItemSource]? = nil
+    var sourceEdgeIDs: [String]? = nil
+    var alternativeNames: [String]? = nil
+    var coverageState: String? = nil
+}
+
+struct MainShopCoverageSummary: Codable, Hashable {
+    var totalBaseUses: Int
+    var accountedBaseUses: Int
+    var uncoveredBaseLabels: [String]
+}
+
+struct MealPrepCompletedCycle: Identifiable, Codable, Hashable {
+    var id: UUID
+    var userID: String
+    var planID: UUID
+    var plan: MealPlan
+    var completedAt: String
+
+    var completedAtDate: Date? {
+        ISO8601DateFormatter().date(from: completedAt)
+    }
+
+    var sortDate: Date {
+        completedAtDate ?? plan.periodEnd
+    }
+}
+
+struct RecurringPrepRecipe: Identifiable, Codable, Hashable {
+    var userID: String
+    var recipeID: String
+    var recipe: Recipe
+    var isEnabled: Bool
+    var createdAt: String?
+    var updatedAt: String?
+
+    var id: String { recipeID }
+
+    var sortDate: Date {
+        let formatter = ISO8601DateFormatter()
+        return updatedAt.flatMap(formatter.date(from:))
+            ?? createdAt.flatMap(formatter.date(from:))
+            ?? .distantPast
+    }
+}
+
+struct MealPrepAutomationState: Codable, Hashable {
+    var userID: String
+    var lastEvaluatedAt: String?
+    var nextPlanningWindowAt: String?
+    var lastGeneratedForDeliveryAt: String?
+    var lastGeneratedPlanID: UUID?
+    var lastGeneratedReason: String?
+    var lastCartSyncForDeliveryAt: String?
+    var lastCartSyncPlanID: UUID?
+    var lastCartSignature: String?
+    var lastInstacartRunID: String?
+    var lastInstacartRunStatus: String?
+    var lastInstacartRetryQueuedForRunID: String?
+    var lastInstacartRetryQueuedAt: String?
 }
 
 struct PrepRecipeOverride: Identifiable, Codable, Hashable {

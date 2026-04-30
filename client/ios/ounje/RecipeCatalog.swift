@@ -5,7 +5,9 @@ protocol RecipeCatalog {
         for profile: UserProfile,
         historyRecipeIDs: [String],
         regenerationContext: PrepRegenerationContext?,
-        savedRecipeIDs: [String]
+        savedRecipeIDs: [String],
+        recurringRecipes: [RecurringPrepRecipe],
+        savedRecipeTitles: [String]
     ) async -> [Recipe]
 }
 
@@ -14,7 +16,9 @@ actor LocalRecipeCatalog: RecipeCatalog {
         for profile: UserProfile,
         historyRecipeIDs: [String] = [],
         regenerationContext: PrepRegenerationContext? = nil,
-        savedRecipeIDs: [String] = []
+        savedRecipeIDs: [String] = [],
+        recurringRecipes: [RecurringPrepRecipe] = [],
+        savedRecipeTitles: [String] = []
     ) async -> [Recipe] {
         []
     }
@@ -33,7 +37,9 @@ actor RemoteRecipeCatalog: RecipeCatalog {
         for profile: UserProfile,
         historyRecipeIDs: [String] = [],
         regenerationContext: PrepRegenerationContext? = nil,
-        savedRecipeIDs: [String] = []
+        savedRecipeIDs: [String] = [],
+        recurringRecipes: [RecurringPrepRecipe] = [],
+        savedRecipeTitles: [String] = []
     ) async -> [Recipe] {
         do {
             let response = try await fetchRemoteRecipesWithFallback(
@@ -41,6 +47,8 @@ actor RemoteRecipeCatalog: RecipeCatalog {
                 historyRecipeIDs: historyRecipeIDs,
                 regenerationContext: regenerationContext,
                 savedRecipeIDs: savedRecipeIDs,
+                recurringRecipes: recurringRecipes,
+                savedRecipeTitles: savedRecipeTitles,
                 limit: max(48, profile.cadence.baseRecipeCount * 12)
             )
             if !response.recipes.isEmpty {
@@ -54,7 +62,9 @@ actor RemoteRecipeCatalog: RecipeCatalog {
             for: profile,
             historyRecipeIDs: historyRecipeIDs,
             regenerationContext: regenerationContext,
-            savedRecipeIDs: savedRecipeIDs
+            savedRecipeIDs: savedRecipeIDs,
+            recurringRecipes: recurringRecipes,
+            savedRecipeTitles: savedRecipeTitles
         )
     }
 
@@ -63,11 +73,17 @@ actor RemoteRecipeCatalog: RecipeCatalog {
         historyRecipeIDs: [String],
         regenerationContext: PrepRegenerationContext?,
         savedRecipeIDs: [String],
+        recurringRecipes: [RecurringPrepRecipe],
+        savedRecipeTitles: [String],
         limit: Int
     ) async throws -> PrepCandidateRecipesResponse {
         var lastError: Error?
 
-        for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
+        let candidateBaseURLs = regenerationContext == nil
+            ? OunjeDevelopmentServer.candidateBaseURLs
+            : [OunjeDevelopmentServer.primaryBaseURL]
+
+        for candidateBaseURL in candidateBaseURLs {
             do {
                 return try await fetchRemoteRecipes(
                     baseURL: candidateBaseURL,
@@ -75,6 +91,8 @@ actor RemoteRecipeCatalog: RecipeCatalog {
                     historyRecipeIDs: historyRecipeIDs,
                     regenerationContext: regenerationContext,
                     savedRecipeIDs: savedRecipeIDs,
+                    recurringRecipes: recurringRecipes,
+                    savedRecipeTitles: savedRecipeTitles,
                     limit: limit
                 )
             } catch {
@@ -91,6 +109,8 @@ actor RemoteRecipeCatalog: RecipeCatalog {
         historyRecipeIDs: [String],
         regenerationContext: PrepRegenerationContext?,
         savedRecipeIDs: [String],
+        recurringRecipes: [RecurringPrepRecipe],
+        savedRecipeTitles: [String],
         limit: Int
     ) async throws -> PrepCandidateRecipesResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/prep-candidates") else {
@@ -99,7 +119,7 @@ actor RemoteRecipeCatalog: RecipeCatalog {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 25
+        request.timeoutInterval = regenerationContext == nil ? 25 : 65
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
             PrepCandidateRecipesRequest(
@@ -107,6 +127,14 @@ actor RemoteRecipeCatalog: RecipeCatalog {
                 historyRecipeIDs: historyRecipeIDs,
                 regenerationContext: regenerationContext.map(PrepRegenerationContextPayload.init),
                 savedRecipeIDs: savedRecipeIDs,
+                savedRecipeTitles: savedRecipeTitles,
+                recurringRecipeIDs: recurringRecipes
+                    .filter(\.isEnabled)
+                    .map(\.recipeID),
+                recurringRecipeTitles: recurringRecipes
+                    .filter(\.isEnabled)
+                    .map { $0.recipe.title },
+                fastRegeneration: regenerationContext != nil,
                 limit: limit
             )
         )
@@ -129,6 +157,10 @@ private struct PrepCandidateRecipesRequest: Encodable {
     let historyRecipeIDs: [String]
     let regenerationContext: PrepRegenerationContextPayload?
     let savedRecipeIDs: [String]
+    let savedRecipeTitles: [String]
+    let recurringRecipeIDs: [String]
+    let recurringRecipeTitles: [String]
+    let fastRegeneration: Bool
     let limit: Int
 
     enum CodingKeys: String, CodingKey {
@@ -136,29 +168,40 @@ private struct PrepCandidateRecipesRequest: Encodable {
         case historyRecipeIDs = "history_recipe_ids"
         case regenerationContext = "regeneration_context"
         case savedRecipeIDs = "saved_recipe_ids"
+        case savedRecipeTitles = "saved_recipe_titles"
+        case recurringRecipeIDs = "recurring_recipe_ids"
+        case recurringRecipeTitles = "recurring_recipe_titles"
+        case fastRegeneration = "fast_regeneration"
         case limit
     }
 }
 
 private struct PrepRegenerationContextPayload: Encodable {
     let focus: String
+    let targetRecipeCount: Int?
     let currentRecipeIDs: [String]
     let currentRecipes: [PrepRegenerationRecipePayload]
     let userPrompt: String?
+    let rerollNonce: String?
 
     init(_ context: PrepRegenerationContext) {
         focus = context.focus.rawValue
+        targetRecipeCount = context.targetRecipeCount
         currentRecipeIDs = context.currentRecipes.map(\.id)
         currentRecipes = context.currentRecipes.map(PrepRegenerationRecipePayload.init)
         let trimmedPrompt = context.userPrompt?.trimmingCharacters(in: .whitespacesAndNewlines)
         userPrompt = (trimmedPrompt?.isEmpty == false) ? trimmedPrompt : nil
+        let trimmedNonce = context.rerollNonce?.trimmingCharacters(in: .whitespacesAndNewlines)
+        rerollNonce = (trimmedNonce?.isEmpty == false) ? trimmedNonce : nil
     }
 
     enum CodingKeys: String, CodingKey {
         case focus
+        case targetRecipeCount = "target_recipe_count"
         case currentRecipeIDs = "current_recipe_ids"
         case currentRecipes = "current_recipes"
         case userPrompt = "user_prompt"
+        case rerollNonce = "reroll_nonce"
     }
 }
 

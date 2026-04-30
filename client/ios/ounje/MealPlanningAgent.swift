@@ -77,6 +77,75 @@ final class MealPlanningAgent {
         "bunches": "bunch",
         "bunch": "bunch"
     ]
+    private let genericIngredientBucketTerms: Set<String> = [
+        "spice",
+        "spices",
+        "seasoning",
+        "seasonings",
+        "herb",
+        "herbs",
+        "sauce",
+        "sauces",
+        "dressing",
+        "dressings",
+        "marinade",
+        "marinades",
+        "glaze",
+        "glazes",
+        "topping",
+        "toppings",
+        "garnish",
+        "garnishes",
+    ]
+    private let concreteSpiceHints: [String] = [
+        "paprika",
+        "chili",
+        "cumin",
+        "coriander",
+        "turmeric",
+        "garlic powder",
+        "onion powder",
+        "black pepper",
+        "white pepper",
+        "red pepper",
+        "cayenne",
+        "oregano",
+        "basil",
+        "thyme",
+        "rosemary",
+        "sage",
+        "mint",
+        "parsley",
+        "cilantro",
+        "dill",
+        "chive",
+        "ginger",
+        "cinnamon",
+        "nutmeg",
+        "clove",
+        "allspice",
+        "cardamom",
+        "fennel",
+        "sumac",
+        "zaatar",
+        "honey",
+        "sriracha",
+        "soy sauce",
+        "hot sauce",
+        "vinegar",
+        "mustard",
+        "mayo",
+        "yogurt",
+        "bbq",
+        "worcestershire",
+        "sesame oil",
+        "fish sauce",
+        "oyster sauce",
+        "hoisin",
+        "teriyaki",
+        "chipotle",
+        "tomato sauce"
+    ]
 
     private enum MealMoment: String, CaseIterable, Hashable {
         case breakfast
@@ -96,6 +165,8 @@ final class MealPlanningAgent {
         let recentFrequency: Int
         let isSaved: Bool
         let isNewSavedRecipe: Bool
+        let isRecurring: Bool
+        let isCurrentCycle: Bool
     }
 
     init(recipeCatalog: RecipeCatalog = RemoteRecipeCatalog(), inventoryProvider: InventoryProvider = PantryInventoryProvider()) {
@@ -109,6 +180,8 @@ final class MealPlanningAgent {
         profile: UserProfile,
         history: [MealPlan],
         savedRecipeIDs: Set<String> = [],
+        recurringRecipes: [RecurringPrepRecipe] = [],
+        savedRecipeTitles: [String] = [],
         options: PrepGenerationOptions = .standard,
         regenerationContext: PrepRegenerationContext? = nil,
         now: Date = Date(),
@@ -116,7 +189,8 @@ final class MealPlanningAgent {
         recipeImageURL: String? = nil,
         recipeID: String? = nil,
         userID: String? = nil,
-        accessToken: String? = nil
+        accessToken: String? = nil,
+        includeRemoteQuotes: Bool = true
     ) async -> MealPlan {
         var pipeline: [PipelineDecision] = []
 
@@ -131,14 +205,25 @@ final class MealPlanningAgent {
             .prefix(4)
             .flatMap(\.recipes)
             .map { $0.recipe.id }
-        let candidates = await recipeCatalog.recipes(
+        let fetchedCandidates = await recipeCatalog.recipes(
             for: profile,
             historyRecipeIDs: recentHistoryRecipeIDs,
             regenerationContext: regenerationContext,
-            savedRecipeIDs: Array(savedRecipeIDs)
+            savedRecipeIDs: Array(savedRecipeIDs),
+            recurringRecipes: recurringRecipes,
+            savedRecipeTitles: savedRecipeTitles
         )
+        let recurringSeedRecipes = recurringRecipes
+            .filter(\.isEnabled)
+            .map(\.recipe)
+        let candidates = dedupeRecipesByID(recurringSeedRecipes + fetchedCandidates)
         let scored = rank(candidates: candidates, profile: profile, options: options)
-        let targetRecipeCount = resolvedTargetRecipeCount(profile: profile)
+        let recurringRecipeIDs = recurringRecipes.filter(\.isEnabled).map(\.recipeID)
+        let targetRecipeCount = resolvedTargetRecipeCount(
+            profile: profile,
+            requestedTargetRecipeCount: options.targetRecipeCount,
+            recurringRecipeCount: recurringRecipeIDs.count
+        )
 
         pipeline.append(
             PipelineDecision(
@@ -147,15 +232,28 @@ final class MealPlanningAgent {
             )
         )
 
+        let currentRecipeIDs = Set(regenerationContext?.currentRecipes.map(\.id) ?? [])
+        let currentRecipeTitleKeys = Set(
+            regenerationContext?.currentRecipes
+                .map { normalizedRecipeTitleKey($0.title) }
+                .filter { !$0.isEmpty } ?? []
+        )
+        let isExplicitReroll = options.rerollNonce?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         let selected = selectRecipes(
             from: scored,
             profile: profile,
             history: history,
             savedRecipeIDs: savedRecipeIDs,
+            recurringRecipeIDs: Set(recurringRecipeIDs),
+            currentRecipeIDs: currentRecipeIDs,
+            currentRecipeTitleKeys: currentRecipeTitleKeys,
+            isExplicitReroll: isExplicitReroll,
             options: options
         )
         let carriedCount = selected.filter(\.carriedFromPreviousPlan).count
         let savedSelectedCount = selected.filter { savedRecipeIDs.contains($0.recipe.id) }.count
+        let recurringRecipeIDSet = Set(recurringRecipeIDs)
+        let recurringSelectedCount = selected.filter { recurringRecipeIDSet.contains($0.recipe.id) }.count
 
         pipeline.append(
             PipelineDecision(
@@ -165,6 +263,14 @@ final class MealPlanningAgent {
                     : "Stable mode selected \(selected.count) recipes, preserved \(carriedCount) prior favorites, and still pulled in \(savedSelectedCount) saved meal\(savedSelectedCount == 1 ? "" : "s") when possible."
             )
         )
+        if recurringSelectedCount > 0 {
+            pipeline.append(
+                PipelineDecision(
+                    stage: .handleRotation,
+                    summary: "Recurring anchors locked in \(recurringSelectedCount) recipe\(recurringSelectedCount == 1 ? "" : "s") from the user's repeat list before filling the rest of the cycle."
+                )
+            )
+        }
 
         let inventory = inventoryProvider.currentInventory(for: profile)
         let groceries = buildGroceryList(from: selected, profile: profile, inventory: inventory)
@@ -178,15 +284,20 @@ final class MealPlanningAgent {
 
         // Try real API quotes first; fall back to local estimate if server is down
         let quotes: [ProviderQuote]
-        let apiQuotes = await GroceryService.shared.buildQuotes(
-            for: groceries,
-            profile: profile,
-            recipeTitle: recipeTitle,
-            recipeImageURL: recipeImageURL,
-            recipeID: recipeID,
-            userID: userID,
-            accessToken: accessToken
-        )
+        let apiQuotes: [ProviderQuote]
+        if includeRemoteQuotes {
+            apiQuotes = await GroceryService.shared.buildQuotes(
+                for: groceries,
+                profile: profile,
+                recipeTitle: recipeTitle,
+                recipeImageURL: recipeImageURL,
+                recipeID: recipeID,
+                userID: userID,
+                accessToken: accessToken
+            )
+        } else {
+            apiQuotes = []
+        }
         if !apiQuotes.isEmpty {
             quotes = apiQuotes
         } else {
@@ -202,7 +313,7 @@ final class MealPlanningAgent {
             pipeline.append(
                 PipelineDecision(
                     stage: .optimizeProvider,
-                    summary: "Best provider: \(top.provider.title)\(storeLabel) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
+                    summary: "Best provider: \(top.provider.marketingTitle)\(storeLabel) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
                 )
             )
         }
@@ -213,7 +324,8 @@ final class MealPlanningAgent {
             now: now,
             pipeline: pipeline,
             groceries: groceries,
-            quotes: quotes
+            quotes: quotes,
+            recurringRecipeIDs: recurringRecipeIDs
         )
     }
 
@@ -221,7 +333,8 @@ final class MealPlanningAgent {
         profile: UserProfile,
         recipes: [PlannedRecipe],
         history: [MealPlan] = [],
-        now: Date = Date()
+        now: Date = Date(),
+        recurringRecipeIDs: [String] = []
     ) async -> MealPlan {
         let pipeline: [PipelineDecision] = [
             PipelineDecision(
@@ -265,7 +378,7 @@ final class MealPlanningAgent {
             composedPipeline.append(
                 PipelineDecision(
                     stage: .optimizeProvider,
-                    summary: "Best provider: \(top.provider.title)\(storeLabel) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
+                    summary: "Best provider: \(top.provider.marketingTitle)\(storeLabel) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
                 )
             )
         }
@@ -277,7 +390,8 @@ final class MealPlanningAgent {
             pipeline: composedPipeline,
             groceries: groceries,
             quotes: quotes,
-            history: history
+            history: history,
+            recurringRecipeIDs: recurringRecipeIDs
         )
     }
 
@@ -286,7 +400,8 @@ final class MealPlanningAgent {
         basePlan: MealPlan,
         recipes: [PlannedRecipe],
         history: [MealPlan] = [],
-        now: Date = Date()
+        now: Date = Date(),
+        recurringRecipeIDs: [String] = []
     ) async -> MealPlan {
         let pipeline: [PipelineDecision] = [
             PipelineDecision(
@@ -330,7 +445,7 @@ final class MealPlanningAgent {
             composedPipeline.append(
                 PipelineDecision(
                     stage: .optimizeProvider,
-                    summary: "Best provider: \(top.provider.title)\(storeLabel) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
+                    summary: "Best provider: \(top.provider.marketingTitle)\(storeLabel) (\(statusLabel)) at \(top.estimatedTotal.asCurrency) (\(budgetState)), ETA \(top.etaDays) day(s)."
                 )
             )
         }
@@ -344,7 +459,113 @@ final class MealPlanningAgent {
             recipes: recipes,
             groceryItems: groceries,
             providerQuotes: quotes,
-            pipeline: composedPipeline
+            pipeline: composedPipeline,
+            recurringRecipeIDs: recurringRecipeIDs.isEmpty ? basePlan.recurringRecipeIDs : recurringRecipeIDs
+        )
+    }
+
+    func rebuildPlanCartOnly(
+        profile: UserProfile,
+        basePlan: MealPlan,
+        recipes: [PlannedRecipe],
+        history: [MealPlan] = [],
+        now: Date = Date(),
+        recurringRecipeIDs: [String] = []
+    ) -> MealPlan {
+        let pipeline: [PipelineDecision] = [
+            PipelineDecision(
+                stage: .interpretProfile,
+                summary: "Applied your prep edits immediately without rerunning the full planning flow."
+            ),
+            PipelineDecision(
+                stage: .curateRecipes,
+                summary: "Updated \(recipes.count) recipe(s) in the active prep."
+            ),
+            PipelineDecision(
+                stage: .handleRotation,
+                summary: "Kept the current prep cycle intact and refreshed groceries right away."
+            ),
+            PipelineDecision(
+                stage: .composeGroceries,
+                summary: "Rebuilt grocery coverage now and left slower provider quote refresh for background sync."
+            )
+        ]
+
+        let inventory = inventoryProvider.currentInventory(for: profile)
+        let groceries = buildGroceryList(from: recipes, profile: profile, inventory: inventory)
+
+        return MealPlan(
+            id: basePlan.id,
+            generatedAt: basePlan.generatedAt,
+            periodStart: basePlan.periodStart,
+            periodEnd: basePlan.periodEnd,
+            cadence: basePlan.cadence,
+            recipes: recipes,
+            groceryItems: groceries,
+            providerQuotes: basePlan.providerQuotes,
+            pipeline: pipeline,
+            recurringRecipeIDs: recurringRecipeIDs.isEmpty ? basePlan.recurringRecipeIDs : recurringRecipeIDs
+        )
+    }
+
+    func mergedGroceryItems(
+        existing groceries: [GroceryItem],
+        previousRecipes: [PlannedRecipe],
+        updatedRecipes: [PlannedRecipe]
+    ) -> [GroceryItem] {
+        let previousByID = Dictionary(uniqueKeysWithValues: previousRecipes.map { ($0.recipe.id, $0) })
+        let updatedByID = Dictionary(uniqueKeysWithValues: updatedRecipes.map { ($0.recipe.id, $0) })
+        let removedRecipes = previousRecipes.filter { updatedByID[$0.recipe.id] == nil || updatedByID[$0.recipe.id] != $0 }
+        let addedRecipes = updatedRecipes.filter { previousByID[$0.recipe.id] == nil || previousByID[$0.recipe.id] != $0 }
+
+        var merged = groceries
+        applyGroceryContributions(from: removedRecipes, into: &merged, subtracting: true)
+        applyGroceryContributions(from: addedRecipes, into: &merged, subtracting: false)
+        return merged
+    }
+
+    func optimizedProviderQuotes(for groceries: [GroceryItem], profile: UserProfile) -> [ProviderQuote] {
+        optimizeProviders(for: groceries, profile: profile)
+    }
+
+    func buildPlanCartOnly(
+        profile: UserProfile,
+        recipes: [PlannedRecipe],
+        history: [MealPlan] = [],
+        now: Date = Date(),
+        recurringRecipeIDs: [String] = []
+    ) -> MealPlan {
+        let pipeline: [PipelineDecision] = [
+            PipelineDecision(
+                stage: .interpretProfile,
+                summary: "Built a prep shell from your direct recipe edits."
+            ),
+            PipelineDecision(
+                stage: .curateRecipes,
+                summary: "Started the prep with \(recipes.count) recipe(s)."
+            ),
+            PipelineDecision(
+                stage: .handleRotation,
+                summary: "Skipped a fresh rotation and focused on immediate grocery rebuild."
+            ),
+            PipelineDecision(
+                stage: .composeGroceries,
+                summary: "Generated groceries now and deferred provider quote refresh."
+            )
+        ]
+
+        let inventory = inventoryProvider.currentInventory(for: profile)
+        let groceries = buildGroceryList(from: recipes, profile: profile, inventory: inventory)
+
+        return composePlan(
+            profile: profile,
+            selectedRecipes: recipes,
+            now: now,
+            pipeline: pipeline,
+            groceries: groceries,
+            quotes: [],
+            history: history,
+            recurringRecipeIDs: recurringRecipeIDs
         )
     }
 
@@ -358,7 +579,8 @@ final class MealPlanningAgent {
         history: [MealPlan] = [],
         recipeTitle: String? = nil,
         recipeImageURL: String? = nil,
-        recipeID: String? = nil
+        recipeID: String? = nil,
+        recurringRecipeIDs: [String] = []
     ) -> MealPlan {
         MealPlan(
             id: UUID(),
@@ -369,7 +591,8 @@ final class MealPlanningAgent {
             recipes: selectedRecipes,
             groceryItems: groceries,
             providerQuotes: quotes,
-            pipeline: pipeline
+            pipeline: pipeline,
+            recurringRecipeIDs: recurringRecipeIDs.isEmpty ? nil : recurringRecipeIDs
         )
     }
 
@@ -469,6 +692,11 @@ final class MealPlanningAgent {
             score += 10
         }
 
+        if let rerollNonce = options.rerollNonce?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rerollNonce.isEmpty {
+            score += deterministicRerollJitter(seed: "\(rerollNonce)|\(recipe.id)") * 9.0
+        }
+
         switch profile.explorationLevel {
         case .comfort:
             if recipe.tags.contains("quick") { score += 4 }
@@ -484,28 +712,55 @@ final class MealPlanningAgent {
         case .balanced:
             score += fullnessBiasScore(for: recipe)
         case .closerToFavorites:
-            score += profileAffinityScore(for: recipe, profile: profile) * 0.55
-        case .moreVariety:
-            if !profile.preferredCuisines.contains(recipe.cuisine) {
-                score += 6
-            }
-            if inferredMealMoments(for: recipe).count > 1 {
-                score += 3
-            }
-        case .lessPrepTime:
-            score += prepTimeBiasScore(for: recipe)
-        case .tighterOverlap:
-            if recipe.tags.contains("budget") {
-                score += 7
-            }
+            score += profileAffinityScore(for: recipe, profile: profile) * 0.82
             if recipe.tags.contains("meal-prep") {
                 score += 4
             }
+        case .moreVariety:
+            if !profile.preferredCuisines.contains(recipe.cuisine) {
+                score += 10
+            }
+            if inferredMealMoments(for: recipe).count > 1 {
+                score += 2
+            }
+            score -= profileAffinityScore(for: recipe, profile: profile) * 0.12
+        case .lessPrepTime:
+            score += prepTimeBiasScore(for: recipe)
+            if recipe.prepMinutes <= 25 {
+                score += 18
+            } else if recipe.prepMinutes <= 35 {
+                score += 8
+            } else {
+                score -= 10
+            }
+        case .tighterOverlap:
+            if recipe.tags.contains("budget") {
+                score += 9
+            }
+            if recipe.tags.contains("meal-prep") {
+                score += 6
+            }
+            if recipe.tags.contains("protein-forward") {
+                score += 2
+            }
         case .savedRecipeRefresh:
-            score += 2
+            score += profileAffinityScore(for: recipe, profile: profile) * 0.82
+            if recipe.tags.contains("meal-prep") {
+                score += 4
+            }
         }
 
         return score
+    }
+
+    private func deterministicRerollJitter(seed: String) -> Double {
+        guard !seed.isEmpty else { return 0 }
+        var hash: UInt64 = 1469598103934665603
+        for byte in seed.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211
+        }
+        return Double(hash % 10_000) / 10_000.0
     }
 
     private func containsRestrictedIngredient(_ recipe: Recipe, restrictions: [String]) -> Bool {
@@ -528,9 +783,17 @@ final class MealPlanningAgent {
         profile: UserProfile,
         history: [MealPlan],
         savedRecipeIDs: Set<String>,
+        recurringRecipeIDs: Set<String>,
+        currentRecipeIDs: Set<String>,
+        currentRecipeTitleKeys: Set<String>,
+        isExplicitReroll: Bool,
         options: PrepGenerationOptions
     ) -> [PlannedRecipe] {
-        let targetCount = resolvedTargetRecipeCount(profile: profile)
+        let targetCount = resolvedTargetRecipeCount(
+            profile: profile,
+            requestedTargetRecipeCount: options.targetRecipeCount,
+            recurringRecipeCount: recurringRecipeIDs.count
+        )
         let previousPlanRecipeIDs = Set(history.first?.recipes.map { $0.recipe.id } ?? [])
         let recentRecipeIDs = Set(history.prefix(4).flatMap(\.recipes).map { $0.recipe.id })
         let frequencyMap = recipeFrequency(from: history)
@@ -541,7 +804,11 @@ final class MealPlanningAgent {
             recentRecipeIDs: recentRecipeIDs,
             frequencyMap: frequencyMap,
             savedRecipeIDs: savedRecipeIDs,
+            recurringRecipeIDs: recurringRecipeIDs,
+            currentRecipeIDs: currentRecipeIDs,
+            currentRecipeTitleKeys: currentRecipeTitleKeys,
             targetCount: targetCount,
+            isExplicitReroll: isExplicitReroll,
             options: options
         )
 
@@ -554,8 +821,10 @@ final class MealPlanningAgent {
             targetCount: targetCount,
             requiredMoments: requiredMoments,
             savedRecipeIDs: savedRecipeIDs,
+            recurringRecipeIDs: recurringRecipeIDs,
             options: options
         )
+        let lockedRecipeIDs = Set(selected.filter(\.isRecurring).map(\.recipe.id))
         selected = optimizeBundle(
             selected,
             using: candidates,
@@ -563,6 +832,8 @@ final class MealPlanningAgent {
             targetCount: targetCount,
             requiredMoments: requiredMoments,
             savedRecipeIDs: savedRecipeIDs,
+            recurringRecipeIDs: recurringRecipeIDs,
+            lockedRecipeIDs: lockedRecipeIDs,
             options: options
         )
 
@@ -575,35 +846,102 @@ final class MealPlanningAgent {
         }
     }
 
-    private func resolvedTargetRecipeCount(profile: UserProfile) -> Int {
+    private func resolvedTargetRecipeCount(
+        profile: UserProfile,
+        requestedTargetRecipeCount: Int? = nil,
+        recurringRecipeCount: Int = 0
+    ) -> Int {
+        let minimumRecipeCount = max(recurringRecipeCount, 1)
+        let maximumRecipeCount = max(10, minimumRecipeCount)
+
+        if let requestedTargetRecipeCount {
+            return min(max(requestedTargetRecipeCount, minimumRecipeCount), maximumRecipeCount)
+        }
+
         let cycleWeeks = max(1.0, Double(profile.cadence.dayInterval) / 7.0)
         let cycleMealDemand = Double(profile.consumption.mealsPerWeek) * cycleWeeks
-        let repeatFactor = profile.consumption.includeLeftovers ? 1.45 : 1.15
-        var target = cycleMealDemand / repeatFactor
+
+        // Distinct-recipe planning is based on how often each recipe is reused in a cycle.
+        // Biweekly should generally land around 3-4 recipes unless the user explicitly
+        // prefers higher novelty or has a very loose budget.
+        let cadenceMinMax: ClosedRange<Int>
+        let baseReusePerRecipe: Double
+        switch profile.cadence {
+        case .daily:
+            cadenceMinMax = 2...3
+            baseReusePerRecipe = 1.8
+        case .everyFewDays:
+            cadenceMinMax = 2...4
+            baseReusePerRecipe = 2.0
+        case .twiceWeekly:
+            cadenceMinMax = 3...4
+            baseReusePerRecipe = 2.2
+        case .weekly:
+            cadenceMinMax = 3...5
+            baseReusePerRecipe = 2.4
+        case .biweekly:
+            cadenceMinMax = 3...4
+            baseReusePerRecipe = 2.9
+        case .monthly:
+            cadenceMinMax = 5...8
+            baseReusePerRecipe = 3.25
+        }
+
+        var reusePerRecipe = baseReusePerRecipe
+
+        if !profile.consumption.includeLeftovers {
+            reusePerRecipe -= 0.45
+        }
 
         switch profile.explorationLevel {
         case .comfort:
-            target -= 0.35
+            reusePerRecipe += 0.30
         case .balanced:
-            target += 0.15
+            break
         case .adventurous:
-            target += 0.8
+            reusePerRecipe -= 0.35
         }
 
         switch profile.budgetFlexibility {
         case .strict:
-            target -= 0.35
+            reusePerRecipe += 0.30
         case .slightlyFlexible:
             break
         case .convenienceFirst:
-            target += 0.25
+            reusePerRecipe -= 0.25
+        }
+
+        let mealsInCycle = max(1.0, cycleMealDemand)
+        let budgetPerMeal = profile.budgetPerCycle / mealsInCycle
+        if budgetPerMeal < 6 {
+            reusePerRecipe += 0.45
+        } else if budgetPerMeal < 9 {
+            reusePerRecipe += 0.20
+        } else if budgetPerMeal > 16 {
+            reusePerRecipe -= 0.20
         }
 
         if profile.consumption.kids > 0 || profile.cooksForOthers {
-            target -= 0.15
+            reusePerRecipe += 0.15
         }
 
-        return max(3, min(7, Int(target.rounded(.toNearestOrAwayFromZero))))
+        if profile.consumption.adults + profile.consumption.kids >= 4 {
+            reusePerRecipe += 0.10
+        }
+
+        let demandDrivenDistinct = cycleMealDemand / max(1.5, reusePerRecipe)
+        var target = Int(demandDrivenDistinct.rounded(.toNearestOrAwayFromZero))
+
+        if profile.cadence == .biweekly && profile.explorationLevel == .adventurous && profile.budgetFlexibility == .convenienceFirst {
+            target = max(target, 5)
+        }
+
+        if profile.cadence == .monthly && profile.explorationLevel == .adventurous {
+            target = max(target, 7)
+        }
+
+        let defaultTarget = min(cadenceMinMax.upperBound, max(cadenceMinMax.lowerBound, target))
+        return min(max(defaultTarget, minimumRecipeCount), maximumRecipeCount)
     }
 
     private func buildPlanningCandidates(
@@ -612,12 +950,20 @@ final class MealPlanningAgent {
         recentRecipeIDs: Set<String>,
         frequencyMap: [String: Int],
         savedRecipeIDs: Set<String>,
+        recurringRecipeIDs: Set<String>,
+        currentRecipeIDs: Set<String>,
+        currentRecipeTitleKeys: Set<String>,
         targetCount: Int,
+        isExplicitReroll: Bool,
         options: PrepGenerationOptions
     ) -> [PlanningCandidate] {
         let seeded = rankedRecipes.map { recipe in
             let isSaved = savedRecipeIDs.contains(recipe.id)
+            let isRecurring = recurringRecipeIDs.contains(recipe.id)
             let isRecent = recentRecipeIDs.contains(recipe.id)
+            let titleKey = normalizedRecipeTitleKey(recipe.title)
+            let isCurrentCycle = currentRecipeIDs.contains(recipe.id)
+                || (!titleKey.isEmpty && currentRecipeTitleKeys.contains(titleKey))
             let candidate = PlanningCandidate(
                 recipe: recipe,
                 baseScore: score(for: recipe, profile: profile, options: options),
@@ -629,36 +975,66 @@ final class MealPlanningAgent {
                 formatKey: recipeFormatKey(for: recipe),
                 recentFrequency: frequencyMap[recipe.id, default: 0],
                 isSaved: isSaved,
-                isNewSavedRecipe: isSaved && !isRecent
+                isNewSavedRecipe: isSaved && !isRecent,
+                isRecurring: isRecurring,
+                isCurrentCycle: isCurrentCycle
             )
             return candidate
         }
 
         let imageRichCandidates = seeded.filter { !$0.recipe.isImagePoor }
+        let recurringSeedIDs = Set(recurringRecipeIDs)
         let qualityPool: [PlanningCandidate]
-        if imageRichCandidates.count >= max(targetCount + 2, 6) {
-            qualityPool = imageRichCandidates
+        if isExplicitReroll {
+            qualityPool = seeded
+        } else if imageRichCandidates.count >= max(targetCount + 2, 6) {
+            let imageRichIDs = Set(imageRichCandidates.map(\.recipe.id))
+            var mergedPool = imageRichCandidates
+            mergedPool.append(contentsOf: seeded.filter {
+                recurringSeedIDs.contains($0.recipe.id) && !imageRichIDs.contains($0.recipe.id)
+            })
+            qualityPool = mergedPool
         } else {
             qualityPool = seeded
         }
 
-        return qualityPool
-            .filter { $0.baseScore > -1_000 }
+        let baseCandidates = qualityPool.filter { $0.baseScore > -1_000 }
+        let freshRerollCandidates = baseCandidates.filter { !$0.isCurrentCycle || $0.isRecurring }
+        let rotationPool: [PlanningCandidate]
+        if isExplicitReroll, freshRerollCandidates.count >= targetCount {
+            rotationPool = freshRerollCandidates
+        } else {
+            rotationPool = baseCandidates
+        }
+
+        let sortedCandidates = rotationPool
             .sorted { lhs, rhs in
-                let lhsScore = candidateSortScore(lhs, profile: profile)
-                let rhsScore = candidateSortScore(rhs, profile: profile)
+                let lhsScore = candidateSortScore(lhs, profile: profile, isExplicitReroll: isExplicitReroll)
+                let rhsScore = candidateSortScore(rhs, profile: profile, isExplicitReroll: isExplicitReroll)
                 if lhsScore == rhsScore {
                     return lhs.recipe.id < rhs.recipe.id
                 }
                 return lhsScore > rhsScore
             }
-            .prefix(42)
-            .map { $0 }
+
+        let recurringLocked = sortedCandidates.filter(\.isRecurring)
+        let remainingCapacity = max(0, 42 - recurringLocked.count)
+        let remainder = sortedCandidates
+            .filter { !$0.isRecurring }
+            .prefix(remainingCapacity)
+
+        return recurringLocked + remainder
     }
 
-    private func candidateSortScore(_ candidate: PlanningCandidate, profile: UserProfile) -> Double {
+    private func candidateSortScore(_ candidate: PlanningCandidate, profile: UserProfile, isExplicitReroll: Bool = false) -> Double {
         var score = candidate.baseScore
         score += candidate.profileAffinity * 0.32
+        if candidate.isRecurring {
+            score += 32
+        }
+        if isExplicitReroll, candidate.isCurrentCycle, !candidate.isRecurring {
+            score -= 120
+        }
         if candidate.isNewSavedRecipe {
             score += 24
         } else if candidate.isSaved {
@@ -704,9 +1080,16 @@ final class MealPlanningAgent {
         targetCount: Int,
         requiredMoments: [MealMoment],
         savedRecipeIDs: Set<String>,
+        recurringRecipeIDs: Set<String>,
         options: PrepGenerationOptions
     ) -> [PlanningCandidate] {
         var selected: [PlanningCandidate] = []
+        if !recurringRecipeIDs.isEmpty {
+            let recurringPool = candidates.filter { $0.isRecurring && !selected.contains($0) }
+            for candidate in recurringPool {
+                selected.append(candidate)
+            }
+        }
 
         for moment in requiredMoments {
             let pool = candidates.filter {
@@ -719,6 +1102,7 @@ final class MealPlanningAgent {
                 profile: profile,
                 requiredMoments: requiredMoments,
                 savedRecipeIDs: savedRecipeIDs,
+                recurringRecipeIDs: recurringRecipeIDs,
                 targetCount: targetCount,
                 options: options
             ) {
@@ -733,6 +1117,7 @@ final class MealPlanningAgent {
             profile: profile,
             requiredMoments: requiredMoments,
             savedRecipeIDs: savedRecipeIDs,
+            recurringRecipeIDs: recurringRecipeIDs,
             targetCount: targetCount,
             options: options
            ) {
@@ -746,6 +1131,7 @@ final class MealPlanningAgent {
                 profile: profile,
                 requiredMoments: requiredMoments,
                 savedRecipeIDs: savedRecipeIDs,
+                recurringRecipeIDs: recurringRecipeIDs,
                 targetCount: targetCount,
                 options: options
               ) {
@@ -761,6 +1147,7 @@ final class MealPlanningAgent {
         profile: UserProfile,
         requiredMoments: [MealMoment],
         savedRecipeIDs: Set<String>,
+        recurringRecipeIDs: Set<String>,
         targetCount: Int,
         options: PrepGenerationOptions
     ) -> PlanningCandidate? {
@@ -771,6 +1158,7 @@ final class MealPlanningAgent {
                 profile: profile,
                 requiredMoments: requiredMoments,
                 savedRecipeIDs: savedRecipeIDs,
+                recurringRecipeIDs: recurringRecipeIDs,
                 targetCount: targetCount,
                 options: options
             ) < marginalBundleScore(
@@ -779,6 +1167,7 @@ final class MealPlanningAgent {
                 profile: profile,
                 requiredMoments: requiredMoments,
                 savedRecipeIDs: savedRecipeIDs,
+                recurringRecipeIDs: recurringRecipeIDs,
                 targetCount: targetCount,
                 options: options
             )
@@ -791,6 +1180,7 @@ final class MealPlanningAgent {
         profile: UserProfile,
         requiredMoments: [MealMoment],
         savedRecipeIDs: Set<String>,
+        recurringRecipeIDs: Set<String>,
         targetCount: Int,
         options: PrepGenerationOptions
     ) -> Double {
@@ -798,8 +1188,16 @@ final class MealPlanningAgent {
         let coveredMoments = Set(selected.flatMap(\.mealMoments))
         let uncoveredMoments = Set(requiredMoments).subtracting(coveredMoments)
 
+        if isExplicitReroll(options), candidate.isCurrentCycle, !candidate.isRecurring {
+            score -= 180
+        }
+
         if !uncoveredMoments.isDisjoint(with: candidate.mealMoments) {
             score += 24
+        }
+
+        if candidate.isRecurring && !selected.contains(where: \.isRecurring) {
+            score += 18
         }
 
         if candidate.isNewSavedRecipe {
@@ -828,27 +1226,42 @@ final class MealPlanningAgent {
         case .balanced:
             score += fullnessBiasScore(for: candidate.recipe) * 0.8
         case .closerToFavorites:
-            score += candidate.profileAffinity * 0.55
-        case .moreVariety:
-            let distinctCuisinePenalty = selected.filter { $0.recipe.cuisine == candidate.recipe.cuisine }.count
-            score -= Double(distinctCuisinePenalty) * 6.5
-            if candidate.mealMoments.subtracting(Set(selected.flatMap(\.mealMoments))).isEmpty == false {
-                score += 7
-            }
-        case .lessPrepTime:
-            score += prepTimeBiasScore(for: candidate.recipe) * 1.15
-        case .tighterOverlap:
-            score += Double(min(exactOverlap, 6)) * 3.4
-            score += Double(min(max(0, familyOverlap - exactOverlap), 4)) * 1.9
-            if !selected.isEmpty && exactOverlap == 0 && familyOverlap == 0 {
-                score -= 12
-            }
-        case .savedRecipeRefresh:
+            score += candidate.profileAffinity * 0.82
             if candidate.isNewSavedRecipe {
-                score += 24
+                score += 28
             } else if candidate.isSaved {
                 score += 18
             }
+            score += Double(min(exactOverlap, 4)) * 1.8
+        case .moreVariety:
+            let distinctCuisinePenalty = selected.filter { $0.recipe.cuisine == candidate.recipe.cuisine }.count
+            score -= Double(distinctCuisinePenalty) * 9.0
+            if candidate.mealMoments.subtracting(Set(selected.flatMap(\.mealMoments))).isEmpty == false {
+                score += 7
+            }
+            if candidate.isSaved && !candidate.isRecurring {
+                score -= 12
+            }
+            score -= candidate.profileAffinity * 0.18
+        case .lessPrepTime:
+            score += prepTimeBiasScore(for: candidate.recipe) * 1.15
+            if candidate.recipe.prepMinutes > 32 {
+                score -= 18
+            }
+        case .tighterOverlap:
+            score += Double(min(exactOverlap, 6)) * 5.1
+            score += Double(min(max(0, familyOverlap - exactOverlap), 4)) * 2.8
+            if !selected.isEmpty && exactOverlap == 0 && familyOverlap == 0 {
+                score -= 18
+            }
+        case .savedRecipeRefresh:
+            score += candidate.profileAffinity * 0.82
+            if candidate.isNewSavedRecipe {
+                score += 28
+            } else if candidate.isSaved {
+                score += 18
+            }
+            score += Double(min(exactOverlap, 4)) * 1.8
         }
 
         score -= redundancyPenalty(
@@ -868,6 +1281,8 @@ final class MealPlanningAgent {
         targetCount: Int,
         requiredMoments: [MealMoment],
         savedRecipeIDs: Set<String>,
+        recurringRecipeIDs: Set<String>,
+        lockedRecipeIDs: Set<String>,
         options: PrepGenerationOptions
     ) -> [PlanningCandidate] {
         var best = seed
@@ -876,12 +1291,14 @@ final class MealPlanningAgent {
             profile: profile,
             requiredMoments: requiredMoments,
             savedRecipeIDs: savedRecipeIDs,
+            recurringRecipeIDs: recurringRecipeIDs,
             options: options
         )
 
         for _ in 0..<2 {
             var improved = false
             for index in best.indices {
+                guard !lockedRecipeIDs.contains(best[index].recipe.id) else { continue }
                 for candidate in candidates where !best.contains(candidate) {
                     var trial = best
                     trial[index] = candidate
@@ -893,6 +1310,7 @@ final class MealPlanningAgent {
                         profile: profile,
                         requiredMoments: requiredMoments,
                         savedRecipeIDs: savedRecipeIDs,
+                        recurringRecipeIDs: recurringRecipeIDs,
                         options: options
                     )
                     if trialScore > bestScore + 0.5 {
@@ -914,6 +1332,7 @@ final class MealPlanningAgent {
         profile: UserProfile,
         requiredMoments: [MealMoment],
         savedRecipeIDs: Set<String>,
+        recurringRecipeIDs: Set<String>,
         options: PrepGenerationOptions
     ) -> Double {
         guard !bundle.isEmpty else { return -.greatestFiniteMagnitude }
@@ -921,9 +1340,18 @@ final class MealPlanningAgent {
         var score = bundle.reduce(0) { $0 + candidateSortScore($1, profile: profile) }
         score += bundle.reduce(0) { $0 + min($1.profileAffinity, 28) * 0.3 }
 
+        if isExplicitReroll(options) {
+            let repeatedNonRecurringCount = bundle.filter { $0.isCurrentCycle && !$0.isRecurring }.count
+            score -= Double(repeatedNonRecurringCount) * 220
+        }
+
         let coveredMoments = Set(bundle.flatMap(\.mealMoments))
         let missingMoments = requiredMoments.filter { !coveredMoments.contains($0) }
         score -= Double(missingMoments.count) * 40
+
+        if !recurringRecipeIDs.isEmpty && !bundle.contains(where: \.isRecurring) {
+            score -= 46
+        }
 
         if !savedRecipeIDs.isEmpty && !bundle.contains(where: \.isSaved) {
             score -= 32
@@ -963,35 +1391,45 @@ final class MealPlanningAgent {
             score -= proteinPenaltyBase
             score -= formatPenaltyBase
         case .closerToFavorites:
-            score += bundle.reduce(0) { $0 + $1.profileAffinity } * 0.35
-            score -= cuisinePenaltyBase * 0.75
+            let savedCount = bundle.filter(\.isSaved).count
+            score += bundle.reduce(0) { $0 + $1.profileAffinity } * 0.5
+            score += Double(savedCount) * 24
+            score -= cuisinePenaltyBase * 0.55
             score -= proteinPenaltyBase
             score -= formatPenaltyBase
         case .moreVariety:
             score += Double(cuisineCounts.keys.count) * 8
             score += Double(formatCounts.keys.count) * 5
+            let nonRecurringSavedCount = bundle.filter { $0.isSaved && !$0.isRecurring }.count
+            score -= Double(max(0, nonRecurringSavedCount - 1)) * 10
             score -= cuisinePenaltyBase * 1.5
             score -= proteinPenaltyBase * 1.35
             score -= formatPenaltyBase * 1.4
         case .lessPrepTime:
             score += bundle.reduce(0) { $0 + prepTimeBiasScore(for: $1.recipe) } * 0.65
+            score -= Double(bundle.filter { $0.recipe.prepMinutes > 32 }.count) * 14
             score -= cuisinePenaltyBase * 0.9
             score -= proteinPenaltyBase * 0.85
             score -= formatPenaltyBase * 0.9
         case .tighterOverlap:
-            score += overlapScore * 0.7
+            score += overlapScore
             score -= cuisinePenaltyBase * 0.8
             score -= proteinPenaltyBase * 0.8
             score -= formatPenaltyBase
         case .savedRecipeRefresh:
             let savedCount = bundle.filter(\.isSaved).count
-            score += Double(savedCount) * 20
-            score -= cuisinePenaltyBase
+            score += bundle.reduce(0) { $0 + $1.profileAffinity } * 0.5
+            score += Double(savedCount) * 24
+            score -= cuisinePenaltyBase * 0.55
             score -= proteinPenaltyBase
             score -= formatPenaltyBase
         }
 
         return score
+    }
+
+    private func isExplicitReroll(_ options: PrepGenerationOptions) -> Bool {
+        options.rerollNonce?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private func redundancyPenalty(
@@ -1083,7 +1521,7 @@ final class MealPlanningAgent {
         case .balanced:
             return "filling-first"
         case .closerToFavorites:
-            return "favorites-first"
+            return "taste-first"
         case .moreVariety:
             return "variety-first"
         case .lessPrepTime:
@@ -1091,7 +1529,7 @@ final class MealPlanningAgent {
         case .tighterOverlap:
             return "grocery-overlap"
         case .savedRecipeRefresh:
-            return "saved-recipes"
+            return "taste-first"
         }
     }
 
@@ -1235,6 +1673,15 @@ final class MealPlanningAgent {
         return "plate"
     }
 
+    private func normalizedRecipeTitleKey(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\b(the|a|an)\\b", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func normalizedIngredientName(_ value: String) -> String {
         var normalized = value
             .lowercased()
@@ -1292,19 +1739,53 @@ final class MealPlanningAgent {
     }
 
     private func buildGroceryList(from recipes: [PlannedRecipe], profile: UserProfile, inventory: [InventoryItem]) -> [GroceryItem] {
+        let ingredientItems = buildIngredientContributions(from: recipes)
+
+        var inventoryMap: [String: Double] = [:]
+        for item in inventory {
+            let key = "\(canonicalIngredientName(item.name))::\(canonicalUnitName(item.unit))"
+            inventoryMap[key, default: 0] += item.amount
+        }
+
+        let adjusted = ingredientItems.compactMap { item -> GroceryItem? in
+            let key = item.id
+            let inStock = inventoryMap[key, default: 0]
+            let needed = item.amount - inStock
+            guard needed > 0.1 else { return nil }
+
+            let ratio = needed / max(item.amount, 0.1)
+            return GroceryItem(
+                name: item.name,
+                amount: needed,
+                unit: item.unit,
+                estimatedPrice: item.estimatedPrice * ratio,
+                sourceIngredients: item.sourceIngredients
+            )
+        }
+
+        return adjusted.sorted { $0.estimatedPrice > $1.estimatedPrice }
+    }
+
+    private func buildIngredientContributions(from recipes: [PlannedRecipe]) -> [GroceryItem] {
         var ingredientMap: [String: GroceryItem] = [:]
 
         for plannedRecipe in recipes {
             let scale = Double(plannedRecipe.servings) / Double(plannedRecipe.recipe.servings)
             for ingredient in plannedRecipe.recipe.ingredients {
-                let canonicalName = canonicalIngredientName(ingredient.name)
+                if shouldSuppressGenericIngredient(ingredient, in: plannedRecipe.recipe) {
+                    continue
+                }
+
+                let sourceDisplayName = recoveredIngredientNameIfNeeded(from: ingredient) ?? ingredient.name
+                let displayName = genericBucketDisplayName(for: sourceDisplayName)
+                let canonicalName = canonicalIngredientName(displayName)
                 let canonicalUnit = canonicalUnitName(ingredient.unit)
                 let key = "\(canonicalName)::\(canonicalUnit)"
                 let amountToAdd = ingredient.amount * scale
                 let priceToAdd = ingredient.estimatedUnitPrice * amountToAdd
                 let source = GroceryItemSource(
                     recipeID: plannedRecipe.recipe.id,
-                    ingredientName: ingredient.name,
+                    ingredientName: displayName,
                     unit: canonicalUnit
                 )
 
@@ -1327,29 +1808,97 @@ final class MealPlanningAgent {
             }
         }
 
-        var inventoryMap: [String: Double] = [:]
-        for item in inventory {
-            let key = "\(canonicalIngredientName(item.name))::\(canonicalUnitName(item.unit))"
-            inventoryMap[key, default: 0] += item.amount
+        return Array(ingredientMap.values)
+    }
+
+    func expectedGrocerySourceKeys(from recipes: [PlannedRecipe]) -> Set<String> {
+        Set(
+            buildIngredientContributions(from: recipes)
+                .flatMap(\.sourceIngredients)
+                .map(Self.grocerySourceCoverageKey)
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    func coveredGrocerySourceKeys(from groceries: [GroceryItem]) -> Set<String> {
+        Set(
+            groceries
+                .flatMap(\.sourceIngredients)
+                .map(Self.grocerySourceCoverageKey)
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    func hasCompleteGrocerySourceCoverage(recipes: [PlannedRecipe], groceries: [GroceryItem]) -> Bool {
+        let expected = expectedGrocerySourceKeys(from: recipes)
+        guard !expected.isEmpty else { return true }
+        let covered = coveredGrocerySourceKeys(from: groceries)
+        return expected.isSubset(of: covered)
+    }
+
+    private static func grocerySourceCoverageKey(_ source: GroceryItemSource) -> String {
+        let recipeID = source.recipeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let ingredientName = normalizedSourceIngredientKey(source.ingredientName)
+        let unit = source.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !recipeID.isEmpty, !ingredientName.isEmpty else { return "" }
+        return "\(recipeID)::\(ingredientName)::\(unit)"
+    }
+
+    private static func normalizedSourceIngredientKey(_ value: String) -> String {
+        value
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func applyGroceryContributions(
+        from recipes: [PlannedRecipe],
+        into groceries: inout [GroceryItem],
+        subtracting: Bool
+    ) {
+        let contributions = buildIngredientContributions(from: recipes)
+
+        for contribution in contributions {
+            if let index = groceries.firstIndex(where: { $0.id == contribution.id }) {
+                var item = groceries[index]
+                let sourceSet = Set(contribution.sourceIngredients)
+
+                if subtracting {
+                    item.amount -= contribution.amount
+                    item.estimatedPrice -= contribution.estimatedPrice
+                    item.sourceIngredients.removeAll { sourceSet.contains($0) }
+                    if item.amount <= 0.1 {
+                        groceries.remove(at: index)
+                        continue
+                    }
+                } else {
+                    item.amount += contribution.amount
+                    item.estimatedPrice += contribution.estimatedPrice
+                    for source in contribution.sourceIngredients where !item.sourceIngredients.contains(source) {
+                        item.sourceIngredients.append(source)
+                    }
+                }
+
+                groceries[index] = item
+            } else if !subtracting {
+                groceries.append(contribution)
+            }
+        }
+    }
+
+    private func dedupeRecipesByID(_ recipes: [Recipe]) -> [Recipe] {
+        var seen = Set<String>()
+        var deduped: [Recipe] = []
+
+        for recipe in recipes {
+            if seen.insert(recipe.id).inserted {
+                deduped.append(recipe)
+            }
         }
 
-        let adjusted = ingredientMap.values.compactMap { item -> GroceryItem? in
-            let key = item.id
-            let inStock = inventoryMap[key, default: 0]
-            let needed = item.amount - inStock
-            guard needed > 0.1 else { return nil }
-
-            let ratio = needed / max(item.amount, 0.1)
-            return GroceryItem(
-                name: item.name,
-                amount: needed,
-                unit: item.unit,
-                estimatedPrice: item.estimatedPrice * ratio,
-                sourceIngredients: item.sourceIngredients
-            )
-        }
-
-        return adjusted.sorted { $0.estimatedPrice > $1.estimatedPrice }
+        return deduped
     }
 
     private func canonicalIngredientName(_ value: String) -> String {
@@ -1373,6 +1922,100 @@ final class MealPlanningAgent {
         }
 
         return singularized.isEmpty ? normalized : singularized
+    }
+
+    private func genericBucketKind(for value: String) -> String? {
+        let normalized = normalizedIngredientName(value)
+        guard !normalized.isEmpty else { return nil }
+        switch normalized {
+        case "spice", "spices", "seasoning", "seasonings":
+            return "spice"
+        case "herb", "herbs":
+            return "herb"
+        case "sauce", "sauces", "dressing", "dressings", "marinade", "marinades", "glaze", "glazes":
+            return "sauce"
+        case "topping", "toppings", "garnish", "garnishes":
+            return "topping"
+        default:
+            return nil
+        }
+    }
+
+    private func isConcreteIngredientForBucket(_ value: String, bucketKind: String) -> Bool {
+        let normalized = normalizedIngredientName(value)
+        guard !normalized.isEmpty else { return false }
+        if genericIngredientBucketTerms.contains(normalized) {
+            return false
+        }
+
+        switch bucketKind {
+        case "spice":
+            return concreteSpiceHints.contains(where: { normalized.contains($0) })
+        case "herb":
+            return ["cilantro", "parsley", "basil", "mint", "thyme", "oregano", "rosemary", "sage", "dill", "chive"].contains(where: { normalized.contains($0) })
+        case "sauce":
+            return ["honey", "sriracha", "soy sauce", "hot sauce", "vinegar", "mustard", "mayo", "yogurt", "bbq", "worcestershire", "sesame oil", "fish sauce", "oyster sauce", "hoisin", "teriyaki", "chipotle", "tomato sauce"].contains(where: { normalized.contains($0) })
+        case "topping":
+            return ["cheese", "onion", "scallion", "cilantro", "parsley", "lime", "avocado", "crisp", "seed", "nut"].contains(where: { normalized.contains($0) })
+        default:
+            return false
+        }
+    }
+
+    private func shouldSuppressGenericIngredient(_ ingredient: RecipeIngredient, in recipe: Recipe) -> Bool {
+        guard let bucketKind = genericBucketKind(for: ingredient.name) else { return false }
+        let supportingCount = recipe.ingredients.filter { isConcreteIngredientForBucket($0.name, bucketKind: bucketKind) }.count
+        return supportingCount >= 1
+    }
+
+    private func genericBucketDisplayName(for value: String) -> String {
+        let normalized = normalizedIngredientName(value)
+        switch normalized {
+        case "spice", "spices", "seasoning", "seasonings":
+            return "seasoning blend"
+        case "herb", "herbs":
+            return "herb blend"
+        case "sauce", "sauces", "dressing", "dressings", "marinade", "marinades", "glaze", "glazes":
+            return "sauce mix"
+        case "topping", "toppings", "garnish", "garnishes":
+            return "topping mix"
+        default:
+            return value
+        }
+    }
+
+    private func recoveredIngredientNameIfNeeded(from ingredient: RecipeIngredient) -> String? {
+        let normalizedName = normalizedIngredientName(ingredient.name)
+        guard normalizedName.count <= 2 else { return nil }
+
+        let unitTokens = ingredient.unit
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+        guard unitTokens.count > 1,
+              let first = unitTokens.first
+        else { return nil }
+
+        let knownUnits: Set<String> = [
+            "cup", "cups", "tbsp", "tbsps", "tablespoon", "tablespoons",
+            "tsp", "tsps", "teaspoon", "teaspoons",
+            "lb", "lbs", "pound", "pounds", "oz", "ounce", "ounces",
+            "g", "gram", "grams", "kg", "kilogram", "kilograms",
+            "ml", "milliliter", "milliliters", "l", "liter", "liters",
+            "clove", "cloves", "slice", "slices", "can", "cans",
+            "jar", "jars", "package", "packages", "medium", "large", "small"
+        ]
+        let normalizedUnit = first.trimmingCharacters(in: .punctuationCharacters).lowercased()
+        guard knownUnits.contains(normalizedUnit) else { return nil }
+
+        let recovered = unitTokens.dropFirst().joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return recovered.isEmpty ? nil : recovered
+    }
+
+    private func isGenericIngredientBucketLabel(_ value: String) -> Bool {
+        guard let bucketKind = genericBucketKind(for: value) else { return false }
+        return bucketKind == "spice" || bucketKind == "herb" || bucketKind == "sauce" || bucketKind == "topping"
     }
 
     private func singularizeToken(_ token: String) -> String {

@@ -9,9 +9,14 @@
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
-import { addItemsToInstacartCart } from "../lib/instacart-cart.js";
-import { buildShoppingSpecEntries } from "../lib/instacart-intent.js";
+import { config as loadDotenv } from "dotenv";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+loadDotenv({ path: path.resolve(SCRIPT_DIR, "..", ".env") });
+const { addItemsToInstacartCart } = await import("../lib/instacart-cart.js");
+const { buildShoppingSpecEntries } = await import("../lib/instacart-intent.js");
 
 const PREFERRED_STORE = process.argv[2] ?? process.env.INSTACART_PREFERRED_STORE ?? null;
 const STRICT_STORE = Boolean(PREFERRED_STORE);
@@ -43,6 +48,7 @@ def decode_bytes(value):
     return value
 
 auth = json.loads(decode_bytes(data.get("agentic-auth-session-v1") or b"{}"))
+profile = json.loads(decode_bytes(data.get("agentic-meal-profile-v1") or b"{}"))
 user_id = auth.get("userID")
 preferred_keys = []
 if user_id:
@@ -58,6 +64,7 @@ history = json.loads(decode_bytes(data[history_key]))
 plan = history[0] if isinstance(history, list) and history else history
 print(json.dumps({
     "auth": auth,
+    "profile": profile,
     "historyKey": history_key,
     "plan": plan,
 }, separators=(",", ":")))
@@ -97,17 +104,24 @@ function summarizePlan(plan) {
 const source = loadCurrentMealPlan();
 const plan = summarizePlan(source.plan);
 const recipeTitleByID = new Map((Array.isArray(source.plan?.recipes) ? source.plan.recipes : []).map((entry) => [entry?.recipe?.id, entry?.recipe?.title]));
+const accessToken = source.auth?.accessToken ?? null;
+const userID = source.auth?.userID ?? null;
+const deliveryAddress = source.profile?.deliveryAddress ?? null;
 const originalItems = plan.groceryItems;
-const refinedItems = await buildShoppingSpecEntries({
+const shoppingSpec = await buildShoppingSpecEntries({
   originalItems,
   plan: source.plan,
 });
+const refinedItems = Array.isArray(shoppingSpec?.items) ? shoppingSpec.items : [];
 
 console.log("=== Ounje -> Instacart batch add ===");
 console.log(`historyKey: ${source.historyKey}`);
 console.log(`generatedAt: ${plan.generatedAt}`);
 console.log(`recipes: ${plan.recipeCount}`);
 console.log(`groceryItems: ${plan.groceryCount}`);
+if (shoppingSpec?.reconciliationSummary) {
+  console.log(`reconciliationSummary: ${JSON.stringify(shoppingSpec.reconciliationSummary)}`);
+}
 if (PREFERRED_STORE) {
   console.log(`preferredStore: ${PREFERRED_STORE}`);
 }
@@ -131,6 +145,9 @@ refinedItems.forEach((entry, index) => {
 });
 
 const result = await addItemsToInstacartCart({
+  userId: userID,
+  accessToken,
+  mealPlanID: source.plan?.id ?? null,
   items: refinedItems.map((entry) => ({
     name: entry.name,
     originalName: entry.originalName ?? entry.name,
@@ -140,6 +157,7 @@ const result = await addItemsToInstacartCart({
     sourceRecipes: compactSourceRecipeTitles(entry, recipeTitleByID),
     shoppingContext: entry.shoppingContext ?? null,
   })),
+  deliveryAddress,
   preferredStore: PREFERRED_STORE,
   strictStore: STRICT_STORE,
   headless: true,

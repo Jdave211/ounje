@@ -162,6 +162,7 @@ final class OunjeShareViewController: UIViewController {
                         let reconciled = SharedRecipeImportEnvelope(
                             id: envelope.id,
                             createdAt: envelope.createdAt,
+                            jobID: response.job.id,
                             targetState: envelope.targetState,
                             sourceText: envelope.sourceText,
                             sourceURLString: response.job.canonicalURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -288,6 +289,7 @@ final class OunjeShareViewController: UIViewController {
         return SharedRecipeImportEnvelope(
             id: envelopeID,
             createdAt: Date(),
+            jobID: nil,
             targetState: targetState,
             sourceText: sourceText,
             sourceURLString: sourceURLString,
@@ -571,11 +573,13 @@ private struct RecipeImportResponse: Decodable {
 }
 
 private struct RecipeImportJobPayload: Decodable {
+    let id: String
     let status: String
     let sourceURL: String?
     let canonicalURL: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case status
         case sourceURL = "source_url"
         case canonicalURL = "canonical_url"
@@ -584,30 +588,45 @@ private struct RecipeImportJobPayload: Decodable {
 
 private enum ImportSubmissionServer {
     static let productionBaseURL = "https://api.ounje.app"
+    private static let dropletBaseURL = "http://161.35.129.11"
 
     static var candidateBaseURLs: [String] {
-        var baseURLs: [String] = []
-        if let explicitLocalBaseURL = explicitLocalBaseURL {
-            baseURLs.append(explicitLocalBaseURL)
-        }
-        baseURLs.append(productionBaseURL)
-        #if targetEnvironment(simulator)
-        baseURLs.append("http://127.0.0.1:8080")
-        #endif
-        return deduplicated(baseURLs)
+        [dropletBaseURL]
     }
 
-    private static var explicitLocalBaseURL: String? {
+    private static var explicitPrimaryBaseURL: String? {
+        explicitBaseURL(hostKey: "OunjePrimaryServerHost", portKey: "OunjePrimaryServerPort", defaultPort: "8080")
+    }
+
+    private static var explicitWorkerBaseURL: String? {
+        explicitBaseURL(hostKey: "OunjeWorkerServerHost", portKey: "OunjeWorkerServerPort", defaultPort: "80")
+            ?? explicitBaseURL(hostKey: "OunjeDevServerHost", portKey: "OunjeDevServerPort", defaultPort: "80")
+    }
+
+    private static func explicitBaseURL(hostKey: String, portKey: String, defaultPort: String) -> String? {
         guard
-            let host = Bundle.main.object(forInfoDictionaryKey: "OunjeDevServerHost") as? String,
-            !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let rawHost = Bundle.main.object(forInfoDictionaryKey: hostKey) as? String
         else {
             return nil
         }
 
-        let configuredPort = (Bundle.main.object(forInfoDictionaryKey: "OunjeDevServerPort") as? String)?
+        let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return nil }
+
+        let configuredPort = (Bundle.main.object(forInfoDictionaryKey: portKey) as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let port = (configuredPort?.isEmpty == false ? configuredPort! : "8080")
+        let port = (configuredPort?.isEmpty == false ? configuredPort! : defaultPort)
+
+        if host.contains("://") {
+            guard var components = URLComponents(string: host) else {
+                return host
+            }
+            if components.port == nil, !port.isEmpty {
+                components.port = Int(port)
+            }
+            return components.string ?? host
+        }
+
         return "http://\(host):\(port)"
     }
 

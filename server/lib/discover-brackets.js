@@ -106,6 +106,14 @@ export function sanitizeDiscoverBrackets(recipe = {}, candidateBrackets = []) {
     brackets.add("fish");
   }
 
+  if (hasNigerianSignal) {
+    brackets.add("nigerian");
+  }
+
+  if (hasFishSignal) {
+    brackets.add("fish");
+  }
+
   if (!brackets.size) {
     if (hasDrinkSignal && !hasDrinkExclusionSignal) brackets.add("drinks");
     else if (hasBreakfastCoreSignal) brackets.add("breakfast");

@@ -9,6 +9,10 @@ function sanitizeRecipeText(value) {
     .trim();
 }
 
+function normalizeText(value) {
+  return sanitizeRecipeText(value).toLowerCase();
+}
+
 function normalizeRecipeLine(value) {
   return String(value ?? "")
     .replace(/^[-*•\s]+/, "")
@@ -54,7 +58,18 @@ const INGREDIENT_UNIT_WORDS = new Set([
   "bunches",
   "head",
   "heads",
+  "medium",
+  "large",
+  "small",
+  "extra-large",
+  "jumbo",
+  "package",
+  "packages",
+  "pkg",
+  "pkgs",
 ]);
+
+const FRACTION_CHARACTER_PATTERN = "¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞";
 
 function cleanIngredientDisplayName(value) {
   let normalized = normalizeRecipeLine(value);
@@ -81,6 +96,13 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
     return { displayName: name, quantityText: quantity };
   }
 
+  if (quantity && isLikelyIngredientAbbreviation(name) && looksLikePromotableIngredientName(quantity)) {
+    return {
+      displayName: stripLeadingIngredientQuantityTerms(quantity),
+      quantityText: null,
+    };
+  }
+
   let workingName = name;
   let workingQuantity = quantity;
 
@@ -103,7 +125,7 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
     }
   }
 
-  const leadingMatch = workingName.match(/^((?:\d+\s+)?\d+\/\d+|\d+(?:\.\d+)?)(?:\s+([a-zA-Z]+))?\s+(.+)$/);
+  const leadingMatch = workingName.match(new RegExp(`^((?:\\d+\\s+)?\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[${FRACTION_CHARACTER_PATTERN}])(?:\\s+([a-zA-Z-]+))?\\s+(.+)$`));
   if (leadingMatch) {
     const parsedQuantity = leadingMatch[1].trim();
     const parsedUnit = normalizeRecipeLine(leadingMatch[2] ?? "") || null;
@@ -118,6 +140,33 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
     displayName: workingName,
     quantityText: workingQuantity,
   };
+}
+
+function isLikelyIngredientAbbreviation(value) {
+  const trimmed = normalizeRecipeLine(value);
+  if (!trimmed || trimmed.includes(" ") || trimmed.length > 4) return false;
+  return trimmed === trimmed.toUpperCase() || /\d/.test(trimmed) || trimmed.length <= 2;
+}
+
+function stripLeadingIngredientQuantityTerms(value) {
+  const tokens = normalizeRecipeLine(value).split(/\s+/).filter(Boolean);
+  while (tokens.length) {
+    const lowered = tokens[0].replace(/[^\p{L}\p{N}/.-]+/gu, "").toLowerCase();
+    const numericLike = /\d/.test(lowered) || lowered.includes("/") || [...lowered].some((char) => FRACTIONS[char] != null);
+    if (numericLike || INGREDIENT_UNIT_WORDS.has(lowered)) {
+      tokens.shift();
+      continue;
+    }
+    break;
+  }
+  return tokens.join(" ").replace(/^of\s+/i, "").trim();
+}
+
+function looksLikePromotableIngredientName(value) {
+  const stripped = stripLeadingIngredientQuantityTerms(value);
+  if (!stripped || !/[a-z]/i.test(stripped)) return false;
+  const lowered = stripped.toLowerCase();
+  return !["to taste", "as needed", "for serving", "optional", "divided"].includes(lowered);
 }
 
 function normalizeStepText(value) {
@@ -169,7 +218,8 @@ const UNITS = new Set([
   "kg", "ml", "l", "liter", "liters", "pinch", "pinches", "clove", "cloves", "can",
   "cans", "package", "packages", "pkg", "pkgs", "slice", "slices", "piece", "pieces",
   "sprig", "sprigs", "bunch", "bunches", "stalk", "stalks", "head", "heads", "fillet",
-  "fillets", "breast", "breasts", "thigh", "thighs"
+  "fillets", "breast", "breasts", "thigh", "thighs", "medium", "large", "small",
+  "extra-large", "jumbo"
 ]);
 
 function parseQuantityToken(token) {
@@ -206,6 +256,35 @@ function parseQuantityToken(token) {
   }
 
   return null;
+}
+
+function parseQuantityAndUnitText(value) {
+  const normalized = normalizeRecipeLine(value);
+  if (!normalized) return { quantity: null, unit: null };
+
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return { quantity: null, unit: null };
+
+  let quantity = null;
+  let quantityTokens = 0;
+  const firstTwo = tokens.length >= 2 ? parseQuantityToken(`${tokens[0]} ${tokens[1]}`) : null;
+  const first = parseQuantityToken(tokens[0]);
+
+  if (firstTwo != null) {
+    quantity = firstTwo;
+    quantityTokens = 2;
+  } else if (first != null) {
+    quantity = first;
+    quantityTokens = 1;
+  }
+
+  if (quantityTokens === 0) {
+    return { quantity: null, unit: null };
+  }
+
+  const unitCandidate = tokens[quantityTokens]?.replace(/[^\p{L}-]+/gu, "").toLowerCase() ?? "";
+  const unit = unitCandidate && UNITS.has(unitCandidate) ? tokens[quantityTokens] : null;
+  return { quantity, unit };
 }
 
 function parseIngredientLine(line) {
@@ -302,17 +381,19 @@ function normalizeRecipeIngredientRow(value) {
   const split = splitIngredientQuantityPrefix(rawDisplayName, value.quantity_text ?? value.amount_text ?? "");
   const displayName = split.displayName;
   if (!displayName) return null;
+  const normalizedQuantityText = split.quantityText || normalizeRecipeLine(value.quantity_text ?? value.amount_text ?? "") || null;
+  const parsedQuantity = parseQuantityAndUnitText(normalizedQuantityText);
 
   return {
     id: value.id ?? null,
     ingredient_id: value.ingredient_id ?? null,
     display_name: displayName,
-    quantity_text: split.quantityText || normalizeRecipeLine(value.quantity_text ?? value.amount_text ?? "") || null,
+    quantity_text: normalizedQuantityText,
     image_url: value.image_url ?? null,
     sort_order: Number.isFinite(value.sort_order) ? Number(value.sort_order) : null,
     name: displayName,
-    quantity: null,
-    unit: null,
+    quantity: parsedQuantity.quantity,
+    unit: parsedQuantity.unit,
     note: null,
     image_hint: displayName.toLowerCase(),
   };
@@ -369,6 +450,124 @@ function enrichIngredientQuantities(ingredients, stepIngredients) {
 
     return ingredient;
   });
+}
+
+const GENERIC_INGREDIENT_BUCKETS = new Set([
+  "spice",
+  "spices",
+  "seasoning",
+  "seasonings",
+  "herb",
+  "herbs",
+  "blend",
+  "mix",
+  "sauce",
+  "sauces",
+  "dressing",
+  "dressings",
+  "marinade",
+  "marinades",
+  "glaze",
+  "glazes",
+  "topping",
+  "toppings",
+  "garnish",
+  "garnishes",
+]);
+
+const CONCRETE_INGREDIENT_HINTS = [
+  /paprika/i,
+  /chili/i,
+  /cumin/i,
+  /coriander/i,
+  /turmeric/i,
+  /garlic\s+powder/i,
+  /onion\s+powder/i,
+  /black\s+pepper/i,
+  /white\s+pepper/i,
+  /red\s+pepper/i,
+  /cayenne/i,
+  /oregano/i,
+  /basil/i,
+  /thyme/i,
+  /rosemary/i,
+  /sage/i,
+  /mint/i,
+  /parsley/i,
+  /cilantro/i,
+  /dill/i,
+  /chives?/i,
+  /ginger/i,
+  /cinnamon/i,
+  /nutmeg/i,
+  /cloves?/i,
+  /allspice/i,
+  /cardamom/i,
+  /fennel/i,
+  /sumac/i,
+  /za'?atar/i,
+  /honey/i,
+  /sriracha/i,
+  /soy\s+sauce/i,
+  /hot\s+sauce/i,
+  /vinegar/i,
+  /mustard/i,
+  /mayo/i,
+  /yogurt/i,
+  /bbq/i,
+  /worcestershire/i,
+  /sesame\s+oil/i,
+  /fish\s+sauce/i,
+  /oyster\s+sauce/i,
+  /hoisin/i,
+  /teriyaki/i,
+  /chipotle/i,
+  /tomato\s+sauce/i,
+];
+
+function normalizeGenericIngredientBucket(value) {
+  const normalized = normalizeRecipeLine(value ?? "").toLowerCase();
+  if (!normalized) return "";
+  if (["spice", "spices", "seasoning", "seasonings"].includes(normalized)) return "seasoning blend";
+  if (["herb", "herbs"].includes(normalized)) return "herb blend";
+  if (["sauce", "sauces", "dressing", "dressings", "marinade", "marinades", "glaze", "glazes"].includes(normalized)) return "sauce mix";
+  if (["topping", "toppings", "garnish", "garnishes"].includes(normalized)) return "topping mix";
+  return normalized;
+}
+
+function isConcreteIngredientName(value) {
+  const normalized = normalizeRecipeLine(value ?? "");
+  if (!normalized) return false;
+  if (GENERIC_INGREDIENT_BUCKETS.has(normalized.toLowerCase())) return false;
+  return CONCRETE_INGREDIENT_HINTS.some((pattern) => pattern.test(normalized));
+}
+
+function shouldDropGenericIngredientRow(ingredient, ingredients = [], steps = []) {
+  const displayName = normalizeRecipeLine(ingredient?.display_name ?? ingredient?.displayName ?? ingredient?.name ?? "");
+  const normalized = displayName.toLowerCase();
+  if (!GENERIC_INGREDIENT_BUCKETS.has(normalized)) return false;
+
+  const concreteSiblingCount = (ingredients ?? []).filter((candidate) => {
+    const candidateName = normalizeRecipeLine(candidate?.display_name ?? candidate?.displayName ?? candidate?.name ?? "");
+    if (!candidateName) return false;
+    if (candidateName.toLowerCase() === normalized) return false;
+    return isConcreteIngredientName(candidateName);
+  }).length;
+
+  if (concreteSiblingCount >= 1) {
+    return true;
+  }
+
+  const stepMentionsConcreteSibling = (steps ?? []).some((step) => {
+    const text = normalizeText(step?.text ?? step?.instruction_text ?? step?.instruction ?? "");
+    if (!text) return false;
+    return (ingredients ?? []).some((candidate) => {
+      const candidateName = normalizeRecipeLine(candidate?.display_name ?? candidate?.displayName ?? candidate?.name ?? "");
+      return candidateName && candidateName.toLowerCase() !== normalized && isConcreteIngredientName(candidateName) && text.includes(candidateName.toLowerCase());
+    });
+  });
+
+  return stepMentionsConcreteSibling;
 }
 
 function parseIngredientObjects(value) {
@@ -533,10 +732,29 @@ export function normalizeRecipeDetail(recipe, related = {}) {
   );
 
   const steps = structuredSteps.length ? structuredSteps : parseInstructionSteps(recipe.steps_json ?? recipe.instructions_text, ingredientSources);
-  const ingredients = enrichIngredientQuantities(
+  const enrichedIngredients = enrichIngredientQuantities(
     ingredientSources,
     steps.flatMap((step) => Array.isArray(step.ingredients) ? step.ingredients : [])
   );
+  const ingredients = enrichedIngredients
+    .map((ingredient) => {
+      const displayName = normalizeRecipeLine(ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? "");
+      if (!displayName) return null;
+      if (shouldDropGenericIngredientRow(ingredient, enrichedIngredients, steps)) {
+        return null;
+      }
+      const normalizedName = displayName.toLowerCase();
+      if (GENERIC_INGREDIENT_BUCKETS.has(normalizedName)) {
+        return {
+          ...ingredient,
+          display_name: normalizeGenericIngredientBucket(displayName),
+          name: normalizeGenericIngredientBucket(displayName),
+          image_hint: normalizeGenericIngredientBucket(displayName).toLowerCase(),
+        };
+      }
+      return ingredient;
+    })
+    .filter(Boolean);
   const servingsCount = Number.isFinite(recipe.servings_count)
     ? Number(recipe.servings_count)
     : parseFirstInteger(recipe.servings_text);

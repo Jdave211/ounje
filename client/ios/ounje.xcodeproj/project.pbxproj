@@ -14,16 +14,23 @@
 		A10000000000000000000002 /* SharedRecipeImportCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SharedRecipeImportCore.swift */; };
 		A10000000000000000000003 /* OunjeShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* OunjeShareViewController.swift */; };
 		A10000000000000000000004 /* OunjeShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* OunjeShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		C1D2E3F40100000100000001 /* ounje/OunjeAgenticApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000001 /* ounje/OunjeAgenticApp.swift */; };
-		C1D2E3F40100000100000002 /* ounje/MealPlanningAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000002 /* ounje/MealPlanningAppStore.swift */; };
-		C1D2E3F40100000100000003 /* ounje/MealPlanningAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */; };
-		C1D2E3F40100000100000004 /* ounje/MealPlanningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000004 /* ounje/MealPlanningModels.swift */; };
-		C1D2E3F40100000100000005 /* ounje/RecipeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000005 /* ounje/RecipeCatalog.swift */; };
-		C1D2E3F40100000100000006 /* ounje/GroceryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000006 /* ounje/GroceryService.swift */; };
-		C1D2E3F40100000100000007 /* ounje/MealMeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */; };
-		C1D2E3F40100000100000008 /* ounje/MealMeCartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */; };
+		C1D2E3F40100000100000001 /* OunjeAgenticApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000001 /* OunjeAgenticApp.swift */; };
+		C1D2E3F40100000100000002 /* MealPlanningAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000002 /* MealPlanningAppStore.swift */; };
+		C1D2E3F40100000100000003 /* MealPlanningAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000003 /* MealPlanningAgent.swift */; };
+		C1D2E3F40100000100000004 /* MealPlanningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000004 /* MealPlanningModels.swift */; };
+		C1D2E3F40100000100000005 /* RecipeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000005 /* RecipeCatalog.swift */; };
+		C1D2E3F40100000100000006 /* GroceryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000006 /* GroceryService.swift */; };
+		C1D2E3F40100000100000009 /* MainShopSnapshotBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */; };
 		EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000002 /* Biro_Script_reduced.ttf */; };
 		EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000004 /* Slee_handwritting-Regular.otf */; };
+		F10000000000000000000001 /* shopping_cart.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000002 /* shopping_cart.lottie */; };
+		F10000000000000000000010 /* retro_coffee_character_bag.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000000D /* retro_coffee_character_bag.lottie */; };
+		F10000000000000000000011 /* wumpus_hi.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000000E /* wumpus_hi.lottie */; };
+		F10000000000000000000012 /* driving_car.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000013 /* driving_car.lottie */; };
+		F10000000000000000000003 /* rbutton.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000004 /* rbutton.riv */; };
+		F10000000000000000000005 /* liquid.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000006 /* liquid.riv */; };
+		F10000000000000000000007 /* skills.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000008 /* skills.riv */; };
+		F10000000000000000000014 /* DotLottie in Frameworks */ = {isa = PBXBuildFile; productRef = F10000000000000000000015 /* DotLottie */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,22 +62,28 @@
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = ounje/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = ounje/Info.plist; sourceTree = "<group>"; };
 		2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = ounje/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = OunjeLaunch.storyboard; path = ounje/OunjeLaunch.storyboard; sourceTree = "<group>"; };
 		A20000000000000000000001 /* SharedRecipeImportCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/SharedRecipeImportCore.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* OunjeShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OunjeShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		A20000000000000000000003 /* OunjeShareExtension/Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000004 /* OunjeShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OunjeShareViewController.swift; sourceTree = "<group>"; };
 		A20000000000000000000005 /* OunjeShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OunjeShareExtension.entitlements; sourceTree = "<group>"; };
+		AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = OunjeLaunch.storyboard; path = ounje/OunjeLaunch.storyboard; sourceTree = "<group>"; };
 		EA0100010000000000000002 /* Biro_Script_reduced.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = Biro_Script_reduced.ttf; path = ounje/Supporting/Fonts/Biro_Script_reduced.ttf; sourceTree = "<group>"; };
 		EA0100010000000000000004 /* Slee_handwritting-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "Slee_handwritting-Regular.otf"; path = "ounje/Supporting/Fonts/Slee_handwritting-Regular.otf"; sourceTree = "<group>"; };
-		F1A2B3C40100000100000001 /* ounje/OunjeAgenticApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/OunjeAgenticApp.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000002 /* ounje/MealPlanningAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAppStore.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAgent.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000004 /* ounje/MealPlanningModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningModels.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000005 /* ounje/RecipeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/RecipeCatalog.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000006 /* ounje/GroceryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/GroceryService.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealMeModels.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealMeCartView.swift; sourceTree = "<group>"; };
+		F10000000000000000000002 /* shopping_cart.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = shopping_cart.lottie; path = ounje/shopping_cart.lottie; sourceTree = "<group>"; };
+		F1000000000000000000000D /* retro_coffee_character_bag.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = retro_coffee_character_bag.lottie; path = ounje/retro_coffee_character_bag.lottie; sourceTree = "<group>"; };
+		F1000000000000000000000E /* wumpus_hi.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = wumpus_hi.lottie; path = ounje/wumpus_hi.lottie; sourceTree = "<group>"; };
+		F10000000000000000000013 /* driving_car.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = driving_car.lottie; path = ounje/driving_car.lottie; sourceTree = "<group>"; };
+		F10000000000000000000004 /* rbutton.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = rbutton.riv; path = ounje/rbutton.riv; sourceTree = "<group>"; };
+		F10000000000000000000006 /* liquid.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = liquid.riv; path = ounje/liquid.riv; sourceTree = "<group>"; };
+		F10000000000000000000008 /* skills.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = skills.riv; path = ounje/skills.riv; sourceTree = "<group>"; };
+		F1A2B3C40100000100000001 /* OunjeAgenticApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/OunjeAgenticApp.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000002 /* MealPlanningAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAppStore.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000003 /* MealPlanningAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAgent.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000004 /* MealPlanningModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningModels.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000005 /* RecipeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/RecipeCatalog.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000006 /* GroceryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/GroceryService.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MainShopSnapshotBuilder.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -78,6 +91,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F10000000000000000000014 /* DotLottie in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -94,14 +108,13 @@
 		13B07FAE1A68108700A75B9A /* ounje */ = {
 			isa = PBXGroup;
 			children = (
-				F1A2B3C40100000100000001 /* ounje/OunjeAgenticApp.swift */,
-				F1A2B3C40100000100000002 /* ounje/MealPlanningAppStore.swift */,
-				F1A2B3C40100000100000003 /* ounje/MealPlanningAgent.swift */,
-				F1A2B3C40100000100000004 /* ounje/MealPlanningModels.swift */,
-				F1A2B3C40100000100000005 /* ounje/RecipeCatalog.swift */,
-				F1A2B3C40100000100000006 /* ounje/GroceryService.swift */,
-				F1A2B3C40100000100000007 /* ounje/MealMeModels.swift */,
-				F1A2B3C40100000100000008 /* ounje/MealMeCartView.swift */,
+				F1A2B3C40100000100000001 /* OunjeAgenticApp.swift */,
+				F1A2B3C40100000100000002 /* MealPlanningAppStore.swift */,
+				F1A2B3C40100000100000003 /* MealPlanningAgent.swift */,
+				F1A2B3C40100000100000004 /* MealPlanningModels.swift */,
+				F1A2B3C40100000100000005 /* RecipeCatalog.swift */,
+				F1A2B3C40100000100000006 /* GroceryService.swift */,
+				F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */,
 				A20000000000000000000001 /* SharedRecipeImportCore.swift */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
@@ -109,6 +122,13 @@
 				2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */,
 				EA0100010000000000000002 /* Biro_Script_reduced.ttf */,
 				EA0100010000000000000004 /* Slee_handwritting-Regular.otf */,
+				F10000000000000000000002 /* shopping_cart.lottie */,
+				F1000000000000000000000D /* retro_coffee_character_bag.lottie */,
+				F1000000000000000000000E /* wumpus_hi.lottie */,
+				F10000000000000000000013 /* driving_car.lottie */,
+				F10000000000000000000004 /* rbutton.riv */,
+				F10000000000000000000006 /* liquid.riv */,
+				F10000000000000000000008 /* skills.riv */,
 			);
 			name = ounje;
 			sourceTree = "<group>";
@@ -125,16 +145,6 @@
 			tabWidth = 2;
 			usesTabs = 0;
 		};
-		A60000000000000000000001 /* OunjeShareExtension */ = {
-			isa = PBXGroup;
-			children = (
-				A20000000000000000000004 /* OunjeShareViewController.swift */,
-				A20000000000000000000003 /* OunjeShareExtension/Info.plist */,
-				A20000000000000000000005 /* OunjeShareExtension.entitlements */,
-			);
-			path = OunjeShareExtension;
-			sourceTree = "<group>";
-		};
 		83CBBA001A601CBA00E9B192 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -142,6 +152,16 @@
 				A20000000000000000000002 /* OunjeShareExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A60000000000000000000001 /* OunjeShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000004 /* OunjeShareViewController.swift */,
+				A20000000000000000000003 /* Info.plist */,
+				A20000000000000000000005 /* OunjeShareExtension.entitlements */,
+			);
+			path = OunjeShareExtension;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -162,6 +182,9 @@
 				A80000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = ounje;
+			packageProductDependencies = (
+				F10000000000000000000015 /* DotLottie */,
+			);
 			productName = ounje;
 			productReference = 13B07F961A680F5B00A75B9A /* ounje.app */;
 			productType = "com.apple.product-type.application";
@@ -211,6 +234,9 @@
 				Base,
 			);
 			mainGroup = 83CBB9F61A601CBA00E9B192;
+			packageReferences = (
+				F10000000000000000000016 /* XCRemoteSwiftPackageReference "dotlottie-ios" */,
+			);
 			productRefGroup = 83CBBA001A601CBA00E9B192 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -231,6 +257,13 @@
 				07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */,
 				EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */,
 				EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */,
+				F10000000000000000000001 /* shopping_cart.lottie in Resources */,
+				F10000000000000000000010 /* retro_coffee_character_bag.lottie in Resources */,
+				F10000000000000000000011 /* wumpus_hi.lottie in Resources */,
+				F10000000000000000000012 /* driving_car.lottie in Resources */,
+				F10000000000000000000003 /* rbutton.riv in Resources */,
+				F10000000000000000000005 /* liquid.riv in Resources */,
+				F10000000000000000000007 /* skills.riv in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -248,14 +281,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C1D2E3F40100000100000001 /* ounje/OunjeAgenticApp.swift in Sources */,
-				C1D2E3F40100000100000002 /* ounje/MealPlanningAppStore.swift in Sources */,
-				C1D2E3F40100000100000003 /* ounje/MealPlanningAgent.swift in Sources */,
-				C1D2E3F40100000100000004 /* ounje/MealPlanningModels.swift in Sources */,
-				C1D2E3F40100000100000005 /* ounje/RecipeCatalog.swift in Sources */,
-				C1D2E3F40100000100000006 /* ounje/GroceryService.swift in Sources */,
-				C1D2E3F40100000100000007 /* ounje/MealMeModels.swift in Sources */,
-				C1D2E3F40100000100000008 /* ounje/MealMeCartView.swift in Sources */,
+				C1D2E3F40100000100000001 /* OunjeAgenticApp.swift in Sources */,
+				C1D2E3F40100000100000002 /* MealPlanningAppStore.swift in Sources */,
+				C1D2E3F40100000100000003 /* MealPlanningAgent.swift in Sources */,
+				C1D2E3F40100000100000004 /* MealPlanningModels.swift in Sources */,
+				C1D2E3F40100000100000005 /* RecipeCatalog.swift in Sources */,
+				C1D2E3F40100000100000006 /* GroceryService.swift in Sources */,
+				C1D2E3F40100000100000009 /* MainShopSnapshotBuilder.swift in Sources */,
 				A10000000000000000000001 /* SharedRecipeImportCore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -287,7 +319,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ounje/ounje.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = ounje/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ounje;
@@ -297,7 +329,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.3;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -315,7 +347,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ounje/ounje.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = ounje/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ounje;
@@ -325,67 +357,13 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.3;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 				VERSIONING_SYSTEM = "apple-generic";
-			};
-			name = Release;
-		};
-		A90000000000000000000001 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
-				DEVELOPMENT_TEAM = U8FPZXV6X6;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.1.3;
-				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
-				PRODUCT_NAME = OunjeShareExtension;
-				SKIP_INSTALL = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
-				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		A90000000000000000000002 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				APPLICATION_EXTENSION_API_ONLY = YES;
-				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
-				DEVELOPMENT_TEAM = U8FPZXV6X6;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.1.3;
-				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
-				PRODUCT_NAME = OunjeShareExtension;
-				SKIP_INSTALL = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -502,6 +480,60 @@
 			};
 			name = Release;
 		};
+		A90000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = U8FPZXV6X6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
+				PRODUCT_NAME = OunjeShareExtension;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A90000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 5;
+				DEVELOPMENT_TEAM = U8FPZXV6X6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
+				PRODUCT_NAME = OunjeShareExtension;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -510,15 +542,6 @@
 			buildConfigurations = (
 				13B07F941A680F5B00A75B9A /* Debug */,
 				13B07F951A680F5B00A75B9A /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		A90000000000000000000003 /* Build configuration list for PBXNativeTarget "OunjeShareExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				A90000000000000000000001 /* Debug */,
-				A90000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -532,7 +555,35 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A90000000000000000000003 /* Build configuration list for PBXNativeTarget "OunjeShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A90000000000000000000001 /* Debug */,
+				A90000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F10000000000000000000016 /* XCRemoteSwiftPackageReference "dotlottie-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/LottieFiles/dotlottie-ios.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F10000000000000000000015 /* DotLottie */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F10000000000000000000016 /* XCRemoteSwiftPackageReference "dotlottie-ios" */;
+			productName = DotLottie;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 83CBB9F71A601CBA00E9B192 /* Project object */;
 }

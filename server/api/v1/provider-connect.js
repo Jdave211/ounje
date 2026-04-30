@@ -15,6 +15,7 @@ import express from "express";
 import { chromium } from "playwright";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import { buildPlaywrightLaunchOptions } from "../../lib/playwright-runtime.js";
 
 const router = express.Router();
 
@@ -48,6 +49,24 @@ function getSupabase() {
   return createClient(SUPABASE_URL, SUPABASE_KEY);
 }
 
+function parseSessionCookies(rawCookies) {
+  if (Array.isArray(rawCookies)) return rawCookies;
+  if (typeof rawCookies !== "string") return [];
+  try {
+    const parsed = JSON.parse(rawCookies);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function isProviderAccountConnected(row = {}) {
+  const isActive = row.is_active !== false;
+  const loginStatus = String(row.login_status ?? "").trim().toLowerCase();
+  const cookies = parseSessionCookies(row.session_cookies);
+  return isActive && loginStatus !== "logged_out" && cookies.length > 0;
+}
+
 // ── POST /v1/connect/:provider ─────────────────────────────────────────────────
 /**
  * Start a connection session for a provider.
@@ -73,10 +92,10 @@ router.post("/connect/:provider", async (req, res) => {
     const sessionId = randomUUID();
     
     // Launch browser
-    const browser = await chromium.launch({
+    const browser = await chromium.launch(buildPlaywrightLaunchOptions({
       headless: true,
-      args: ['--disable-blink-features=AutomationControlled', '--no-sandbox'],
-    });
+      args: ["--disable-blink-features=AutomationControlled"],
+    }));
 
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 }, // iPhone-sized
@@ -581,11 +600,15 @@ router.get("/connect/providers", async (req, res) => {
       const supabase = getSupabase();
       const { data } = await supabase
         .from("user_provider_accounts")
-        .select("provider")
+        .select("provider,is_active,login_status,session_cookies")
         .eq("user_id", userId);
 
       if (data) {
-        const connectedProviders = new Set(data.map(d => d.provider));
+        const connectedProviders = new Set(
+          data
+            .filter((row) => isProviderAccountConnected(row))
+            .map((row) => row.provider)
+        );
         providers.forEach(p => {
           p.connected = connectedProviders.has(p.id);
         });

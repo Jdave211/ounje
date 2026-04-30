@@ -14,6 +14,7 @@
  */
 
 import express from "express";
+import { createClient } from "@supabase/supabase-js";
 import {
   geocodeAddress,
   searchGroceryCart,
@@ -24,6 +25,8 @@ import {
 } from "./providers/mealme.js";
 import { createInstacartShoppableLink }                              from "./providers/instacart.js";
 import { buildKrogerSearchUrl, findNearestKrogerStore, searchKrogerProduct } from "./providers/kroger.js";
+import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
+import { sourceEdgeID } from "../../lib/main-shop-collation.js";
 
 const router = express.Router();
 
@@ -32,6 +35,154 @@ const MEALME_API_KEY     = process.env.MEALME_API_KEY       ?? "";
 const INSTACART_API_KEY  = process.env.INSTACART_API_KEY    ?? "";
 const KROGER_CLIENT_ID   = process.env.KROGER_CLIENT_ID     ?? "";
 const KROGER_CLIENT_SECRET = process.env.KROGER_CLIENT_SECRET ?? "";
+
+function normalizeIncomingItems(items = []) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const sources = item?.sourceIngredients ?? item?.source_ingredients ?? [];
+    return {
+      ...item,
+      name: item?.name ?? "",
+      amount: Number(item?.amount ?? 0),
+      unit: item?.unit ?? "item",
+      estimatedPrice: Number(item?.estimatedPrice ?? item?.estimated_price ?? 0),
+      sourceIngredients: (Array.isArray(sources) ? sources : []).map((source) => ({
+        recipeID: String(source?.recipeID ?? source?.recipe_id ?? source?.recipeId ?? "").trim(),
+        ingredientName: String(source?.ingredientName ?? source?.ingredient_name ?? "").trim(),
+        unit: String(source?.unit ?? "").trim(),
+      })),
+    };
+  });
+}
+
+function buildCoverageSummary(originalItems = [], specItems = []) {
+  const genericCoverageLabels = new Set([
+    "spice",
+    "spices",
+    "seasoning",
+    "seasonings",
+    "herb",
+    "herbs",
+    "sauce",
+    "sauces",
+    "dressing",
+    "dressings",
+    "marinade",
+    "marinades",
+    "glaze",
+    "glazes",
+    "topping",
+    "toppings",
+    "garnish",
+    "garnishes",
+  ]);
+
+  const sourceKey = sourceEdgeID;
+
+  const totalSourceUses = new Set();
+  for (const item of originalItems) {
+    const sources = Array.isArray(item?.sourceIngredients) ? item.sourceIngredients : [];
+    if (sources.length === 0) {
+      totalSourceUses.add(`fallback::${String(item?.name ?? "").trim().toLowerCase()}::${String(item?.unit ?? "").trim().toLowerCase()}`);
+      continue;
+    }
+    for (const source of sources) {
+      const ingredientName = String(source?.ingredientName ?? "").trim().toLowerCase();
+      if (genericCoverageLabels.has(ingredientName)) {
+        continue;
+      }
+      const key = sourceKey(source);
+      if (key) totalSourceUses.add(key);
+    }
+  }
+
+  const coveredSourceUses = new Set();
+  for (const item of specItems) {
+    for (const edgeID of item?.sourceEdgeIDs ?? item?.shoppingContext?.sourceEdgeIDs ?? []) {
+      const normalized = String(edgeID ?? "").trim();
+      if (normalized) coveredSourceUses.add(normalized);
+    }
+    for (const source of item?.sourceIngredients ?? []) {
+      const key = sourceKey(source);
+      if (key) coveredSourceUses.add(key);
+    }
+  }
+
+  const uncoveredBaseLabels = [];
+  for (const item of originalItems) {
+    const sources = Array.isArray(item?.sourceIngredients) ? item.sourceIngredients : [];
+    if (sources.length === 0) continue;
+    const isCovered = sources.some((source) => {
+      const ingredientName = String(source?.ingredientName ?? "").trim().toLowerCase();
+      if (genericCoverageLabels.has(ingredientName)) {
+        return true;
+      }
+      return coveredSourceUses.has(sourceKey(source));
+    });
+    if (!isCovered) {
+      const baseLabel = String(item?.name ?? "").trim() || "ingredient";
+      if (!genericCoverageLabels.has(baseLabel.toLowerCase())) {
+        uncoveredBaseLabels.push(baseLabel);
+      }
+    }
+  }
+
+  return {
+    totalBaseUses: totalSourceUses.size,
+    accountedBaseUses: coveredSourceUses.size,
+    uncoveredBaseLabels,
+  };
+}
+
+// ── POST /v1/grocery/spec ──────────────────────────────────────────────────────
+router.post("/grocery/spec", async (req, res) => {
+  const startedAt = Date.now();
+  const { items, plan = null } = req.body ?? {};
+  const normalizedItems = normalizeIncomingItems(items);
+  if (!Array.isArray(normalizedItems) || normalizedItems.length === 0) {
+    return res.json({
+      items: [],
+      coverageSummary: {
+        totalBaseUses: 0,
+        accountedBaseUses: 0,
+        uncoveredBaseLabels: [],
+      },
+      reconciliationSummary: null,
+    });
+  }
+
+  try {
+    const shoppingSpec = await buildShoppingSpecEntries({
+      originalItems: normalizedItems,
+      plan,
+    });
+    const specItems = Array.isArray(shoppingSpec?.items) ? shoppingSpec.items : [];
+    const coverageSummary = buildCoverageSummary(normalizedItems, specItems);
+    console.log(
+      "[grocery/spec] ok",
+      JSON.stringify({
+        itemCount: normalizedItems.length,
+        resolvedCount: specItems.length,
+        durationMs: Date.now() - startedAt,
+        reconciliationSummary: shoppingSpec?.reconciliationSummary ?? null,
+      })
+    );
+    return res.json({
+      items: specItems,
+      coverageSummary,
+      reconciliationSummary: shoppingSpec?.reconciliationSummary ?? null,
+    });
+  } catch (error) {
+    console.error(
+      "[grocery/spec] error:",
+      JSON.stringify({
+        itemCount: normalizedItems.length,
+        durationMs: Date.now() - startedAt,
+        message: error.message,
+      })
+    );
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 // ── POST /v1/grocery/cart ─────────────────────────────────────────────────────
 /**
@@ -71,19 +222,32 @@ const KROGER_CLIENT_SECRET = process.env.KROGER_CLIENT_SECRET ?? "";
  */
 router.post("/grocery/cart", async (req, res) => {
   const { provider = "mealme", items, recipeContext, deliveryAddress } = req.body ?? {};
+  const normalizedRequestItems = normalizeIncomingItems(items);
 
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: "items array is required and must not be empty" });
+  if (!Array.isArray(normalizedRequestItems) || normalizedRequestItems.length === 0) {
+    return res.json({
+      provider,
+      cartUrl: "",
+      providerStatus: "deep_link",
+      itemCount: 0,
+      note: "No items to build",
+      resolvedProducts: [],
+      selectedStore: null,
+      storeOptions: [],
+      partialSuccess: false,
+      addedItems: [],
+      unresolvedItems: [],
+    });
   }
 
   try {
     // ── MealMe: primary path ────────────────────────────────────────────────
     if (provider === "mealme") {
-      return await handleMealMe(req, res, items, deliveryAddress, recipeContext);
+      return await handleMealMe(req, res, normalizedRequestItems, deliveryAddress, recipeContext);
     }
 
     // ── Legacy fallback providers ───────────────────────────────────────────
-    const normalizedItems = items.map((item) => ({ ...item, name: normalizeIngredientName(item.name) }));
+    const normalizedItems = normalizedRequestItems.map((item) => ({ ...item, name: normalizeIngredientName(item.name) }));
     switch (provider) {
       case "instacart":   return await handleInstacart(req, res, normalizedItems, recipeContext);
       case "kroger":      return await handleKroger(req, res, normalizedItems, deliveryAddress);
@@ -379,8 +543,74 @@ function handleAmazonFresh(req, res, items) {
 
 import * as orchestrator from "../../lib/grocery-orchestrator.js";
 import * as browserAgent from "./providers/browser-agent.js";
+import { trackInstacartOrder } from "../../lib/instacart-order-tracker.js";
+import { resolveAuthenticatedUserID } from "../../lib/instacart-run-logs.js";
 
 const BROWSER_USE_API_KEY = process.env.BROWSER_USE_API_KEY ?? "";
+const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+function extractBearerToken(authorizationHeader) {
+  const value = String(authorizationHeader ?? "").trim();
+  if (!value) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(value);
+  return match?.[1]?.trim() || null;
+}
+
+function getServiceSupabase() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Supabase not configured");
+  }
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+}
+
+async function resolveAuthorizedUserID(req) {
+  const accessToken = extractBearerToken(req.headers.authorization);
+  if (!accessToken) {
+    const error = new Error("Authorization required");
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const authenticatedUserID = await resolveAuthenticatedUserID(accessToken);
+  if (!authenticatedUserID) {
+    const error = new Error("Could not resolve authenticated user");
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const requestedUserID = String(req.headers["x-user-id"] ?? req.query.user_id ?? req.query.userID ?? "").trim();
+  if (requestedUserID && requestedUserID !== authenticatedUserID) {
+    const error = new Error("User mismatch");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return { userID: authenticatedUserID, accessToken };
+}
+
+function resolveReadOnlyUserID(req) {
+  return String(req.headers["x-user-id"] ?? req.query.user_id ?? req.query.userID ?? "").trim();
+}
+
+async function assertOrderOwnership(orderId, userID, columns = "id,user_id") {
+  const supabase = getServiceSupabase();
+  const { data, error } = await supabase
+    .from("grocery_orders")
+    .select(columns)
+    .eq("id", orderId)
+    .eq("user_id", userID)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) {
+    const notFoundError = new Error("Order not found");
+    notFoundError.statusCode = 404;
+    throw notFoundError;
+  }
+
+  return data;
+}
 
 // ── POST /v1/grocery/orders ────────────────────────────────────────────────────
 /**
@@ -403,29 +633,26 @@ const BROWSER_USE_API_KEY = process.env.BROWSER_USE_API_KEY ?? "";
  */
 router.post("/grocery/orders", async (req, res) => {
   const { provider, items, deliveryAddress, mealPlanId } = req.body ?? {};
-  const userId = req.headers["x-user-id"];  // From auth middleware
-
-  if (!userId) {
-    return res.status(401).json({ error: "User ID required" });
-  }
-
-  if (!provider || !browserAgent.SUPPORTED_PROVIDERS.includes(provider)) {
-    return res.status(400).json({
-      error: `Invalid provider. Supported: ${browserAgent.SUPPORTED_PROVIDERS.join(", ")}`,
-    });
-  }
-
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: "items array is required" });
-  }
-
-  if (!deliveryAddress?.line1 || !deliveryAddress?.postalCode) {
-    return res.status(400).json({ error: "deliveryAddress is required" });
-  }
 
   try {
+    const { userID } = await resolveAuthorizedUserID(req);
+
+    if (!provider || !browserAgent.SUPPORTED_PROVIDERS.includes(provider)) {
+      return res.status(400).json({
+        error: `Invalid provider. Supported: ${browserAgent.SUPPORTED_PROVIDERS.join(", ")}`,
+      });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "items array is required" });
+    }
+
+    if (!deliveryAddress?.line1 || !deliveryAddress?.postalCode) {
+      return res.status(400).json({ error: "deliveryAddress is required" });
+    }
+
     const order = await orchestrator.createOrder({
-      userId,
+      userId: userID,
       provider,
       items,
       deliveryAddress,
@@ -438,8 +665,9 @@ router.post("/grocery/orders", async (req, res) => {
       provider: order.provider,
     });
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders] create error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -450,17 +678,21 @@ router.post("/grocery/orders", async (req, res) => {
  */
 router.post("/grocery/orders/:id/start", async (req, res) => {
   const { id } = req.params;
+  const { deliveryAddress } = req.body ?? {};
 
   if (!BROWSER_USE_API_KEY) {
     return res.status(503).json({ error: "Browser automation not configured" });
   }
 
   try {
-    const result = await orchestrator.startOrder(id);
+    const { userID } = await resolveAuthorizedUserID(req);
+    await assertOrderOwnership(id, userID);
+    const result = await orchestrator.startOrder(id, { deliveryAddress });
     return res.json(result);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders/start] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -472,11 +704,67 @@ router.get("/grocery/orders/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
+    const userID = resolveReadOnlyUserID(req);
+    if (!userID) {
+      return res.status(401).json({ error: "User ID required" });
+    }
+    await assertOrderOwnership(id, userID);
     const summary = await orchestrator.getOrderSummary(id);
     return res.json(summary);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders] get error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
+  }
+});
+
+// ── GET /v1/grocery/orders/:id/tracking ───────────────────────────────────────
+router.get("/grocery/orders/:id/tracking", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const userID = resolveReadOnlyUserID(req);
+    if (!userID) {
+      return res.status(401).json({ error: "User ID required" });
+    }
+    const supabase = getServiceSupabase();
+
+    const { data, error } = await supabase
+      .from("grocery_orders")
+      .select("id,provider,status,provider_tracking_url,tracking_status,tracking_title,tracking_detail,tracking_eta_text,tracking_image_url,tracking_payload,tracking_started_at,last_tracked_at,delivered_at,step_log")
+      .eq("id", id)
+      .eq("user_id", userID)
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ tracking: data });
+  } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
+    console.error("[grocery/orders/tracking] get error:", err.message);
+    return res.status(statusCode).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/grocery/orders/:id/track ─────────────────────────────────────────
+router.post("/grocery/orders/:id/track", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
+    await assertOrderOwnership(id, userID);
+    const result = await trackInstacartOrder({
+      orderId: id,
+      accessToken,
+      headless: true,
+      logger: console,
+    });
+
+    return res.json(result);
+  } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
+    console.error("[grocery/orders/track] error:", err.message);
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -488,11 +776,17 @@ router.get("/grocery/orders/:id/slots", async (req, res) => {
   const { id } = req.params;
 
   try {
+    const userID = resolveReadOnlyUserID(req);
+    if (!userID) {
+      return res.status(401).json({ error: "User ID required" });
+    }
+    await assertOrderOwnership(id, userID);
     const slots = await orchestrator.getDeliverySlots(id);
     return res.json(slots);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders/slots] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -509,11 +803,14 @@ router.post("/grocery/orders/:id/slot", async (req, res) => {
   }
 
   try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    await assertOrderOwnership(id, userID);
     const result = await orchestrator.selectDeliverySlot(id, { date, timeRange });
     return res.json(result);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders/slot] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -529,11 +826,14 @@ router.post("/grocery/orders/:id/approve", async (req, res) => {
   const { tipCents = 0 } = req.body ?? {};
 
   try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    await assertOrderOwnership(id, userID);
     const result = await orchestrator.approveOrder(id, { tipCents });
     return res.json(result);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders/approve] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -546,11 +846,14 @@ router.post("/grocery/orders/:id/complete", async (req, res) => {
   const { providerOrderId } = req.body ?? {};
 
   try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    await assertOrderOwnership(id, userID);
     const result = await orchestrator.completeOrder(id, { providerOrderId });
     return res.json(result);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders/complete] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -563,11 +866,14 @@ router.post("/grocery/orders/:id/cancel", async (req, res) => {
   const { reason } = req.body ?? {};
 
   try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    await assertOrderOwnership(id, userID);
     const result = await orchestrator.cancelOrder(id, { reason });
     return res.json(result);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders/cancel] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -579,11 +885,14 @@ router.post("/grocery/orders/:id/retry", async (req, res) => {
   const { id } = req.params;
 
   try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    await assertOrderOwnership(id, userID);
     const result = await orchestrator.retryOrder(id);
     return res.json(result);
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders/retry] error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -592,23 +901,17 @@ router.post("/grocery/orders/:id/retry", async (req, res) => {
  * List user's orders.
  */
 router.get("/grocery/orders", async (req, res) => {
-  const userId = req.headers["x-user-id"];
-
-  if (!userId) {
-    return res.status(401).json({ error: "User ID required" });
-  }
-
   try {
-    const { createClient } = await import("@supabase/supabase-js");
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    );
+    const userID = resolveReadOnlyUserID(req);
+    if (!userID) {
+      return res.status(401).json({ error: "User ID required" });
+    }
+    const supabase = getServiceSupabase();
 
     const { data: orders, error } = await supabase
       .from("grocery_orders")
-      .select("id, provider, status, status_message, total_cents, created_at")
-      .eq("user_id", userId)
+      .select("id, provider, status, status_message, total_cents, created_at, completed_at, provider_tracking_url, tracking_status, tracking_title, tracking_detail, tracking_eta_text, tracking_image_url, last_tracked_at, delivered_at, step_log")
+      .eq("user_id", userID)
       .order("created_at", { ascending: false })
       .limit(20);
 
@@ -616,8 +919,9 @@ router.get("/grocery/orders", async (req, res) => {
 
     return res.json({ orders });
   } catch (err) {
+    const statusCode = Number(err?.statusCode) || 500;
     console.error("[grocery/orders] list error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 

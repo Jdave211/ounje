@@ -1,0 +1,17 @@
+[Unit]
+Description=Ounje recipe ingestion worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ounje
+WorkingDirectory=/opt/ounje
+Environment=NODE_ENV=production
+EnvironmentFile=-/etc/ounje/ounje.env
+ExecStart=/usr/bin/env node /opt/ounje/server/scripts/recipe_ingestion_worker.mjs --worker-id droplet_recipe_ingest
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

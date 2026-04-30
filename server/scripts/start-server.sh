@@ -1,8 +1,22 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
-cd /Users/davejaga/Desktop/startups/ounje/server
-source /Users/davejaga/Desktop/startups/ounje/server/.env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-export PATH="/Users/davejaga/.nvm/versions/node/v24.14.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-exec /Users/davejaga/.nvm/versions/node/v24.14.0/bin/node /Users/davejaga/Desktop/startups/ounje/server/server.js
+cd "$SERVER_DIR"
+
+if [[ -f "$SERVER_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SERVER_DIR/.env"
+  set +a
+fi
+
+NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
+if [[ -z "$NODE_BIN" ]]; then
+  echo "[server/bootstrap] node executable not found on PATH" >&2
+  exit 1
+fi
+
+exec "$NODE_BIN" "$SERVER_DIR/scripts/start-server.mjs" "$@"

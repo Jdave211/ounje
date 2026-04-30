@@ -34,11 +34,21 @@ scripts/output/
 scripts/__pycache__/
 *.egg-info/
 
+# Local automation artifacts
+.playwright-cli/
+output/
+tmp/
+tmp-*
+*.tgz
+
 # Server uploads
 server/uploads/
+server/logs/
 
 # Misc
 sb_backup
 *.swp
 *.swo
 .codex-deriveddata/
+dropletsshkey
+dropletsshkey.pub
