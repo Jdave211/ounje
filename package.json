@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Ounje — Nigerian food app. Swift iOS client + Node.js API server.",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "server": "nodemon --watch server --ext js,mjs,json --exec \"bash server/scripts/start-server.sh\"",
     "start": "bash server/scripts/start-server.sh",

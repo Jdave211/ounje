@@ -410,7 +410,7 @@ enum ShoppingProvider: String, CaseIterable, Codable, Identifiable {
             .lowercased()
 
         switch rawValue {
-        case "mealme", "instacart":
+        case "instacart":
             self = .instacart
         case "walmart":
             self = .walmart

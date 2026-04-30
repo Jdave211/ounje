@@ -2,12 +2,8 @@
  * Grocery cart API
  *
  * POST /v1/grocery/cart
- *   - MealMe: full in-app cart flow (store discovery + product matching + cart creation)
- *   - Instacart: hosted shoppable page (fallback for US/CA)
- *   - Kroger / Walmart / Amazon Fresh: search deep-links (fallback)
- *
- * POST /v1/grocery/cart/create
- *   - Finalises a MealMe cart for a chosen store + quote
+ *   - Instacart / Walmart / Amazon Fresh: search deep-links
+ *   - Kroger: API-backed search when configured, otherwise deep-link
  *
  * GET /v1/grocery/providers
  *   - Returns provider availability
@@ -15,15 +11,6 @@
 
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
-import {
-  geocodeAddress,
-  searchGroceryCart,
-  getStoreQuotes,
-  createCart,
-  shapeStoreOptions,
-  normalizeIngredientName,
-} from "./providers/mealme.js";
-import { createInstacartShoppableLink }                              from "./providers/instacart.js";
 import { buildKrogerSearchUrl, findNearestKrogerStore, searchKrogerProduct } from "./providers/kroger.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
 import { sourceEdgeID } from "../../lib/main-shop-collation.js";
@@ -31,10 +18,16 @@ import { sourceEdgeID } from "../../lib/main-shop-collation.js";
 const router = express.Router();
 
 // ── Env ───────────────────────────────────────────────────────────────────────
-const MEALME_API_KEY     = process.env.MEALME_API_KEY       ?? "";
-const INSTACART_API_KEY  = process.env.INSTACART_API_KEY    ?? "";
 const KROGER_CLIENT_ID   = process.env.KROGER_CLIENT_ID     ?? "";
 const KROGER_CLIENT_SECRET = process.env.KROGER_CLIENT_SECRET ?? "";
+
+function normalizeIngredientName(name) {
+  return String(name ?? "")
+    .toLowerCase()
+    .replace(/\b(fresh|large|small|medium|organic|frozen|dried|chopped|sliced|diced|minced|grated|shredded)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 function normalizeIncomingItems(items = []) {
   return (Array.isArray(items) ? items : []).map((item) => {
@@ -188,7 +181,7 @@ router.post("/grocery/spec", async (req, res) => {
 /**
  * Request body:
  * {
- *   provider?: "mealme" | "instacart" | "kroger" | "walmart" | "amazonFresh",
+ *   provider?: "instacart" | "kroger" | "walmart" | "amazonFresh",
  *   items: GroceryItem[],       // [{ name, amount, unit, estimatedPrice }]
  *   recipeContext?: {
  *     title: string,
@@ -204,15 +197,7 @@ router.post("/grocery/spec", async (req, res) => {
  *   }
  * }
  *
- * MealMe response:
- * {
- *   provider: "mealme",
- *   providerStatus: "live",
- *   storeOptions: StoreOption[],    // ranked by matchedCount, then price
- *   itemCount: number
- * }
- *
- * Fallback response:
+ * Response:
  * {
  *   provider: string,
  *   cartUrl: string,
@@ -221,7 +206,7 @@ router.post("/grocery/spec", async (req, res) => {
  * }
  */
 router.post("/grocery/cart", async (req, res) => {
-  const { provider = "mealme", items, recipeContext, deliveryAddress } = req.body ?? {};
+  const { provider = "instacart", items, deliveryAddress } = req.body ?? {};
   const normalizedRequestItems = normalizeIncomingItems(items);
 
   if (!Array.isArray(normalizedRequestItems) || normalizedRequestItems.length === 0) {
@@ -241,15 +226,9 @@ router.post("/grocery/cart", async (req, res) => {
   }
 
   try {
-    // ── MealMe: primary path ────────────────────────────────────────────────
-    if (provider === "mealme") {
-      return await handleMealMe(req, res, normalizedRequestItems, deliveryAddress, recipeContext);
-    }
-
-    // ── Legacy fallback providers ───────────────────────────────────────────
     const normalizedItems = normalizedRequestItems.map((item) => ({ ...item, name: normalizeIngredientName(item.name) }));
     switch (provider) {
-      case "instacart":   return await handleInstacart(req, res, normalizedItems, recipeContext);
+      case "instacart":   return handleInstacart(req, res, normalizedItems);
       case "kroger":      return await handleKroger(req, res, normalizedItems, deliveryAddress);
       case "walmart":     return handleWalmart(req, res, normalizedItems);
       case "amazonFresh": return handleAmazonFresh(req, res, normalizedItems);
@@ -261,100 +240,17 @@ router.post("/grocery/cart", async (req, res) => {
   }
 });
 
-// ── POST /v1/grocery/cart/create ──────────────────────────────────────────────
-/**
- * Creates a finalised MealMe cart for a specific store option.
- * Called after user picks a store in the app.
- *
- * Request body:
- * {
- *   storeId: string,
- *   quoteId: string,
- *   cartItems: [{ productId, quantity }],
- *   fulfillment?: "delivery" | "pickup",
- *   customer: { firstName, lastName, email, phone },
- *   deliveryAddress: { line1, city, region, postalCode }
- * }
- *
- * Response: { cartId, subtotal, deliveryFee, total, etaMinutes }
- */
-router.post("/grocery/cart/create", async (req, res) => {
-  if (!MEALME_API_KEY) {
-    return res.status(503).json({ error: "MealMe not configured — set MEALME_API_KEY" });
-  }
-
-  const { storeId, quoteId, cartItems, fulfillment, customer, deliveryAddress } = req.body ?? {};
-  if (!quoteId)                          return res.status(400).json({ error: "quoteId is required" });
-  if (!Array.isArray(cartItems) || !cartItems.length)
-                                         return res.status(400).json({ error: "cartItems is required" });
-
-  try {
-    const result = await createCart({
-      quoteId,
-      cartItems,
-      fulfillment,
-      customer,
-      deliveryAddress,
-      apiKey: MEALME_API_KEY,
-    });
-    return res.json(result);
-  } catch (err) {
-    console.error("[grocery/cart/create] error:", err.message);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// ── GET /v1/grocery/quotes ────────────────────────────────────────────────────
-/**
- * Fetches live delivery/pickup quotes for a given MealMe store.
- * Called when user taps a store option to see the real delivery fee.
- *
- * Query params: storeId, lat, lng, postalCode, city, region, line1
- */
-router.get("/grocery/quotes", async (req, res) => {
-  if (!MEALME_API_KEY) {
-    return res.status(503).json({ error: "MealMe not configured" });
-  }
-
-  const { storeId, lat, lng, line1, city, region, postalCode } = req.query;
-  if (!storeId || !lat || !lng) {
-    return res.status(400).json({ error: "storeId, lat, lng are required" });
-  }
-
-  try {
-    const quotes = await getStoreQuotes({
-      storeId,
-      latitude:  parseFloat(lat),
-      longitude: parseFloat(lng),
-      address:   { line1, city, region, postalCode },
-      apiKey: MEALME_API_KEY,
-    });
-    return res.json({ quotes });
-  } catch (err) {
-    console.error("[grocery/quotes] error:", err.message);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
 // ── GET /v1/grocery/providers ─────────────────────────────────────────────────
 router.get("/grocery/providers", (req, res) => {
   res.json({
     providers: [
       {
-        id: "mealme",
-        name: "MealMe",
-        status: MEALME_API_KEY ? "live" : "not_configured",
-        coverage: ["US", "CA"],
-        note: "1M+ stores, real product matching, in-app checkout",
-        priority: 1,
-      },
-      {
         id: "instacart",
         name: "Instacart",
-        status: INSTACART_API_KEY ? "live" : "deep_link",
+        status: "deep_link",
         coverage: ["US", "CA"],
-        note: "Hosted shoppable page — opens in browser",
-        priority: 2,
+        note: "Browser search and automation path",
+        priority: 1,
       },
       {
         id: "kroger",
@@ -362,106 +258,33 @@ router.get("/grocery/providers", (req, res) => {
         status: KROGER_CLIENT_ID ? "live" : "deep_link",
         coverage: ["US"],
         note: "Kroger, Ralphs, Fred Meyer, Harris Teeter, and more",
-        priority: 3,
+        priority: 2,
       },
       {
         id: "walmart",
         name: "Walmart",
         status: "deep_link",
         coverage: ["US", "CA"],
-        priority: 4,
+        priority: 3,
       },
       {
         id: "amazonFresh",
         name: "Amazon Fresh",
         status: "deep_link",
         coverage: ["US"],
-        priority: 5,
+        priority: 4,
       },
     ],
   });
 });
 
-// ── MealMe handler ────────────────────────────────────────────────────────────
-async function handleMealMe(req, res, items, deliveryAddress, recipeContext) {
-  if (!MEALME_API_KEY) {
-    // No key yet — gracefully fall back to Instacart or Walmart deep-link
-    console.warn("[grocery/cart] MEALME_API_KEY not set, falling back to deep-link");
-    const normalizedItems = items.map((i) => ({ ...i, name: normalizeIngredientName(i.name) }));
-    if (INSTACART_API_KEY) return handleInstacart(req, res, normalizedItems, recipeContext);
-    return handleWalmart(req, res, normalizedItems);
-  }
-
-  // 1. Resolve user coordinates
-  let latitude, longitude;
-  if (deliveryAddress) {
-    const geo = await geocodeAddress(deliveryAddress, MEALME_API_KEY);
-    latitude  = geo?.latitude  ?? 37.7786357;  // SF default for dev
-    longitude = geo?.longitude ?? -122.3918135;
-  } else {
-    // Client should always send address, but default to central US if missing
-    latitude  = 37.7786357;
-    longitude = -122.3918135;
-  }
-
-  // 2. Search grocery cart across nearby stores
-  const searchResult = await searchGroceryCart({
-    items,
-    latitude,
-    longitude,
-    address: deliveryAddress,
-    maxMiles: 8,
-    sort: "cheapest",
-    apiKey: MEALME_API_KEY,
-  });
-
-  const storeOptions = shapeStoreOptions(searchResult.stores, 5, searchResult.queryItems);
-
-  if (storeOptions.length === 0) {
-    // No stores found — fall back to Instacart deep-link
-    const normalizedItems = items.map((i) => ({ ...i, name: normalizeIngredientName(i.name) }));
-    return handleWalmart(req, res, normalizedItems);
-  }
-
-  return res.json({
-    provider:     "mealme",
-    providerStatus: "live",
-    storeOptions,
-    itemCount:    items.length,
-    location:     { latitude, longitude },
-  });
-}
-
-// ── Instacart handler ─────────────────────────────────────────────────────────
-async function handleInstacart(req, res, items, recipeContext) {
-  if (!INSTACART_API_KEY) {
-    const query = encodeURIComponent(items.slice(0, 8).map((i) => i.name).join(" "));
-    return res.json({
-      provider: "instacart",
-      cartUrl: `https://www.instacart.com/store/s?k=${query}`,
-      itemCount: items.length,
-      providerStatus: "deep_link",
-    });
-  }
-
-  const linkbackUrl = recipeContext?.recipeId
-    ? `ounje://recipes/${recipeContext.recipeId}`
-    : undefined;
-
-  const { url, expiresAt } = await createInstacartShoppableLink({
-    recipeTitle:       recipeContext?.title,
-    recipeImageUrl:    recipeContext?.imageUrl,
-    recipeLinkbackUrl: linkbackUrl,
-    items,
-    apiKey: INSTACART_API_KEY,
-  });
-
+function handleInstacart(req, res, items) {
+  const query = encodeURIComponent(items.slice(0, 8).map((i) => i.name).join(" "));
   return res.json({
     provider: "instacart",
-    cartUrl: url,
-    expiresAt,
+    cartUrl: `https://www.instacart.com/store/s?k=${query}`,
     itemCount: items.length,
-    providerStatus: "live",
+    providerStatus: "deep_link",
   });
 }
 

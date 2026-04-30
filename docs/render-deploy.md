@@ -27,8 +27,6 @@ Set these in both Render services:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `MEALME_API_KEY`
-- `INSTACART_API_KEY`
 - `KROGER_CLIENT_ID`
 - `KROGER_CLIENT_SECRET`
 - `BROWSER_USE_API_KEY`
@@ -56,4 +54,4 @@ That migration closes the current gap where:
 3. Deploy the web service.
 4. Deploy the worker service.
 5. Verify `GET /healthz` returns `200`.
-6. Verify recipe generation, discover search, and Instacart run logging against the Render-hosted API.
+6. Verify recipe generation, discover search, and Instacart browser-run logging against the Render-hosted API.
