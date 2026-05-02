@@ -17,26 +17,29 @@ import DotLottie
 typealias Color = SwiftUI.Color
 typealias Alignment = SwiftUI.Alignment
 
-@main
-struct OunjeAgenticApp: App {
+struct OunjeAppScene: View {
     @StateObject private var store = MealPlanningAppStore()
     @StateObject private var toastCenter = AppToastCenter()
     @StateObject private var notificationCenter = AppNotificationCenterManager()
     @StateObject private var realtimeCoordinator = AppRealtimeInvalidationCoordinator()
 
-    var body: some Scene {
-        WindowGroup {
-            RootView()
-                .environmentObject(store)
-                .environmentObject(toastCenter)
-                .environmentObject(notificationCenter)
-                .environmentObject(realtimeCoordinator)
-                .preferredColorScheme(.dark)
-        }
+    var body: some View {
+        AppRootView()
+            .environmentObject(store)
+            .environmentObject(toastCenter)
+            .environmentObject(notificationCenter)
+            .environmentObject(realtimeCoordinator)
+            .preferredColorScheme(.dark)
     }
 }
 
-private struct RootView: View {
+struct AppRootView: View {
+    var body: some View {
+        RootView()
+    }
+}
+
+struct RootView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var toastCenter: AppToastCenter
     @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
@@ -555,27 +558,6 @@ private final class SupabaseRealtimeBroadcastClient {
         offset += count
         return String(bytes: slice, encoding: .utf8)
     }
-}
-
-private struct AppToast: Identifiable, Equatable {
-    let id = UUID()
-    let title: String
-    let subtitle: String?
-    let systemImage: String
-    let thumbnailURLString: String?
-    let destination: AppToastDestination?
-    let actionTitle: String?
-    let action: (() -> Void)?
-
-    static func == (lhs: AppToast, rhs: AppToast) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
-private enum AppToastDestination: Hashable {
-    case recipe(DiscoverRecipeCardData)
-    case recipeImportQueue(SharedRecipeImportQueueTab)
-    case appTab(AppTab)
 }
 
 private func sanitizedInstacartStoreName(_ value: String?) -> String? {
@@ -1198,205 +1180,6 @@ private extension AppNotificationEvent {
     }
 }
 
-private struct AppFeedbackMessageAttachment: Codable, Hashable {
-    let fileName: String?
-    let mimeType: String?
-    let kind: String?
-
-    enum CodingKeys: String, CodingKey {
-        case fileName = "file_name"
-        case mimeType = "mime_type"
-        case kind
-    }
-}
-
-private struct AppFeedbackMessage: Identifiable, Codable, Hashable {
-    let id: UUID
-    let userID: String
-    let authorRole: String
-    let body: String
-    let attachments: [AppFeedbackMessageAttachment]
-    let createdAt: Date
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case userID = "user_id"
-        case authorRole = "author_role"
-        case body
-        case attachments
-        case createdAt = "created_at"
-    }
-
-    init(
-        id: UUID,
-        userID: String,
-        authorRole: String,
-        body: String,
-        attachments: [AppFeedbackMessageAttachment],
-        createdAt: Date
-    ) {
-        self.id = id
-        self.userID = userID
-        self.authorRole = authorRole
-        self.body = body
-        self.attachments = attachments
-        self.createdAt = createdAt
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        userID = try container.decodeIfPresent(String.self, forKey: .userID) ?? ""
-        authorRole = try container.decodeIfPresent(String.self, forKey: .authorRole) ?? "system"
-        body = try container.decodeIfPresent(String.self, forKey: .body) ?? ""
-        attachments = try container.decodeIfPresent([AppFeedbackMessageAttachment].self, forKey: .attachments) ?? []
-
-        let rawCreatedAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
-        createdAt = FeedbackDateParser.parse(rawCreatedAt) ?? Date()
-    }
-}
-
-private enum FeedbackDateParser {
-    private static let fractionalFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    private static let standardFormatter = ISO8601DateFormatter()
-
-    static func parse(_ raw: String?) -> Date? {
-        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
-            return nil
-        }
-        return fractionalFormatter.date(from: raw) ?? standardFormatter.date(from: raw)
-    }
-}
-
-private enum FeedbackServiceError: LocalizedError {
-    case invalidRequest
-    case invalidResponse
-    case requestFailed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidRequest:
-            return "Feedback request was invalid."
-        case .invalidResponse:
-            return "Feedback response was invalid."
-        case let .requestFailed(message):
-            return message
-        }
-    }
-}
-
-private struct FeedbackSubmissionResponse: Decodable {
-    let items: [AppFeedbackMessage]
-}
-
-private final class OunjeFeedbackService {
-    static let shared = OunjeFeedbackService()
-
-    private init() {}
-
-    func fetchMessages(userID: String) async throws -> [AppFeedbackMessage] {
-        guard var components = URLComponents(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/feedback") else {
-            throw FeedbackServiceError.invalidRequest
-        }
-        components.queryItems = [URLQueryItem(name: "user_id", value: userID)]
-        guard let url = components.url else {
-            throw FeedbackServiceError.invalidRequest
-        }
-
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw FeedbackServiceError.invalidResponse
-        }
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-            if Self.isMissingFeedbackTable(errorPayload?.message ?? errorPayload?.error ?? "") {
-                return []
-            }
-            throw FeedbackServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? "Feedback could not be loaded (\(httpResponse.statusCode)).")
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let payload = try decoder.decode(NotificationEventsResponse<AppFeedbackMessage>.self, from: data)
-        return payload.items
-    }
-
-    func submitFeedback(
-        userID: String,
-        body: String,
-        attachments: [AppFeedbackMessageAttachment]
-    ) async throws -> FeedbackSubmissionResponse {
-        guard let url = URL(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/feedback") else {
-            throw FeedbackServiceError.invalidRequest
-        }
-
-        struct Payload: Encodable {
-            let userID: String
-            let body: String
-            let attachments: [AppFeedbackMessageAttachment]
-
-            enum CodingKeys: String, CodingKey {
-                case userID = "user_id"
-                case body
-                case attachments
-            }
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(Payload(userID: userID, body: body, attachments: attachments))
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw FeedbackServiceError.invalidResponse
-        }
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-            let message = errorPayload?.message ?? errorPayload?.error ?? "Feedback could not be submitted (\(httpResponse.statusCode))."
-            if Self.isMissingFeedbackTable(message) {
-                return Self.localFallbackSubmission(body: body, attachments: attachments)
-            }
-            throw FeedbackServiceError.requestFailed(message)
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(FeedbackSubmissionResponse.self, from: data)
-    }
-
-    private struct NotificationEventsResponse<Item: Decodable>: Decodable {
-        let items: [Item]
-    }
-
-    private static func isMissingFeedbackTable(_ message: String) -> Bool {
-        let normalized = message.lowercased()
-        return normalized.contains("app_feedback_messages")
-            && (normalized.contains("schema cache") || normalized.contains("does not exist"))
-    }
-
-    private static func localFallbackSubmission(body: String, attachments: [AppFeedbackMessageAttachment]) -> FeedbackSubmissionResponse {
-        let now = Date()
-        let userMessage = AppFeedbackMessage(
-            id: UUID(),
-            userID: "",
-            authorRole: "user",
-            body: body,
-            attachments: attachments,
-            createdAt: now
-        )
-
-        return FeedbackSubmissionResponse(
-            items: [userMessage]
-        )
-    }
-}
-
 struct StoreProductSnapshot: Hashable {
     let productID: String
     let displayPrice: String
@@ -1894,111 +1677,6 @@ private final class AppNotificationCenterManager: ObservableObject {
 }
 
 @MainActor
-private final class AppToastCenter: ObservableObject {
-    @Published var toast: AppToast?
-
-    private var dismissTask: Task<Void, Never>?
-
-    func showSavedRecipe(_ recipe: DiscoverRecipeCardData) {
-        showSavedRecipe(
-            title: recipe.title,
-            thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString,
-            destination: .recipe(recipe)
-        )
-    }
-
-    func showSavedRecipe(title: String, thumbnailURLString: String? = nil) {
-        showSavedRecipe(title: title, thumbnailURLString: thumbnailURLString, destination: nil)
-    }
-
-    func showSavedRecipe(
-        title: String,
-        thumbnailURLString: String? = nil,
-        destination: AppToastDestination?
-    ) {
-        show(
-            title: "Saved",
-            subtitle: title,
-            systemImage: "bookmark.fill",
-            thumbnailURLString: thumbnailURLString,
-            destination: destination
-        )
-    }
-
-    func showUnsavedRecipe(_ recipe: DiscoverRecipeCardData) {
-        showUnsavedRecipe(
-            title: recipe.title,
-            thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString,
-            destination: .recipe(recipe)
-        )
-    }
-
-    func showUnsavedRecipe(title: String, thumbnailURLString: String? = nil) {
-        showUnsavedRecipe(title: title, thumbnailURLString: thumbnailURLString, destination: nil)
-    }
-
-    func showUnsavedRecipe(
-        title: String,
-        thumbnailURLString: String? = nil,
-        destination: AppToastDestination?,
-        actionTitle: String? = nil,
-        action: (() -> Void)? = nil
-    ) {
-        show(
-            title: "Removed from saved",
-            subtitle: title,
-            systemImage: "bookmark.slash.fill",
-            thumbnailURLString: thumbnailURLString,
-            destination: destination,
-            actionTitle: actionTitle,
-            action: action
-        )
-    }
-
-    func show(
-        title: String,
-        subtitle: String? = nil,
-        systemImage: String = "checkmark.circle.fill",
-        thumbnailURLString: String? = nil,
-        destination: AppToastDestination? = nil,
-        actionTitle: String? = nil,
-        action: (() -> Void)? = nil
-    ) {
-        dismissTask?.cancel()
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
-            toast = AppToast(
-                title: title,
-                subtitle: subtitle,
-                systemImage: systemImage,
-                thumbnailURLString: thumbnailURLString,
-                destination: destination,
-                actionTitle: actionTitle,
-                action: action
-            )
-        }
-
-        dismissTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.92)) {
-                    self.toast = nil
-                }
-            }
-        }
-    }
-
-    func dismiss() {
-        dismissTask?.cancel()
-        dismissTask = nil
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.92)) {
-            toast = nil
-        }
-    }
-}
-
-@MainActor
 private final class SharedRecipeImportInboxStore: ObservableObject {
     @Published private(set) var envelopes: [SharedRecipeImportEnvelope] = []
 
@@ -2282,113 +1960,6 @@ private final class InstacartRunLogsStore: ObservableObject {
         totalCount = 0
         hasMore = false
         errorMessage = "Waiting for your account to finish loading."
-    }
-}
-
-private struct AppToastBanner: View {
-    let toast: AppToast
-    let onTap: (() -> Void)?
-
-    private var thumbnailURL: URL? {
-        guard let raw = toast.thumbnailURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty else { return nil }
-        return URL(string: raw)
-    }
-
-    var body: some View {
-        content
-    }
-
-    private var content: some View {
-        HStack(spacing: 10) {
-            toastMainContent
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onTap?()
-                }
-
-            if let actionTitle = toast.actionTitle, let action = toast.action {
-                Button {
-                    action()
-                } label: {
-                    Text(actionTitle)
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(OunjePalette.softCream)
-                        .padding(.horizontal, 2)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(OunjePalette.panel.opacity(0.96))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                )
-        )
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
-    }
-
-    private var toastMainContent: some View {
-        HStack(spacing: 10) {
-            Group {
-                if let thumbnailURL {
-                    AsyncImage(url: thumbnailURL) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        default:
-                            toastFallbackBadge
-                        }
-                    }
-                } else {
-                    toastFallbackBadge
-                }
-            }
-            .frame(width: 30, height: 30)
-            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(toast.title)
-                    .font(.custom("Slee_handwritting-Regular", size: 16))
-                    .tracking(0.05)
-                    .foregroundStyle(OunjePalette.primaryText)
-                    .lineLimit(1)
-
-                if let subtitle = toast.subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            if toast.actionTitle == nil, toast.destination != nil {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.82))
-            }
-        }
-    }
-
-    private var toastFallbackBadge: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.96))
-
-            Image(systemName: toast.systemImage)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(OunjePalette.softCream)
-        }
     }
 }
 
@@ -4382,11 +3953,11 @@ private struct FirstLoginOnboardingView: View {
             favoriteFoods: Array(selectedFavoriteFoods).sorted() + parsedExtraFavoriteFoods,
             favoriteFlavors: [],
             neverIncludeFoods: Array(selectedNeverIncludeFoods).sorted() + parsedNeverIncludeFoods,
-            mealPrepGoals: selectedGoals.sorted(),
+            mealPrepGoals: [],
             cooksForOthers: cooksForOthers,
-            kitchenEquipment: availableKitchenEquipment,
+            kitchenEquipment: [],
             budgetWindow: budgetWindow,
-            budgetFlexibility: BudgetFlexibility.from(calibrationScore: budgetFlexibilityScore),
+            budgetFlexibility: .slightlyFlexible,
             purchasingBehavior: purchasingBehavior,
             orderingAutonomy: orderingAutonomy,
             pricingTier: store.effectivePricingTier
@@ -4425,8 +3996,6 @@ private struct FirstLoginOnboardingView: View {
 
     private func hydrateDraftFromStore() {
         let sourceProfile = store.profile ?? .starter
-        let availableEquipment = Set(equipmentOptions.map(\.title))
-        let legacyStarterEquipment = Set(["Microwave", "Oven", "Stovetop"])
 
         if !store.isOnboarded {
             currentStep = SetupStep.resumeStep(from: store.lastOnboardingStep)
@@ -4441,14 +4010,8 @@ private struct FirstLoginOnboardingView: View {
         selectedCuisineCountries = Set(sourceProfile.cuisineCountries)
         selectedFavoriteFoods = Set(sourceProfile.favoriteFoods)
         selectedNeverIncludeFoods = Set(sourceProfile.neverIncludeFoods)
-        selectedGoals = Set(sourceProfile.mealPrepGoals)
-
-        let storedEquipment = Set(sourceProfile.kitchenEquipment)
-        if storedEquipment.isEmpty || (!store.isOnboarded && storedEquipment == legacyStarterEquipment) {
-            missingEquipment.removeAll()
-        } else {
-            missingEquipment = availableEquipment.subtracting(storedEquipment)
-        }
+        selectedGoals = []
+        missingEquipment.removeAll()
         cadence = sourceProfile.cadence
         deliveryAnchorDay = sourceProfile.deliveryAnchorDay
         deliveryTimeMinutes = sourceProfile.deliveryTimeMinutes
@@ -4461,7 +4024,7 @@ private struct FirstLoginOnboardingView: View {
         syncBudgetInput()
         budgetWindow = sourceProfile.budgetWindow
         previousBudgetWindow = sourceProfile.budgetWindow
-        budgetFlexibilityScore = sourceProfile.budgetFlexibility.calibrationScore
+        budgetFlexibilityScore = UserProfile.starter.budgetFlexibility.calibrationScore
         allergiesText = sourceProfile.absoluteRestrictions.joined(separator: ", ")
         extraFavoriteFoodsText = additionalDraftEntryText(
             from: sourceProfile.favoriteFoods,
@@ -4500,7 +4063,7 @@ private struct FirstLoginOnboardingView: View {
         let resolvedStep = step ?? currentStep
         store.saveOnboardingDraft(profile, step: resolvedStep.rawValue)
 
-        guard let session = store.authSession else { return }
+        guard !store.isOnboarded, let session = store.authSession else { return }
         Task(priority: .utility) {
             try? await SupabaseProfileStateService.shared.upsertProfile(
                 userID: session.userID,
@@ -6447,250 +6010,6 @@ private func onboardingEmoji(for value: String) -> String? {
     return nil
 }
 
-@MainActor
-private final class SavedRecipesStore: ObservableObject {
-    @Published private(set) var savedRecipes: [DiscoverRecipeCardData] = []
-
-    private let legacyKey = "ounje-saved-recipes-v1"
-    private let keyPrefix = "ounje-saved-recipes-v2"
-    private let deletedKeyPrefix = "ounje-saved-recipes-deleted-v1"
-    private let toastCenter: AppToastCenter
-    private var activeUserID: String?
-    private var deletedSavedRecipeIDs: Set<String> = []
-
-    init(toastCenter: AppToastCenter) {
-        self.toastCenter = toastCenter
-        load(for: nil)
-    }
-
-    func isSaved(_ recipe: DiscoverRecipeCardData) -> Bool {
-        savedRecipes.contains { $0.id == recipe.id }
-    }
-
-    func bootstrap(authSession: AuthSession?) async {
-        let resolvedUserID = authSession?.userID
-
-        if activeUserID != resolvedUserID {
-            activeUserID = resolvedUserID
-            load(for: resolvedUserID)
-        }
-
-        guard let authSession else { return }
-
-        do {
-            let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(userID: authSession.userID)
-            let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
-
-            if mergedRecipes != savedRecipes {
-                savedRecipes = mergedRecipes
-                persist()
-            }
-
-            if !deletedSavedRecipeIDs.isEmpty {
-                await reconcilePendingDeletes(userID: authSession.userID)
-            }
-
-            let remoteIDs = Set(remoteRecipes.map(\.id)).subtracting(deletedSavedRecipeIDs)
-            let unsyncedLocalRecipes = mergedRecipes.filter { !remoteIDs.contains($0.id) && !deletedSavedRecipeIDs.contains($0.id) }
-            if !unsyncedLocalRecipes.isEmpty {
-                try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                    userID: authSession.userID,
-                    recipes: unsyncedLocalRecipes
-                )
-            }
-        } catch {
-            // Keep local saves available even when network sync fails.
-        }
-    }
-
-    func toggle(_ recipe: DiscoverRecipeCardData) {
-        let shouldSave = !isSaved(recipe)
-
-        if shouldSave {
-            deletedSavedRecipeIDs.remove(recipe.id)
-            savedRecipes.removeAll { $0.id == recipe.id }
-            savedRecipes.insert(recipe, at: 0)
-            toastCenter.showSavedRecipe(recipe)
-        } else {
-            savedRecipes.removeAll { $0.id == recipe.id }
-            deletedSavedRecipeIDs.insert(recipe.id)
-            toastCenter.showUnsavedRecipe(
-                title: recipe.title,
-                thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString,
-                destination: nil,
-                actionTitle: "Undo",
-                action: { [weak self] in
-                    self?.restoreSavedRecipe(recipe)
-                }
-            )
-        }
-        persist()
-
-        guard let userID = activeUserID else { return }
-
-        Task(priority: .utility) {
-            do {
-                if shouldSave {
-                    try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                        userID: userID,
-                        recipes: [recipe]
-                    )
-                } else {
-                    try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
-                        userID: userID,
-                        recipeID: recipe.id
-                    )
-                }
-            } catch {
-                // Local persistence remains the source of truth when sync fails.
-            }
-        }
-    }
-
-    func saveImportedRecipe(_ recipe: DiscoverRecipeCardData, showToast: Bool = true) {
-        let existing = savedRecipes.first(where: { $0.id == recipe.id })
-        let resolved = mergeRecipeCards(primary: recipe, fallback: existing)
-        deletedSavedRecipeIDs.remove(recipe.id)
-        savedRecipes.removeAll { $0.id == recipe.id }
-        savedRecipes.insert(resolved, at: 0)
-        persist()
-
-        if showToast {
-            toastCenter.showSavedRecipe(resolved)
-        }
-    }
-
-    private func restoreSavedRecipe(_ recipe: DiscoverRecipeCardData) {
-        deletedSavedRecipeIDs.remove(recipe.id)
-        savedRecipes.removeAll { $0.id == recipe.id }
-        savedRecipes.insert(recipe, at: 0)
-        persist()
-        toastCenter.dismiss()
-
-        guard let userID = activeUserID else { return }
-        Task(priority: .utility) {
-            try? await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                userID: userID,
-                recipes: [recipe]
-            )
-        }
-    }
-
-    private func persist() {
-        if let data = try? JSONEncoder().encode(savedRecipes) {
-            UserDefaults.standard.set(data, forKey: storageKey(for: activeUserID))
-        }
-        if let deletedData = try? JSONEncoder().encode(Array(deletedSavedRecipeIDs)) {
-            UserDefaults.standard.set(deletedData, forKey: deletedStorageKey(for: activeUserID))
-        }
-    }
-
-    private func load(for userID: String?) {
-        let defaults = UserDefaults.standard
-        let primaryKey = storageKey(for: userID)
-        let deletedKey = deletedStorageKey(for: userID)
-        let fallbackKey = userID == nil ? legacyKey : nil
-
-        let data = defaults.data(forKey: primaryKey)
-            ?? fallbackKey.flatMap { defaults.data(forKey: $0) }
-        let deletedData = defaults.data(forKey: deletedKey)
-
-        guard let data,
-              let decoded = try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: data)
-        else {
-            savedRecipes = []
-            deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
-            return
-        }
-
-        deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
-        savedRecipes = deduplicated(decoded.filter { !deletedSavedRecipeIDs.contains($0.id) })
-
-        if defaults.data(forKey: primaryKey) == nil {
-            defaults.set(data, forKey: primaryKey)
-        }
-    }
-
-    private func storageKey(for userID: String?) -> String {
-        "\(keyPrefix)-\(userID ?? "guest")"
-    }
-
-    private func deletedStorageKey(for userID: String?) -> String {
-        "\(deletedKeyPrefix)-\(userID ?? "guest")"
-    }
-
-    private func loadDeletedRecipeIDs(from data: Data?) -> Set<String> {
-        guard let data,
-              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
-            return []
-        }
-        return Set(decoded)
-    }
-
-    private func merge(local: [DiscoverRecipeCardData], remote: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
-        // Prefer the server's newest ordering first, then keep any local-only saves.
-        let filteredRemote = remote.filter { !deletedSavedRecipeIDs.contains($0.id) }
-        return deduplicated(filteredRemote + local)
-    }
-
-    private func deduplicated(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
-        var merged: [String: DiscoverRecipeCardData] = [:]
-        var orderedIDs: [String] = []
-
-        for recipe in recipes {
-            if let existing = merged[recipe.id] {
-                merged[recipe.id] = mergeRecipeCards(primary: existing, fallback: recipe)
-            } else {
-                merged[recipe.id] = recipe
-                orderedIDs.append(recipe.id)
-            }
-        }
-
-        return orderedIDs.compactMap { merged[$0] }
-    }
-
-    private func mergeRecipeCards(primary: DiscoverRecipeCardData, fallback: DiscoverRecipeCardData?) -> DiscoverRecipeCardData {
-        guard let fallback else { return primary }
-
-        return DiscoverRecipeCardData(
-            id: primary.id,
-            title: primary.title,
-            description: primary.description ?? fallback.description,
-            authorName: primary.authorName ?? fallback.authorName,
-            authorHandle: primary.authorHandle ?? fallback.authorHandle,
-            category: primary.category ?? fallback.category,
-            recipeType: primary.recipeType ?? fallback.recipeType,
-            discoverBrackets: (primary.discoverBrackets?.isEmpty == false ? primary.discoverBrackets : fallback.discoverBrackets),
-            cookTimeText: primary.cookTimeText ?? fallback.cookTimeText,
-            cookTimeMinutes: primary.cookTimeMinutes ?? fallback.cookTimeMinutes,
-            publishedDate: primary.publishedDate ?? fallback.publishedDate,
-            imageURLString: primary.imageURLString ?? fallback.imageURLString,
-            heroImageURLString: primary.heroImageURLString ?? fallback.heroImageURLString,
-            recipeURLString: primary.recipeURLString ?? fallback.recipeURLString,
-            source: primary.source ?? fallback.source
-        )
-    }
-
-    private func reconcilePendingDeletes(userID: String) async {
-        let pending = deletedSavedRecipeIDs
-        guard !pending.isEmpty else { return }
-
-        for recipeID in pending {
-            do {
-                try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
-                    userID: userID,
-                    recipeID: recipeID
-                )
-                deletedSavedRecipeIDs.remove(recipeID)
-            } catch {
-                // Keep the tombstone locally so the recipe does not resurrect on relaunch.
-            }
-        }
-
-        persist()
-    }
-}
-
 private struct MealPlannerShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: MealPlanningAppStore
@@ -6700,6 +6019,7 @@ private struct MealPlannerShellView: View {
     @StateObject private var recipeImportHistory = RecipeImportHistoryStore()
     @StateObject private var savedStore: SavedRecipesStore
     @StateObject private var discoverRecipesViewModel = DiscoverRecipesViewModel()
+    @StateObject private var discoverEnvironmentModel = DiscoverEnvironmentViewModel()
     @Namespace private var recipeTransitionNamespace
     @State private var selectedTab: AppTab = .prep
     @State private var discoverSearchText = ""
@@ -6820,6 +6140,14 @@ private struct MealPlannerShellView: View {
         .task(id: "fresh-plan::\(store.authSession?.userID ?? "signed-out")") {
             await store.ensureFreshPlanIfNeeded()
         }
+        .task(id: discoverPrewarmKey) {
+            guard scenePhase == .active else { return }
+            await prewarmBaseDiscoverFeed()
+        }
+        .task(id: cartSupportWarmupKey) {
+            guard scenePhase == .active else { return }
+            await CartSupportWarmupService.prewarmLatestPlanCartSupport(for: store)
+        }
         .task(id: "shared-import::\(store.authSession?.userID ?? "signed-out")") {
             await processPendingSharedImports(scope: .queued)
         }
@@ -6878,6 +6206,7 @@ private struct MealPlannerShellView: View {
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
             Task {
+                await prewarmBaseDiscoverFeed()
                 await store.runAutomationPassIfNeeded(trigger: "scene_active")
                 await sharedImportInbox.refresh()
                 if hasQueuedSharedImportWork || hasLiveSharedImportWork {
@@ -6945,7 +6274,8 @@ private struct MealPlannerShellView: View {
                 onSelectRecipe: { recipe in
                     presentRecipeDetail(PresentedRecipeDetail(recipeCard: recipe))
                 },
-                viewModel: discoverRecipesViewModel
+                viewModel: discoverRecipesViewModel,
+                environmentModel: discoverEnvironmentModel
             )
         case .cookbook:
                 CookbookTabView(
@@ -7019,6 +6349,18 @@ private struct MealPlannerShellView: View {
         }
     }
 
+    @MainActor
+    private func prewarmBaseDiscoverFeed() async {
+        guard discoverSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        discoverRecipesViewModel.updateFeedbackRevision(discoverFeedbackRevision)
+        await discoverEnvironmentModel.refresh(profile: store.profile)
+        await discoverRecipesViewModel.loadIfNeeded(
+            profile: store.profile,
+            query: "",
+            feedContext: discoverEnvironmentModel.feedContext
+        )
+    }
+
     private func presentRecipeDetail(_ recipe: PresentedRecipeDetail) {
         withAnimation(OunjeMotion.heroSpring) {
             presentedRecipe = recipe
@@ -7058,6 +6400,32 @@ private struct MealPlannerShellView: View {
         sharedImportInbox.envelopes.contains { envelope in
             envelope.shouldAutoProcess || envelope.isRetryNeeded
         }
+    }
+
+    private var cartSupportWarmupKey: String {
+        let userKey = store.authSession?.userID ?? "signed-out"
+        let planKey = store.latestPlan?.id.uuidString ?? "no-plan"
+        let activeKey = scenePhase == .active ? "active" : "inactive"
+        return "cart-support-warmup::\(userKey)::\(planKey)::\(store.latestPlanRevision)::\(activeKey)"
+    }
+
+    private var discoverPrewarmKey: String {
+        let userKey = store.authSession?.userID ?? "signed-out"
+        let profile = store.profile
+        let preferredName = profile?.preferredName ?? ""
+        let cuisines = profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
+        let dietaryPatterns = profile?.dietaryPatterns.joined(separator: ",") ?? ""
+        let city = profile?.deliveryAddress.city ?? ""
+        let region = profile?.deliveryAddress.region ?? ""
+        let postalCode = profile?.deliveryAddress.postalCode ?? ""
+        let profileKey = [preferredName, cuisines, dietaryPatterns, city, region, postalCode]
+            .joined(separator: "|")
+        let activeKey = scenePhase == .active ? "active" : "inactive"
+        return "discover-prewarm::\(userKey)::\(profileKey)::feedback:\(discoverFeedbackRevision)::\(activeKey)"
+    }
+
+    private var discoverFeedbackRevision: Int {
+        savedStore.savedRecipes.count / 3
     }
 
     private var hasLiveSharedImportWork: Bool {
@@ -7305,463 +6673,6 @@ private struct MealPlannerShellView: View {
                     systemImage: "exclamationmark.circle.fill",
                     destination: .recipeImportQueue(.failed)
                 )
-            }
-        }
-    }
-}
-
-private struct DiscoverTabView: View {
-    @EnvironmentObject private var store: MealPlanningAppStore
-    @EnvironmentObject private var savedStore: SavedRecipesStore
-    @Binding var selectedTab: AppTab
-    @Binding var searchText: String
-    let recipeTransitionNamespace: Namespace.ID
-    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
-    @ObservedObject var viewModel: DiscoverRecipesViewModel
-    @StateObject private var environmentModel = DiscoverEnvironmentViewModel()
-    @State private var hasAppearedOnce = false
-    @State private var searchRefreshTask: Task<Void, Never>?
-    @State private var isManualRefreshing = false
-    @State private var isShowingPullRefreshCue = false
-    @State private var hasPresentedPullRefreshCue = false
-    @State private var discoverPullDistance: CGFloat = 0
-    @State private var discoverPullBaseline: CGFloat?
-
-    private let recipeColumns = [
-        GridItem(.flexible(), spacing: 16, alignment: .top),
-        GridItem(.flexible(), spacing: 16, alignment: .top)
-    ]
-
-    private var filters: [String] {
-        viewModel.filters
-    }
-
-    private var filteredRecipes: [DiscoverRecipeCardData] {
-        viewModel.recipes
-    }
-
-    private var greetingLine: String {
-        let name = store.profile?.trimmedPreferredName
-        if let name, !name.isEmpty {
-            return "Welcome back, \(name)."
-        }
-        return "Welcome back."
-    }
-
-    private var dateLine: String {
-        Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day())
-    }
-
-    private var mealPrompt: String {
-        let hour = Calendar.current.component(.hour, from: .now)
-        switch hour {
-        case 5..<11:
-            return "What are we making for breakfast?"
-        case 11..<16:
-            return "What are we making for lunch?"
-        case 16..<22:
-            return "What are we making for dinner?"
-        default:
-            return "What are we prepping next?"
-        }
-    }
-
-    private var visibleRecipes: [DiscoverRecipeCardData] {
-        filteredRecipes
-    }
-
-    private var normalizedSearchText: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var isSearching: Bool {
-        !normalizedSearchText.isEmpty
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        BiroScriptDisplayText("Discover", size: 31, color: OunjePalette.primaryText)
-                        Text("Find your next meal")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                    }
-
-                    CompactDiscoverSearchField(
-                        text: $searchText,
-                        isLoading: viewModel.isLoading && isSearching,
-                        isRefreshing: viewModel.isTransitioningFeed && !visibleRecipes.isEmpty
-                    )
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .firstTextBaseline, spacing: 26) {
-                            ForEach(filters, id: \.self) { filter in
-                                DiscoverPresetTextButton(
-                                    title: filter,
-                                    isSelected: viewModel.selectedFilter == filter
-                                ) {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
-                                        viewModel.selectFilter(filter, isSearching: isSearching)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.trailing, 10)
-                        .padding(.top, 2)
-                        .padding(.bottom, 4)
-                    }
-
-                }
-                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.top, 14)
-                .padding(.bottom, 10)
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        GeometryReader { geometry in
-                            Color.clear.preference(
-                                key: PullStretchRefreshOffsetPreferenceKey.self,
-                                value: geometry.frame(in: .named("discover-feed-scroll")).minY
-                            )
-                        }
-                        .frame(height: 0)
-
-                        if shouldShowDiscoverPullIndicator {
-                            PullStretchRefreshIndicator(
-                                phase: discoverPullRefreshPhase,
-                                pullDistance: discoverPullDistance
-                            )
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-
-                        discoverRecipeFeedContent
-                    }
-                    .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                    .padding(.top, 2)
-                    .padding(.bottom, 140)
-                }
-                .coordinateSpace(name: "discover-feed-scroll")
-                .scrollIndicators(.hidden)
-                .onPreferenceChange(PullStretchRefreshOffsetPreferenceKey.self) { value in
-                    updateDiscoverPullDistance(value)
-                }
-                .refreshable {
-                    await refreshDiscoverFromPull()
-                }
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-        }
-        .task(id: discoverFeedKey) {
-            let initialContext = environmentModel.feedContext
-            viewModel.updateFeedbackRevision(discoverFeedbackRevision)
-            async let environmentRefresh: Void = environmentModel.refresh(profile: store.profile)
-            await viewModel.loadIfNeeded(profile: store.profile, query: searchText, feedContext: initialContext)
-            await environmentRefresh
-            let refreshedContext = environmentModel.feedContext
-            guard refreshedContext.cacheKey != initialContext.cacheKey else { return }
-            guard viewModel.recipes.isEmpty || viewModel.errorMessage != nil else { return }
-            await viewModel.forceReload(profile: store.profile, query: searchText, feedContext: refreshedContext)
-        }
-        .onChange(of: searchText) { newValue in
-            searchRefreshTask?.cancel()
-
-            let normalized = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty else {
-                Task {
-                    await viewModel.loadIfNeeded(profile: store.profile, query: "", feedContext: environmentModel.feedContext)
-                }
-                return
-            }
-
-            if viewModel.selectedFilter != "All" {
-                viewModel.selectFilter("All", isSearching: true)
-            }
-            viewModel.resetFeedPagination()
-            viewModel.prepareForQueryRefresh()
-            searchRefreshTask = Task {
-                try? await Task.sleep(nanoseconds: 90_000_000)
-                guard !Task.isCancelled else { return }
-                await viewModel.refresh(profile: store.profile, query: normalized, feedContext: environmentModel.feedContext, offset: 0)
-            }
-        }
-        .onAppear {
-            viewModel.clearTransientError()
-            viewModel.updateFeedbackRevision(discoverFeedbackRevision)
-            presentPullRefreshCueIfNeeded()
-            if normalizedSearchText.isEmpty {
-                viewModel.selectedFilter = "All"
-            }
-
-            guard normalizedSearchText.isEmpty else { return }
-            guard hasAppearedOnce else {
-                hasAppearedOnce = true
-                return
-            }
-            Task {
-                if viewModel.recipes.isEmpty || viewModel.errorMessage != nil {
-                    await viewModel.loadIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var discoverRecipeFeedContent: some View {
-        if let errorMessage = viewModel.errorMessage,
-           viewModel.hasResolvedInitialLoad,
-           !viewModel.isLoading,
-           !visibleRecipes.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Recipe feed unavailable")
-                    .biroHeaderFont(18)
-                    .foregroundStyle(OunjePalette.primaryText)
-                Text(errorMessage)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 6)
-        } else if !viewModel.hasResolvedInitialLoad
-                    || (visibleRecipes.isEmpty && (viewModel.isLoading || viewModel.isTransitioningFeed))
-                    || (viewModel.errorMessage != nil && visibleRecipes.isEmpty) {
-            LazyVGrid(columns: recipeColumns, spacing: 14) {
-                ForEach(0..<6, id: \.self) { _ in
-                    DiscoverRecipeCardLoadingPlaceholder()
-                }
-            }
-        } else if visibleRecipes.isEmpty {
-            RecipesEmptyState(
-                title: "No recipes matched",
-                detail: "Try a different keyword or category.",
-                symbolName: "fork.knife",
-                assetName: "CookbookEmptyIllustrationLight"
-            )
-        } else {
-            if viewModel.isTransitioningFeed && !visibleRecipes.isEmpty {
-                DiscoverInlineLoadingState(message: "Refreshing your feed")
-            }
-
-            LazyVGrid(columns: recipeColumns, spacing: 16) {
-                ForEach(visibleRecipes) { recipe in
-                    DiscoverRemoteRecipeCard(
-                        recipe: recipe,
-                        transitionNamespace: recipeTransitionNamespace
-                    ) {
-                        onSelectRecipe(recipe)
-                    }
-                    .onAppear {
-                        guard shouldPrefetch(after: recipe) else { return }
-                        Task {
-                            await viewModel.loadMoreIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
-                        }
-                    }
-                }
-            }
-            if viewModel.isFetchingMore {
-                LazyVGrid(columns: recipeColumns, spacing: 14) {
-                    ForEach(0..<2, id: \.self) { _ in
-                        DiscoverRecipeCardLoadingPlaceholder()
-                    }
-                }
-                .padding(.top, 2)
-            }
-
-            Color.clear
-                .frame(height: 1)
-                .onAppear {
-                    guard viewModel.hasMoreRecipes, !viewModel.isLoading, !viewModel.isFetchingMore else { return }
-                    Task {
-                        await viewModel.loadMoreIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
-                    }
-                }
-        }
-    }
-
-    private var discoverFeedKey: String {
-        let cuisines = store.profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
-        let foods = store.profile?.favoriteFoods.joined(separator: ",") ?? ""
-        let flavors = store.profile?.favoriteFlavors.joined(separator: ",") ?? ""
-        let dietary = store.profile?.dietaryPatterns.joined(separator: ",") ?? ""
-        let goals = store.profile?.mealPrepGoals.joined(separator: ",") ?? ""
-        let address = store.profile?.deliveryAddress
-        let environmentKey = [
-            address?.city ?? "",
-            address?.region ?? "",
-            address?.postalCode ?? ""
-        ].joined(separator: "|")
-        return "\(cuisines)|\(foods)|\(flavors)|\(dietary)|\(goals)|\(viewModel.selectedFilter)|\(normalizedSearchText)|\(environmentKey)|feedback:\(discoverFeedbackRevision)"
-    }
-
-    private var discoverFeedbackRevision: Int {
-        savedStore.savedRecipes.count / 3
-    }
-
-    private var shouldShowDiscoverPullIndicator: Bool {
-        isShowingPullRefreshCue
-            || isManualRefreshing
-            || (viewModel.isTransitioningFeed && !visibleRecipes.isEmpty)
-            || discoverPullDistance > 6
-    }
-
-    private var discoverPullRefreshPhase: PullStretchRefreshPhase {
-        if isManualRefreshing || (viewModel.isTransitioningFeed && !visibleRecipes.isEmpty) {
-            return .refreshing
-        }
-        if discoverPullDistance >= 62 {
-            return .release
-        }
-        if discoverPullDistance > 6 {
-            return .pulling
-        }
-        return .hint
-    }
-
-    private func updateDiscoverPullDistance(_ offset: CGFloat) {
-        if discoverPullBaseline == nil {
-            discoverPullBaseline = offset
-        }
-
-        let baseline = discoverPullBaseline ?? offset
-        let distance = max(0, offset - baseline)
-        discoverPullDistance = distance > 1 ? distance : 0
-    }
-
-    private func presentPullRefreshCueIfNeeded() {
-        guard !hasPresentedPullRefreshCue, normalizedSearchText.isEmpty else { return }
-        hasPresentedPullRefreshCue = true
-        Task { @MainActor in
-            withAnimation(.easeOut(duration: 0.22)) {
-                isShowingPullRefreshCue = true
-            }
-            try? await Task.sleep(nanoseconds: 2_200_000_000)
-            withAnimation(.easeInOut(duration: 0.24)) {
-                isShowingPullRefreshCue = false
-            }
-        }
-    }
-
-    private func refreshDiscoverFromPull() async {
-        guard !isManualRefreshing else { return }
-        isManualRefreshing = true
-        defer { isManualRefreshing = false }
-        viewModel.updateFeedbackRevision(discoverFeedbackRevision)
-        await viewModel.forceReload(
-            profile: store.profile,
-            query: searchText,
-            feedContext: environmentModel.feedContext,
-            rotateBaseFeed: normalizedSearchText.isEmpty,
-            forceNetwork: true
-        )
-    }
-
-    private func shouldPrefetch(after recipe: DiscoverRecipeCardData) -> Bool {
-        guard let currentIndex = visibleRecipes.firstIndex(where: { $0.id == recipe.id }) else { return false }
-        let thresholdIndex = max(visibleRecipes.count - 4, 0)
-        return currentIndex >= thresholdIndex
-    }
-}
-
-private struct DiscoverInlineLoadingState: View {
-    var message: String = "Refreshing"
-
-    var body: some View {
-        HStack(spacing: 10) {
-            DiscoverRiveLoader(size: 18)
-
-            Text(message)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(OunjePalette.secondaryText)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule(style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.82))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(OunjePalette.stroke.opacity(0.8), lineWidth: 1)
-                )
-        )
-    }
-}
-
-private enum PullStretchRefreshPhase: Equatable {
-    case hint
-    case pulling
-    case release
-    case refreshing
-    case complete
-}
-
-private struct PullStretchRefreshOffsetPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct PullStretchRefreshIndicator: View {
-    let phase: PullStretchRefreshPhase
-    var pullDistance: CGFloat = 0
-    @State private var isAnimating = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var pullProgress: CGFloat {
-        min(max(pullDistance / 62, 0), 1)
-    }
-
-    private var title: String {
-        switch phase {
-        case .hint:
-            return "Pull here for fresh ideas"
-        case .pulling:
-            return "Keep pulling"
-        case .release:
-            return "Release to refresh"
-        case .refreshing:
-            return "Refreshing ideas"
-        case .complete:
-            return "Fresh ideas ready"
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 9) {
-            if phase == .refreshing {
-                DiscoverRiveLoader(size: 18)
-            } else if phase == .complete {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-            } else {
-                Image(systemName: "arrow.down")
-                    .font(.system(size: 12, weight: .bold))
-                    .rotationEffect(.degrees(phase == .release ? 180 : 0))
-                    .offset(y: reduceMotion ? 0 : (isAnimating ? 3 : -2))
-            }
-
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-        }
-        .foregroundStyle(OunjePalette.softCream.opacity(phase == .refreshing ? 0.95 : 0.76))
-        .padding(.vertical, 4)
-        .scaleEffect(
-            x: reduceMotion ? 1 : 1 + (pullProgress * 0.06),
-            y: reduceMotion ? 1 : 1 + (pullProgress * 0.16),
-            anchor: .center
-        )
-        .frame(maxWidth: .infinity, alignment: .center)
-        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: phase)
-        .animation(.spring(response: 0.24, dampingFraction: 0.78), value: pullProgress)
-        .accessibilityLabel(phase == .refreshing ? "Refreshing Discover recipes" : "Pull down to refresh Discover recipes")
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 0.62).repeatForever(autoreverses: true)) {
-                isAnimating = true
             }
         }
     }
@@ -8021,68 +6932,6 @@ private struct PurchasingCTAButton: View {
         case .failed:
             return 1
         }
-    }
-}
-
-private struct DiscoverRiveLoader: View {
-    var size: CGFloat = 18
-
-    var body: some View {
-        ProgressView()
-            .tint(OunjePalette.accent)
-            .scaleEffect(0.8)
-            .frame(width: size, height: size)
-            .allowsHitTesting(false)
-    }
-}
-
-private struct CompactDiscoverSearchField: View {
-    @Binding var text: String
-    let isLoading: Bool
-    let isRefreshing: Bool
-
-    @FocusState private var isFocused: Bool
-    private let placeholder = "Search recipes"
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(OunjePalette.secondaryText)
-
-            TextField(placeholder, text: $text)
-                .textInputAutocapitalization(.never)
-                .disableAutocorrection(true)
-                .submitLabel(.search)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(OunjePalette.primaryText)
-                .focused($isFocused)
-
-            if isLoading || isRefreshing {
-                DiscoverRiveLoader(size: 18)
-            }
-
-            if !text.isEmpty && !isLoading {
-                Button {
-                    text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.75))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.96))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                )
-        )
     }
 }
 
@@ -8609,7 +7458,7 @@ private struct CookbookTabView: View {
     }
 }
 
-private enum SharedRecipeImportQueueTab: String, CaseIterable, Identifiable {
+enum SharedRecipeImportQueueTab: String, CaseIterable, Identifiable {
     case queued = "Queued"
     case failed = "Failed"
     case completed = "Completed"
@@ -12154,28 +11003,6 @@ private struct MealPrepLoadingCard: View {
     }
 }
 
-private struct MealPrepLoadingArtworkBlock: View {
-    let shimmerOffset: CGFloat
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .fill(OunjePalette.surface.opacity(0.82))
-            .frame(height: 188)
-            .overlay(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(OunjePalette.surface.opacity(0.95))
-                    .frame(width: 26, height: 26)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(OunjePalette.stroke.opacity(0.64), lineWidth: 1)
-                    )
-                    .modifier(LoadingSheen(offset: shimmerOffset))
-                    .padding(10)
-            }
-            .modifier(LoadingSheen(offset: shimmerOffset))
-    }
-}
-
 private struct PrepEmptyState: View {
     let title: String
     let detail: String
@@ -13422,7 +12249,7 @@ private struct ProfileTabView: View {
             ),
             .init(
                 title: "Budget",
-                detail: "\(profile.budgetSummary) · \(profile.budgetFlexibility.title)",
+                detail: profile.budgetSummary,
                 symbolName: "creditcard",
                 tint: OunjePalette.softCream,
                 action: { isBudgetSheetPresented = true }
@@ -13482,15 +12309,14 @@ private struct ProfileTabView: View {
     }
 
     private var foodProfileSummary: String {
-        guard let profile else { return "Diet, cuisines, goals" }
+        guard let profile else { return "Diet and cuisines" }
 
         let highlights = normalizedHighlights(
             profile.dietaryPatterns
             + profile.userFacingCuisineTitles
-            + profile.mealPrepGoals
         )
         let summary = highlights.prefix(3).joined(separator: " · ")
-        return summary.isEmpty ? "Diet, cuisines, goals" : summary
+        return summary.isEmpty ? "Diet and cuisines" : summary
     }
 
     private var profileBackground: some View {
@@ -13887,11 +12713,11 @@ private struct ProfileSettingsPage: View {
     }
 
     private var privacyPolicyURL: URL? {
-        URL(string: "https://api.ounje.app/privacy")
+        URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/privacy")
     }
 
     private var termsOfServiceURL: URL? {
-        URL(string: "https://api.ounje.app/terms")
+        URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/terms")
     }
 
     private var sections: [ProfileSettingsSectionModel] {
@@ -14221,7 +13047,7 @@ private struct ProfileSettingsSectionView: View {
                     if index < section.rows.count - 1 {
                         Divider()
                             .overlay(OunjePalette.stroke.opacity(0.75))
-                            .padding(.leading, 44)
+                            .padding(.leading, 36)
                     }
                 }
             }
@@ -14240,14 +13066,6 @@ private struct ProfileSettingsMenuRow: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(row.iconTint)
                     .frame(width: 24, height: 24)
-                    .background(
-                        Circle()
-                            .fill(OunjePalette.elevated.opacity(0.92))
-                            .overlay(
-                                Circle()
-                                    .stroke(OunjePalette.stroke.opacity(0.62), lineWidth: 1)
-                            )
-                    )
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(row.title)
@@ -14435,7 +13253,6 @@ private struct ProfileBudgetSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var budgetPerCycle = UserProfile.starter.budgetPerCycle
     @State private var budgetWindow = UserProfile.starter.budgetWindow
-    @State private var budgetFlexibilityScore = UserProfile.starter.budgetFlexibility.calibrationScore
 
     var body: some View {
         NavigationStack {
@@ -14469,7 +13286,6 @@ private struct ProfileBudgetSheet: View {
                         }
                     }
 
-                    BudgetFlexibilityCalibrationCard(score: $budgetFlexibilityScore)
                 }
                 .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
                 .padding(.top, 18)
@@ -14514,7 +13330,6 @@ private struct ProfileBudgetSheet: View {
         let source = store.profile ?? .starter
         budgetPerCycle = source.budgetPerCycle
         budgetWindow = source.budgetWindow
-        budgetFlexibilityScore = source.budgetFlexibility.calibrationScore
     }
 
     private func saveBudget() {
@@ -14525,7 +13340,6 @@ private struct ProfileBudgetSheet: View {
 
         updated.budgetPerCycle = budgetPerCycle
         updated.budgetWindow = budgetWindow
-        updated.budgetFlexibility = BudgetFlexibility.from(calibrationScore: budgetFlexibilityScore)
         store.updateProfile(updated)
         dismiss()
     }
@@ -14540,6 +13354,7 @@ private struct FeedbackSheet: View {
     @State private var photoAttachments: [FeedbackPhotoAttachment] = []
     @State private var threadMessages: [AppFeedbackMessage] = []
     @State private var isLoadingMessages = false
+    @State private var isSubmittingFeedback = false
     @State private var feedbackErrorMessage: String?
     @State private var isFoundersCallDialogPresented = false
     @FocusState private var isComposerFocused: Bool
@@ -14757,13 +13572,13 @@ private struct FeedbackSheet: View {
                 }
                 .buttonStyle(.plain)
 
-                TextField("Message", text: $feedbackDraft, axis: .vertical)
+                TextField("Message", text: $feedbackDraft)
                     .textFieldStyle(.plain)
                     .submitLabel(.send)
                     .focused($isComposerFocused)
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(OunjePalette.primaryText)
-                    .lineLimit(1 ... 4)
+                    .lineLimit(1)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
                     .background(
@@ -14775,6 +13590,23 @@ private struct FeedbackSheet: View {
                             await submitFeedback()
                         }
                     }
+
+                Button {
+                    Task {
+                        await submitFeedback()
+                    }
+                } label: {
+                    Image(systemName: isSubmittingFeedback ? "hourglass" : "paperplane.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.black.opacity(canSubmit ? 0.82 : 0.38))
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Circle()
+                                .fill(canSubmit ? OunjePalette.accent : OunjePalette.surface)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSubmit || isSubmittingFeedback)
             }
         }
     }
@@ -14826,7 +13658,7 @@ private struct FeedbackSheet: View {
     }
 
     private func submitFeedback() async {
-        guard canSubmit else { return }
+        guard canSubmit, !isSubmittingFeedback else { return }
 
         guard let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID else {
             feedbackErrorMessage = "Feedback is unavailable until your session is live."
@@ -14842,6 +13674,9 @@ private struct FeedbackSheet: View {
                 kind: "image"
             )
         }
+
+        isSubmittingFeedback = true
+        defer { isSubmittingFeedback = false }
 
         do {
             let response = try await OunjeFeedbackService.shared.submitFeedback(
@@ -16227,9 +15062,9 @@ private extension OunjePricingTier {
     }
 }
 
-private let privacyPolicyURL = URL(string: "https://boiled-education-5d3.notion.site/GlowUp-Privacy-Policy-867796a49e504c3d839ce15de6ade6f3?source=copy_link")!
-private let termsOfServiceURL = URL(string: "https://boiled-education-5d3.notion.site/GlowUp-Terms-of-Service-a17b8e90751743dba5a33e2a03dd4b64?source=copy_link")!
-private let supportURL = URL(string: "https://boiled-education-5d3.notion.site/GlowUp-Support-b4226f97acba41e3bd4803fa1d0624fb?source=copy_link")!
+private let privacyPolicyURL = URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/privacy")!
+private let termsOfServiceURL = URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/terms")!
+private let supportURL = URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/support")!
 
 private struct PaywallFeature: Identifiable {
     let id = UUID()
@@ -16937,6 +15772,171 @@ private struct FoodProfileSheet: View {
             }
             .preferredColorScheme(.dark)
         }
+    }
+}
+
+private actor CartSupportWarmupCache {
+    static let shared = CartSupportWarmupCache()
+
+    private struct Entry {
+        let planID: UUID
+        let signature: String
+        let rows: [SupabaseRecipeIngredientRow]
+        let warmedAt: Date
+    }
+
+    private var entriesByPlanID: [UUID: Entry] = [:]
+
+    func rows(for plan: MealPlan) -> [SupabaseRecipeIngredientRow]? {
+        let signature = MainShopSnapshotBuilder.signature(for: plan.groceryItems)
+        guard let entry = entriesByPlanID[plan.id],
+              entry.signature == signature,
+              Date().timeIntervalSince(entry.warmedAt) < 30 * 60 else {
+            return nil
+        }
+        return entry.rows
+    }
+
+    func store(rows: [SupabaseRecipeIngredientRow], for plan: MealPlan) {
+        guard !rows.isEmpty else { return }
+        entriesByPlanID[plan.id] = Entry(
+            planID: plan.id,
+            signature: MainShopSnapshotBuilder.signature(for: plan.groceryItems),
+            rows: rows,
+            warmedAt: .now
+        )
+        if entriesByPlanID.count > 4 {
+            let stalePlanIDs = entriesByPlanID
+                .values
+                .sorted { $0.warmedAt < $1.warmedAt }
+                .prefix(entriesByPlanID.count - 4)
+                .map(\.planID)
+            stalePlanIDs.forEach { entriesByPlanID.removeValue(forKey: $0) }
+        }
+    }
+}
+
+private enum CartSupportWarmupService {
+    static func prewarmLatestPlanCartSupport(for store: MealPlanningAppStore) async {
+        guard await MainActor.run(body: {
+            store.isAuthenticated
+                && store.isOnboarded
+                && !store.isHydratingRemoteState
+                && store.latestPlan?.recipes.isEmpty == false
+        }) else {
+            return
+        }
+
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        guard !Task.isCancelled else { return }
+
+        let didRefreshSnapshot = await store.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
+
+        if didRefreshSnapshot {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+        }
+        guard !Task.isCancelled else { return }
+
+        guard let plan = await MainActor.run(body: { store.latestPlan }),
+              !plan.recipes.isEmpty else {
+            return
+        }
+
+        if await CartSupportWarmupCache.shared.rows(for: plan) != nil {
+            prewarmArtwork(for: plan, rows: [])
+            return
+        }
+
+        do {
+            let rows = try await buildPrepRecipeIngredientRows(from: plan.recipes)
+            guard !Task.isCancelled else { return }
+            guard let activePlan = await MainActor.run(body: { store.latestPlan }),
+                  activePlan.id == plan.id,
+                  MainShopSnapshotBuilder.signature(for: activePlan.groceryItems) == MainShopSnapshotBuilder.signature(for: plan.groceryItems) else {
+                return
+            }
+            await CartSupportWarmupCache.shared.store(rows: rows, for: activePlan)
+            prewarmArtwork(for: activePlan, rows: rows)
+        } catch {
+            prewarmArtwork(for: plan, rows: [])
+        }
+    }
+
+    static func cachedIngredientRows(for plan: MealPlan) async -> [SupabaseRecipeIngredientRow]? {
+        await CartSupportWarmupCache.shared.rows(for: plan)
+    }
+
+    static func buildPrepRecipeIngredientRows(from recipes: [PlannedRecipe]) async throws -> [SupabaseRecipeIngredientRow] {
+        let candidateImageNames = Array(
+            Set(
+                recipes.flatMap { plannedRecipe in
+                    plannedRecipe.recipe.ingredients.map { ingredient in
+                        SupabaseIngredientsCatalogService.normalizedName(ingredient.name)
+                    }
+                }
+                .filter { !$0.isEmpty }
+            )
+        )
+        let imageLookup = (try? await SupabaseIngredientsCatalogService.shared.fetchImageLookup(
+            normalizedNames: candidateImageNames
+        )) ?? [:]
+        let indexedRows: [(Int, [SupabaseRecipeIngredientRow])] = recipes.enumerated().map { recipeIndex, plannedRecipe in
+            let scale = Double(max(1, plannedRecipe.servings)) / Double(max(1, plannedRecipe.recipe.servings))
+            var seenIngredientKeys = Set<String>()
+            var recipeRows: [SupabaseRecipeIngredientRow] = []
+            for (index, ingredient) in plannedRecipe.recipe.ingredients.enumerated() {
+                let normalizedKey = normalizedIngredientKey(ingredient.name)
+                guard !normalizedKey.isEmpty, seenIngredientKeys.insert(normalizedKey).inserted else {
+                    continue
+                }
+                let quantityText = CartQuantityFormatter.format(
+                    amount: max(ingredient.amount * scale, ingredient.amount > 0 ? 0.0001 : 0),
+                    unit: ingredient.unit
+                )
+                recipeRows.append(
+                    SupabaseRecipeIngredientRow(
+                        id: "\(plannedRecipe.recipe.id)::local::\(index)",
+                        recipeID: plannedRecipe.recipe.id,
+                        ingredientID: nil,
+                        displayName: ingredient.name,
+                        quantityText: quantityText,
+                        imageURLString: imageLookup[normalizedKey],
+                        sortOrder: ingredient.amount <= 0 ? nil : index
+                    )
+                )
+            }
+            return (recipeIndex, recipeRows)
+        }
+
+        return indexedRows
+            .sorted { $0.0 < $1.0 }
+            .flatMap(\.1)
+    }
+
+    private static func prewarmArtwork(for plan: MealPlan, rows: [SupabaseRecipeIngredientRow]) {
+        let urls = Array(
+            Set(
+                rows.compactMap(\.imageURL)
+                + (plan.mainShopSnapshot?.items ?? []).compactMap { item in
+                    guard let value = item.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !value.isEmpty else {
+                        return nil
+                    }
+                    return URL(string: value)
+                }
+            )
+        )
+        guard !urls.isEmpty else { return }
+        Task { @MainActor in
+            CartArtworkImageLoader.prewarm(urls: urls)
+        }
+    }
+
+    private static func normalizedIngredientKey(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -18991,7 +17991,7 @@ private struct CartTabView: View {
         defer { isLoadingIngredients = false }
 
         do {
-            let rows = try await buildPrepRecipeIngredientRows(from: latestPlan.recipes)
+            let rows = try await cachedOrLoadedPrepRecipeIngredientRows(from: latestPlan)
             guard !Task.isCancelled else { return }
             guard let activePlan = store.latestPlan,
                   activePlan.id == latestPlan.id,
@@ -19114,7 +18114,7 @@ private struct CartTabView: View {
     private func warmCartIngredientSupportData(for latestPlan: MealPlan) {
         Task(priority: .utility) {
             do {
-                let rows = try await buildPrepRecipeIngredientRows(from: latestPlan.recipes)
+                let rows = try await cachedOrLoadedPrepRecipeIngredientRows(from: latestPlan)
                 await MainActor.run {
                     guard store.latestPlan?.id == latestPlan.id else { return }
                     ingredientRows = rows
@@ -19152,50 +18152,16 @@ private struct CartTabView: View {
     }
 
     private func buildPrepRecipeIngredientRows(from recipes: [PlannedRecipe]) async throws -> [SupabaseRecipeIngredientRow] {
-        let candidateImageNames = Array(
-            Set(
-                recipes.flatMap { plannedRecipe in
-                    plannedRecipe.recipe.ingredients.map { ingredient in
-                        SupabaseIngredientsCatalogService.normalizedName(ingredient.name)
-                    }
-                }
-                .filter { !$0.isEmpty }
-            )
-        )
-        let imageLookup = (try? await SupabaseIngredientsCatalogService.shared.fetchImageLookup(
-            normalizedNames: candidateImageNames
-        )) ?? [:]
-        let indexedRows: [(Int, [SupabaseRecipeIngredientRow])] = recipes.enumerated().map { recipeIndex, plannedRecipe in
-            let scale = Double(max(1, plannedRecipe.servings)) / Double(max(1, plannedRecipe.recipe.servings))
-            var seenIngredientKeys = Set<String>()
-            var recipeRows: [SupabaseRecipeIngredientRow] = []
-            for (index, ingredient) in plannedRecipe.recipe.ingredients.enumerated() {
-                let normalizedKey = Self.normalizedIngredientKey(ingredient.name)
-                guard !normalizedKey.isEmpty, seenIngredientKeys.insert(normalizedKey).inserted else {
-                    continue
-                }
-                let quantityText = CartQuantityFormatter.format(
-                    amount: max(ingredient.amount * scale, ingredient.amount > 0 ? 0.0001 : 0),
-                    unit: ingredient.unit
-                )
-                recipeRows.append(
-                    SupabaseRecipeIngredientRow(
-                    id: "\(plannedRecipe.recipe.id)::local::\(index)",
-                    recipeID: plannedRecipe.recipe.id,
-                    ingredientID: nil,
-                    displayName: ingredient.name,
-                    quantityText: quantityText,
-                    imageURLString: imageLookup[normalizedKey],
-                    sortOrder: ingredient.amount <= 0 ? nil : index
-                )
-                )
-            }
-            return (recipeIndex, recipeRows)
-        }
+        try await CartSupportWarmupService.buildPrepRecipeIngredientRows(from: recipes)
+    }
 
-        return indexedRows
-            .sorted { $0.0 < $1.0 }
-            .flatMap(\.1)
+    private func cachedOrLoadedPrepRecipeIngredientRows(from plan: MealPlan) async throws -> [SupabaseRecipeIngredientRow] {
+        if let cachedRows = await CartSupportWarmupService.cachedIngredientRows(for: plan) {
+            return cachedRows
+        }
+        let rows = try await buildPrepRecipeIngredientRows(from: plan.recipes)
+        await CartSupportWarmupCache.shared.store(rows: rows, for: plan)
+        return rows
     }
 }
 
@@ -20002,37 +18968,6 @@ private struct FilterTagButton: View {
     }
 }
 
-private struct DiscoverPresetTextButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                SleeScriptDisplayText(
-                    title,
-                    size: isSelected ? 20 : 18,
-                    color: isSelected ? OunjePalette.softCream : OunjePalette.secondaryText.opacity(0.96)
-                )
-                .lineLimit(1)
-                .minimumScaleFactor(0.9)
-
-                Capsule(style: .continuous)
-                    .fill(isSelected ? OunjePalette.accent : Color.clear)
-                    .frame(width: isSelected ? 34 : 22, height: 3)
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .fill(OunjePalette.accent.opacity(isSelected ? 0.28 : 0))
-                            .blur(radius: 5)
-                    )
-            }
-            .padding(.vertical, 2)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct InlineSearchBar: View {
     @Binding var text: String
     let placeholder: String
@@ -20166,57 +19101,6 @@ private struct CollapsibleSavedSearchBar: View {
         }
         .animation(.easeInOut(duration: 0.18), value: isExpanded)
         .animation(.easeInOut(duration: 0.18), value: hasQuery)
-    }
-}
-
-private struct RecipesEmptyState: View {
-    let title: String
-    let detail: String
-    let symbolName: String
-    var assetName: String? = nil
-
-    var body: some View {
-        VStack(spacing: 18) {
-            if let assetName {
-                Image(assetName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(height: 132)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 24)
-                    .accessibilityHidden(true)
-            } else {
-                Image(systemName: symbolName)
-                    .font(.system(size: 88, weight: .light))
-                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.5))
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 44)
-            }
-
-            VStack(spacing: 8) {
-                Text(title)
-                    .biroHeaderFont(20)
-                    .foregroundStyle(OunjePalette.primaryText)
-
-                Text(detail)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.bottom, 16)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 24)
-        .background(
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(OunjePalette.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                )
-        )
     }
 }
 
@@ -23082,52 +21966,6 @@ private struct PrepRouteOverlay: View {
     }
 }
 
-private enum AppTab: String, CaseIterable, Identifiable {
-    case prep
-    case discover
-    case cookbook
-    case cart
-    case profile
-
-    var id: String { rawValue }
-
-    var motionIndex: Int {
-        switch self {
-        case .prep:
-            return 0
-        case .discover:
-            return 1
-        case .cookbook:
-            return 2
-        case .cart:
-            return 3
-        case .profile:
-            return 4
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .prep: return "Prep"
-        case .discover: return "Discover"
-        case .cookbook: return "Cookbook"
-        case .cart: return "Cart"
-        case .profile: return "Profile"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .prep: return "calendar"
-        case .discover: return "safari"
-        case .cookbook: return "book.closed"
-        case .cart: return "basket"
-        case .profile: return "person.crop.circle"
-        }
-    }
-
-}
-
 private struct CustomTabBar: View {
     @Binding var selectedTab: AppTab
     @Namespace private var selectionNamespace
@@ -24520,293 +23358,6 @@ private struct ThemedCard<Content: View>: View {
 
     var body: some View {
         BubblySurfaceCard(accent: OunjePalette.accent, content: content)
-    }
-}
-
-private struct DiscoverRemoteRecipeCard: View {
-    let recipe: DiscoverRecipeCardData
-    let showsSaveAction: Bool
-    let secondaryTopAction: DiscoverRemoteRecipeCardTopAction?
-    let transitionNamespace: Namespace.ID?
-    let onSelect: () -> Void
-    let isInteractive: Bool
-    let showsTopActions: Bool
-    let showsImageLoadingSkeleton: Bool
-    @EnvironmentObject private var savedStore: SavedRecipesStore
-    private let cardHeight: CGFloat = 292
-
-    private var transitionContext: RecipeTransitionContext? {
-        guard let transitionNamespace else { return nil }
-        return RecipeTransitionContext(namespace: transitionNamespace, recipeID: recipe.id)
-    }
-
-    init(
-        recipe: DiscoverRecipeCardData,
-        showsSaveAction: Bool = true,
-        secondaryTopAction: DiscoverRemoteRecipeCardTopAction? = nil,
-        transitionNamespace: Namespace.ID? = nil,
-        isInteractive: Bool = true,
-        showsTopActions: Bool = true,
-        showsImageLoadingSkeleton: Bool = false,
-        onSelect: @escaping () -> Void
-    ) {
-        self.recipe = recipe
-        self.showsSaveAction = showsSaveAction
-        self.secondaryTopAction = secondaryTopAction
-        self.transitionNamespace = transitionNamespace
-        self.isInteractive = isInteractive
-        self.showsTopActions = showsTopActions
-        self.showsImageLoadingSkeleton = showsImageLoadingSkeleton
-        self.onSelect = onSelect
-    }
-
-    var body: some View {
-        content
-            .buttonStyle(OunjeCardPressButtonStyle())
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        cardBody
-            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .onTapGesture {
-                guard isInteractive else { return }
-                onSelect()
-            }
-    }
-
-    @ViewBuilder
-    private var cardBody: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            DiscoverRemoteRecipeImage(
-                recipe: recipe,
-                transitionContext: transitionContext,
-                showsLoadingSkeleton: showsImageLoadingSkeleton
-            )
-                .frame(maxWidth: .infinity)
-                .frame(height: 188)
-                .clipped()
-
-            VStack(alignment: .leading, spacing: 8) {
-                SleeRecipeCardTitleText(
-                    recipe.displayTitle,
-                    size: 22,
-                    color: OunjePalette.primaryText
-                )
-                .lineLimit(2)
-                .minimumScaleFactor(0.84)
-                .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42, alignment: .topLeading)
-                .modifier(RecipeTitleTransitionModifier(transitionContext: transitionContext))
-
-                HStack(spacing: 5) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                    Text(recipe.compactCookTime ?? recipe.filterLabel)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .topLeading)
-            .padding(.horizontal, 2)
-            .padding(.bottom, 2)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: cardHeight, maxHeight: cardHeight, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            OunjePalette.panel.opacity(0.98),
-                            OunjePalette.surface.opacity(0.84)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        )
-        .overlay(alignment: .topTrailing) {
-            if showsTopActions {
-                HStack(spacing: 8) {
-                    if showsSaveAction {
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                savedStore.toggle(recipe)
-                            }
-                        } label: {
-                            Image(systemName: savedStore.isSaved(recipe) ? "bookmark.fill" : "bookmark")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(savedStore.isSaved(recipe) ? OunjePalette.softCream : OunjePalette.primaryText.opacity(0.88))
-                                .frame(width: 32, height: 32)
-                                .background(
-                                    Circle()
-                                        .fill(OunjePalette.surface.opacity(0.96))
-                                        .overlay(
-                                            Circle()
-                                                .stroke(savedStore.isSaved(recipe) ? OunjePalette.accent.opacity(0.45) : OunjePalette.stroke, lineWidth: 1)
-                                        )
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if let secondaryTopAction {
-                        Button(action: secondaryTopAction.action) {
-                            Image(systemName: secondaryTopAction.systemName)
-                                .font(.system(size: secondaryTopAction.symbolSize, weight: .bold))
-                                .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
-                                .frame(width: secondaryTopAction.frameSize, height: secondaryTopAction.frameSize)
-                                .background(
-                                    Group {
-                                        if secondaryTopAction.showsBackground {
-                                            Circle()
-                                                .fill(OunjePalette.surface.opacity(0.96))
-                                                .overlay(
-                                                    Circle()
-                                                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                                                )
-                                        }
-                                    }
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(secondaryTopAction.accessibilityLabel)
-                    }
-                }
-                .padding(8)
-            }
-        }
-        .shadow(color: .black.opacity(0.16), radius: 12, x: 0, y: 8)
-    }
-}
-
-private struct DiscoverRemoteRecipeCardTopAction {
-    let systemName: String
-    let accessibilityLabel: String
-    let showsBackground: Bool
-    let symbolSize: CGFloat
-    let frameSize: CGFloat
-    let action: () -> Void
-
-    init(
-        systemName: String,
-        accessibilityLabel: String,
-        showsBackground: Bool,
-        symbolSize: CGFloat = 20,
-        frameSize: CGFloat = 42,
-        action: @escaping () -> Void
-    ) {
-        self.systemName = systemName
-        self.accessibilityLabel = accessibilityLabel
-        self.showsBackground = showsBackground
-        self.symbolSize = symbolSize
-        self.frameSize = frameSize
-        self.action = action
-    }
-}
-
-private struct DiscoverRemoteRecipeImage: View {
-    let recipe: DiscoverRecipeCardData
-    let transitionContext: RecipeTransitionContext?
-    var showsLoadingSkeleton: Bool = false
-    @StateObject private var loader = DiscoverRecipeImageLoader()
-    @State private var shimmerOffset: CGFloat = -1.2
-
-    var body: some View {
-        ZStack {
-            if let uiImage = loader.image {
-                Image(uiImage: uiImage)
-                            .resizable()
-                            .scaledToFill()
-                    .frame(width: 146, height: 146)
-                    .clipShape(Circle())
-                    .overlay(
-                        Circle()
-                            .stroke(.white.opacity(0.08), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 12)
-            } else if loader.isLoading {
-                if showsLoadingSkeleton {
-                    MealPrepLoadingArtworkBlock(shimmerOffset: shimmerOffset)
-                } else {
-                    ProgressView()
-                        .tint(OunjePalette.accent)
-                }
-            } else {
-                fallback
-            }
-        }
-        .modifier(RecipeImageTransitionModifier(transitionContext: transitionContext))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: recipe.imageCandidates.map(\.absoluteString).joined(separator: "|")) {
-            await loader.load(from: recipe.imageCandidates)
-        }
-        .onAppear {
-            guard showsLoadingSkeleton else { return }
-            withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) {
-                shimmerOffset = 1.4
-            }
-        }
-    }
-
-    private var fallback: some View {
-        VStack(spacing: 10) {
-            Text(recipe.emoji)
-                .font(.system(size: 56))
-            Text(recipe.filterLabel)
-                .biroHeaderFont(13)
-                .foregroundStyle(OunjePalette.secondaryText)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-@MainActor
-private final class DiscoverRecipeImageLoader: ObservableObject {
-    @Published var image: UIImage?
-    @Published var isLoading = false
-    private var lastKey: String?
-
-    func load(from candidates: [URL]) async {
-        let key = candidates.map(\.absoluteString).joined(separator: "|")
-        if lastKey == key, image != nil {
-            return
-        }
-
-        lastKey = key
-        image = nil
-        isLoading = true
-
-        defer {
-            isLoading = false
-        }
-
-        for url in candidates {
-            do {
-                var request = URLRequest(url: url)
-                request.cachePolicy = .returnCacheDataElseLoad
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200 ... 299).contains(httpResponse.statusCode),
-                      let fetched = UIImage(data: data)
-                else {
-                    continue
-                }
-
-                image = fetched
-                return
-            } catch {
-                continue
-            }
-        }
-
-        image = nil
     }
 }
 
@@ -28129,102 +26680,6 @@ private struct RecipeEnjoyMiniCardPlaceholder: View {
     }
 }
 
-private struct DiscoverRecipeCardLoadingPlaceholder: View {
-    var width: CGFloat? = nil
-    @State private var shimmerOffset: CGFloat = -1.2
-    @State private var pulse = false
-
-    init(width: CGFloat? = nil) {
-        self.width = width
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Circle()
-                .fill(OunjePalette.surface)
-                .frame(width: 146, height: 146)
-                .overlay(
-                    Circle()
-                        .stroke(.white.opacity(0.06), lineWidth: 1)
-                )
-                .modifier(LoadingSheen(offset: shimmerOffset))
-                .scaleEffect(pulse ? 1.015 : 0.985)
-
-            VStack(alignment: .leading, spacing: 9) {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(OunjePalette.surface)
-                    .frame(height: 22)
-                    .modifier(LoadingSheen(offset: shimmerOffset))
-
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(OunjePalette.surface.opacity(0.94))
-                    .frame(width: 116, height: 14)
-                    .modifier(LoadingSheen(offset: shimmerOffset))
-            }
-            .padding(.horizontal, 2)
-        }
-        .padding(14)
-        .frame(width: width)
-        .frame(maxWidth: width == nil ? .infinity : width, minHeight: 292, maxHeight: 292, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            OunjePalette.panel.opacity(0.98),
-                            OunjePalette.surface.opacity(0.84)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: .black.opacity(0.13), radius: 12, x: 0, y: 8)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) {
-                pulse.toggle()
-            }
-            withAnimation(.linear(duration: 1.35).repeatForever(autoreverses: false)) {
-                shimmerOffset = 1.4
-            }
-        }
-    }
-}
-
-private struct LoadingSheen: ViewModifier {
-    let offset: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .overlay {
-                GeometryReader { proxy in
-                    let width = proxy.size.width
-                    let height = proxy.size.height
-
-                    LinearGradient(
-                        colors: [
-                            .clear,
-                            .white.opacity(0.16),
-                            .clear
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(width: max(54, width * 0.34), height: height * 1.7)
-                    .rotationEffect(.degrees(18))
-                    .offset(x: width * offset)
-                }
-                .allowsHitTesting(false)
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            }
-    }
-}
-
 private struct FlexibleTagCloud: View {
     let tags: [String]
 
@@ -30184,7 +28639,6 @@ private struct AgentSummaryAesthetic {
 private extension UserProfile {
     var agentSummaryAesthetic: AgentSummaryAesthetic {
         let loweredCuisines = userFacingCuisineTitles.map { $0.lowercased() }
-        let loweredGoals = mealPrepGoals.map { $0.lowercased() }
         let loweredDietaryPatterns = dietaryPatterns.map { $0.lowercased() }
 
         if loweredCuisines.contains(where: { $0.contains("nigerian") || $0.contains("caribbean") || $0.contains("mexican") }) {
@@ -30204,16 +28658,6 @@ private extension UserProfile {
                 primary: OunjePalette.accent,
                 secondary: OunjePalette.softCream,
                 tertiary: Color(hex: "C7D9CF")
-            )
-        }
-
-        if loweredGoals.contains(where: { $0.contains("speed") || $0.contains("cleanup") || $0.contains("cost") }) {
-            return AgentSummaryAesthetic(
-                title: "Control Mode",
-                symbolName: "bolt.fill",
-                primary: OunjePalette.accent,
-                secondary: Color(hex: "6AD6FF"),
-                tertiary: Color(hex: "B2FFFF")
             )
         }
 
@@ -30574,8 +29018,8 @@ private struct InferredAgentBrief: Codable, Hashable {
 
     private static func fallbackGraphItems(from profile: UserProfile) -> [AgentBriefGraphItem] {
         let restrictionWeight = min(100, 18 + (profile.absoluteRestrictions.count * 16) + (profile.dietaryPatterns.count * 7))
-        let varietyWeight = min(100, 25 + (profile.userFacingCuisineTitles.count * 10) + (profile.cuisineCountries.count * 8) + (profile.mealPrepGoals.contains(where: { $0.localizedCaseInsensitiveContains("variety") }) ? 14 : 0))
-        let budgetWeight = profile.budgetFlexibility.calibrationScore
+        let varietyWeight = min(100, 25 + (profile.userFacingCuisineTitles.count * 10) + (profile.cuisineCountries.count * 8))
+        let budgetWeight = min(100, max(10, Int(profile.budgetWindow == .weekly ? profile.budgetPerCycle / 4 : profile.budgetPerCycle / 16)))
         let autonomyWeight: Int
 
         switch profile.orderingAutonomy {
@@ -30592,7 +29036,7 @@ private struct InferredAgentBrief: Codable, Hashable {
         return [
             AgentBriefGraphItem(label: "Guardrails", value: restrictionWeight, caption: "Hard limits locked in"),
             AgentBriefGraphItem(label: "Variety", value: varietyWeight, caption: "Cuisine range on deck"),
-            AgentBriefGraphItem(label: "Budget flex", value: budgetWeight, caption: profile.budgetWindow == .weekly ? "Weekly spend tolerance" : "Monthly spend tolerance"),
+            AgentBriefGraphItem(label: "Budget", value: budgetWeight, caption: profile.budgetSummary),
             AgentBriefGraphItem(label: "Autonomy", value: autonomyWeight, caption: "How far Ounje can run")
         ]
     }
@@ -31058,11 +29502,6 @@ private struct DestructivePillButtonStyle: ButtonStyle {
     }
 }
 
-private enum SupabaseConfig {
-    static let url = "https://ztqptjimmcdoriefkqcx.supabase.co"
-    static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0cXB0amltbWNkb3JpZWZrcWN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM2ODU3NDMsImV4cCI6MjA4OTI2MTc0M30.DncVXO-eWJDKlwQvceSHq4HYV-PuqSqlF8TbWVRZkLA"
-}
-
 private struct SupabaseAppleUserSession {
     let userID: String
     let email: String?
@@ -31213,7 +29652,7 @@ final class SupabaseAuthSessionRefreshService {
     }
 }
 
-private enum SupabaseProfileStateError: LocalizedError {
+enum SupabaseProfileStateError: LocalizedError {
     case invalidRequest
     case invalidResponse
     case requestFailed(String)
@@ -31354,7 +29793,6 @@ final class SupabaseProfileStateService {
             cuisineCountries: profile?.cuisineCountries ?? [],
             dietaryPatterns: profile?.dietaryPatterns ?? [],
             hardRestrictions: profile?.absoluteRestrictions ?? [],
-            mealPrepGoals: profile?.mealPrepGoals ?? [],
             cadence: profile?.cadence.rawValue,
             deliveryAnchorDay: profile?.deliveryAnchorDay.rawValue,
             adults: profile?.consumption.adults,
@@ -31363,9 +29801,7 @@ final class SupabaseProfileStateService {
             mealsPerWeek: profile?.consumption.mealsPerWeek,
             budgetPerCycle: profile?.budgetPerCycle,
             budgetWindow: profile?.budgetWindow.rawValue,
-            budgetFlexibility: profile?.budgetFlexibility.rawValue,
             orderingAutonomy: profile?.orderingAutonomy.rawValue,
-            kitchenEquipment: profile?.kitchenEquipment ?? [],
             addressLine1: profile?.deliveryAddress.line1,
             addressLine2: profile?.deliveryAddress.line2,
             city: profile?.deliveryAddress.city,
@@ -31511,7 +29947,7 @@ final class SupabaseSavedRecipesService {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    fileprivate func fetchSavedRecipes(userID: String) async throws -> [DiscoverRecipeCardData] {
+    func fetchSavedRecipes(userID: String) async throws -> [DiscoverRecipeCardData] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
                 string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source&user_id=eq.\(encodedUserID)&order=saved_at.desc"
@@ -31536,7 +29972,7 @@ final class SupabaseSavedRecipesService {
         return hydratedRows.map(\.recipe)
     }
 
-    fileprivate func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData]) async throws {
+    func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData]) async throws {
         guard !recipes.isEmpty,
               let url = URL(string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?on_conflict=user_id,recipe_id") else {
             throw SupabaseSavedRecipesError.invalidRequest
@@ -31567,7 +30003,7 @@ final class SupabaseSavedRecipesService {
         }
     }
 
-    fileprivate func deleteSavedRecipe(userID: String, recipeID: String) async throws {
+    func deleteSavedRecipe(userID: String, recipeID: String) async throws {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let encodedRecipeID = recipeID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
@@ -33765,7 +32201,6 @@ private struct SupabaseProfileUpsertPayload: Codable {
     let cuisineCountries: [String]
     let dietaryPatterns: [String]
     let hardRestrictions: [String]
-    let mealPrepGoals: [String]
     let cadence: String?
     let deliveryAnchorDay: String?
     let adults: Int?
@@ -33774,9 +32209,7 @@ private struct SupabaseProfileUpsertPayload: Codable {
     let mealsPerWeek: Int?
     let budgetPerCycle: Double?
     let budgetWindow: String?
-    let budgetFlexibility: String?
     let orderingAutonomy: String?
-    let kitchenEquipment: [String]
     let addressLine1: String?
     let addressLine2: String?
     let city: String?
@@ -33798,7 +32231,6 @@ private struct SupabaseProfileUpsertPayload: Codable {
         case cuisineCountries = "cuisine_countries"
         case dietaryPatterns = "dietary_patterns"
         case hardRestrictions = "hard_restrictions"
-        case mealPrepGoals = "meal_prep_goals"
         case cadence
         case deliveryAnchorDay = "delivery_anchor_day"
         case adults
@@ -33807,9 +32239,7 @@ private struct SupabaseProfileUpsertPayload: Codable {
         case mealsPerWeek = "meals_per_week"
         case budgetPerCycle = "budget_per_cycle"
         case budgetWindow = "budget_window"
-        case budgetFlexibility = "budget_flexibility"
         case orderingAutonomy = "ordering_autonomy"
-        case kitchenEquipment = "kitchen_equipment"
         case addressLine1 = "address_line1"
         case addressLine2 = "address_line2"
         case city
@@ -33833,7 +32263,6 @@ private struct SupabaseProfileRow: Codable {
     let cuisineCountries: [String]?
     let dietaryPatterns: [String]?
     let hardRestrictions: [String]?
-    let mealPrepGoals: [String]?
     let cadence: String?
     let deliveryAnchorDay: String?
     let adults: Int?
@@ -33842,9 +32271,7 @@ private struct SupabaseProfileRow: Codable {
     let mealsPerWeek: Int?
     let budgetPerCycle: Double?
     let budgetWindow: String?
-    let budgetFlexibility: String?
     let orderingAutonomy: String?
-    let kitchenEquipment: [String]?
     let addressLine1: String?
     let addressLine2: String?
     let city: String?
@@ -33865,7 +32292,6 @@ private struct SupabaseProfileRow: Codable {
         case cuisineCountries = "cuisine_countries"
         case dietaryPatterns = "dietary_patterns"
         case hardRestrictions = "hard_restrictions"
-        case mealPrepGoals = "meal_prep_goals"
         case cadence
         case deliveryAnchorDay = "delivery_anchor_day"
         case adults
@@ -33874,9 +32300,7 @@ private struct SupabaseProfileRow: Codable {
         case mealsPerWeek = "meals_per_week"
         case budgetPerCycle = "budget_per_cycle"
         case budgetWindow = "budget_window"
-        case budgetFlexibility = "budget_flexibility"
         case orderingAutonomy = "ordering_autonomy"
-        case kitchenEquipment = "kitchen_equipment"
         case addressLine1 = "address_line1"
         case addressLine2 = "address_line2"
         case city
@@ -33894,7 +32318,6 @@ private struct SupabaseProfileRow: Codable {
               let cadence,
               let budgetPerCycle,
               let budgetWindow,
-              let budgetFlexibility,
               let orderingAutonomy else {
             return nil
         }
@@ -33903,7 +32326,6 @@ private struct SupabaseProfileRow: Codable {
         guard !cuisines.isEmpty,
               let cadenceValue = MealCadence(rawValue: cadence),
               let budgetWindowValue = BudgetWindow(rawValue: budgetWindow),
-              let budgetFlexibilityValue = BudgetFlexibility(rawValue: budgetFlexibility),
               let orderingAutonomyValue = OrderingAutonomyLevel(rawValue: orderingAutonomy) else {
             return nil
         }
@@ -33942,622 +32364,14 @@ private struct SupabaseProfileRow: Codable {
             favoriteFoods: [],
             favoriteFlavors: [],
             neverIncludeFoods: [],
-            mealPrepGoals: mealPrepGoals ?? [],
+            mealPrepGoals: [],
             cooksForOthers: cooksForOthers ?? false,
-            kitchenEquipment: kitchenEquipment ?? [],
+            kitchenEquipment: [],
             budgetWindow: budgetWindowValue,
-            budgetFlexibility: budgetFlexibilityValue,
+            budgetFlexibility: .slightlyFlexible,
             purchasingBehavior: .healthier,
             orderingAutonomy: orderingAutonomyValue
         )
-    }
-}
-
-@MainActor
-private final class DiscoverRecipesViewModel: ObservableObject {
-    private struct DiscoverShelfCacheEntry: Codable {
-        let key: String
-        let recipes: [DiscoverRecipeCardData]
-        let filters: [String]
-        let hasMoreRecipes: Bool
-        let nextOffset: Int
-        let storedAt: Date
-    }
-
-    private struct DiscoverShelfCacheStore: Codable {
-        var entries: [String: DiscoverShelfCacheEntry] = [:]
-    }
-
-    @Published private(set) var recipes: [DiscoverRecipeCardData] = []
-    @Published private(set) var filters: [String]
-    @Published private(set) var isLoading = false
-    @Published private(set) var isTransitioningFeed = false
-    @Published private(set) var isFetchingMore = false
-    @Published private(set) var hasMoreRecipes = false
-    @Published private(set) var errorMessage: String?
-    @Published private(set) var hasResolvedInitialLoad = false
-    @Published var selectedFilter = "All"
-
-    private var lastLoadKey: String?
-    private var responseCache: [String: [DiscoverRecipeCardData]] = [:]
-    private var activeRequestID: UUID?
-    private let sessionSeed = String(UUID().uuidString.prefix(8))
-    private let filterShuffleSeed = UUID().uuidString
-    private var baseFeedRotationIndex = 0
-    private var baseFeedRefreshToken = UUID().uuidString
-    private var lastBaseRotationAt: Date?
-    private var lastLoadedFilter = "All"
-    private var feedbackRevision = 0
-    private let stagedPageSize = 18
-    private var currentFeedLimit = 18
-    private var currentFeedOffset = 0
-    private let shelfCacheTTL: TimeInterval = 12 * 60 * 60
-    private let shelfCacheStoreKey = "ounje-discover-shelf-cache-v2"
-    private let shelfCacheSchemaVersion = "2026-04-27"
-    private let recipeCatalogVersion = "ounje-recipes-v1"
-    private let rankingConfigVersion = "ranked-discover-v1"
-
-    init() {
-        filters = DiscoverPreset.shuffledTitles(seed: filterShuffleSeed)
-    }
-
-    func loadIfNeeded(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
-        let loadKey = cacheKey(
-            profile: profile,
-            filter: selectedFilter,
-            query: query.trimmingCharacters(in: .whitespacesAndNewlines),
-            feedContext: feedContext,
-            limit: stagedPageSize,
-            offset: 0
-        )
-        guard lastLoadKey != loadKey else {
-            isLoading = false
-            isTransitioningFeed = false
-            return
-        }
-        currentFeedLimit = stagedPageSize
-        currentFeedOffset = 0
-        await refresh(profile: profile, query: query, feedContext: feedContext, limit: currentFeedLimit, offset: 0)
-    }
-
-    func refresh(
-        profile: UserProfile?,
-        query: String = "",
-        feedContext: DiscoverFeedContext,
-        limit: Int? = nil,
-        offset: Int = 0,
-        appendResults: Bool = false,
-        forceNetwork: Bool = false
-    ) async {
-        let requestID = UUID()
-        activeRequestID = requestID
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        var hadExistingRecipes = !recipes.isEmpty
-        let isPresetTransition = normalizedQuery.isEmpty && selectedFilter != lastLoadedFilter
-        let requestedLimit = max(1, limit ?? currentFeedLimit)
-        currentFeedLimit = requestedLimit
-        let requestedOffset = max(0, offset)
-        currentFeedOffset = requestedOffset
-        let loadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: requestedLimit, offset: requestedOffset)
-        let shelfKey = persistentShelfKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
-
-        if !forceNetwork,
-           let cachedRecipes = responseCache[loadKey],
-           !cachedRecipes.isEmpty {
-            applyCachedRecipes(
-                cachedRecipes,
-                filters: filters,
-                hasMore: cachedRecipes.count >= requestedLimit,
-                nextOffset: requestedOffset + cachedRecipes.count,
-                loadKey: loadKey,
-                appendResults: appendResults,
-                requestedOffset: requestedOffset
-            )
-            isLoading = false
-            isTransitioningFeed = false
-            return
-        }
-
-        if !appendResults,
-           !forceNetwork,
-           let storedShelf = storedShelf(for: shelfKey),
-           !storedShelf.recipes.isEmpty {
-            applyStoredShelf(storedShelf, loadKey: loadKey)
-            hadExistingRecipes = true
-            if Date().timeIntervalSince(storedShelf.storedAt) < shelfCacheTTL {
-                isLoading = false
-                isTransitioningFeed = false
-                return
-            }
-        }
-
-        errorMessage = nil
-        isLoading = true
-        if isPresetTransition {
-            isTransitioningFeed = true
-        }
-        let shouldClearVisibleRecipes = !appendResults
-            && responseCache[loadKey] == nil
-            && (normalizedQuery.isEmpty || !hadExistingRecipes)
-        if shouldClearVisibleRecipes {
-            recipes = []
-        }
-        defer {
-            if activeRequestID == requestID {
-                isLoading = false
-                isTransitioningFeed = false
-            }
-        }
-        if !normalizedQuery.isEmpty {
-            try? await Task.sleep(nanoseconds: 90_000_000)
-            guard !Task.isCancelled, activeRequestID == requestID else { return }
-        }
-
-        do {
-            let requestSeed = normalizedQuery.isEmpty
-                ? "\(sessionSeed)-base-\(baseFeedRotationIndex)-\(baseFeedRefreshToken)-\(feedContext.windowKey)"
-                : "\(sessionSeed)-search"
-            let response = try await SupabaseDiscoverRecipeService.shared.fetchRankedRecipes(
-                profile: profile,
-                filter: selectedFilter,
-                query: normalizedQuery,
-                sessionSeed: requestSeed,
-                feedContext: feedContext,
-                limit: requestedLimit,
-                offset: requestedOffset
-            )
-            guard activeRequestID == requestID else { return }
-            recipes = appendResults && requestedOffset > 0
-                ? dedupeRecipesByID(recipes + response.recipes)
-                : response.recipes
-            responseCache[loadKey] = response.recipes
-            filters = DiscoverPreset.shuffledTitles(seed: filterShuffleSeed)
-            errorMessage = nil
-            hasResolvedInitialLoad = true
-            hasMoreRecipes = response.hasMore ?? (response.recipes.count >= requestedLimit)
-            currentFeedOffset = response.nextOffset ?? (requestedOffset + response.recipes.count)
-            lastLoadedFilter = selectedFilter
-            lastLoadKey = loadKey
-            if !filters.contains(selectedFilter) {
-                selectedFilter = "All"
-            }
-            if !appendResults && requestedOffset == 0 {
-                storeShelf(
-                    key: shelfKey,
-                    recipes: response.recipes,
-                    filters: filters,
-                    hasMore: hasMoreRecipes,
-                    nextOffset: currentFeedOffset
-                )
-            }
-        } catch {
-            guard activeRequestID == requestID else { return }
-            hasResolvedInitialLoad = true
-            hasMoreRecipes = false
-            if hadExistingRecipes {
-                errorMessage = normalizedQuery.isEmpty
-                    ? "Live Discover refresh failed, so we kept the last feed on screen."
-                    : "Search refresh failed, so we kept the last results on screen."
-            } else {
-                errorMessage = (error as? LocalizedError)?.errorDescription ?? "We couldn’t load the live recipe feed."
-            }
-        }
-    }
-
-    func loadMoreIfNeeded(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
-        guard hasResolvedInitialLoad, hasMoreRecipes, !isLoading, !isFetchingMore else { return }
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nextOffset = recipes.count
-        let loadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset)
-        guard responseCache[loadKey] == nil else {
-            currentFeedOffset = nextOffset
-            return await refresh(profile: profile, query: query, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset, appendResults: true)
-        }
-
-        isFetchingMore = true
-        defer { isFetchingMore = false }
-        await refresh(profile: profile, query: query, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset, appendResults: true)
-    }
-
-    func rotateBaseFeedIfNeeded(profile: UserProfile?, feedContext: DiscoverFeedContext) async {
-        let now = Date()
-        if let lastBaseRotationAt, now.timeIntervalSince(lastBaseRotationAt) < 4 {
-            return
-        }
-
-        invalidateBaseFeedRotation()
-        lastBaseRotationAt = now
-        await refresh(profile: profile, query: "", feedContext: feedContext)
-    }
-
-    func forceReload(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
-        await forceReload(profile: profile, query: query, feedContext: feedContext, rotateBaseFeed: false, forceNetwork: false)
-    }
-
-    func forceReload(
-        profile: UserProfile?,
-        query: String = "",
-        feedContext: DiscoverFeedContext,
-        rotateBaseFeed: Bool,
-        forceNetwork: Bool
-    ) async {
-        lastLoadKey = nil
-        currentFeedLimit = stagedPageSize
-        currentFeedOffset = 0
-        if rotateBaseFeed {
-            invalidateBaseFeedRotation()
-        }
-        await refresh(profile: profile, query: query, feedContext: feedContext, limit: currentFeedLimit, offset: 0, forceNetwork: forceNetwork)
-    }
-
-    func resetFeedPagination() {
-        currentFeedLimit = stagedPageSize
-        currentFeedOffset = 0
-        hasMoreRecipes = true
-    }
-
-    func selectFilter(_ filter: String, isSearching: Bool) {
-        guard selectedFilter != filter else { return }
-        selectedFilter = filter
-        if !isSearching {
-            isTransitioningFeed = true
-            currentFeedOffset = 0
-        }
-    }
-
-    func prepareForQueryRefresh() {
-        isTransitioningFeed = true
-        if recipes.isEmpty {
-            hasMoreRecipes = false
-        }
-        errorMessage = nil
-        currentFeedOffset = 0
-    }
-
-    func clearTransientError() {
-        errorMessage = nil
-    }
-
-    func updateFeedbackRevision(_ revision: Int) {
-        let normalized = max(0, revision)
-        guard feedbackRevision != normalized else { return }
-        feedbackRevision = normalized
-        lastLoadKey = nil
-    }
-
-    private func cacheKey(profile: UserProfile?, filter: String, query: String, feedContext: DiscoverFeedContext, limit: Int, offset: Int = 0) -> String {
-        let cuisines = profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
-        let dietary = profile?.dietaryPatterns.joined(separator: ",") ?? ""
-        let foods = profile?.favoriteFoods.joined(separator: ",") ?? ""
-        let flavors = profile?.favoriteFlavors.joined(separator: ",") ?? ""
-        let goals = profile?.mealPrepGoals.joined(separator: ",") ?? ""
-        let baseRotationKey = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "|rotation:\(baseFeedRotationIndex)|token:\(baseFeedRefreshToken)"
-            : ""
-        return "\(sessionSeed)|\(feedContext.cacheKey)|\(filter)|\(cuisines)|\(dietary)|\(foods)|\(flavors)|\(goals)|\(query)|feedback:\(feedbackRevision)|limit:\(limit)|offset:\(offset)\(baseRotationKey)"
-    }
-
-    private func persistentShelfKey(profile: UserProfile?, filter: String, query: String, feedContext: DiscoverFeedContext) -> String {
-        [
-            shelfCacheSchemaVersion,
-            recipeCatalogVersion,
-            rankingConfigVersion,
-            profileFingerprint(profile),
-            normalizedCacheComponent(filter),
-            normalizedCacheComponent(query),
-            normalizedCacheComponent(feedContext.locationLabel ?? ""),
-            normalizedCacheComponent(feedContext.regionCode ?? ""),
-            normalizedCacheComponent(feedContext.seasonCue ?? ""),
-            "feedback-\(feedbackRevision)"
-        ].joined(separator: "|")
-    }
-
-    private func profileFingerprint(_ profile: UserProfile?) -> String {
-        guard let profile,
-              let data = try? JSONEncoder().encode(profile) else {
-            return "anonymous-profile"
-        }
-        let digest = SHA256.hash(data: data)
-        return digest.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func normalizedCacheComponent(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .joined(separator: "-")
-    }
-
-    private func applyCachedRecipes(
-        _ cachedRecipes: [DiscoverRecipeCardData],
-        filters cachedFilters: [String],
-        hasMore: Bool,
-        nextOffset: Int,
-        loadKey: String,
-        appendResults: Bool,
-        requestedOffset: Int
-    ) {
-        recipes = appendResults && requestedOffset > 0
-            ? dedupeRecipesByID(recipes + cachedRecipes)
-            : cachedRecipes
-        if !cachedFilters.isEmpty {
-            filters = cachedFilters
-        }
-        errorMessage = nil
-        hasResolvedInitialLoad = true
-        hasMoreRecipes = hasMore
-        currentFeedOffset = nextOffset
-        lastLoadedFilter = selectedFilter
-        lastLoadKey = loadKey
-    }
-
-    private func applyStoredShelf(_ shelf: DiscoverShelfCacheEntry, loadKey: String) {
-        applyCachedRecipes(
-            shelf.recipes,
-            filters: shelf.filters,
-            hasMore: shelf.hasMoreRecipes,
-            nextOffset: shelf.nextOffset,
-            loadKey: loadKey,
-            appendResults: false,
-            requestedOffset: 0
-        )
-        responseCache[loadKey] = shelf.recipes
-    }
-
-    private func storedShelf(for key: String) -> DiscoverShelfCacheEntry? {
-        guard let data = UserDefaults.standard.data(forKey: shelfCacheStoreKey),
-              let store = try? JSONDecoder().decode(DiscoverShelfCacheStore.self, from: data) else {
-            return nil
-        }
-        return store.entries[key]
-    }
-
-    private func storeShelf(
-        key: String,
-        recipes: [DiscoverRecipeCardData],
-        filters: [String],
-        hasMore: Bool,
-        nextOffset: Int
-    ) {
-        guard !recipes.isEmpty else { return }
-
-        var store: DiscoverShelfCacheStore
-        if let data = UserDefaults.standard.data(forKey: shelfCacheStoreKey),
-           let decoded = try? JSONDecoder().decode(DiscoverShelfCacheStore.self, from: data) {
-            store = decoded
-        } else {
-            store = DiscoverShelfCacheStore()
-        }
-
-        store.entries[key] = DiscoverShelfCacheEntry(
-            key: key,
-            recipes: Array(recipes.prefix(stagedPageSize)),
-            filters: filters,
-            hasMoreRecipes: hasMore,
-            nextOffset: nextOffset,
-            storedAt: Date()
-        )
-
-        let sortedKeys = store.entries
-            .sorted { $0.value.storedAt > $1.value.storedAt }
-            .map(\.key)
-        for oldKey in sortedKeys.dropFirst(18) {
-            store.entries.removeValue(forKey: oldKey)
-        }
-
-        if let data = try? JSONEncoder().encode(store) {
-            UserDefaults.standard.set(data, forKey: shelfCacheStoreKey)
-        }
-    }
-
-    private func dedupeRecipesByID(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
-        var seen = Set<String>()
-        return recipes.filter { recipe in
-            let identifier = recipe.id.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !identifier.isEmpty else { return false }
-            return seen.insert(identifier).inserted
-        }
-    }
-
-    private func invalidateBaseFeedRotation() {
-        baseFeedRotationIndex += 1
-        baseFeedRefreshToken = UUID().uuidString
-        lastLoadKey = nil
-    }
-
-    private func fallbackRecipeLimit(for normalizedQuery: String) -> Int {
-        if normalizedQuery.isEmpty {
-            return selectedFilter == "All" ? 300 : 600
-        }
-        return 600
-    }
-
-    private func applyLocalDiscoverFilters(
-        to recipes: [DiscoverRecipeCardData],
-        filter: String,
-        query: String
-    ) -> [DiscoverRecipeCardData] {
-        let queryTerms = localDiscoverQueryTerms(from: query)
-
-        return recipes.filter { recipe in
-            let matchesFilter = recipe.matchesDiscoverFilter(filter)
-            let matchesQuery = queryTerms.isEmpty || recipe.matchesDiscoverSearchTerms(queryTerms)
-            return matchesFilter && matchesQuery
-        }
-    }
-
-    private func localDiscoverQueryTerms(from query: String) -> [String] {
-        let stopwords: Set<String> = [
-            "a", "an", "the", "all",
-            "what", "would", "like", "want", "need", "show", "find", "give",
-            "me", "my", "you", "your", "can", "could", "should",
-            "i", "im", "i'm", "to", "for", "of", "with", "in", "on", "at",
-            "something", "anything", "ideas", "idea",
-            "meal", "meals", "recipe", "recipes", "food", "foods",
-            "today", "tonight", "now"
-        ]
-
-        return query
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { term in
-                guard term.count > 1 else { return false }
-                return !stopwords.contains(term)
-            }
-    }
-}
-
-private enum DiscoverPreset: CaseIterable {
-    case all
-    case breakfast
-    case lunch
-    case dinner
-    case dessert
-    case drinks
-    case vegetarian
-    case vegan
-    case pasta
-    case chicken
-    case steak
-    case fish
-    case salad
-    case sandwich
-    case beans
-    case potatoes
-    case salmon
-    case nigerian
-    case beginner
-    case under500Cal
-
-    var title: String {
-        switch self {
-        case .all: return "All"
-        case .breakfast: return "Breakfast"
-        case .lunch: return "Lunch"
-        case .dinner: return "Dinner"
-        case .dessert: return "Dessert"
-        case .drinks: return "Drinks"
-        case .vegetarian: return "Vegetarian"
-        case .vegan: return "Vegan"
-        case .pasta: return "Pasta"
-        case .chicken: return "Chicken"
-        case .steak: return "Steak"
-        case .fish: return "Fish"
-        case .salad: return "Salad"
-        case .sandwich: return "Sandwich"
-        case .beans: return "Beans"
-        case .potatoes: return "Potatoes"
-        case .salmon: return "Salmon"
-        case .nigerian: return "Nigerian"
-        case .beginner: return "Beginner"
-        case .under500Cal: return "Under 500 Cal"
-        }
-    }
-
-    static var allTitles: [String] {
-        DiscoverPreset.allCases.map(\.title)
-    }
-
-    static func shuffledTitles(seed: String) -> [String] {
-        shuffledTitles(DiscoverPreset.allCases.map(\.title), seed: seed)
-    }
-
-    static func shuffledTitles(_ titles: [String], seed: String) -> [String] {
-        guard let allTitle = titles.first else { return [] }
-
-        let remainingTitles = Array(titles.dropFirst())
-        guard !remainingTitles.isEmpty else { return [allTitle] }
-
-        var generator = SeededTitleGenerator(seed: stableSeed(from: seed))
-        var shuffled = remainingTitles
-
-        if shuffled.count > 1 {
-            for index in stride(from: shuffled.count - 1, through: 1, by: -1) {
-                let swapIndex = Int(generator.next() % UInt64(index + 1))
-                if swapIndex != index {
-                    shuffled.swapAt(index, swapIndex)
-                }
-            }
-        }
-
-        return [allTitle] + shuffled
-    }
-
-    private static func stableSeed(from rawValue: String) -> UInt64 {
-        rawValue.utf8.reduce(1469598103934665603) { partial, byte in
-            (partial ^ UInt64(byte)) &* 1099511628211
-        }
-    }
-
-    private struct SeededTitleGenerator {
-        private var state: UInt64
-
-        init(seed: UInt64) {
-            self.state = seed == 0 ? 0x9E3779B97F4A7C15 : seed
-        }
-
-        mutating func next() -> UInt64 {
-            state = state &* 6364136223846793005 &+ 1
-            return state
-        }
-    }
-
-    static func normalizedKey(for title: String) -> String {
-        let lowered = title
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "calories", with: "cal")
-            .replacingOccurrences(of: "calorie", with: "cal")
-            .replacingOccurrences(of: " ", with: "")
-
-        switch lowered {
-        case "", "all":
-            return "all"
-        case "breakfast":
-            return "breakfast"
-        case "lunch":
-            return "lunch"
-        case "dinner":
-            return "dinner"
-        case "dessert", "desserts":
-            return "dessert"
-        case "drinks", "drink":
-            return "drinks"
-        case "vegetarian":
-            return "vegetarian"
-        case "vegan":
-            return "vegan"
-        case "pasta":
-            return "pasta"
-        case "chicken":
-            return "chicken"
-        case "steak", "beef":
-            return "steak"
-        case "fish":
-            return "fish"
-        case "nigerian", "westafrican", "west african":
-            return "nigerian"
-        case "salad":
-            return "salad"
-        case "sandwich", "sandwiches":
-            return "sandwich"
-        case "beans", "bean", "legumes", "legume":
-            return "beans"
-        case "potatoes", "potato":
-            return "potatoes"
-        case "salmon":
-            return "salmon"
-        case "beginner":
-            return "beginner"
-        case "under500", "under500cal", "under500cals":
-            return "under500"
-        default:
-            return lowered
-        }
     }
 }
 
@@ -36022,732 +33836,6 @@ private struct SupabaseRecipeStepIngredientRow: Decodable {
     }
 }
 
-struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
-    let id: String
-    let title: String
-    let description: String?
-    let authorName: String?
-    let authorHandle: String?
-    let category: String?
-    let recipeType: String?
-    let discoverBrackets: [String]?
-    let cookTimeText: String?
-    let cookTimeMinutes: Int?
-    let publishedDate: String?
-    let imageURLString: String?
-    let heroImageURLString: String?
-    let recipeURLString: String?
-    let source: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case title
-        case description
-        case authorName = "author_name"
-        case authorHandle = "author_handle"
-        case category
-        case recipeType = "recipe_type"
-        case discoverBrackets = "discover_brackets"
-        case cookTimeText = "cook_time_text"
-        case cookTimeMinutes = "cook_time_minutes"
-        case publishedDate = "published_date"
-        case imageURLString = "discover_card_image_url"
-        case heroImageURLString = "hero_image_url"
-        case recipeURLString = "recipe_url"
-        case source
-    }
-
-    var imageURL: URL? {
-        imageCandidates.first
-    }
-
-    var imageCandidates: [URL] {
-        [imageURLString, heroImageURLString]
-            .compactMap(Self.normalizedImageURL(from:))
-    }
-
-    private static func normalizedImageURL(from rawValue: String?) -> URL? {
-        guard let rawValue, !rawValue.isEmpty else { return nil }
-        let normalized = rawValue
-            .replacingOccurrences(of: "https://firebasestorage.googleapis.com:443/", with: "https://firebasestorage.googleapis.com/")
-            .replacingOccurrences(of: " ", with: "%20")
-        return URL(string: normalized)
-    }
-
-    var destinationURL: URL? {
-        guard let recipeURLString, !recipeURLString.isEmpty else { return nil }
-        return URL(string: recipeURLString)
-    }
-
-    var authorLabel: String {
-        if let authorHandle, !authorHandle.isEmpty { return authorHandle }
-        if let authorName, !authorName.isEmpty { return authorName }
-        return "Source pending"
-    }
-
-    var filterLabel: String {
-        if let discoverBracketLabel = discoverBracketLabel {
-            return discoverBracketLabel
-        }
-        if let normalizedRecipeType = Self.normalizedFilterLabel(from: recipeType) {
-            return normalizedRecipeType
-        }
-        if let category, !category.isEmpty {
-            if let normalizedCategory = Self.normalizedFilterLabel(
-                from: category.replacingOccurrences(of: " Recipes", with: "")
-            ) {
-                return normalizedCategory
-            }
-        }
-        return "Recipes"
-    }
-
-    private var discoverBracketLabel: String? {
-        guard let discoverBrackets else { return nil }
-        return discoverBrackets.compactMap { Self.normalizedFilterLabel(from: $0) }.first
-    }
-
-    var filterChipLabel: String? {
-        let value = filterLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.isEmpty { return nil }
-        if value.caseInsensitiveCompare("Recipes") == .orderedSame { return nil }
-        if value.caseInsensitiveCompare("Other") == .orderedSame { return nil }
-        return value
-    }
-
-    var compactFilterLabel: String? {
-        let value = filterLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
-    }
-
-    private static func normalizedFilterLabel(from rawValue: String?) -> String? {
-        guard let rawValue else { return nil }
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-
-        let lowered = trimmed.lowercased()
-        switch lowered {
-        case "concept_prompt", "direct_input", "text", "media_image", "media_video", "tiktok", "instagram", "youtube", "ounje":
-            return nil
-        case "breakfast":
-            return "Breakfast"
-        case "lunch":
-            return "Lunch"
-        case "dinner":
-            return "Dinner"
-        case "dessert":
-            return "Dessert"
-        case "vegetarian":
-            return "Vegetarian"
-        case "vegan":
-            return "Vegan"
-        case "nigerian", "westafrican", "west african":
-            return "Nigerian"
-        case "other", "recipes":
-            return "Other"
-        default:
-            return lowered
-                .split(separator: " ")
-                .map { word in
-                    word.prefix(1).uppercased() + word.dropFirst()
-                }
-                .joined(separator: " ")
-        }
-    }
-
-    var compactCookTime: String? {
-        if let cookTimeMinutes, cookTimeMinutes > 0 {
-            return cookTimeMinutes == 1 ? "1 min" : "\(cookTimeMinutes) mins"
-        }
-        guard let cookTimeText, !cookTimeText.isEmpty else { return nil }
-        return cookTimeText
-    }
-
-    var displayTitle: String {
-        let withDigitSpacing = title.replacingOccurrences(
-            of: #"(?<=\d)(?=[A-Za-z])"#,
-            with: " ",
-            options: .regularExpression
-        )
-        return withDigitSpacing.replacingOccurrences(
-            of: #"(?<=[a-z])(?=[A-Z])"#,
-            with: " ",
-            options: .regularExpression
-        )
-    }
-
-    var footerLine: String {
-        let parts: [String] = [
-            source?.capitalized,
-            publishedDate?.replacingOccurrences(of: "_", with: "/")
-        ].compactMap { value in
-            guard let value, !value.isEmpty else { return nil }
-            return value
-        }
-
-        if !parts.isEmpty {
-            return parts.joined(separator: " • ")
-        }
-
-        if let description, !description.isEmpty {
-            return description
-        }
-
-        return "Freshly scraped into your live recipe feed."
-    }
-
-    var emoji: String {
-        switch filterLabel.lowercased() {
-        case "breakfast":
-            return "🍳"
-        case "lunch":
-            return "🥗"
-        case "dinner":
-            return "🍽️"
-        case "dessert":
-            return "🍰"
-        case "nigerian":
-            return "🍛"
-        default:
-            return "🍴"
-        }
-    }
-
-    var accentColor: Color {
-        switch filterLabel.lowercased() {
-        case "breakfast":
-            return Color(hex: "F4B15E")
-        case "lunch":
-            return Color(hex: "56D7C8")
-        case "dinner":
-            return Color(hex: "52C67A")
-        case "dessert":
-            return Color(hex: "FF8AAE")
-        case "nigerian":
-            return Color(hex: "F1A24A")
-        default:
-            return OunjePalette.accent
-        }
-    }
-
-    init(
-        id: String,
-        title: String,
-        description: String?,
-        authorName: String?,
-        authorHandle: String?,
-        category: String?,
-        recipeType: String?,
-        discoverBrackets: [String]? = nil,
-        cookTimeText: String?,
-        cookTimeMinutes: Int? = nil,
-        publishedDate: String?,
-        imageURLString: String?,
-        heroImageURLString: String?,
-        recipeURLString: String?,
-        source: String?
-    ) {
-        self.id = id
-        self.title = title
-        self.description = description
-        self.authorName = authorName
-        self.authorHandle = authorHandle
-        self.category = category
-        self.recipeType = recipeType
-        self.discoverBrackets = discoverBrackets
-        self.cookTimeText = cookTimeText
-        self.cookTimeMinutes = cookTimeMinutes
-        self.publishedDate = publishedDate
-        self.imageURLString = imageURLString
-        self.heroImageURLString = heroImageURLString
-        self.recipeURLString = recipeURLString
-        self.source = source
-    }
-
-    init(preppedRecipe: PlannedRecipe) {
-        let tags = preppedRecipe.recipe.tags.map { $0.lowercased() }
-        let mealType = tags.first { ["breakfast", "lunch", "dinner", "dessert"].contains($0) }
-
-        self.init(
-            id: preppedRecipe.recipe.id,
-            title: preppedRecipe.recipe.title,
-            description: preppedRecipe.carriedFromPreviousPlan ? "Carried over from your last cycle." : "Scheduled for this prep cycle.",
-            authorName: nil,
-            authorHandle: nil,
-            category: mealType,
-            recipeType: mealType,
-            cookTimeText: "\(preppedRecipe.recipe.prepMinutes) mins",
-            cookTimeMinutes: preppedRecipe.recipe.prepMinutes,
-            publishedDate: nil,
-            imageURLString: preppedRecipe.recipe.cardImageURLString,
-            heroImageURLString: preppedRecipe.recipe.heroImageURLString,
-            recipeURLString: nil,
-            source: preppedRecipe.recipe.source ?? preppedRecipe.recipe.cuisine.title
-        )
-    }
-
-    func matchesDiscoverFilter(_ filter: String) -> Bool {
-        let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
-        guard normalizedFilter != "all" else { return true }
-
-        switch normalizedFilter {
-        case "under500":
-            if let cookTimeMinutes, cookTimeMinutes > 0 {
-                return cookTimeMinutes <= 500
-            }
-            return false
-        case "beginner":
-            let haystack = [category, recipeType, description, title]
-                .compactMap { $0?.lowercased() }
-                .joined(separator: " ")
-            return haystack.contains("beginner") || haystack.contains("easy")
-        default:
-            let filterTokens = Set(discoverFilterTokens)
-            return filterTokens.contains(normalizedFilter)
-        }
-    }
-
-    func matchesDiscoverSearchTerms(_ terms: [String]) -> Bool {
-        guard !terms.isEmpty else { return true }
-
-        let haystack = [
-            title,
-            description,
-            authorName,
-            authorHandle,
-            category,
-            recipeType,
-            source
-        ]
-        .compactMap { $0?.lowercased() }
-        .joined(separator: " ")
-
-        return terms.allSatisfy { haystack.contains($0) }
-    }
-
-    private var discoverFilterTokens: [String] {
-        let rawValues = [category, recipeType, filterLabel].compactMap { $0 } + (discoverBrackets ?? [])
-
-        return rawValues.compactMap { value in
-            let normalized = DiscoverPreset.normalizedKey(for: value)
-            return normalized.isEmpty ? nil : normalized
-        }
-    }
-}
-
-private struct DiscoverRankedRecipesResponse: Decodable {
-    let recipes: [DiscoverRecipeCardData]
-    let filters: [String]
-    let rankingMode: String?
-    let totalAvailable: Int?
-    let hasMore: Bool?
-    let nextOffset: Int?
-}
-
-private struct DiscoverRankedRecipesRequest: Encodable {
-    let profile: UserProfile?
-    let filter: String
-    let query: String?
-    let limit: Int
-    let offset: Int
-    let feedContext: DiscoverFeedContext
-}
-
-private struct DiscoverFeedContext: Encodable {
-    let sessionSeed: String
-    let windowKey: String
-    let weekday: String
-    let daypart: String
-    let isWeekend: Bool
-    let locationLabel: String?
-    let regionCode: String?
-    let weatherSummary: String?
-    let weatherMood: String?
-    let temperatureBand: String?
-    let seasonCue: String?
-    let sweetTreatBias: Double
-
-    static var current: DiscoverFeedContext {
-        let calendar = Calendar.current
-        let now = Date()
-        let hour = calendar.component(.hour, from: now)
-        let minute = calendar.component(.minute, from: now)
-        let tenMinuteBucket = (minute / 10) * 10
-        let weekdayIndex = calendar.component(.weekday, from: now)
-        let weekdaySymbols = calendar.weekdaySymbols
-        let weekday = weekdaySymbols[max(0, min(weekdaySymbols.count - 1, weekdayIndex - 1))].lowercased()
-
-        let daypart: String
-        switch hour {
-        case 5..<11:
-            daypart = "morning"
-        case 11..<15:
-            daypart = "midday"
-        case 15..<18:
-            daypart = "afternoon"
-        case 18..<22:
-            daypart = "evening"
-        default:
-            daypart = "late-night"
-        }
-
-        return DiscoverFeedContext(
-            sessionSeed: "",
-            windowKey: "\(calendar.component(.year, from: now))-\(calendar.ordinality(of: .day, in: .year, for: now) ?? 0)-\(hour)-\(tenMinuteBucket)",
-            weekday: weekday,
-            daypart: daypart,
-            isWeekend: calendar.isDateInWeekend(now),
-            locationLabel: nil,
-            regionCode: Locale.current.region?.identifier,
-            weatherSummary: nil,
-            weatherMood: nil,
-            temperatureBand: nil,
-            seasonCue: Self.seasonCue(for: now),
-            sweetTreatBias: Self.baseSweetTreatBias(daypart: daypart, isWeekend: calendar.isDateInWeekend(now))
-        )
-    }
-
-    func withSessionSeed(_ seed: String) -> DiscoverFeedContext {
-        DiscoverFeedContext(
-            sessionSeed: seed,
-            windowKey: windowKey,
-            weekday: weekday,
-            daypart: daypart,
-            isWeekend: isWeekend,
-            locationLabel: locationLabel,
-            regionCode: regionCode,
-            weatherSummary: weatherSummary,
-            weatherMood: weatherMood,
-            temperatureBand: temperatureBand,
-            seasonCue: seasonCue,
-            sweetTreatBias: sweetTreatBias
-        )
-    }
-
-    func withLocation(locationLabel: String?, regionCode: String?) -> DiscoverFeedContext {
-        DiscoverFeedContext(
-            sessionSeed: sessionSeed,
-            windowKey: windowKey,
-            weekday: weekday,
-            daypart: daypart,
-            isWeekend: isWeekend,
-            locationLabel: locationLabel,
-            regionCode: regionCode,
-            weatherSummary: weatherSummary,
-            weatherMood: weatherMood,
-            temperatureBand: temperatureBand,
-            seasonCue: seasonCue,
-            sweetTreatBias: sweetTreatBias
-        )
-    }
-
-    func withWeather(summary: String?, mood: String?, temperatureBand: String?, sweetTreatBias: Double) -> DiscoverFeedContext {
-        DiscoverFeedContext(
-            sessionSeed: sessionSeed,
-            windowKey: windowKey,
-            weekday: weekday,
-            daypart: daypart,
-            isWeekend: isWeekend,
-            locationLabel: locationLabel,
-            regionCode: regionCode,
-            weatherSummary: summary,
-            weatherMood: mood,
-            temperatureBand: temperatureBand,
-            seasonCue: seasonCue,
-            sweetTreatBias: sweetTreatBias
-        )
-    }
-
-    var cacheKey: String {
-        [
-            windowKey,
-            weekday,
-            daypart,
-            isWeekend ? "weekend" : "weekday",
-            locationLabel ?? "",
-            regionCode ?? "",
-            weatherSummary ?? "",
-            weatherMood ?? "",
-            temperatureBand ?? "",
-            seasonCue ?? "",
-            String(format: "%.2f", sweetTreatBias)
-        ].joined(separator: "|")
-    }
-
-    private static func seasonCue(for date: Date) -> String {
-        switch Calendar.current.component(.month, from: date) {
-        case 12, 1, 2:
-            return "winter"
-        case 3, 4, 5:
-            return "spring"
-        case 6, 7, 8:
-            return "summer"
-        default:
-            return "autumn"
-        }
-    }
-
-    private static func baseSweetTreatBias(daypart: String, isWeekend: Bool) -> Double {
-        var bias = 0.18
-        if daypart == "evening" { bias += 0.12 }
-        if daypart == "late-night" { bias += 0.18 }
-        if isWeekend { bias += 0.1 }
-        return min(max(bias, 0), 1)
-    }
-}
-
-private struct DiscoverWeatherSnapshot {
-    let summary: String
-    let mood: String
-    let temperatureBand: String
-    let sweetTreatBias: Double
-}
-
-@MainActor
-private final class DiscoverEnvironmentViewModel: ObservableObject {
-    @Published private(set) var feedContext = DiscoverFeedContext.current
-    private var lastKey: String?
-
-    func refresh(profile: UserProfile?) async {
-        let address = profile?.deliveryAddress
-        let city = address?.city.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let region = address?.region.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let locationLabel = [city, region].filter { !$0.isEmpty }.joined(separator: ", ")
-        let key = "\(DiscoverFeedContext.current.windowKey)|\(locationLabel)"
-        if lastKey == key { return }
-
-        var context = DiscoverFeedContext.current.withLocation(
-            locationLabel: locationLabel.isEmpty ? nil : locationLabel,
-            regionCode: region.isEmpty ? Locale.current.region?.identifier : region
-        )
-
-        if !city.isEmpty, let snapshot = try? await DiscoverWeatherService.shared.fetchWeather(city: city, region: region) {
-            context = context.withWeather(
-                summary: snapshot.summary,
-                mood: snapshot.mood,
-                temperatureBand: snapshot.temperatureBand,
-                sweetTreatBias: snapshot.sweetTreatBias
-            )
-        }
-
-        feedContext = context
-        lastKey = key
-    }
-}
-
-final class SupabaseDiscoverRecipeService {
-    static let shared = SupabaseDiscoverRecipeService()
-
-    private init() {}
-
-    func fetchRecipes(limit: Int = 30) async throws -> [DiscoverRecipeCardData] {
-        let select = [
-            "id",
-            "title",
-            "description",
-            "author_name",
-            "author_handle",
-            "category",
-            "recipe_type",
-            "cook_time_text",
-            "cook_time_minutes",
-            "published_date",
-            "discover_card_image_url",
-            "hero_image_url",
-            "recipe_url",
-            "source",
-            "discover_brackets"
-        ].joined(separator: ",")
-
-        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(select)&order=updated_at.desc.nullslast,published_date.desc.nullslast&limit=\(limit)") else {
-            throw SupabaseProfileStateError.invalidRequest
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SupabaseProfileStateError.invalidResponse
-        }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-            let fallback = "Failed to load recipes (\(httpResponse.statusCode))."
-            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-        }
-
-        return try JSONDecoder().decode([DiscoverRecipeCardData].self, from: data)
-    }
-
-    fileprivate func fetchRankedRecipes(
-        profile: UserProfile?,
-        filter: String,
-        query: String,
-        sessionSeed: String,
-        feedContext: DiscoverFeedContext,
-        limit: Int = 30,
-        offset: Int = 0
-    ) async throws -> DiscoverRankedRecipesResponse {
-        var lastError: Error?
-        for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
-            do {
-                return try await fetchRankedRecipes(
-                    baseURL: candidateBaseURL,
-                    profile: profile,
-                    filter: filter,
-                    query: query,
-                    sessionSeed: sessionSeed,
-                    feedContext: feedContext,
-                    limit: limit,
-                    offset: offset
-                )
-            } catch {
-                lastError = error
-            }
-        }
-
-        throw lastError ?? SupabaseProfileStateError.invalidResponse
-    }
-
-    fileprivate func fetchRankedRecipes(
-        baseURL: String,
-        profile: UserProfile?,
-        filter: String,
-        query: String,
-        sessionSeed: String,
-        feedContext: DiscoverFeedContext,
-        limit: Int,
-        offset: Int
-    ) async throws -> DiscoverRankedRecipesResponse {
-        guard let url = URL(string: "\(baseURL)/v1/recipe/discover") else {
-            throw SupabaseProfileStateError.invalidRequest
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 8
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(
-            DiscoverRankedRecipesRequest(
-                profile: profile,
-                filter: filter,
-                query: query.isEmpty ? nil : query,
-                limit: limit,
-                offset: offset,
-                feedContext: feedContext.withSessionSeed(sessionSeed)
-            )
-        )
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SupabaseProfileStateError.invalidResponse
-        }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-            let fallback = "Failed to load ranked recipes (\(httpResponse.statusCode))."
-            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-        }
-
-        return try JSONDecoder().decode(DiscoverRankedRecipesResponse.self, from: data)
-    }
-}
-
-private actor DiscoverWeatherService {
-    static let shared = DiscoverWeatherService()
-    private var cache: [String: (timestamp: Date, snapshot: DiscoverWeatherSnapshot)] = [:]
-
-    func fetchWeather(city: String, region: String) async throws -> DiscoverWeatherSnapshot {
-        let key = "\(city.lowercased())|\(region.lowercased())"
-        if let cached = cache[key], Date().timeIntervalSince(cached.timestamp) < 3600 {
-            return cached.snapshot
-        }
-
-        let query = [city, region].filter { !$0.isEmpty }.joined(separator: ", ")
-        guard let geocodeURL = URL(string: "https://geocoding-api.open-meteo.com/v1/search?name=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query)&count=1&language=en&format=json") else {
-            throw URLError(.badURL)
-        }
-
-        let (geoData, _) = try await URLSession.shared.data(from: geocodeURL)
-        let geocode = try JSONDecoder().decode(DiscoverWeatherGeocodeResponse.self, from: geoData)
-        guard let result = geocode.results?.first else {
-            throw URLError(.resourceUnavailable)
-        }
-
-        guard let weatherURL = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(result.latitude)&longitude=\(result.longitude)&current=temperature_2m,weather_code,cloud_cover,precipitation&temperature_unit=celsius") else {
-            throw URLError(.badURL)
-        }
-
-        let (weatherData, _) = try await URLSession.shared.data(from: weatherURL)
-        let weather = try JSONDecoder().decode(DiscoverWeatherForecastResponse.self, from: weatherData)
-
-        let temperatureBand: String
-        switch weather.current.temperature2m {
-        case ..<4:
-            temperatureBand = "cold"
-        case 4..<14:
-            temperatureBand = "cool"
-        case 14..<24:
-            temperatureBand = "mild"
-        default:
-            temperatureBand = "hot"
-        }
-
-        let mood: String
-        switch weather.current.weatherCode {
-        case 51...67, 80...99:
-            mood = "rainy"
-        case 71...77, 85...86:
-            mood = "snowy"
-        case 0, 1:
-            mood = "sunny"
-        case 2, 3, 45, 48:
-            mood = "cloudy"
-        default:
-            mood = "mild"
-        }
-
-        var sweetTreatBias = DiscoverFeedContext.current.sweetTreatBias
-        if mood == "sunny" && temperatureBand == "hot" { sweetTreatBias += 0.14 }
-        if mood == "rainy" || mood == "snowy" { sweetTreatBias += 0.06 }
-        if temperatureBand == "cold" { sweetTreatBias -= 0.04 }
-        sweetTreatBias = min(max(sweetTreatBias, 0.05), 0.8)
-
-        let snapshot = DiscoverWeatherSnapshot(
-            summary: "\(temperatureBand)-\(mood)",
-            mood: mood,
-            temperatureBand: temperatureBand,
-            sweetTreatBias: sweetTreatBias
-        )
-        cache[key] = (Date(), snapshot)
-        return snapshot
-    }
-}
-
-private struct DiscoverWeatherGeocodeResponse: Decodable {
-    let results: [DiscoverWeatherGeocodeResult]?
-}
-
-private struct DiscoverWeatherGeocodeResult: Decodable {
-    let latitude: Double
-    let longitude: Double
-}
-
-private struct DiscoverWeatherForecastResponse: Decodable {
-    let current: DiscoverWeatherCurrent
-}
-
-private struct DiscoverWeatherCurrent: Decodable {
-    let temperature2m: Double
-    let weatherCode: Int
-
-    enum CodingKeys: String, CodingKey {
-        case temperature2m = "temperature_2m"
-        case weatherCode = "weather_code"
-    }
-}
-
 private struct SupabaseTokenResponse: Codable {
     let accessToken: String
     let refreshToken: String?
@@ -36796,7 +33884,7 @@ private struct SupabaseAuthErrorResponse: Codable {
     }
 }
 
-private struct SupabaseRestErrorResponse: Codable {
+struct SupabaseRestErrorResponse: Codable {
     let message: String?
     let error: String?
 }
@@ -39078,731 +36166,6 @@ final class GroceryOrderAPIService {
     }
 }
 
-private enum OunjeLayout {
-    static let screenHorizontalPadding: CGFloat = 16
-    static let authButtonHeight: CGFloat = 52
-    static let tabBarHeight: CGFloat = 58
-    static let setupActionBarReservedHeight: CGFloat = 112
-    static let welcomeActionBarHeight: CGFloat = 182
-}
-
-enum OunjeMotion {
-    static let heroSpring = Animation.spring(response: 0.46, dampingFraction: 0.86)
-    static let screenSpring = Animation.spring(response: 0.4, dampingFraction: 0.86)
-    static let tabSpring = Animation.spring(response: 0.34, dampingFraction: 0.8)
-    static let quickSpring = Animation.spring(response: 0.28, dampingFraction: 0.82)
-    static let subtleEase = Animation.easeInOut(duration: 0.18)
-    static let cardPressScale: CGFloat = 0.985
-}
-
-private struct DirectionalSurfaceRevealModifier: ViewModifier {
-    var xOffset: CGFloat = 0
-    var yOffset: CGFloat = 0
-    var scale: CGFloat = 1
-    var blur: CGFloat = 0
-    var opacity: Double = 1
-
-    func body(content: Content) -> some View {
-        content
-            .offset(x: xOffset, y: yOffset)
-            .scaleEffect(scale)
-            .opacity(opacity)
-            .blur(radius: blur)
-    }
-}
-
-struct OunjeCardPressButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? OunjeMotion.cardPressScale : 1)
-            .animation(OunjeMotion.subtleEase, value: configuration.isPressed)
-    }
-}
-
-private struct RecipeTransitionContext {
-    let namespace: Namespace.ID
-    let recipeID: String
-
-    var imageID: String { "recipe-transition-image-\(recipeID)" }
-    var titleID: String { "recipe-transition-title-\(recipeID)" }
-}
-
-private struct RecipeImageTransitionModifier: ViewModifier {
-    let transitionContext: RecipeTransitionContext?
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if let transitionContext {
-            content.matchedGeometryEffect(id: transitionContext.imageID, in: transitionContext.namespace)
-        } else {
-            content
-        }
-    }
-}
-
-private struct RecipeTitleTransitionModifier: ViewModifier {
-    let transitionContext: RecipeTransitionContext?
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if let transitionContext {
-            content.matchedGeometryEffect(id: transitionContext.titleID, in: transitionContext.namespace)
-        } else {
-            content
-        }
-    }
-}
-
-private struct RecipeDetailChromeRevealModifier: ViewModifier {
-    let isVisible: Bool
-    let yOffset: CGFloat
-    let delay: Double
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(isVisible ? 1 : 0.001)
-            .offset(y: isVisible ? 0 : yOffset)
-            .blur(radius: isVisible ? 0 : 8)
-            .animation(OunjeMotion.screenSpring.delay(delay), value: isVisible)
-    }
-}
-
-enum OunjeDevelopmentServer {
-    static let productionBaseURL = "https://ounje-idbl.onrender.com"
-
-    static var baseURL: String {
-        explicitPrimaryBaseURL ?? productionBaseURL
-    }
-
-    static var candidateBaseURLs: [String] {
-        deduplicated(
-            [
-                explicitPrimaryBaseURL,
-                productionBaseURL
-            ].compactMap { $0 }
-        )
-    }
-
-    static var primaryBaseURL: String {
-        explicitPrimaryBaseURL ?? productionBaseURL
-    }
-
-    static var workerBaseURL: String {
-        explicitWorkerBaseURL ?? explicitPrimaryBaseURL ?? productionBaseURL
-    }
-
-    static var interactiveCandidateBaseURLs: [String] {
-        candidateBaseURLs
-    }
-
-    static var workerCandidateBaseURLs: [String] {
-        deduplicated(
-            [
-                explicitWorkerBaseURL,
-                explicitPrimaryBaseURL,
-                productionBaseURL
-            ].compactMap { $0 }
-        )
-    }
-
-    private static var explicitPrimaryBaseURL: String? {
-#if DEBUG
-        explicitBaseURL(hostKey: "OunjePrimaryServerHost", portKey: "OunjePrimaryServerPort", defaultPort: "8080")
-#else
-        nil
-#endif
-    }
-
-    private static var explicitWorkerBaseURL: String? {
-#if DEBUG
-        explicitBaseURL(hostKey: "OunjeWorkerServerHost", portKey: "OunjeWorkerServerPort", defaultPort: "80")
-            ?? explicitBaseURL(hostKey: "OunjeDevServerHost", portKey: "OunjeDevServerPort", defaultPort: "80")
-#else
-        nil
-#endif
-    }
-
-    private static func explicitBaseURL(hostKey: String, portKey: String, defaultPort: String) -> String? {
-        guard
-            let rawHost = Bundle.main.object(forInfoDictionaryKey: hostKey) as? String
-        else {
-            return nil
-        }
-
-        let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty else { return nil }
-
-        let configuredPort = (Bundle.main.object(forInfoDictionaryKey: portKey) as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let port = (configuredPort?.isEmpty == false ? configuredPort! : defaultPort)
-
-        if host.contains("://") {
-            guard var components = URLComponents(string: host) else {
-                return host
-            }
-            if components.port == nil, !port.isEmpty {
-                components.port = Int(port)
-            }
-            return components.string ?? host
-        }
-
-        return "http://\(host):\(port)"
-    }
-
-    private static func deduplicated(_ baseURLs: [String]) -> [String] {
-        var uniqueBaseURLs: [String] = []
-        for baseURL in baseURLs where !uniqueBaseURLs.contains(baseURL) {
-            uniqueBaseURLs.append(baseURL)
-        }
-        return uniqueBaseURLs
-    }
-}
-
-private enum DiscoverAPIConfig {
-    static let baseURL = OunjeDevelopmentServer.baseURL
-}
-
-private struct BiroScriptDisplayText: View {
-    let text: String
-    let size: CGFloat
-    let color: Color
-
-    init(_ text: String, size: CGFloat, color: Color = OunjePalette.primaryText) {
-        self.text = text
-        self.size = size
-        self.color = color
-    }
-
-    var body: some View {
-        ZStack {
-            Text(text)
-                .font(.custom("BiroScriptreduced", size: size))
-                .tracking(0.2)
-                .foregroundStyle(color.opacity(0.88))
-                .offset(x: 0.55)
-
-            Text(text)
-                .font(.custom("BiroScriptreduced", size: size))
-                .tracking(0.2)
-                .foregroundStyle(color)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
-    }
-}
-
-private struct SleeScriptDisplayText: View {
-    let text: String
-    let size: CGFloat
-    let color: Color
-
-    init(_ text: String, size: CGFloat, color: Color = OunjePalette.primaryText) {
-        self.text = text
-        self.size = size
-        self.color = color
-    }
-
-    var body: some View {
-        Group {
-            if shouldUseCustomNumerals {
-                HandwrittenRunText(
-                    text: text,
-                    size: size,
-                    color: color,
-                    style: .slee
-                )
-            } else {
-                ZStack(alignment: .topLeading) {
-                    Text(text)
-                        .font(.custom("Slee_handwritting-Regular", size: size))
-                        .tracking(0.1)
-                        .foregroundStyle(color.opacity(0.78))
-                        .offset(x: 0.45, y: 0.35)
-
-                    Text(text)
-                        .font(.custom("Slee_handwritting-Regular", size: size))
-                        .tracking(0.1)
-                        .foregroundStyle(color)
-                }
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
-    }
-
-    private var shouldUseCustomNumerals: Bool {
-        guard text.contains(where: \.isNumber) else { return false }
-
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let allowedScalars = CharacterSet.decimalDigits
-            .union(.whitespaces)
-            .union(CharacterSet(charactersIn: ":+-–—/.,"))
-
-        let isMostlyNumericLabel = trimmed.unicodeScalars.allSatisfy { allowedScalars.contains($0) }
-        return isMostlyNumericLabel && trimmed.count <= 14
-    }
-}
-
-private struct SleeRecipeCardTitleText: View {
-    let text: String
-    let size: CGFloat
-    let color: Color
-
-    init(_ text: String, size: CGFloat, color: Color = OunjePalette.primaryText) {
-        self.text = text
-        self.size = size
-        self.color = color
-    }
-
-    private var leadingDigitPrefix: String? {
-        guard let match = text.range(of: #"^\d+"#, options: .regularExpression) else { return nil }
-        return String(text[match])
-    }
-
-    private var remainderText: String {
-        guard let prefix = leadingDigitPrefix else { return text }
-        return text.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        Group {
-            if let prefix = leadingDigitPrefix, !remainderText.isEmpty {
-                HStack(alignment: .firstTextBaseline, spacing: size * 0.1) {
-                    HandwrittenRunText(
-                        text: prefix,
-                        size: size,
-                        color: color,
-                        style: .slee
-                    )
-                    .fixedSize()
-
-                    Text(remainderText)
-                        .recipeCardTitleFont(size)
-                        .foregroundStyle(color)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.84)
-                }
-            } else {
-                Text(text)
-                    .recipeCardTitleFont(size)
-                    .foregroundStyle(color)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
-    }
-}
-
-private extension View {
-    func biroHeaderFont(_ size: CGFloat) -> some View {
-        Group {
-            if size >= 28 {
-                self
-                    .font(.custom("BiroScriptreduced", size: size))
-                    .tracking(0.2)
-            } else {
-                self
-                    .font(.system(size: size, weight: .bold, design: .rounded))
-            }
-        }
-    }
-
-    func sleeDisplayFont(_ size: CGFloat) -> some View {
-        self.modifier(SleeDisplayModifier(size: size))
-    }
-
-    func recipeCardTitleFont(_ size: CGFloat) -> some View {
-        self.modifier(RecipeCardTitleModifier(size: size))
-    }
-}
-
-private struct SleeDisplayModifier: ViewModifier {
-    let size: CGFloat
-
-    func body(content: Content) -> some View {
-        ZStack(alignment: .topLeading) {
-            content
-                .font(.custom("Slee_handwritting-Regular", size: size))
-                .tracking(0.12)
-                .foregroundStyle(OunjePalette.primaryText.opacity(0.82))
-                .offset(x: 0.55, y: 0.4)
-
-            content
-                .font(.custom("Slee_handwritting-Regular", size: size))
-                .tracking(0.12)
-        }
-    }
-}
-
-private struct RecipeCardTitleModifier: ViewModifier {
-    let size: CGFloat
-
-    func body(content: Content) -> some View {
-        ZStack(alignment: .topLeading) {
-            content
-                .font(.custom("Slee_handwritting-Regular", size: size))
-                .tracking(0.1)
-                .foregroundStyle(OunjePalette.primaryText.opacity(0.78))
-                .offset(x: 0.45, y: 0.35)
-
-            content
-                .font(.custom("Slee_handwritting-Regular", size: size))
-                .tracking(0.1)
-        }
-    }
-}
-
-private enum HandwrittenNumeralStyle {
-    case slee
-
-    var baseFontName: String {
-        switch self {
-        case .slee:
-            return "Slee_handwritting-Regular"
-        }
-    }
-
-    var tracking: CGFloat {
-        switch self {
-        case .slee:
-            return 0.1
-        }
-    }
-
-    var shadowOffset: CGSize {
-        switch self {
-        case .slee:
-            return CGSize(width: 0.45, height: 0.35)
-        }
-    }
-
-    var strokeWidthFactor: CGFloat {
-        switch self {
-        case .slee:
-            return 0.08
-        }
-    }
-
-    var characterSpacingFactor: CGFloat {
-        switch self {
-        case .slee:
-            return 0.025
-        }
-    }
-
-    var wordSpacingFactor: CGFloat {
-        switch self {
-        case .slee:
-            return 0.16
-        }
-    }
-
-    var numeralWidthFactor: CGFloat {
-        switch self {
-        case .slee:
-            return 0.54
-        }
-    }
-}
-
-private struct HandwrittenRunText: View {
-    let text: String
-    let size: CGFloat
-    let color: Color
-    let style: HandwrittenNumeralStyle
-
-    var body: some View {
-        FlowWrapLayout(
-            lineSpacing: size * 0.16,
-            itemSpacing: size * style.wordSpacingFactor
-        ) {
-            ForEach(tokenizedWords.indices, id: \.self) { index in
-                HandwrittenWordView(
-                    word: tokenizedWords[index],
-                    size: size,
-                    color: color,
-                    style: style
-                )
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
-    }
-
-    private var tokenizedWords: [String] {
-        text
-            .split(separator: " ", omittingEmptySubsequences: false)
-            .map(String.init)
-    }
-}
-
-private struct HandwrittenWordView: View {
-    let word: String
-    let size: CGFloat
-    let color: Color
-    let style: HandwrittenNumeralStyle
-
-    var body: some View {
-        HStack(spacing: size * style.characterSpacingFactor) {
-            ForEach(Array(word.enumerated()), id: \.offset) { _, character in
-                if character.isNumber {
-                    HandwrittenDigitView(
-                        digit: character,
-                        size: size,
-                        color: color,
-                        style: style
-                    )
-                } else {
-                    ZStack(alignment: .topLeading) {
-                    Text(String(character))
-                        .font(.custom(style.baseFontName, size: size))
-                        .tracking(style.tracking)
-                        .foregroundStyle(color.opacity(0.78))
-                        .offset(style.shadowOffset)
-
-                        Text(String(character))
-                            .font(.custom(style.baseFontName, size: size))
-                            .tracking(style.tracking)
-                            .foregroundStyle(color)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct HandwrittenDigitView: View {
-    let digit: Character
-    let size: CGFloat
-    let color: Color
-    let style: HandwrittenNumeralStyle
-
-    var body: some View {
-        HandwrittenDigitShape(digit: digit)
-            .stroke(
-                color,
-                style: StrokeStyle(
-                    lineWidth: size * style.strokeWidthFactor,
-                    lineCap: .round,
-                    lineJoin: .round
-                )
-            )
-            .frame(
-                width: size * style.numeralWidthFactor,
-                height: size * 0.9
-            )
-            .overlay(alignment: .topLeading) {
-                HandwrittenDigitShape(digit: digit)
-                    .stroke(
-                        color.opacity(0.78),
-                        style: StrokeStyle(
-                            lineWidth: size * style.strokeWidthFactor,
-                            lineCap: .round,
-                            lineJoin: .round
-                        )
-                    )
-                    .offset(style.shadowOffset)
-            }
-            .padding(.vertical, size * 0.02)
-    }
-}
-
-private struct HandwrittenDigitShape: Shape {
-    let digit: Character
-
-    func path(in rect: CGRect) -> Path {
-        switch digit {
-        case "0":
-            return zeroPath(in: rect)
-        case "1":
-            return onePath(in: rect)
-        case "2":
-            return twoPath(in: rect)
-        case "3":
-            return threePath(in: rect)
-        case "4":
-            return fourPath(in: rect)
-        case "5":
-            return fivePath(in: rect)
-        case "6":
-            return sixPath(in: rect)
-        case "7":
-            return sevenPath(in: rect)
-        case "8":
-            return eightPath(in: rect)
-        case "9":
-            return ninePath(in: rect)
-        default:
-            return Path()
-        }
-    }
-
-    private func pt(_ x: CGFloat, _ y: CGFloat, in rect: CGRect) -> CGPoint {
-        CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
-    }
-
-    private func zeroPath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addEllipse(in: CGRect(
-            x: rect.minX + rect.width * 0.12,
-            y: rect.minY + rect.height * 0.08,
-            width: rect.width * 0.72,
-            height: rect.height * 0.78
-        ))
-        return path
-    }
-
-    private func onePath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.28, 0.28, in: rect))
-        path.addLine(to: pt(0.48, 0.12, in: rect))
-        path.addLine(to: pt(0.48, 0.86, in: rect))
-        path.move(to: pt(0.22, 0.84, in: rect))
-        path.addLine(to: pt(0.64, 0.84, in: rect))
-        return path
-    }
-
-    private func twoPath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.18, 0.28, in: rect))
-        path.addQuadCurve(to: pt(0.72, 0.24, in: rect), control: pt(0.42, 0.02, in: rect))
-        path.addQuadCurve(to: pt(0.26, 0.58, in: rect), control: pt(0.72, 0.46, in: rect))
-        path.addLine(to: pt(0.14, 0.84, in: rect))
-        path.addLine(to: pt(0.76, 0.84, in: rect))
-        return path
-    }
-
-    private func threePath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.16, 0.2, in: rect))
-        path.addQuadCurve(to: pt(0.66, 0.34, in: rect), control: pt(0.62, 0.02, in: rect))
-        path.addQuadCurve(to: pt(0.3, 0.48, in: rect), control: pt(0.6, 0.46, in: rect))
-        path.move(to: pt(0.3, 0.48, in: rect))
-        path.addQuadCurve(to: pt(0.68, 0.82, in: rect), control: pt(0.7, 0.5, in: rect))
-        path.addQuadCurve(to: pt(0.16, 0.8, in: rect), control: pt(0.46, 0.98, in: rect))
-        return path
-    }
-
-    private func fourPath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.66, 0.12, in: rect))
-        path.addLine(to: pt(0.66, 0.84, in: rect))
-        path.move(to: pt(0.18, 0.56, in: rect))
-        path.addLine(to: pt(0.76, 0.56, in: rect))
-        path.move(to: pt(0.18, 0.56, in: rect))
-        path.addLine(to: pt(0.5, 0.12, in: rect))
-        return path
-    }
-
-    private func fivePath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.72, 0.12, in: rect))
-        path.addLine(to: pt(0.24, 0.12, in: rect))
-        path.addLine(to: pt(0.22, 0.46, in: rect))
-        path.addQuadCurve(to: pt(0.7, 0.78, in: rect), control: pt(0.7, 0.44, in: rect))
-        path.addQuadCurve(to: pt(0.18, 0.78, in: rect), control: pt(0.46, 0.96, in: rect))
-        return path
-    }
-
-    private func sixPath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.68, 0.18, in: rect))
-        path.addQuadCurve(to: pt(0.24, 0.54, in: rect), control: pt(0.32, 0.08, in: rect))
-        path.addQuadCurve(to: pt(0.66, 0.82, in: rect), control: pt(0.18, 0.88, in: rect))
-        path.addQuadCurve(to: pt(0.42, 0.52, in: rect), control: pt(0.76, 0.56, in: rect))
-        path.addQuadCurve(to: pt(0.22, 0.62, in: rect), control: pt(0.28, 0.48, in: rect))
-        return path
-    }
-
-    private func sevenPath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.16, 0.16, in: rect))
-        path.addLine(to: pt(0.78, 0.16, in: rect))
-        path.addLine(to: pt(0.32, 0.86, in: rect))
-        return path
-    }
-
-    private func eightPath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.addEllipse(in: CGRect(
-            x: rect.minX + rect.width * 0.22,
-            y: rect.minY + rect.height * 0.08,
-            width: rect.width * 0.44,
-            height: rect.height * 0.34
-        ))
-        path.addEllipse(in: CGRect(
-            x: rect.minX + rect.width * 0.18,
-            y: rect.minY + rect.height * 0.42,
-            width: rect.width * 0.52,
-            height: rect.height * 0.4
-        ))
-        return path
-    }
-
-    private func ninePath(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: pt(0.64, 0.46, in: rect))
-        path.addQuadCurve(to: pt(0.26, 0.2, in: rect), control: pt(0.24, 0.48, in: rect))
-        path.addQuadCurve(to: pt(0.7, 0.22, in: rect), control: pt(0.48, 0.0, in: rect))
-        path.addLine(to: pt(0.62, 0.84, in: rect))
-        return path
-    }
-}
-
-private struct FlowWrapLayout: SwiftUI.Layout {
-    let lineSpacing: CGFloat
-    let itemSpacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .greatestFiniteMagnitude
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        var usedWidth: CGFloat = 0
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0 && x + size.width > maxWidth {
-                usedWidth = max(usedWidth, x - itemSpacing)
-                x = 0
-                y += lineHeight + lineSpacing
-                lineHeight = 0
-            }
-            lineHeight = max(lineHeight, size.height)
-            x += size.width + itemSpacing
-        }
-
-        usedWidth = max(usedWidth, x > 0 ? x - itemSpacing : 0)
-        return CGSize(width: min(maxWidth, usedWidth), height: y + lineHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
-        var y = bounds.minY
-        var lineHeight: CGFloat = 0
-        let maxWidth = bounds.width
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX && (x - bounds.minX) + size.width > maxWidth {
-                x = bounds.minX
-                y += lineHeight + lineSpacing
-                lineHeight = 0
-            }
-
-            subview.place(
-                at: CGPoint(x: x, y: y),
-                proposal: ProposedViewSize(width: size.width, height: size.height)
-            )
-            x += size.width + itemSpacing
-            lineHeight = max(lineHeight, size.height)
-        }
-    }
-}
-
 private struct InlineAddButton: View {
     let title: String
     let action: () -> Void
@@ -39828,36 +36191,5 @@ private struct InlineAddButton: View {
             )
         }
         .buttonStyle(.plain)
-    }
-}
-
-private enum OunjePalette {
-    static let background = Color(hex: "121212")
-    static let panel = Color(hex: "1E1E1E")
-    static let surface = Color(hex: "2E2E2E")
-    static let elevated = Color(hex: "383838")
-    static let navBar = Color(hex: "1B1D20")
-    static let accent = Color(hex: "1E5A3E")
-    static let accentDark = Color(hex: "123828")
-    static let softCream = Color(hex: "E9E0D2")
-    static let tabSelected = Color(hex: "2D6B4B")
-    static let secondaryText = Color(hex: "8A8A8A")
-    static let linkText = Color(hex: "B2FFFF")
-    static let stroke = Color.white.opacity(0.08)
-    static let primaryText = Color.white
-}
-
-private extension Color {
-    init(hex: String) {
-        let cleaned = hex.replacingOccurrences(of: "#", with: "")
-        let scanner = Scanner(string: cleaned)
-        var value: UInt64 = 0
-        scanner.scanHexInt64(&value)
-
-        let red = Double((value >> 16) & 0xFF) / 255
-        let green = Double((value >> 8) & 0xFF) / 255
-        let blue = Double(value & 0xFF) / 255
-
-        self.init(.sRGB, red: red, green: green, blue: blue, opacity: 1)
     }
 }

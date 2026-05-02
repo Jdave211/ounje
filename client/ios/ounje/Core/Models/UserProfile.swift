@@ -1208,17 +1208,8 @@ struct UserProfile: Codable, Hashable {
         cuisineCountries: [],
         favoriteFoods: ["Chicken bowls", "Pasta", "Rice bowls"],
         favoriteFlavors: ["Savory", "Spicy"],
-        mealPrepGoals: ["Speed", "Taste", "Variety"],
-        kitchenEquipment: [
-            "Microwave",
-            "Oven",
-            "Stovetop",
-            "Air fryer",
-            "Blender",
-            "Rice cooker",
-            "Instant Pot",
-            "Freezer"
-        ],
+        mealPrepGoals: [],
+        kitchenEquipment: [],
         budgetWindow: .weekly,
         budgetFlexibility: .slightlyFlexible,
         purchasingBehavior: .healthier,
@@ -1386,7 +1377,7 @@ struct UserProfile: Codable, Hashable {
     }
 
     var profileHeadline: String {
-        "\(primaryGoalDescriptor) \(cadenceDescriptor) prep profile"
+        "\(cadenceDescriptor.capitalized) prep profile"
     }
 
     var profileNarrative: String {
@@ -1405,13 +1396,8 @@ struct UserProfile: Codable, Hashable {
     var profileSignals: [String] {
         var signals: [String] = [
             cadence.title,
-            budgetFlexibility.title,
             orderingAutonomy.title
         ]
-
-        if let firstGoal = mealPrepGoals.first {
-            signals.insert(firstGoal, at: 1)
-        }
 
         if let firstCuisine = userFacingCuisineTitles.first {
             signals.append(firstCuisine)
@@ -1432,7 +1418,7 @@ struct UserProfile: Codable, Hashable {
         }
 
         notes.append("Meal cadence is set to \(cadenceScheduleSummary.lowercased()) with \(consumption.mealsPerWeek) planned meals per week.")
-        notes.append("Budget guardrails are set to \(budgetSummary.lowercased()) with \(budgetFlexibility.title.lowercased()).")
+        notes.append("Budget guardrails are set to \(budgetSummary.lowercased()).")
 
         return notes
     }
@@ -1462,10 +1448,6 @@ struct UserProfile: Codable, Hashable {
                 detail: tasteLines.joined(separator: "\n")
             ),
             MealPrepSummarySection(
-                title: "Meal-prep intent",
-                detail: joinedOrFallback(mealPrepGoals, fallback: "Balanced planning")
-            ),
-            MealPrepSummarySection(
                 title: "Household",
                 detail: [
                     householdSummary,
@@ -1478,13 +1460,8 @@ struct UserProfile: Codable, Hashable {
                 title: "Cadence and budget",
                 detail: [
                     cadenceScheduleSummary,
-                    budgetSummary,
-                    budgetFlexibility.subtitle
+                    budgetSummary
                 ].joined(separator: "\n")
-            ),
-            MealPrepSummarySection(
-                title: "Kitchen setup",
-                detail: joinedOrFallback(kitchenEquipment, fallback: "Basic kitchen only")
             ),
             MealPrepSummarySection(
                 title: "Ordering",
@@ -1599,14 +1576,46 @@ struct UserProfile: Codable, Hashable {
         favoriteFoods = try container.decodeIfPresent([String].self, forKey: .favoriteFoods) ?? []
         favoriteFlavors = try container.decodeIfPresent([String].self, forKey: .favoriteFlavors) ?? []
         neverIncludeFoods = try container.decodeIfPresent([String].self, forKey: .neverIncludeFoods) ?? []
-        mealPrepGoals = try container.decodeIfPresent([String].self, forKey: .mealPrepGoals) ?? UserProfile.starter.mealPrepGoals
+        mealPrepGoals = try container.decodeIfPresent([String].self, forKey: .mealPrepGoals) ?? []
         cooksForOthers = try container.decodeIfPresent(Bool.self, forKey: .cooksForOthers) ?? false
-        kitchenEquipment = try container.decodeIfPresent([String].self, forKey: .kitchenEquipment) ?? UserProfile.starter.kitchenEquipment
+        kitchenEquipment = try container.decodeIfPresent([String].self, forKey: .kitchenEquipment) ?? []
         budgetWindow = try container.decodeIfPresent(BudgetWindow.self, forKey: .budgetWindow) ?? .weekly
         budgetFlexibility = try container.decodeIfPresent(BudgetFlexibility.self, forKey: .budgetFlexibility) ?? .slightlyFlexible
         purchasingBehavior = try container.decodeIfPresent(PurchasingBehavior.self, forKey: .purchasingBehavior) ?? .healthier
         orderingAutonomy = try container.decodeIfPresent(OrderingAutonomyLevel.self, forKey: .orderingAutonomy) ?? .autoOrderWithinBudget
         pricingTier = try container.decodeIfPresent(OunjePricingTier.self, forKey: .pricingTier) ?? .plus
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(preferredName, forKey: .preferredName)
+        try container.encode(preferredCuisines, forKey: .preferredCuisines)
+        try container.encode(cadence, forKey: .cadence)
+        try container.encode(deliveryAnchorDay, forKey: .deliveryAnchorDay)
+        try container.encodeIfPresent(deliveryAnchorDate, forKey: .deliveryAnchorDate)
+        try container.encode(deliveryTimeMinutes, forKey: .deliveryTimeMinutes)
+        try container.encode(rotationPreference, forKey: .rotationPreference)
+        try container.encode(maxRepeatsPerCycle, forKey: .maxRepeatsPerCycle)
+        try container.encode(storage, forKey: .storage)
+        try container.encode(consumption, forKey: .consumption)
+        try container.encode(preferredProviders, forKey: .preferredProviders)
+        try container.encode(pantryStaples, forKey: .pantryStaples)
+        try container.encode(ownedMainShopItems, forKey: .ownedMainShopItems)
+        try container.encode(allergies, forKey: .allergies)
+        try container.encode(budgetPerCycle, forKey: .budgetPerCycle)
+        try container.encode(explorationLevel, forKey: .explorationLevel)
+        try container.encode(deliveryAddress, forKey: .deliveryAddress)
+        try container.encode(dietaryPatterns, forKey: .dietaryPatterns)
+        try container.encode(cuisineCountries, forKey: .cuisineCountries)
+        try container.encode(hardRestrictions, forKey: .hardRestrictions)
+        try container.encode(favoriteFoods, forKey: .favoriteFoods)
+        try container.encode(favoriteFlavors, forKey: .favoriteFlavors)
+        try container.encode(neverIncludeFoods, forKey: .neverIncludeFoods)
+        try container.encode(cooksForOthers, forKey: .cooksForOthers)
+        try container.encode(budgetWindow, forKey: .budgetWindow)
+        try container.encode(purchasingBehavior, forKey: .purchasingBehavior)
+        try container.encode(orderingAutonomy, forKey: .orderingAutonomy)
+        try container.encode(pricingTier, forKey: .pricingTier)
     }
 
     private func joinedOrFallback(_ values: [String], fallback: String) -> String {
@@ -1653,436 +1662,4 @@ struct AuthSession: Codable, Hashable {
     var signedInAt: Date
     var accessToken: String? = nil
     var refreshToken: String? = nil
-}
-
-struct RecipeIngredient: Codable, Hashable {
-    var name: String
-    var amount: Double
-    var unit: String
-    var estimatedUnitPrice: Double
-}
-
-struct StorageFootprint: Codable, Hashable {
-    var pantry: Int
-    var fridge: Int
-    var freezer: Int
-
-    static let low = StorageFootprint(pantry: 1, fridge: 1, freezer: 0)
-    static let medium = StorageFootprint(pantry: 2, fridge: 2, freezer: 1)
-    static let high = StorageFootprint(pantry: 2, fridge: 3, freezer: 3)
-}
-
-struct Recipe: Identifiable, Codable, Hashable {
-    var id: String
-    var title: String
-    var cuisine: CuisinePreference
-    var prepMinutes: Int
-    var servings: Int
-    var storageFootprint: StorageFootprint
-    var tags: [String]
-    var ingredients: [RecipeIngredient]
-    var cardImageURLString: String? = nil
-    var heroImageURLString: String? = nil
-    var source: String? = nil
-}
-
-enum PrepRegenerationFocus: String, CaseIterable, Hashable, Identifiable {
-    case balanced
-    case closerToFavorites
-    case moreVariety
-    case lessPrepTime
-    case tighterOverlap
-    case savedRecipeRefresh
-
-    var id: String { rawValue }
-
-    static var allCases: [PrepRegenerationFocus] {
-        [
-            .balanced,
-            .closerToFavorites,
-            .moreVariety,
-            .lessPrepTime,
-            .tighterOverlap
-        ]
-    }
-}
-
-struct PrepGenerationOptions: Hashable {
-    var focus: PrepRegenerationFocus = .balanced
-    var targetRecipeCount: Int? = nil
-    var userPrompt: String? = nil
-    var rerollNonce: String? = nil
-
-    static let standard = PrepGenerationOptions()
-}
-
-struct PrepRegenerationContext: Hashable {
-    var focus: PrepRegenerationFocus
-    var targetRecipeCount: Int? = nil
-    var currentRecipes: [Recipe]
-    var userPrompt: String? = nil
-    var rerollNonce: String? = nil
-}
-
-extension Recipe {
-    var isLegacySeedRecipe: Bool {
-        let looksLikeSeedID = id.range(of: #"^[a-z]{2}-\d{3}$"#, options: .regularExpression) != nil
-        return looksLikeSeedID && cardImageURLString == nil && heroImageURLString == nil
-    }
-
-    var isKnownSampleRecipe: Bool {
-        let normalizedTitle = title
-            .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let exactSamples: Set<String> = [
-            "chipotle chicken burrito bowls",
-            "bbq chicken sweet potato skillet",
-            "sheet pan lemon chicken"
-        ]
-
-        if exactSamples.contains(normalizedTitle) {
-            return true
-        }
-
-        if normalizedTitle.contains("roasted")
-            && normalizedTitle.contains("quinoa")
-            && normalizedTitle.contains("chicken")
-        {
-            return true
-        }
-
-        return false
-    }
-
-    var isImagePoor: Bool {
-        let card = cardImageURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let hero = heroImageURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return card.isEmpty && hero.isEmpty
-    }
-}
-
-struct InventoryItem: Identifiable, Codable, Hashable {
-    var id = UUID()
-    var name: String
-    var amount: Double
-    var unit: String
-}
-
-struct PlannedRecipe: Identifiable, Codable, Hashable {
-    var id: String { recipe.id }
-    var recipe: Recipe
-    var servings: Int
-    var carriedFromPreviousPlan: Bool
-}
-
-struct GroceryItemSource: Codable, Hashable {
-    var recipeID: String
-    var ingredientName: String
-    var unit: String
-}
-
-struct GroceryItem: Identifiable, Codable, Hashable {
-    var id: String {
-        "\(name.lowercased())::\(unit.lowercased())"
-    }
-
-    var name: String
-    var amount: Double
-    var unit: String
-    var estimatedPrice: Double
-    var sourceIngredients: [GroceryItemSource]
-
-    init(
-        name: String,
-        amount: Double,
-        unit: String,
-        estimatedPrice: Double,
-        sourceIngredients: [GroceryItemSource] = []
-    ) {
-        self.name = name
-        self.amount = amount
-        self.unit = unit
-        self.estimatedPrice = estimatedPrice
-        self.sourceIngredients = sourceIngredients
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case name
-        case amount
-        case unit
-        case estimatedPrice
-        case sourceIngredients
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        name = try container.decode(String.self, forKey: .name)
-        amount = try container.decode(Double.self, forKey: .amount)
-        unit = try container.decode(String.self, forKey: .unit)
-        estimatedPrice = try container.decode(Double.self, forKey: .estimatedPrice)
-        sourceIngredients = try container.decodeIfPresent([GroceryItemSource].self, forKey: .sourceIngredients) ?? []
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(name, forKey: .name)
-        try container.encode(amount, forKey: .amount)
-        try container.encode(unit, forKey: .unit)
-        try container.encode(estimatedPrice, forKey: .estimatedPrice)
-        try container.encode(sourceIngredients, forKey: .sourceIngredients)
-    }
-}
-
-struct ProviderCartReviewItem: Identifiable, Codable, Hashable {
-    var id: String {
-        [
-            requested.lowercased(),
-            status.lowercased(),
-            matched?.lowercased() ?? "",
-            matchedStore?.lowercased() ?? ""
-        ].joined(separator: "::")
-    }
-
-    var requested: String
-    var normalizedQuery: String?
-    var matched: String?
-    var quantityRequested: Int?
-    var quantityAdded: Int?
-    var quantity: Double?
-    var status: String
-    var matchedStore: String?
-    var decision: String?
-    var matchType: String?
-    var needsReview: Bool
-    var reason: String?
-    var substituteReason: String?
-    var refinedQuery: String?
-}
-
-struct ProviderQuote: Identifiable, Codable, Hashable {
-    var id: String { provider.rawValue }
-    var provider: ShoppingProvider
-    var subtotal: Double
-    var deliveryFee: Double
-    var estimatedTotal: Double
-    var etaDays: Int
-    var orderURL: URL
-    /// "live" = real API cart page, "deep_link" = browser search fallback
-    var providerStatus: ProviderQuoteStatus
-    /// Instacart shoppable links expire after ~24 hrs
-    var expiresAt: Date?
-    var selectedStore: ProviderStoreSelection?
-    var storeOptions: [ProviderStoreSelection]
-    var partialSuccess: Bool
-    var reviewItems: [ProviderCartReviewItem]
-
-    init(
-        provider: ShoppingProvider,
-        subtotal: Double,
-        deliveryFee: Double,
-        estimatedTotal: Double,
-        etaDays: Int,
-        orderURL: URL,
-        providerStatus: ProviderQuoteStatus = .deepLink,
-        expiresAt: Date? = nil,
-        selectedStore: ProviderStoreSelection? = nil,
-        storeOptions: [ProviderStoreSelection] = [],
-        partialSuccess: Bool = false,
-        reviewItems: [ProviderCartReviewItem] = []
-    ) {
-        self.provider = provider
-        self.subtotal = subtotal
-        self.deliveryFee = deliveryFee
-        self.estimatedTotal = estimatedTotal
-        self.etaDays = etaDays
-        self.orderURL = orderURL
-        self.providerStatus = providerStatus
-        self.expiresAt = expiresAt
-        self.selectedStore = selectedStore
-        self.storeOptions = storeOptions
-        self.partialSuccess = partialSuccess
-        self.reviewItems = reviewItems
-    }
-}
-
-struct ProviderStoreSelection: Codable, Hashable {
-    let storeName: String
-    let score: Double
-    let matchedCount: Int
-    let totalProbes: Int
-    let distanceKm: Double?
-    let deliveryText: String?
-    let sourceUrl: String?
-    let coverageRatio: Double?
-}
-
-enum ProviderQuoteStatus: String, Codable, Hashable {
-    case live       // real API — pre-filled cart
-    case deepLink   // browser search fallback
-}
-
-enum AgentStage: String, Codable, CaseIterable, Identifiable {
-    case interpretProfile
-    case curateRecipes
-    case handleRotation
-    case composeGroceries
-    case optimizeProvider
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .interpretProfile: return "Interpreted profile"
-        case .curateRecipes: return "Curated recipes"
-        case .handleRotation: return "Applied rotation strategy"
-        case .composeGroceries: return "Built grocery list"
-        case .optimizeProvider: return "Optimized provider"
-        }
-    }
-}
-
-struct PipelineDecision: Identifiable, Codable, Hashable {
-    var id: String {
-        "\(stage.rawValue)::\(summary)"
-    }
-
-    var stage: AgentStage
-    var summary: String
-}
-
-struct MealPlan: Identifiable, Codable, Hashable {
-    var id: UUID
-    var generatedAt: Date
-    var periodStart: Date
-    var periodEnd: Date
-    var cadence: MealCadence
-    var recipes: [PlannedRecipe]
-    var groceryItems: [GroceryItem]
-    var providerQuotes: [ProviderQuote]
-    var pipeline: [PipelineDecision]
-    var mainShopSnapshot: MainShopSnapshot? = nil
-    var recurringRecipeIDs: [String]? = nil
-
-    var bestQuote: ProviderQuote? {
-        providerQuotes.first
-    }
-}
-
-struct MainShopSnapshot: Codable, Hashable {
-    var signature: String
-    var generatedAt: Date
-    var items: [MainShopSnapshotItem]
-    var coverageSummary: MainShopCoverageSummary?
-}
-
-struct MainShopSnapshotItem: Identifiable, Codable, Hashable {
-    var id: String {
-        "\(name.lowercased())::\(quantityText.lowercased())::\(supportingText?.lowercased() ?? "")"
-    }
-
-    var name: String
-    var quantityText: String
-    var supportingText: String?
-    var imageURLString: String?
-    var estimatedPriceText: String?
-    var estimatedPriceValue: Double
-    var sectionKindRawValue: Int?
-    var removalKey: String?
-    var canonicalKey: String? = nil
-    var sourceIngredients: [GroceryItemSource]? = nil
-    var sourceEdgeIDs: [String]? = nil
-    var alternativeNames: [String]? = nil
-    var coverageState: String? = nil
-}
-
-struct MainShopCoverageSummary: Codable, Hashable {
-    var totalBaseUses: Int
-    var accountedBaseUses: Int
-    var uncoveredBaseLabels: [String]
-}
-
-struct MealPrepCompletedCycle: Identifiable, Codable, Hashable {
-    var id: UUID
-    var userID: String
-    var planID: UUID
-    var plan: MealPlan
-    var completedAt: String
-
-    var completedAtDate: Date? {
-        ISO8601DateFormatter().date(from: completedAt)
-    }
-
-    var sortDate: Date {
-        completedAtDate ?? plan.periodEnd
-    }
-}
-
-struct RecurringPrepRecipe: Identifiable, Codable, Hashable {
-    var userID: String
-    var recipeID: String
-    var recipe: Recipe
-    var isEnabled: Bool
-    var createdAt: String?
-    var updatedAt: String?
-
-    var id: String { recipeID }
-
-    var sortDate: Date {
-        let formatter = ISO8601DateFormatter()
-        return updatedAt.flatMap(formatter.date(from:))
-            ?? createdAt.flatMap(formatter.date(from:))
-            ?? .distantPast
-    }
-}
-
-struct MealPrepAutomationState: Codable, Hashable {
-    var userID: String
-    var lastEvaluatedAt: String?
-    var nextPlanningWindowAt: String?
-    var lastGeneratedForDeliveryAt: String?
-    var lastGeneratedPlanID: UUID?
-    var lastGeneratedReason: String?
-    var lastCartSyncForDeliveryAt: String?
-    var lastCartSyncPlanID: UUID?
-    var lastCartSignature: String?
-    var lastInstacartRunID: String?
-    var lastInstacartRunStatus: String?
-    var lastInstacartRetryQueuedForRunID: String?
-    var lastInstacartRetryQueuedAt: String?
-}
-
-struct PrepRecipeOverride: Identifiable, Codable, Hashable {
-    var id: String { recipe.id }
-    var recipe: Recipe
-    var servings: Int
-    var isIncludedInPrep: Bool
-
-    init(recipe: Recipe, servings: Int, isIncludedInPrep: Bool = true) {
-        self.recipe = recipe
-        self.servings = max(1, servings)
-        self.isIncludedInPrep = isIncludedInPrep
-    }
-}
-
-extension Date {
-    func adding(days: Int) -> Date {
-        Calendar.current.date(byAdding: .day, value: days, to: self) ?? self
-    }
-}
-
-extension Double {
-    func roundedString(_ decimals: Int = 1) -> String {
-        String(format: "%.\(decimals)f", self)
-    }
-
-    var asCurrency: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = 2
-        return formatter.string(from: NSNumber(value: self)) ?? "$0.00"
-    }
 }

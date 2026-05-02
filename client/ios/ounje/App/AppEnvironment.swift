@@ -15,6 +15,17 @@ private enum CachedAuthenticatedEntryRoute: String, Codable {
     case planner
 }
 
+private enum RemoteMealPrepCycleLoadState: Equatable {
+    case notRequested
+    case loaded(Int)
+    case empty
+    case unavailable
+
+    var confirmsNoUsablePrep: Bool {
+        self == .empty
+    }
+}
+
 @MainActor
 final class MealPlanningAppStore: ObservableObject {
     @Published var authSession: AuthSession?
@@ -77,6 +88,7 @@ final class MealPlanningAppStore: ObservableObject {
     private var cachedAuthenticatedEntryRoute: CachedAuthenticatedEntryRoute?
     private var hasPersistedOnboardingState = false
     private var pendingCartSyncIntent: PendingCartSyncIntent?
+    private var remoteMealPrepCycleLoadState: RemoteMealPrepCycleLoadState = .notRequested
     @Published private(set) var hiddenMainShopItemKeys: Set<String> = []
     private var hiddenMainShopPlanID: UUID?
     private var cachedLiveUserID: String?
@@ -180,6 +192,7 @@ final class MealPlanningAppStore: ObservableObject {
             loadPrepRecipeOverridesCache(for: session.userID)
             loadRecurringPrepRecipesCache(for: session.userID)
         }
+        remoteMealPrepCycleLoadState = .notRequested
         if let remoteProfile {
             profile = remoteProfile
             saveProfile()
@@ -449,7 +462,7 @@ final class MealPlanningAppStore: ObservableObject {
             hasResolvedInitialState = true
 
             isRefreshingPrepRecipes = true
-            let remotePlanCount = await loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            let remotePlanLoadState = await loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
             guard authStateRevision == bootstrapRevision else { return }
             if latestPlan?.recipes.isEmpty == false {
                 isRefreshingPrepRecipes = false
@@ -462,7 +475,7 @@ final class MealPlanningAppStore: ObservableObject {
             guard authStateRevision == bootstrapRevision else { return }
             await loadAutomationState(userID: session.userID, accessToken: session.accessToken)
             guard authStateRevision == bootstrapRevision else { return }
-            await repairRemotePrepStateIfNeeded(session: session, remotePlanCount: remotePlanCount)
+            await repairRemotePrepStateIfNeeded(session: session, remotePlanLoadState: remotePlanLoadState)
             guard authStateRevision == bootstrapRevision else { return }
             await reconcileLatestPlanWithPrepOverrides()
             guard authStateRevision == bootstrapRevision else { return }
@@ -704,7 +717,11 @@ final class MealPlanningAppStore: ObservableObject {
 
     func ensureFreshPlanIfNeeded() async {
         guard hasResolvedInitialState, isOnboarded, profile?.isPlanningReady == true else { return }
+        guard !isHydratingRemoteState else { return }
         if let latestPlan, !latestPlan.recipes.isEmpty {
+            return
+        }
+        guard remoteMealPrepCycleLoadState.confirmsNoUsablePrep else {
             return
         }
         await runAutomationPassIfNeeded(trigger: "ensure_fresh_plan")
@@ -948,14 +965,10 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func finalizeCompletedOnboarding(with profile: UserProfile, lastStep: Int) async {
         if let session = await freshTrackingSession() ?? authSession {
-            try? await SupabaseProfileStateService.shared.upsertProfile(
-                userID: session.userID,
-                email: session.email,
-                displayName: profile.trimmedPreferredName ?? session.displayName,
-                authProvider: session.provider,
-                onboarded: true,
-                lastOnboardingStep: lastStep,
-                profile: profile
+            await persistCompletedOnboardingState(
+                profile: profile,
+                lastStep: lastStep,
+                session: session
             )
         }
 
@@ -973,6 +986,33 @@ final class MealPlanningAppStore: ObservableObject {
         }
         await loadLatestInstacartRun()
         await loadLatestGroceryOrder()
+    }
+
+    private func persistCompletedOnboardingState(
+        profile: UserProfile,
+        lastStep: Int,
+        session: AuthSession
+    ) async {
+        for attempt in 1...2 {
+            do {
+                try await SupabaseProfileStateService.shared.upsertProfile(
+                    userID: session.userID,
+                    email: session.email,
+                    displayName: profile.trimmedPreferredName ?? session.displayName,
+                    authProvider: session.provider,
+                    onboarded: true,
+                    lastOnboardingStep: lastStep,
+                    profile: profile
+                )
+                return
+            } catch {
+                guard attempt == 1 else {
+                    print("[onboarding] failed to persist completed profile:", error.localizedDescription)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 450_000_000)
+            }
+        }
     }
 
     func removeRecipeFromLatestPlan(recipeID: String) async {
@@ -1045,6 +1085,7 @@ final class MealPlanningAppStore: ObservableObject {
         isRefreshingPrepRecipes = false
         pendingCartSyncIntent = nil
         prepRecipeOverrides = []
+        remoteMealPrepCycleLoadState = .notRequested
         mainShopSnapshotRefreshTask?.cancel()
         mainShopSnapshotRefreshTask = nil
         hiddenMainShopItemKeys = []
@@ -1109,8 +1150,8 @@ final class MealPlanningAppStore: ObservableObject {
         loadRecurringPrepRecipesCache(for: resolvedUserID)
 
         if shouldPurgePersistedPlan(planHistory) {
-            latestPlan = nil
-            planHistory = []
+            planHistory = usablePersistedPlans(from: planHistory)
+            latestPlan = planHistory.first
             saveHistory()
         }
 
@@ -1550,19 +1591,25 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     @discardableResult
-    private func loadMealPrepCycles(userID: String, accessToken: String?) async -> Int? {
-        guard !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    private func loadMealPrepCycles(userID: String, accessToken: String?) async -> RemoteMealPrepCycleLoadState {
+        guard !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            remoteMealPrepCycleLoadState = .unavailable
+            return .unavailable
+        }
 
         do {
             let fetched = try await SupabaseMealPrepCycleService.shared.fetchMealPrepCycles(
                 userID: userID,
                 accessToken: accessToken
             )
-            guard !fetched.isEmpty else { return 0 }
-            guard !shouldPurgePersistedPlan(fetched) else { return nil }
+            let usableFetched = usablePersistedPlans(from: fetched)
+            guard !usableFetched.isEmpty else {
+                remoteMealPrepCycleLoadState = .empty
+                return .empty
+            }
 
             let localLatestPlan = latestPlan
-            let remoteLatestPlan = fetched.first
+            let remoteLatestPlan = usableFetched.first
             let preferredLatestPlan: MealPlan? = {
                 guard let localLatestPlan, !localLatestPlan.recipes.isEmpty else {
                     return remoteLatestPlan
@@ -1579,19 +1626,22 @@ final class MealPlanningAppStore: ObservableObject {
                 latestPlan = preferredLatestPlan
                 planHistory = mergedMealPrepHistory(
                     preferredLatestPlan: preferredLatestPlan,
-                    remotePlans: fetched,
+                    remotePlans: usableFetched,
                     localPlans: planHistory
                 )
             } else {
                 latestPlan = remoteLatestPlan
-                planHistory = fetched
+                planHistory = usableFetched
             }
             saveHistory()
             await normalizeLatestPlanMainShopDataIfNeeded()
-            return fetched.count
+            let loadedState: RemoteMealPrepCycleLoadState = .loaded(usableFetched.count)
+            remoteMealPrepCycleLoadState = loadedState
+            return loadedState
         } catch {
             // Keep the local cache if remote sync fails.
-            return nil
+            remoteMealPrepCycleLoadState = .unavailable
+            return .unavailable
         }
     }
 
@@ -1631,8 +1681,8 @@ final class MealPlanningAppStore: ObservableObject {
                 .prefix(11)
     }
 
-    private func repairRemotePrepStateIfNeeded(session: AuthSession, remotePlanCount: Int?) async {
-        guard remotePlanCount == 0 else { return }
+    private func repairRemotePrepStateIfNeeded(session: AuthSession, remotePlanLoadState: RemoteMealPrepCycleLoadState) async {
+        guard remotePlanLoadState.confirmsNoUsablePrep else { return }
         guard let localPlan = latestPlan, !localPlan.recipes.isEmpty else { return }
 
         if latestPlanNeedsGroceryRebuild(localPlan) {
@@ -1977,7 +2027,7 @@ final class MealPlanningAppStore: ObservableObject {
         isRefreshingPrepRecipes = true
         defer { isRefreshingPrepRecipes = false }
 
-        let remotePlanCount = await loadMealPrepCycles(
+        let remotePlanLoadState = await loadMealPrepCycles(
             userID: session.userID,
             accessToken: session.accessToken
         )
@@ -1985,7 +2035,7 @@ final class MealPlanningAppStore: ObservableObject {
         await loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
         await loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
         await loadAutomationState(userID: session.userID, accessToken: session.accessToken)
-        await repairRemotePrepStateIfNeeded(session: session, remotePlanCount: remotePlanCount)
+        await repairRemotePrepStateIfNeeded(session: session, remotePlanLoadState: remotePlanLoadState)
         await reconcileLatestPlanWithPrepOverrides()
         await repairRemoteCartStateIfNeeded(session: session)
 
@@ -3598,9 +3648,18 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func shouldPurgePersistedPlan(_ history: [MealPlan]) -> Bool {
         history.contains(where: { plan in
-            plan.recipes.contains(where: { recipe in
-                recipe.recipe.isLegacySeedRecipe || recipe.recipe.isKnownSampleRecipe
-            })
+            !isUsablePersistedPlan(plan)
+        })
+    }
+
+    private func usablePersistedPlans(from history: [MealPlan]) -> [MealPlan] {
+        history.filter(isUsablePersistedPlan)
+    }
+
+    private func isUsablePersistedPlan(_ plan: MealPlan) -> Bool {
+        guard !plan.recipes.isEmpty else { return false }
+        return !plan.recipes.contains(where: { recipe in
+            recipe.recipe.isLegacySeedRecipe || recipe.recipe.isKnownSampleRecipe
         })
     }
 

@@ -14,13 +14,37 @@
 		A10000000000000000000002 /* SharedRecipeImportCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SharedRecipeImportCore.swift */; };
 		A10000000000000000000003 /* OunjeShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* OunjeShareViewController.swift */; };
 		A10000000000000000000004 /* OunjeShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* OunjeShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		C1D2E3F40100000100000001 /* OunjeAgenticApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000001 /* OunjeAgenticApp.swift */; };
-		C1D2E3F40100000100000002 /* MealPlanningAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000002 /* MealPlanningAppStore.swift */; };
-		C1D2E3F40100000100000003 /* MealPlanningAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000003 /* MealPlanningAgent.swift */; };
-		C1D2E3F40100000100000004 /* MealPlanningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000004 /* MealPlanningModels.swift */; };
+		A10000000000000000000005 /* SharedImportModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* SharedImportModels.swift */; };
+		A10000000000000000000006 /* SharedImportModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* SharedImportModels.swift */; };
+		C1D2E3F40100000100000002 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000002 /* AppEnvironment.swift */; };
+		C1D2E3F40100000100000003 /* PrepGenerationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000003 /* PrepGenerationService.swift */; };
+		C1D2E3F40100000100000004 /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000004 /* UserProfile.swift */; };
 		C1D2E3F40100000100000005 /* RecipeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000005 /* RecipeCatalog.swift */; };
 		C1D2E3F40100000100000006 /* GroceryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000006 /* GroceryService.swift */; };
 		C1D2E3F40100000100000009 /* MainShopSnapshotBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */; };
+		C1D2E3F4010000010000000A /* RecipeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4010000010000000A /* RecipeModels.swift */; };
+		C1D2E3F4010000010000000B /* GroceryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4010000010000000B /* GroceryModels.swift */; };
+		DAA00000000000000000001 /* OunjeDevelopmentServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000001 /* OunjeDevelopmentServer.swift */; };
+		DAA00000000000000000002 /* OunjePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000002 /* OunjePalette.swift */; };
+		DAA00000000000000000003 /* RecipeCardComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000003 /* RecipeCardComponents.swift */; };
+		DAA00000000000000000004 /* DiscoverModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000004 /* DiscoverModels.swift */; };
+		DAA00000000000000000005 /* DiscoverRecipesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000005 /* DiscoverRecipesViewModel.swift */; };
+		DAA00000000000000000006 /* DiscoverTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000006 /* DiscoverTabView.swift */; };
+		DAA00000000000000000007 /* OunjeLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000007 /* OunjeLayout.swift */; };
+		DAA00000000000000000008 /* OunjeMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000008 /* OunjeMotion.swift */; };
+		DAA00000000000000000009 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000009 /* Typography.swift */; };
+		DAA00000000000000000010 /* DiscoverRecipeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000010 /* DiscoverRecipeService.swift */; };
+		DAA00000000000000000011 /* DiscoverEnvironmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000011 /* DiscoverEnvironmentService.swift */; };
+		DAA00000000000000000012 /* OunjeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000012 /* OunjeApp.swift */; };
+		DAA00000000000000000013 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000013 /* AppRootView.swift */; };
+		DAA00000000000000000014 /* AppTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000014 /* AppTab.swift */; };
+		DAA00000000000000000015 /* SupabaseConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000015 /* SupabaseConfig.swift */; };
+		DAA00000000000000000016 /* ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000016 /* ToastCenter.swift */; };
+		DAA00000000000000000017 /* BackendEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000017 /* BackendEndpoint.swift */; };
+		DAA00000000000000000018 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000018 /* APIClient.swift */; };
+		DAA00000000000000000019 /* ImagePrefetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000019 /* ImagePrefetcher.swift */; };
+		DAA00000000000000000020 /* SavedRecipesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000020 /* SavedRecipesStore.swift */; };
+		DAA00000000000000000021 /* FeedbackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000021 /* FeedbackService.swift */; };
 		EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000002 /* Biro_Script_reduced.ttf */; };
 		EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000004 /* Slee_handwritting-Regular.otf */; };
 		F10000000000000000000001 /* shopping_cart.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000002 /* shopping_cart.lottie */; };
@@ -62,11 +86,12 @@
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = ounje/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = ounje/Info.plist; sourceTree = "<group>"; };
 		2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = ounje/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		A20000000000000000000001 /* SharedRecipeImportCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/SharedRecipeImportCore.swift; sourceTree = "<group>"; };
+		A20000000000000000000001 /* SharedRecipeImportCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/ShareExtensionShared/SharedRecipeImportCore.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* OunjeShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OunjeShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000004 /* OunjeShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OunjeShareViewController.swift; sourceTree = "<group>"; };
 		A20000000000000000000005 /* OunjeShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OunjeShareExtension.entitlements; sourceTree = "<group>"; };
+		A20000000000000000000006 /* SharedImportModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/ShareExtensionShared/SharedImportModels.swift; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = OunjeLaunch.storyboard; path = ounje/OunjeLaunch.storyboard; sourceTree = "<group>"; };
 		EA0100010000000000000002 /* Biro_Script_reduced.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = Biro_Script_reduced.ttf; path = ounje/Supporting/Fonts/Biro_Script_reduced.ttf; sourceTree = "<group>"; };
 		EA0100010000000000000004 /* Slee_handwritting-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "Slee_handwritting-Regular.otf"; path = "ounje/Supporting/Fonts/Slee_handwritting-Regular.otf"; sourceTree = "<group>"; };
@@ -77,13 +102,35 @@
 		F10000000000000000000004 /* rbutton.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = rbutton.riv; path = ounje/rbutton.riv; sourceTree = "<group>"; };
 		F10000000000000000000006 /* liquid.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = liquid.riv; path = ounje/liquid.riv; sourceTree = "<group>"; };
 		F10000000000000000000008 /* skills.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = skills.riv; path = ounje/skills.riv; sourceTree = "<group>"; };
-		F1A2B3C40100000100000001 /* OunjeAgenticApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/OunjeAgenticApp.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000002 /* MealPlanningAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAppStore.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000003 /* MealPlanningAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningAgent.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000004 /* MealPlanningModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MealPlanningModels.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000005 /* RecipeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/RecipeCatalog.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000006 /* GroceryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/GroceryService.swift; sourceTree = "<group>"; };
-		F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/MainShopSnapshotBuilder.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000002 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/AppEnvironment.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000003 /* PrepGenerationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Prep/PrepGenerationService.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000004 /* UserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Models/UserProfile.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000005 /* RecipeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Models/RecipeCatalog.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000006 /* GroceryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/GroceryService.swift; sourceTree = "<group>"; };
+		F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/MainShopSnapshotBuilder.swift; sourceTree = "<group>"; };
+		F1A2B3C4010000010000000A /* RecipeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Models/RecipeModels.swift; sourceTree = "<group>"; };
+		F1A2B3C4010000010000000B /* GroceryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Models/GroceryModels.swift; sourceTree = "<group>"; };
+		DAB00000000000000000001 /* OunjeDevelopmentServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/OunjeDevelopmentServer.swift; sourceTree = "<group>"; };
+		DAB00000000000000000002 /* OunjePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/DesignSystem/OunjePalette.swift; sourceTree = "<group>"; };
+		DAB00000000000000000003 /* RecipeCardComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/DesignSystem/Components/RecipeCardComponents.swift; sourceTree = "<group>"; };
+		DAB00000000000000000004 /* DiscoverModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/DiscoverModels.swift; sourceTree = "<group>"; };
+		DAB00000000000000000005 /* DiscoverRecipesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/DiscoverRecipesViewModel.swift; sourceTree = "<group>"; };
+		DAB00000000000000000006 /* DiscoverTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/Views/DiscoverTabView.swift; sourceTree = "<group>"; };
+		DAB00000000000000000007 /* OunjeLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/DesignSystem/OunjeLayout.swift; sourceTree = "<group>"; };
+		DAB00000000000000000008 /* OunjeMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/DesignSystem/OunjeMotion.swift; sourceTree = "<group>"; };
+		DAB00000000000000000009 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/DesignSystem/Typography.swift; sourceTree = "<group>"; };
+		DAB00000000000000000010 /* DiscoverRecipeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/DiscoverRecipeService.swift; sourceTree = "<group>"; };
+		DAB00000000000000000011 /* DiscoverEnvironmentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/DiscoverEnvironmentService.swift; sourceTree = "<group>"; };
+		DAB00000000000000000012 /* OunjeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/OunjeApp.swift; sourceTree = "<group>"; };
+		DAB00000000000000000013 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/AppRootView.swift; sourceTree = "<group>"; };
+		DAB00000000000000000014 /* AppTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/AppTab.swift; sourceTree = "<group>"; };
+		DAB00000000000000000015 /* SupabaseConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Networking/SupabaseConfig.swift; sourceTree = "<group>"; };
+		DAB00000000000000000016 /* ToastCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/ToastCenter.swift; sourceTree = "<group>"; };
+		DAB00000000000000000017 /* BackendEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Networking/BackendEndpoint.swift; sourceTree = "<group>"; };
+		DAB00000000000000000018 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Networking/APIClient.swift; sourceTree = "<group>"; };
+		DAB00000000000000000019 /* ImagePrefetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/ImagePrefetcher.swift; sourceTree = "<group>"; };
+		DAB00000000000000000020 /* SavedRecipesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cookbook/SavedRecipesStore.swift; sourceTree = "<group>"; };
+		DAB00000000000000000021 /* FeedbackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Settings/FeedbackService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -108,14 +155,10 @@
 		13B07FAE1A68108700A75B9A /* ounje */ = {
 			isa = PBXGroup;
 			children = (
-				F1A2B3C40100000100000001 /* OunjeAgenticApp.swift */,
-				F1A2B3C40100000100000002 /* MealPlanningAppStore.swift */,
-				F1A2B3C40100000100000003 /* MealPlanningAgent.swift */,
-				F1A2B3C40100000100000004 /* MealPlanningModels.swift */,
-				F1A2B3C40100000100000005 /* RecipeCatalog.swift */,
-				F1A2B3C40100000100000006 /* GroceryService.swift */,
-				F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */,
-				A20000000000000000000001 /* SharedRecipeImportCore.swift */,
+				DAC00000000000000000001 /* App */,
+				DAC00000000000000000002 /* Core */,
+				DAC00000000000000000005 /* Features */,
+				DAC00000000000000000027 /* ShareExtensionShared */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */,
@@ -131,6 +174,249 @@
 				F10000000000000000000008 /* skills.riv */,
 			);
 			name = ounje;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				DAB00000000000000000012 /* OunjeApp.swift */,
+				DAB00000000000000000013 /* AppRootView.swift */,
+				DAB00000000000000000014 /* AppTab.swift */,
+				F1A2B3C40100000100000002 /* AppEnvironment.swift */,
+				DAB00000000000000000001 /* OunjeDevelopmentServer.swift */,
+			);
+			name = App;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000002 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000003 /* DesignSystem */,
+				DAC00000000000000000007 /* Networking */,
+				DAC00000000000000000008 /* Models */,
+				DAC00000000000000000009 /* Services */,
+			);
+			name = Core;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000003 /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				DAB00000000000000000002 /* OunjePalette.swift */,
+				DAB00000000000000000007 /* OunjeLayout.swift */,
+				DAB00000000000000000008 /* OunjeMotion.swift */,
+				DAB00000000000000000009 /* Typography.swift */,
+				DAC00000000000000000004 /* Components */,
+			);
+			name = DesignSystem;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000004 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				DAB00000000000000000003 /* RecipeCardComponents.swift */,
+			);
+			name = Components;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000007 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				DAB00000000000000000018 /* APIClient.swift */,
+				DAB00000000000000000015 /* SupabaseConfig.swift */,
+				DAB00000000000000000017 /* BackendEndpoint.swift */,
+			);
+			name = Networking;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000008 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F1A2B3C40100000100000004 /* UserProfile.swift */,
+				F1A2B3C4010000010000000A /* RecipeModels.swift */,
+				F1A2B3C4010000010000000B /* GroceryModels.swift */,
+				F1A2B3C40100000100000005 /* RecipeCatalog.swift */,
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000009 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				DAB00000000000000000019 /* ImagePrefetcher.swift */,
+				DAB00000000000000000016 /* ToastCenter.swift */,
+			);
+			name = Services;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000005 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000011 /* Onboarding */,
+				DAC00000000000000000012 /* Prep */,
+				DAC00000000000000000006 /* Discover */,
+				DAC00000000000000000013 /* Cookbook */,
+				DAC00000000000000000014 /* Cart */,
+				DAC00000000000000000015 /* Profile */,
+				DAC00000000000000000016 /* Settings */,
+			);
+			name = Features;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000006 /* Discover */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000010 /* Views */,
+				DAC00000000000000000017 /* Components */,
+				DAB00000000000000000004 /* DiscoverModels.swift */,
+				DAB00000000000000000005 /* DiscoverRecipesViewModel.swift */,
+				DAB00000000000000000010 /* DiscoverRecipeService.swift */,
+				DAB00000000000000000011 /* DiscoverEnvironmentService.swift */,
+			);
+			name = Discover;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000010 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				DAB00000000000000000006 /* DiscoverTabView.swift */,
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000011 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000018 /* Views */,
+				DAC00000000000000000019 /* Models */,
+			);
+			name = Onboarding;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000012 /* Prep */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000020 /* Views */,
+				DAC00000000000000000021 /* Models */,
+				F1A2B3C40100000100000003 /* PrepGenerationService.swift */,
+			);
+			name = Prep;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000013 /* Cookbook */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000022 /* Views */,
+				DAB00000000000000000020 /* SavedRecipesStore.swift */,
+			);
+			name = Cookbook;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000014 /* Cart */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000023 /* Views */,
+				DAC00000000000000000024 /* Models */,
+				F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */,
+				F1A2B3C40100000100000006 /* GroceryService.swift */,
+			);
+			name = Cart;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000015 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000025 /* Views */,
+			);
+			name = Profile;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000016 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				DAC00000000000000000026 /* Views */,
+				DAB00000000000000000021 /* FeedbackService.swift */,
+			);
+			name = Settings;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000017 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Components;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000018 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000019 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000020 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000021 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000022 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000023 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000024 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Models;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000025 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000026 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAC00000000000000000027 /* ShareExtensionShared */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000006 /* SharedImportModels.swift */,
+				A20000000000000000000001 /* SharedRecipeImportCore.swift */,
+			);
+			name = ShareExtensionShared;
 			sourceTree = "<group>";
 		};
 		83CBB9F61A601CBA00E9B192 = {
@@ -175,6 +461,7 @@
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				A40000000000000000000001 /* Embed App Extensions */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
+				F10000000000000000000017 /* Generate DotLottiePlayer dSYM */,
 			);
 			buildRules = (
 			);
@@ -276,18 +563,68 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		F10000000000000000000017 /* Generate DotLottiePlayer dSYM */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/generate_dotlottie_dsym.sh",
+				"$(BUILT_PRODUCTS_DIR)/DotLottiePlayer.framework/DotLottiePlayer",
+				"$(BUILT_PRODUCTS_DIR)/DotLottiePlayer.framework/Info.plist",
+			);
+			name = "Generate DotLottiePlayer dSYM";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DWARF_DSYM_FOLDER_PATH)/DotLottiePlayer.framework.dSYM/Contents/Info.plist",
+				"$(DWARF_DSYM_FOLDER_PATH)/DotLottiePlayer.framework.dSYM/Contents/Resources/DWARF/DotLottiePlayer",
+				"$(DWARF_DSYM_FOLDER_PATH)/DotLottiePlayer.framework.dSYM/Contents/Resources/Relocations/aarch64/DotLottiePlayer.yml",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/generate_dotlottie_dsym.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		13B07F871A680F5B00A75B9A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C1D2E3F40100000100000001 /* OunjeAgenticApp.swift in Sources */,
-				C1D2E3F40100000100000002 /* MealPlanningAppStore.swift in Sources */,
-				C1D2E3F40100000100000003 /* MealPlanningAgent.swift in Sources */,
-				C1D2E3F40100000100000004 /* MealPlanningModels.swift in Sources */,
+				DAA00000000000000000012 /* OunjeApp.swift in Sources */,
+				DAA00000000000000000013 /* AppRootView.swift in Sources */,
+				DAA00000000000000000014 /* AppTab.swift in Sources */,
+				C1D2E3F40100000100000002 /* AppEnvironment.swift in Sources */,
+				C1D2E3F40100000100000003 /* PrepGenerationService.swift in Sources */,
+				C1D2E3F40100000100000004 /* UserProfile.swift in Sources */,
+				C1D2E3F4010000010000000A /* RecipeModels.swift in Sources */,
+				C1D2E3F4010000010000000B /* GroceryModels.swift in Sources */,
 				C1D2E3F40100000100000005 /* RecipeCatalog.swift in Sources */,
 				C1D2E3F40100000100000006 /* GroceryService.swift in Sources */,
 				C1D2E3F40100000100000009 /* MainShopSnapshotBuilder.swift in Sources */,
+				DAA00000000000000000001 /* OunjeDevelopmentServer.swift in Sources */,
+				DAA00000000000000000018 /* APIClient.swift in Sources */,
+				DAA00000000000000000015 /* SupabaseConfig.swift in Sources */,
+				DAA00000000000000000017 /* BackendEndpoint.swift in Sources */,
+				DAA00000000000000000019 /* ImagePrefetcher.swift in Sources */,
+				DAA00000000000000000016 /* ToastCenter.swift in Sources */,
+				DAA00000000000000000020 /* SavedRecipesStore.swift in Sources */,
+				DAA00000000000000000021 /* FeedbackService.swift in Sources */,
+				DAA00000000000000000002 /* OunjePalette.swift in Sources */,
+				DAA00000000000000000007 /* OunjeLayout.swift in Sources */,
+				DAA00000000000000000008 /* OunjeMotion.swift in Sources */,
+				DAA00000000000000000009 /* Typography.swift in Sources */,
+				DAA00000000000000000003 /* RecipeCardComponents.swift in Sources */,
+				DAA00000000000000000004 /* DiscoverModels.swift in Sources */,
+				DAA00000000000000000005 /* DiscoverRecipesViewModel.swift in Sources */,
+				DAA00000000000000000010 /* DiscoverRecipeService.swift in Sources */,
+				DAA00000000000000000011 /* DiscoverEnvironmentService.swift in Sources */,
+				DAA00000000000000000006 /* DiscoverTabView.swift in Sources */,
+				A10000000000000000000005 /* SharedImportModels.swift in Sources */,
 				A10000000000000000000001 /* SharedRecipeImportCore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -296,6 +633,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000006 /* SharedImportModels.swift in Sources */,
 				A10000000000000000000002 /* SharedRecipeImportCore.swift in Sources */,
 				A10000000000000000000003 /* OunjeShareViewController.swift in Sources */,
 			);
@@ -319,7 +657,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ounje/ounje.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = ounje/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ounje;
@@ -347,7 +685,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ounje/ounje.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = ounje/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ounje;
@@ -487,7 +825,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = U8FPZXV6X6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
@@ -515,7 +853,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = U8FPZXV6X6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OunjeShareExtension/Info.plist;

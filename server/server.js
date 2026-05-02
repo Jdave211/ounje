@@ -4,6 +4,9 @@ import axios from "axios";
 import dotenv from "dotenv";
 import cors from "cors";
 import { createClient } from "@supabase/supabase-js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import api_router from "./api/index.js";
 import { runRecipeIngestionWorkerBatch } from "./lib/recipe-ingestion.js";
@@ -14,6 +17,9 @@ dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(cors());
+
+const serverDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(serverDir, "..");
 
 const SUPABASE_URL = String(process.env.SUPABASE_URL ?? "").trim();
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
@@ -37,6 +43,101 @@ function getHealthSupabaseClient() {
 }
 
 app.use(api_router);
+function escapeHTML(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderLegalMarkdown(markdown) {
+  const lines = String(markdown ?? "").split(/\r?\n/);
+  const html = [];
+  let inList = false;
+
+  function closeList() {
+    if (inList) {
+      html.push("</ul>");
+      inList = false;
+    }
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      closeList();
+      continue;
+    }
+
+    if (line.startsWith("# ")) {
+      closeList();
+      html.push(`<h1>${escapeHTML(line.slice(2))}</h1>`);
+    } else if (line.startsWith("## ")) {
+      closeList();
+      html.push(`<h2>${escapeHTML(line.slice(3))}</h2>`);
+    } else if (line.startsWith("### ")) {
+      closeList();
+      html.push(`<h3>${escapeHTML(line.slice(4))}</h3>`);
+    } else if (line.startsWith("- ")) {
+      if (!inList) {
+        html.push("<ul>");
+        inList = true;
+      }
+      html.push(`<li>${escapeHTML(line.slice(2))}</li>`);
+    } else {
+      closeList();
+      html.push(`<p>${escapeHTML(line).replaceAll("  ", "<br>")}</p>`);
+    }
+  }
+
+  closeList();
+  return html.join("\n");
+}
+
+function sendLegalPage(res, title, markdownPath) {
+  const fallback = `# ${title}\n\nContact thisisounje@gmail.com for support.`;
+  const markdown = fs.existsSync(markdownPath)
+    ? fs.readFileSync(markdownPath, "utf8")
+    : fallback;
+
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHTML(title)}</title>
+  <style>
+    :root { color-scheme: dark; background: #121212; color: #f6f2ec; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.58; }
+    main { max-width: 760px; margin: 0 auto; padding: 40px 20px 72px; }
+    h1 { font-size: 34px; line-height: 1.05; margin: 0 0 16px; }
+    h2 { font-size: 21px; margin: 34px 0 10px; }
+    h3 { font-size: 17px; margin: 24px 0 8px; }
+    p, li { color: #d7d1c9; font-size: 15px; }
+    ul { padding-left: 22px; }
+    a { color: #63d471; }
+  </style>
+</head>
+<body>
+  <main>${renderLegalMarkdown(markdown)}</main>
+</body>
+</html>`);
+}
+
+app.get(["/privacy", "/privacy-policy"], (_req, res) => {
+  sendLegalPage(res, "Ounje Privacy Policy", path.join(repoRoot, "docs/legal/privacy-policy.md"));
+});
+
+app.get(["/terms", "/terms-of-service"], (_req, res) => {
+  sendLegalPage(res, "Ounje Terms of Service", path.join(repoRoot, "docs/legal/terms-of-service.md"));
+});
+
+app.get("/support", (_req, res) => {
+  sendLegalPage(res, "Ounje Support", path.join(repoRoot, "docs/legal/support.md"));
+});
+
 app.get("/", (req, res) => {
   res.json({ message: "Hello from server" });
 });

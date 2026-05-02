@@ -780,6 +780,15 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       embedTextCached(richSearchText, "text-embedding-3-large"),
     ]);
 
+    const lexicalAnchorPromise = fetchLexicalAnchorRecipes({
+      query: trimmedQuery,
+      parsedQuery,
+      limit: Math.max(requestedWindowLimit, 24),
+    }).catch((error) => {
+      console.warn("[recipe/discover] lexical anchors failed:", error.message);
+      return [];
+    });
+
     const basicMatchesPromise = withTimeout(callRecipeRpc("match_recipes_basic", {
       query_embedding: toPgVector(hybridEmbedding),
       match_count: Math.max(requestedWindowLimit * 8, 80),
@@ -815,10 +824,11 @@ recipe_router.post("/recipe/discover", async (req, res) => {
           return [];
         });
 
-    const [basicMatches, hybridMatches, richMatches] = await Promise.all([
+    const [basicMatches, hybridMatches, richMatches, lexicalAnchorRecipes] = await Promise.all([
       basicMatchesPromise,
       hybridMatchesPromise,
       richMatchesPromise,
+      lexicalAnchorPromise,
     ]);
 
     const rankedIds = fuseRankedIds([basicMatches, hybridMatches, richMatches], candidateLimit);
@@ -826,7 +836,10 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       ? await fetchSearchRecipesByIds(rankedIds)
       : [];
 
-    recipes = dedupeRecipesById(recipes);
+    recipes = dedupeRecipesById([
+      ...lexicalAnchorRecipes,
+      ...recipes,
+    ]);
 
     recipes = applySearchFilterGate(recipes, parsedQuery, filter);
     recipes = applyIntentHardConstraints(recipes, parsedQuery);
@@ -841,6 +854,11 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       feedContext,
       limit: requestedWindowLimit,
     });
+    recipes = dedupeRecipesById([
+      ...lexicalAnchorRecipes,
+      ...recipes,
+    ]).slice(0, requestedWindowLimit);
+    const preAdjudicationRecipes = recipes;
 
     recipes = await adjudicateDiscoverSearchResultsWithLLM({
       recipes,
@@ -851,6 +869,13 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       llmIntent,
       limit: requestedLimit,
       offset: requestedOffset,
+    });
+    recipes = completeSearchResultsFromCandidatePool({
+      selectedRecipes: recipes,
+      candidateRecipes: preAdjudicationRecipes,
+      query: trimmedQuery,
+      parsedQuery,
+      limit: requestedWindowLimit,
     });
     recipes = applyPresetHardConstraints(recipes, filter);
 
@@ -880,7 +905,9 @@ recipe_router.post("/recipe/discover", async (req, res) => {
     const payload = pageDiscoverResults({
       recipes,
       filters: deriveSearchFilters(recipes),
-      rankingMode: "hybrid_search_embeddings_llm_adjudicated",
+      rankingMode: lexicalAnchorRecipes.length
+        ? "hybrid_search_embeddings_lexical_anchors_llm_adjudicated"
+        : "hybrid_search_embeddings_llm_adjudicated",
     }, requestedOffset, requestedLimit);
     searchResponseCache.set(
       buildDiscoverSearchCacheKey({
@@ -1325,6 +1352,15 @@ async function buildDiscoverSearchRecipes({
     richEmbeddingPromise,
   ]);
 
+  const lexicalAnchorPromise = fetchLexicalAnchorRecipes({
+    query: trimmedQuery,
+    parsedQuery,
+    limit: Math.max(limit, 24),
+  }).catch((error) => {
+    console.warn("[recipe/prep-candidates] focus-search lexical anchors failed:", error.message);
+    return [];
+  });
+
   const basicMatchesPromise = withTimeout(callRecipeRpc("match_recipes_basic", {
     query_embedding: toPgVector(hybridEmbedding),
     match_count: Math.max(limit * 4, 48),
@@ -1360,10 +1396,11 @@ async function buildDiscoverSearchRecipes({
         return [];
       });
 
-  const [basicMatches, hybridMatches, richMatches] = await Promise.all([
+  const [basicMatches, hybridMatches, richMatches, lexicalAnchorRecipes] = await Promise.all([
     basicMatchesPromise,
     hybridMatchesPromise,
     richMatchesPromise,
+    lexicalAnchorPromise,
   ]);
 
   const rankedIds = fuseRankedIds([basicMatches, hybridMatches, richMatches], candidateLimit);
@@ -1371,7 +1408,10 @@ async function buildDiscoverSearchRecipes({
     ? await fetchSearchRecipesByIds(rankedIds)
     : [];
 
-  recipes = dedupeRecipesById(recipes);
+  recipes = dedupeRecipesById([
+    ...lexicalAnchorRecipes,
+    ...recipes,
+  ]);
 
   recipes = applySearchFilterGate(recipes, parsedQuery, filter);
   recipes = applyIntentHardConstraints(recipes, parsedQuery);
@@ -1387,6 +1427,10 @@ async function buildDiscoverSearchRecipes({
     feedContext,
     limit,
   });
+  recipes = dedupeRecipesById([
+    ...lexicalAnchorRecipes,
+    ...recipes,
+  ]).slice(0, limit);
   recipes = await adjudicateDiscoverSearchResultsWithLLM({
     recipes,
     profile,
@@ -2857,7 +2901,9 @@ function buildDiscoverQueryContext({ profile, filter, query, llmIntent = null })
   const explicitFilter = normalizeFilterType(filter);
   const parsedQuery = parseDiscoverSearchQuery(query, llmIntent);
   parsedQuery.selectedFilter = filter;
-  const resolvedFilter = explicitFilter ?? parsedQuery.filterType;
+  const queryIntentFilter = parsedQuery.filterType;
+  const retrievalFilter = explicitFilter;
+  const displayFilter = explicitFilter ?? queryIntentFilter;
   const flavorBoostTerms = expandFlavorTerms([
     ...parsedQuery.mustIncludeTerms,
     ...parsedQuery.lexicalTerms,
@@ -2867,7 +2913,9 @@ function buildDiscoverQueryContext({ profile, filter, query, llmIntent = null })
   const primarySegments = [
     "Discover recipes for the Ounje home feed.",
     cuisines ? `Preferred cuisines: ${cuisines}.` : null,
-    resolvedFilter ? `Prioritize ${resolvedFilter} recipes.` : "Prioritize broadly appealing meals.",
+    explicitFilter ? `Restrict to ${explicitFilter} recipes.` : null,
+    !explicitFilter && queryIntentFilter ? `Prioritize ${queryIntentFilter}-style recipes without excluding mislabeled matches.` : null,
+    !displayFilter ? "Prioritize broadly appealing meals." : null,
     favoriteFoods ? `Lean toward foods like ${favoriteFoods}.` : null,
   ].filter(Boolean);
 
@@ -2879,7 +2927,8 @@ function buildDiscoverQueryContext({ profile, filter, query, llmIntent = null })
     goals ? `Meal-prep goals: ${goals}.` : null,
     restrictions ? `Avoid: ${restrictions}.` : null,
     `Exploration level: ${exploration}.`,
-    resolvedFilter ? `Hard focus on ${resolvedFilter}.` : null,
+    explicitFilter ? `Hard focus on ${explicitFilter}.` : null,
+    !explicitFilter && queryIntentFilter ? `Soft query intent: ${queryIntentFilter}. Retrieve globally first because recipe type metadata can be noisy.` : null,
   ].filter(Boolean);
 
   const semanticSegments = [
@@ -2910,7 +2959,8 @@ function buildDiscoverQueryContext({ profile, filter, query, llmIntent = null })
     flavorBoostTerms.length ? `Flavor pairings to consider: ${flavorBoostTerms.join(", ")}.` : null,
     dietaryPatterns ? `Dietary patterns: ${dietaryPatterns}.` : null,
     goals ? `Meal prep goals: ${goals}.` : null,
-    resolvedFilter ? `Restrict to ${resolvedFilter}.` : null,
+    explicitFilter ? `Restrict to ${explicitFilter}.` : null,
+    !explicitFilter && queryIntentFilter ? `User intent leans ${queryIntentFilter}; keep retrieval broad and rank after search.` : null,
     parsedQuery.maxCookMinutes
       ? `Keep cook time under ${parsedQuery.maxCookMinutes} minutes.`
       : null,
@@ -2920,7 +2970,8 @@ function buildDiscoverQueryContext({ profile, filter, query, llmIntent = null })
     llmIntent?.adjudicationNotes ? `Ranking notes: ${llmIntent.adjudicationNotes}.` : null,
     parsedQuery.userIntent ? `Intent: ${parsedQuery.userIntent}.` : null,
     parsedQuery.semanticQuery ? `Search intent: ${parsedQuery.semanticQuery}.` : null,
-    resolvedFilter ? `Hard dietary/type constraint: ${resolvedFilter}.` : null,
+    explicitFilter ? `Hard dietary/type constraint: ${explicitFilter}.` : null,
+    !explicitFilter && queryIntentFilter ? `Soft type cue: ${queryIntentFilter}; do not exclude candidates solely because stored recipe_type differs.` : null,
     parsedQuery.maxCookMinutes
       ? `Hard time constraint: at most ${parsedQuery.maxCookMinutes} minutes.`
       : null,
@@ -2959,7 +3010,7 @@ function buildDiscoverQueryContext({ profile, filter, query, llmIntent = null })
   return {
     primaryText: primarySegments.join(" "),
     secondaryText: secondarySegments.join(" "),
-    filterType: resolvedFilter,
+    filterType: retrievalFilter,
     semanticQuery: semanticSegments.join(" "),
     lexicalQuery: llmIntent?.hybridQuery || parsedQuery.lexicalQuery,
     richSearchText: richSearchSegments.join(" "),
@@ -3678,9 +3729,128 @@ function buildLexicalSearchTerms(query) {
   ].map(safeLexicalTerm), 8);
 }
 
+const SEARCH_ANCHOR_STOPWORDS = new Set([
+  ...STOPWORDS,
+  "breakfast",
+  "lunch",
+  "dinner",
+  "dessert",
+  "desserts",
+  "sweet",
+  "sweets",
+  "snack",
+  "snacks",
+  "drink",
+  "drinks",
+  "beverage",
+  "beverages",
+  "hot",
+  "cold",
+  "iced",
+  "frozen",
+  "warm",
+  "quick",
+  "easy",
+  "healthy",
+  "light",
+]);
+
+function buildLexicalAnchorTerms(query, parsedQuery = null) {
+  const terms = buildLexicalSearchTerms(query);
+  return uniqueStrings(
+    terms
+      .map((term) => {
+        const normalizedTokens = String(term ?? "")
+          .split(/\s+/)
+          .map((token) => normalizeQueryTerm(token))
+          .filter(Boolean)
+          .filter((token) => !SEARCH_ANCHOR_STOPWORDS.has(token));
+        return normalizedTokens.join(" ");
+      })
+      .filter((term) => term.length >= 3),
+    5
+  );
+}
+
+async function fetchLexicalAnchorRecipes({ query, parsedQuery = null, limit = 24 }) {
+  const terms = buildLexicalAnchorTerms(query, parsedQuery);
+  if (!terms.length) return [];
+
+  const fetchLimit = Math.max(1, Math.min(Number(limit) || 24, 48));
+  const fetched = (await Promise.all(
+    terms.slice(0, 4).map((term) => fetchRecipesByFullTextTerm(term, fetchLimit).catch((error) => {
+      console.warn("[recipe/discover] lexical anchor term failed:", term, error.message);
+      return [];
+    }))
+  )).flat();
+
+  return dedupeRecipesById(fetched)
+    .filter((recipe) => terms.some((term) => containsSearchTerm(lexicalRecipeSurface(recipe), term)))
+    .sort((left, right) => scoreLexicalSearchRecipe(right, terms, query) - scoreLexicalSearchRecipe(left, terms, query))
+    .slice(0, fetchLimit);
+}
+
+function completeSearchResultsFromCandidatePool({
+  selectedRecipes,
+  candidateRecipes,
+  query,
+  parsedQuery = null,
+  limit = 30,
+}) {
+  const selected = dedupeRecipesById(selectedRecipes ?? []);
+  const candidates = dedupeRecipesById(candidateRecipes ?? []);
+  const safeLimit = Math.max(1, Number(limit) || 30);
+  if (!candidates.length) return selected.slice(0, safeLimit);
+
+  const anchorTerms = buildLexicalAnchorTerms(query, parsedQuery);
+  if (!anchorTerms.length) {
+    return dedupeRecipesById([...selected, ...candidates]).slice(0, safeLimit);
+  }
+
+  const matchesAnchor = (recipe) => anchorTerms.some((term) => containsSearchTerm(lexicalRecipeSurface(recipe), term));
+  const selectedMatches = selected.filter(matchesAnchor);
+  const candidateMatches = candidates.filter(matchesAnchor);
+  const minimumConcreteSet = Math.min(safeLimit, 4);
+
+  if (candidateMatches.length >= minimumConcreteSet || selectedMatches.length > 0) {
+    return dedupeRecipesById([
+      ...selectedMatches,
+      ...candidateMatches,
+    ]).slice(0, safeLimit);
+  }
+
+  return dedupeRecipesById([...selected, ...candidates]).slice(0, safeLimit);
+}
+
+async function fetchRecipesByFullTextTerm(term, limit = 48) {
+  const safeTerm = safeLexicalTerm(term);
+  if (!safeTerm) return [];
+
+  const select = CANONICAL_RECIPE_SELECT_FIELDS.join(",");
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 48, 120));
+  const url = `${SUPABASE_URL}/rest/v1/recipes?select=${encodeURIComponent(select)}&fts_doc=plfts.${encodeURIComponent(safeTerm)}&limit=${safeLimit}`;
+
+  try {
+    return await fetchRecipesFromUrl(url);
+  } catch (error) {
+    if (!isMissingRecipeColumnError(error.message)) {
+      throw error;
+    }
+
+    const fallbackSelect = LEGACY_RECIPE_SELECT_FIELDS.join(",");
+    const fallbackUrl = `${SUPABASE_URL}/rest/v1/recipes?select=${encodeURIComponent(fallbackSelect)}&fts_doc=plfts.${encodeURIComponent(safeTerm)}&limit=${safeLimit}`;
+    return fetchRecipesFromUrl(fallbackUrl);
+  }
+}
+
 async function fetchRecipesByLexicalTerm(term, limit = 48) {
   const safeTerm = safeLexicalTerm(term);
   if (!safeTerm) return [];
+
+  const fullTextMatches = await fetchRecipesByFullTextTerm(safeTerm, limit).catch(() => []);
+  if (fullTextMatches.length) {
+    return fullTextMatches;
+  }
 
   const select = CANONICAL_RECIPE_SELECT_FIELDS.join(",");
   const orClause = [
