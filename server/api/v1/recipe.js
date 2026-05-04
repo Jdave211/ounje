@@ -1,5 +1,5 @@
 import express from "express";
-import OpenAI from "openai";
+import crypto from "node:crypto";
 import dotenv from "dotenv";
 import ytdl from "youtube-dl-exec";
 import { expandFlavorTerms, scoreFlavorAlignment, suggestAdaptationPairings, extractIngredientSignals } from "../../lib/flavorgraph.js";
@@ -10,10 +10,15 @@ import {
   readRecipeModelRegistry,
   refreshRecipeFineTuneStatus,
 } from "../../lib/recipe-model-registry.js";
-import { normalizeRecipeDetail as canonicalizeRecipeDetail } from "../../lib/recipe-detail-utils.js";
+import {
+  normalizeRecipeDetail as canonicalizeRecipeDetail,
+  parseIngredientObjects,
+  parseInstructionSteps as parseStructuredInstructionSteps,
+} from "../../lib/recipe-detail-utils.js";
 import {
   fetchRecipeIngestionJob,
   listCompletedRecipeImportItems,
+  persistNormalizedRecipe,
   processRecipeIngestionJob,
   queueRecipeIngestion,
 } from "../../lib/recipe-ingestion.js";
@@ -24,6 +29,7 @@ import {
   getDiscoverPresetTitles,
   recipeHasDiscoverBracket,
 } from "../../lib/discover-brackets.js";
+import { annotateAIUsageContext, createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
 
 const recipe_router = express.Router();
 
@@ -35,7 +41,7 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 const IFRAMELY_API_KEY = process.env.IFRAMELY_API_KEY ?? "";
 const IFRAMELY_OEMBED_ENDPOINT = process.env.IFRAMELY_OEMBED_ENDPOINT ?? "https://iframe.ly/api/oembed";
 
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-api" }) : null;
 
 const SEARCH_RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000;
 const DISCOVER_FEED_CACHE_TTL_MS = 2 * 60 * 1000;
@@ -2278,27 +2284,144 @@ function applyPresetCategoryGate(recipes, filter = "All") {
   return (recipes ?? []).filter((recipe) => passesPresetCategoryGate(recipe, filter));
 }
 
+async function fetchRecipeDetailForAdaptation(recipeId, fallbackRecipe = null) {
+  const baseRecipe = fallbackRecipe ?? (recipeId ? await fetchRecipeById(recipeId) : null);
+  if (!baseRecipe) return null;
+
+  const normalizedID = String(baseRecipe.id ?? recipeId ?? "").trim();
+  const [recipeIngredients, recipeSteps] = normalizedID
+    ? await Promise.all([
+        fetchRecipeIngredientRows(normalizedID),
+        fetchRecipeStepRows(normalizedID),
+      ])
+    : [[], []];
+  const stepIngredients = recipeSteps.length
+    ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id))
+    : [];
+
+  return canonicalizeRecipeDetail(baseRecipe, {
+    recipeIngredients,
+    recipeSteps,
+    stepIngredients,
+  });
+}
+
+function adaptedIngredientRows(lines = []) {
+  return (Array.isArray(lines) ? lines : [])
+    .flatMap((line) => parseIngredientObjects(line))
+    .filter(Boolean)
+    .map((ingredient, index) => ({
+      display_name: ingredient.display_name ?? ingredient.name,
+      quantity_text: ingredient.quantity_text ?? ([ingredient.quantity != null ? String(ingredient.quantity) : null, ingredient.unit].filter(Boolean).join(" ").trim() || null),
+      image_url: null,
+      sort_order: index + 1,
+    }))
+    .filter((ingredient) => ingredient.display_name);
+}
+
+function buildAdaptedRecipeCandidate({ baseDetail, adaptedRecipe, adaptationPrompt }) {
+  const ingredients = adaptedIngredientRows(adaptedRecipe.ingredients);
+  const steps = parseStructuredInstructionSteps(adaptedRecipe.steps ?? [], ingredients).map((step, index) => ({
+    number: step.number ?? index + 1,
+    text: step.text,
+    tip_text: step.tip_text ?? null,
+    ingredients: step.ingredients ?? [],
+  }));
+  const cookMinutes = parseFirstInteger(adaptedRecipe.cook_time_text) ?? baseDetail.cook_time_minutes ?? null;
+
+  return {
+    title: String(adaptedRecipe.title ?? baseDetail.title ?? "").trim(),
+    description: String(adaptedRecipe.summary ?? baseDetail.description ?? "").trim() || null,
+    author_name: "Ounje",
+    author_handle: null,
+    author_url: null,
+    source: "Ounje adaptation",
+    source_platform: "Ounje",
+    category: baseDetail.category ?? null,
+    subcategory: baseDetail.subcategory ?? null,
+    recipe_type: baseDetail.recipe_type ?? null,
+    skill_level: baseDetail.skill_level ?? null,
+    cook_time_text: String(adaptedRecipe.cook_time_text ?? baseDetail.cook_time_text ?? "").trim() || null,
+    servings_text: baseDetail.servings_text ?? null,
+    serving_size_text: baseDetail.serving_size_text ?? null,
+    daily_diet_text: baseDetail.daily_diet_text ?? null,
+    est_cost_text: baseDetail.est_cost_text ?? null,
+    est_calories_text: baseDetail.est_calories_text ?? null,
+    carbs_text: baseDetail.carbs_text ?? null,
+    protein_text: baseDetail.protein_text ?? null,
+    fats_text: baseDetail.fats_text ?? null,
+    calories_kcal: baseDetail.calories_kcal ?? null,
+    protein_g: baseDetail.protein_g ?? null,
+    carbs_g: baseDetail.carbs_g ?? null,
+    fat_g: baseDetail.fat_g ?? null,
+    prep_time_minutes: baseDetail.prep_time_minutes ?? null,
+    cook_time_minutes: cookMinutes,
+    hero_image_url: baseDetail.hero_image_url ?? baseDetail.discover_card_image_url ?? null,
+    discover_card_image_url: baseDetail.discover_card_image_url ?? baseDetail.hero_image_url ?? null,
+    recipe_url: null,
+    original_recipe_url: baseDetail.original_recipe_url ?? baseDetail.recipe_url ?? null,
+    attached_video_url: baseDetail.attached_video_url ?? null,
+    detail_footnote: `Adapted from ${baseDetail.title}.`,
+    image_caption: baseDetail.image_caption ?? null,
+    dietary_tags: Array.isArray(baseDetail.dietary_tags) ? baseDetail.dietary_tags : [],
+    flavor_tags: Array.isArray(baseDetail.flavor_tags) ? baseDetail.flavor_tags : [],
+    cuisine_tags: Array.isArray(baseDetail.cuisine_tags) ? baseDetail.cuisine_tags : [],
+    occasion_tags: Array.isArray(baseDetail.occasion_tags) ? baseDetail.occasion_tags : [],
+    main_protein: baseDetail.main_protein ?? null,
+    cook_method: baseDetail.cook_method ?? null,
+    ingredients,
+    steps,
+    servings_count: baseDetail.servings_count ?? parseFirstInteger(baseDetail.servings_text) ?? 4,
+    source_provenance_json: {
+      kind: "recipe_adaptation",
+      adapted_from_recipe_id: baseDetail.id,
+      adaptation_prompt: adaptationPrompt,
+    },
+  };
+}
+
+function adaptationDedupeKey({ userID, recipeID, prompt }) {
+  const digest = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({
+      userID: String(userID ?? ""),
+      recipeID: String(recipeID ?? ""),
+      prompt: String(prompt ?? "").trim().toLowerCase(),
+      nonce: Date.now(),
+    }))
+    .digest("hex")
+    .slice(0, 24);
+  return `adapt:${digest}`;
+}
+
 recipe_router.post("/recipe/adapt", async (req, res) => {
   const {
     recipe_id: recipeId = "",
     recipe = null,
     adaptation_prompt: adaptationPrompt = "",
     profile = null,
+    user_id: userID = null,
   } = req.body ?? {};
 
   if (!openai || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return res.status(500).json({ error: "Recipe adaptation requires OpenAI and Supabase configuration." });
   }
+  const normalizedUserID = String(userID ?? "").trim();
+  if (!normalizedUserID) {
+    return res.status(400).json({ error: "Recipe adaptation requires user_id." });
+  }
 
   try {
-    const baseRecipe = recipe ?? (recipeId ? await fetchRecipeById(recipeId) : null);
-    if (!baseRecipe) {
+    const baseDetail = await fetchRecipeDetailForAdaptation(recipeId, recipe);
+    if (!baseDetail) {
       return res.status(400).json({ error: "Provide a recipe or recipe_id." });
     }
 
-    const styleExamples = findRecipeStyleExamples({ recipe: baseRecipe, profile, limit: 3 });
+    const styleExamples = findRecipeStyleExamples({ recipe: baseDetail, profile, limit: 3 });
     const pairingTerms = suggestAdaptationPairings({
-      ingredientsText: baseRecipe.ingredients_text ?? baseRecipe.ingredientsText ?? "",
+      ingredientsText: (baseDetail.ingredients ?? []).map((ingredient) =>
+        [ingredient.quantity_text, ingredient.display_name].filter(Boolean).join(" ").trim()
+      ).join("\n"),
       adaptationPrompt,
       profile,
       limit: 10,
@@ -2323,7 +2446,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
             {
               adaptation_prompt: adaptationPrompt,
               profile,
-              base_recipe: baseRecipe,
+              base_recipe: baseDetail,
               flavor_pairing_hints: pairingTerms,
               style_examples: styleExamples,
             },
@@ -2339,8 +2462,28 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
       return res.status(502).json({ error: "The model returned no recipe adaptation." });
     }
 
+    const adaptedRecipe = JSON.parse(content);
+    const normalizedCandidate = buildAdaptedRecipeCandidate({
+      baseDetail,
+      adaptedRecipe,
+      adaptationPrompt,
+    });
+    const persisted = await persistNormalizedRecipe(normalizedCandidate, {
+      userID: normalizedUserID,
+      targetState: "adapted_preview",
+      dedupeKey: adaptationDedupeKey({ userID, recipeID: baseDetail.id, prompt: adaptationPrompt }),
+      reviewState: "adapted_preview",
+      confidenceScore: 0.92,
+      qualityFlags: ["recipe_adaptation_preview"],
+    });
+
     return res.json({
-      adapted_recipe: JSON.parse(content),
+      adapted_recipe: adaptedRecipe,
+      recipe_id: persisted.recipe_id,
+      adapted_from_recipe_id: baseDetail.id,
+      recipe_card: toRecipeCardPayload({ id: persisted.recipe_id, ...persisted.recipe_card }),
+      recipe_detail: persisted.recipe_detail,
+      change_summary: adaptedRecipe.summary ?? null,
       pairing_terms: pairingTerms,
       style_examples_used: styleExamples.map((example) => example.title),
       model_mode: "flavorgraph_llm_recipe_adaptation",
@@ -3455,7 +3598,13 @@ function isBeverageLikeRecipe(recipe) {
 }
 
 async function embedText(input, model) {
-  const response = await openai.embeddings.create({ model, input });
+  const response = await withAIUsageContext({
+    service: "recipe-api",
+    operation: "recipe_embedding",
+    metadata: {
+      input_length: String(input ?? "").length,
+    },
+  }, () => openai.embeddings.create({ model, input }));
   return response.data[0]?.embedding ?? [];
 }
 
@@ -5283,7 +5432,14 @@ async function inferPrepRegenerationIntent({ profile = null, regenerationContext
   const fallback = fallbackPrepRegenerationIntent(regenerationContext);
 
   try {
-    const completion = await withTimeout(openai.chat.completions.create({
+    const completion = await withAIUsageContext({
+      service: "recipe-api",
+      operation: "prep_regeneration_intent",
+      metadata: {
+        current_recipe_count: regenerationContext?.currentRecipeIDs?.length ?? 0,
+        focus: regenerationContext?.focus ?? "balanced",
+      },
+    }, () => withTimeout(openai.chat.completions.create({
       model: getDiscoverIntentModel(),
       temperature: 0.2,
       response_format: {
@@ -5307,7 +5463,7 @@ async function inferPrepRegenerationIntent({ profile = null, regenerationContext
           }, null, 2),
         },
       ],
-    }), 9000);
+    }), 9000));
 
     const content = completion?.choices?.[0]?.message?.content;
     const parsed = typeof content === "string" && content.trim()

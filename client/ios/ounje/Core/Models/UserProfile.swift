@@ -803,11 +803,11 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .free:
             return "Discovery, saved recipes, and guided planning."
         case .plus:
-            return "Planner-first access for recurring meal prep."
+            return "Unlimited imports, prep planning, and cart sync."
         case .autopilot:
-            return "Live ordering, slot selection, and execution."
+            return "Legacy beta access. New plans use Plus."
         case .foundingLifetime:
-            return "One-time founder access with full autopilot."
+            return "One-time founder access with Plus."
         }
     }
 
@@ -816,9 +816,9 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .free:
             return "Free"
         case .plus:
-            return "$14.99"
+            return "$4.99"
         case .autopilot:
-            return "$29.99"
+            return "$4.99"
         case .foundingLifetime:
             return "$150"
         }
@@ -862,9 +862,9 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .free:
             return "Planning only"
         case .plus:
-            return "Planner and profile automation"
+            return "Social imports, prep plans, and cart sync"
         case .autopilot:
-            return "Adds ordering, slot selection, and tracking"
+            return "Legacy beta mapped to Plus"
         case .foundingLifetime:
             return "Full access without monthly renewal"
         }
@@ -874,9 +874,7 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .free:
             return .approvalRequired
-        case .plus:
-            return .autoOrderWithinBudget
-        case .autopilot, .foundingLifetime:
+        case .plus, .autopilot, .foundingLifetime:
             return .fullyAutonomousGuardrails
         }
     }
@@ -888,7 +886,7 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .autoOrderWithinBudget:
             return self == .plus || self == .autopilot || self == .foundingLifetime
         case .fullyAutonomousGuardrails:
-            return self == .autopilot || self == .foundingLifetime
+            return self == .plus || self == .autopilot || self == .foundingLifetime
         }
     }
 
@@ -899,7 +897,7 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .autoOrderWithinBudget:
             return .plus
         case .fullyAutonomousGuardrails:
-            return .autopilot
+            return .plus
         }
     }
 }
@@ -971,13 +969,13 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
     var displayPriceText: String {
         switch (tier, cadence) {
         case (.plus, .monthly):
-            return "$9.99"
+            return "$4.99"
         case (.plus, .yearly):
-            return "$99"
+            return "$39.99"
         case (.autopilot, .monthly):
-            return "$19.99"
+            return "$4.99"
         case (.autopilot, .yearly):
-            return "$199"
+            return "$39.99"
         case (.free, _):
             return "Free"
         case (.foundingLifetime, _):
@@ -998,9 +996,9 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
         guard cadence == .yearly else { return nil }
         switch tier {
         case .plus:
-            return "Save 45%"
+            return "Save 33%"
         case .autopilot:
-            return "Save 44%"
+            return "Save 33%"
         case .free, .foundingLifetime:
             return nil
         }
@@ -1024,13 +1022,11 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
     }
 
     static let defaultMonthlyPlans: [OunjeMembershipPlan] = [
-        .init(tier: .plus, cadence: .monthly),
-        .init(tier: .autopilot, cadence: .monthly)
+        .init(tier: .plus, cadence: .monthly)
     ]
 
     static let defaultYearlyPlans: [OunjeMembershipPlan] = [
-        .init(tier: .plus, cadence: .yearly),
-        .init(tier: .autopilot, cadence: .yearly)
+        .init(tier: .plus, cadence: .yearly)
     ]
 }
 

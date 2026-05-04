@@ -1,5 +1,4 @@
 import { chromium } from "playwright";
-import OpenAI from "openai";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +8,7 @@ import { getInstacartRunLogTrace, persistInstacartRunLog } from "./instacart-run
 import { createNotificationEvent } from "./notification-events.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { installCaptchaHooksScript, maybeSolveCaptcha } from "./twocaptcha.js";
+import { createLoggedOpenAI } from "./openai-usage-logger.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const INSTACART_STORE_MODEL = process.env.INSTACART_STORE_MODEL ?? "gpt-5-mini";
@@ -18,7 +18,7 @@ const INSTACART_FINALIZER_MODEL = process.env.INSTACART_FINALIZER_MODEL ?? INSTA
 const INITIAL_SELECTION_CONFIDENCE_CUTOFF = Number(process.env.INSTACART_INITIAL_CONFIDENCE_CUTOFF ?? 0.74);
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "instacart-cart" }) : null;
 
 function chatCompletionTemperatureParams(model) {
   return String(model ?? "").trim() === "gpt-5-mini" ? {} : { temperature: 0 };

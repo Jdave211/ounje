@@ -1,0 +1,383 @@
+import Foundation
+import UIKit
+
+struct RecipeImportJobPayload: Decodable {
+    let id: String
+    let targetState: String
+    let sourceType: String
+    let sourceURL: String?
+    let recipeID: String?
+    let status: String
+    let reviewState: String
+    let confidenceScore: Double?
+    let qualityFlags: [String]
+    let reviewReason: String?
+    let errorMessage: String?
+    let attempts: Int?
+    let maxAttempts: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case targetState = "target_state"
+        case sourceType = "source_type"
+        case sourceURL = "source_url"
+        case recipeID = "recipe_id"
+        case status
+        case reviewState = "review_state"
+        case confidenceScore = "confidence_score"
+        case qualityFlags = "quality_flags"
+        case reviewReason = "review_reason"
+        case errorMessage = "error_message"
+        case attempts
+        case maxAttempts = "max_attempts"
+    }
+}
+
+struct RecipeImportCompletedItem: Identifiable, Decodable {
+    let id: String
+    let recipeID: String?
+    let title: String
+    let status: String
+    let reviewState: String
+    let sourceType: String?
+    let sourceURL: String?
+    let canonicalURL: String?
+    let sourceText: String?
+    let imageURL: String?
+    let source: String?
+    let cookTimeText: String?
+    let completedAt: String?
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case recipeID = "recipe_id"
+        case title
+        case status
+        case reviewState = "review_state"
+        case sourceType = "source_type"
+        case sourceURL = "source_url"
+        case canonicalURL = "canonical_url"
+        case sourceText = "source_text"
+        case imageURL = "image_url"
+        case source
+        case cookTimeText = "cook_time_text"
+        case completedAt = "completed_at"
+        case createdAt = "created_at"
+    }
+}
+
+extension SharedRecipeImportEnvelope {
+    var reconciliationKeys: Set<String> {
+        var keys: Set<String> = []
+        if let normalizedURL = Self.normalizedImportKey(from: sourceURLString) {
+            keys.insert(normalizedURL)
+        }
+        if let normalizedCanonicalURL = Self.normalizedImportKey(from: canonicalSourceURLString) {
+            keys.insert(normalizedCanonicalURL)
+        }
+        if let normalizedText = Self.normalizedImportKey(from: resolvedSourceText) {
+            keys.insert(normalizedText)
+        }
+        return keys
+    }
+
+    static func normalizedImportKey(from raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        if let url = URL(string: raw), let host = url.host?.lowercased(), !host.isEmpty {
+            let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+            return ([host, path].filter { !$0.isEmpty }).joined(separator: "/")
+        }
+
+        return raw
+            .lowercased()
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+}
+
+extension RecipeImportCompletedItem {
+    var sourceKindLabel: String? {
+        switch sourceType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "" {
+        case "recipe_search":
+            return "Recipe search"
+        case "concept_prompt", "direct_input", "text":
+            return "Typed import"
+        case "media_image", "media_video":
+            return "Media import"
+        case "tiktok", "instagram", "youtube":
+            return "Shared import"
+        default:
+            return nil
+        }
+    }
+
+    var reconciliationKeys: Set<String> {
+        [
+            SharedRecipeImportEnvelope.normalizedImportKey(from: sourceURL),
+            SharedRecipeImportEnvelope.normalizedImportKey(from: canonicalURL),
+            SharedRecipeImportEnvelope.normalizedImportKey(from: sourceText)
+        ]
+        .compactMap { $0 }
+        .reduce(into: Set<String>()) { partialResult, key in
+            partialResult.insert(key)
+        }
+    }
+
+    func matches(envelope: SharedRecipeImportEnvelope) -> Bool {
+        !reconciliationKeys.isDisjoint(with: envelope.reconciliationKeys)
+    }
+
+    var savedRecipeCard: DiscoverRecipeCardData? {
+        let normalizedRecipeID = recipeID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let normalizedRecipeID, !normalizedRecipeID.isEmpty else { return nil }
+
+        let normalizedSource = source?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedImageURL = imageURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRecipeURL = (canonicalURL ?? sourceURL)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displaySource = (normalizedSource?.isEmpty == false ? normalizedSource : nil) ?? "Imported recipe"
+
+        return DiscoverRecipeCardData(
+            id: normalizedRecipeID,
+            title: title,
+            description: displaySource == "Imported recipe" ? "Imported recipe." : "Imported from \(displaySource).",
+            authorName: nil,
+            authorHandle: nil,
+            category: displaySource,
+            recipeType: displaySource,
+            cookTimeText: cookTimeText,
+            cookTimeMinutes: nil,
+            publishedDate: completedAt ?? createdAt,
+            imageURLString: normalizedImageURL?.isEmpty == true ? nil : normalizedImageURL,
+            heroImageURLString: normalizedImageURL?.isEmpty == true ? nil : normalizedImageURL,
+            recipeURLString: normalizedRecipeURL?.isEmpty == true ? nil : normalizedRecipeURL,
+            source: displaySource
+        )
+    }
+}
+
+struct RecipeImportResponse: Decodable {
+    let job: RecipeImportJobPayload
+    let recipe: DiscoverRecipeCardData?
+    let recipeDetail: RecipeDetailData?
+
+    enum CodingKeys: String, CodingKey {
+        case job
+        case recipe
+        case recipeDetail = "recipe_detail"
+    }
+}
+
+enum RecipeImportServiceError: Error, LocalizedError {
+    case invalidRequest
+    case invalidResponse
+    case requestFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRequest:
+            return "The request could not be prepared."
+        case .invalidResponse:
+            return "The server returned an invalid response."
+        case let .requestFailed(message):
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "The request failed." : trimmed
+        }
+    }
+}
+
+struct RecipeImportAttachmentPayload: Encodable {
+    let kind: String
+    let sourceURL: String?
+    let dataURL: String?
+    let mimeType: String?
+    let fileName: String?
+    let previewFrameURLs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case sourceURL = "source_url"
+        case dataURL = "data_url"
+        case mimeType = "mime_type"
+        case fileName = "file_name"
+        case previewFrameURLs = "preview_frame_urls"
+    }
+}
+
+struct RecipeImportRequestPayload: Encodable {
+    let userID: String?
+    let sourceURL: String?
+    let sourceText: String
+    let accessToken: String?
+    let targetState: String
+    let attachments: [RecipeImportAttachmentPayload]
+    let processInline: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case sourceURL = "source_url"
+        case sourceText = "source_text"
+        case accessToken = "access_token"
+        case targetState = "target_state"
+        case attachments
+        case processInline = "process_inline"
+    }
+}
+
+final class RecipeImportAPIService {
+    static let shared = RecipeImportAPIService()
+
+    private init() {}
+
+    func importRecipe(
+        userID: String?,
+        accessToken: String? = nil,
+        sourceURL: String? = nil,
+        sourceText: String,
+        targetState: String,
+        attachments: [RecipeImportAttachmentPayload] = []
+    ) async throws -> RecipeImportResponse {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                return try await importRecipe(
+                    baseURL: baseURL,
+                    userID: userID,
+                    accessToken: accessToken,
+                    sourceURL: sourceURL,
+                    sourceText: sourceText,
+                    targetState: targetState,
+                    attachments: attachments
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
+    func fetchCompletedImports(userID: String) async throws -> [RecipeImportCompletedItem] {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                return try await fetchCompletedImports(baseURL: baseURL, userID: userID)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
+    func fetchImportJob(jobID: String) async throws -> RecipeImportResponse {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                return try await fetchImportJob(baseURL: baseURL, jobID: jobID)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
+    private func importRecipe(
+        baseURL: String,
+        userID: String?,
+        accessToken: String?,
+        sourceURL: String?,
+        sourceText: String,
+        targetState: String,
+        attachments: [RecipeImportAttachmentPayload]
+    ) async throws -> RecipeImportResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            RecipeImportRequestPayload(
+                userID: userID,
+                sourceURL: sourceURL,
+                sourceText: sourceText,
+                accessToken: accessToken,
+                targetState: targetState,
+                attachments: attachments
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Recipe import failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+    }
+
+    private func fetchCompletedImports(
+        baseURL: String,
+        userID: String
+    ) async throws -> [RecipeImportCompletedItem] {
+        var components = URLComponents(string: "\(baseURL)/v1/recipe/imports/completed") ?? URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: userID),
+            URLQueryItem(name: "limit", value: "24"),
+        ]
+        guard let url = components.url else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Completed imports failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        struct Payload: Decodable {
+            let items: [RecipeImportCompletedItem]
+            let count: Int?
+        }
+
+        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        return payload.items
+    }
+
+    private func fetchImportJob(
+        baseURL: String,
+        jobID: String
+    ) async throws -> RecipeImportResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/imports/\(jobID)") else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Recipe import status failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+    }
+}

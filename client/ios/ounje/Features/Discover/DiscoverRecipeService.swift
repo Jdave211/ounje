@@ -73,6 +73,19 @@ final class SupabaseDiscoverRecipeService {
             }
         }
 
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedQuery.isEmpty {
+            let fallbackRecipes = try await fetchRecipes(limit: limit)
+            return DiscoverRankedRecipesResponse(
+                recipes: fallbackRecipes,
+                filters: DiscoverPreset.allTitles,
+                rankingMode: "supabase_direct_fallback",
+                totalAvailable: fallbackRecipes.count,
+                hasMore: fallbackRecipes.count >= limit,
+                nextOffset: offset + fallbackRecipes.count
+            )
+        }
+
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 

@@ -55,6 +55,18 @@
 		F10000000000000000000005 /* liquid.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000006 /* liquid.riv */; };
 		F10000000000000000000007 /* skills.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000008 /* skills.riv */; };
 		F10000000000000000000014 /* DotLottie in Frameworks */ = {isa = PBXBuildFile; productRef = F10000000000000000000015 /* DotLottie */; };
+		DAD00000000000000000001 /* AppRealtimeInvalidationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000001 /* AppRealtimeInvalidationCoordinator.swift */; };
+		DAD00000000000000000002 /* AppNotificationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000002 /* AppNotificationServices.swift */; };
+		DAD00000000000000000003 /* MembershipServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000003 /* MembershipServices.swift */; };
+		DAD00000000000000000004 /* SupabaseServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000004 /* SupabaseServices.swift */; };
+		DAD00000000000000000005 /* RecipeDetailServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000005 /* RecipeDetailServices.swift */; };
+		DAD00000000000000000006 /* RecipeImportAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000006 /* RecipeImportAPIService.swift */; };
+		DAD00000000000000000007 /* InstacartAutomationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000007 /* InstacartAutomationServices.swift */; };
+		DAD00000000000000000008 /* OnboardingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000008 /* OnboardingViews.swift */; };
+		DAD00000000000000000009 /* ProfileViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000009 /* ProfileViews.swift */; };
+		DAD0000000000000000000A /* CartViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000A /* CartViews.swift */; };
+		DAD0000000000000000000B /* PrepViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000B /* PrepViews.swift */; };
+		DAD0000000000000000000C /* RecipeDetailViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000C /* RecipeDetailViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -131,6 +143,18 @@
 		DAB00000000000000000019 /* ImagePrefetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/ImagePrefetcher.swift; sourceTree = "<group>"; };
 		DAB00000000000000000020 /* SavedRecipesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cookbook/SavedRecipesStore.swift; sourceTree = "<group>"; };
 		DAB00000000000000000021 /* FeedbackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Settings/FeedbackService.swift; sourceTree = "<group>"; };
+		DAE00000000000000000001 /* AppRealtimeInvalidationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift; sourceTree = "<group>"; };
+		DAE00000000000000000002 /* AppNotificationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/AppNotificationServices.swift; sourceTree = "<group>"; };
+		DAE00000000000000000003 /* MembershipServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/MembershipServices.swift; sourceTree = "<group>"; };
+		DAE00000000000000000004 /* SupabaseServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Supabase/SupabaseServices.swift; sourceTree = "<group>"; };
+		DAE00000000000000000005 /* RecipeDetailServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/RecipeDetail/RecipeDetailServices.swift; sourceTree = "<group>"; };
+		DAE00000000000000000006 /* RecipeImportAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cookbook/RecipeImportAPIService.swift; sourceTree = "<group>"; };
+		DAE00000000000000000007 /* InstacartAutomationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/InstacartAutomationServices.swift; sourceTree = "<group>"; };
+		DAE00000000000000000008 /* OnboardingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Onboarding/Views/OnboardingViews.swift; sourceTree = "<group>"; };
+		DAE00000000000000000009 /* ProfileViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Profile/Views/ProfileViews.swift; sourceTree = "<group>"; };
+		DAE0000000000000000000A /* CartViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/Views/CartViews.swift; sourceTree = "<group>"; };
+		DAE0000000000000000000B /* PrepViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Prep/Views/PrepViews.swift; sourceTree = "<group>"; };
+		DAE0000000000000000000C /* RecipeDetailViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/RecipeDetail/Views/RecipeDetailViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -193,6 +217,7 @@
 			children = (
 				DAC00000000000000000003 /* DesignSystem */,
 				DAC00000000000000000007 /* Networking */,
+				DAG00000000000000000001 /* Supabase */,
 				DAC00000000000000000008 /* Models */,
 				DAC00000000000000000009 /* Services */,
 			);
@@ -229,6 +254,14 @@
 			name = Networking;
 			sourceTree = "<group>";
 		};
+		DAG00000000000000000001 /* Supabase */ = {
+			isa = PBXGroup;
+			children = (
+				DAE00000000000000000004 /* SupabaseServices.swift */,
+			);
+			name = Supabase;
+			sourceTree = "<group>";
+		};
 		DAC00000000000000000008 /* Models */ = {
 			isa = PBXGroup;
 			children = (
@@ -245,6 +278,9 @@
 			children = (
 				DAB00000000000000000019 /* ImagePrefetcher.swift */,
 				DAB00000000000000000016 /* ToastCenter.swift */,
+				DAE00000000000000000001 /* AppRealtimeInvalidationCoordinator.swift */,
+				DAE00000000000000000002 /* AppNotificationServices.swift */,
+				DAE00000000000000000003 /* MembershipServices.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -255,6 +291,7 @@
 				DAC00000000000000000011 /* Onboarding */,
 				DAC00000000000000000012 /* Prep */,
 				DAC00000000000000000006 /* Discover */,
+				DAG00000000000000000002 /* RecipeDetail */,
 				DAC00000000000000000013 /* Cookbook */,
 				DAC00000000000000000014 /* Cart */,
 				DAC00000000000000000015 /* Profile */,
@@ -303,11 +340,37 @@
 			name = Prep;
 			sourceTree = "<group>";
 		};
+		DAG00000000000000000002 /* RecipeDetail */ = {
+			isa = PBXGroup;
+			children = (
+				DAG00000000000000000003 /* Views */,
+				DAG00000000000000000004 /* Components */,
+				DAE00000000000000000005 /* RecipeDetailServices.swift */,
+			);
+			name = RecipeDetail;
+			sourceTree = "<group>";
+		};
+		DAG00000000000000000003 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				DAE0000000000000000000C /* RecipeDetailViews.swift */,
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		DAG00000000000000000004 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Components;
+			sourceTree = "<group>";
+		};
 		DAC00000000000000000013 /* Cookbook */ = {
 			isa = PBXGroup;
 			children = (
 				DAC00000000000000000022 /* Views */,
 				DAB00000000000000000020 /* SavedRecipesStore.swift */,
+				DAE00000000000000000006 /* RecipeImportAPIService.swift */,
 			);
 			name = Cookbook;
 			sourceTree = "<group>";
@@ -319,6 +382,7 @@
 				DAC00000000000000000024 /* Models */,
 				F1A2B3C40100000100000009 /* MainShopSnapshotBuilder.swift */,
 				F1A2B3C40100000100000006 /* GroceryService.swift */,
+				DAE00000000000000000007 /* InstacartAutomationServices.swift */,
 			);
 			name = Cart;
 			sourceTree = "<group>";
@@ -350,6 +414,7 @@
 		DAC00000000000000000018 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				DAE00000000000000000008 /* OnboardingViews.swift */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -364,6 +429,7 @@
 		DAC00000000000000000020 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				DAE0000000000000000000B /* PrepViews.swift */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -385,6 +451,7 @@
 		DAC00000000000000000023 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				DAE0000000000000000000A /* CartViews.swift */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -399,6 +466,7 @@
 		DAC00000000000000000025 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				DAE00000000000000000009 /* ProfileViews.swift */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -612,6 +680,18 @@
 				DAA00000000000000000017 /* BackendEndpoint.swift in Sources */,
 				DAA00000000000000000019 /* ImagePrefetcher.swift in Sources */,
 				DAA00000000000000000016 /* ToastCenter.swift in Sources */,
+				DAD00000000000000000001 /* AppRealtimeInvalidationCoordinator.swift in Sources */,
+				DAD00000000000000000002 /* AppNotificationServices.swift in Sources */,
+				DAD00000000000000000003 /* MembershipServices.swift in Sources */,
+				DAD00000000000000000004 /* SupabaseServices.swift in Sources */,
+				DAD00000000000000000005 /* RecipeDetailServices.swift in Sources */,
+				DAD00000000000000000006 /* RecipeImportAPIService.swift in Sources */,
+				DAD00000000000000000007 /* InstacartAutomationServices.swift in Sources */,
+				DAD00000000000000000008 /* OnboardingViews.swift in Sources */,
+				DAD00000000000000000009 /* ProfileViews.swift in Sources */,
+				DAD0000000000000000000A /* CartViews.swift in Sources */,
+				DAD0000000000000000000B /* PrepViews.swift in Sources */,
+				DAD0000000000000000000C /* RecipeDetailViews.swift in Sources */,
 				DAA00000000000000000020 /* SavedRecipesStore.swift in Sources */,
 				DAA00000000000000000021 /* FeedbackService.swift in Sources */,
 				DAA00000000000000000002 /* OunjePalette.swift in Sources */,

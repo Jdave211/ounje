@@ -10,12 +10,22 @@
  */
 
 import express from "express";
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { buildKrogerSearchUrl, findNearestKrogerStore, searchKrogerProduct } from "./providers/kroger.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
 import { sourceEdgeID } from "../../lib/main-shop-collation.js";
 
 const router = express.Router();
+const GROCERY_SPEC_CACHE_TTL_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.GROCERY_SPEC_CACHE_TTL_MS ?? "600000", 10) || 600_000
+);
+const GROCERY_SPEC_CACHE_MAX_ENTRIES = Math.max(
+  20,
+  Number.parseInt(process.env.GROCERY_SPEC_CACHE_MAX_ENTRIES ?? "250", 10) || 250
+);
+const grocerySpecCache = new Map();
 
 // ── Env ───────────────────────────────────────────────────────────────────────
 const KROGER_CLIENT_ID   = process.env.KROGER_CLIENT_ID     ?? "";
@@ -45,6 +55,67 @@ function normalizeIncomingItems(items = []) {
       })),
     };
   });
+}
+
+function stableJSONStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJSONStringify).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJSONStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function grocerySpecCacheKey(normalizedItems = [], plan = null) {
+  const recipeContext = Array.isArray(plan?.recipes)
+    ? plan.recipes.map((entry) => {
+        const recipe = entry?.recipe ?? entry;
+        return {
+          id: String(recipe?.id ?? "").trim(),
+          title: String(recipe?.title ?? "").trim(),
+          ingredients: (recipe?.ingredients ?? []).map((ingredient) => ({
+            name: String(ingredient?.name ?? ingredient?.display_name ?? "").trim(),
+            unit: String(ingredient?.unit ?? "").trim(),
+          })),
+        };
+      })
+    : [];
+  const payload = {
+    items: normalizedItems.map((item) => ({
+      name: String(item?.name ?? "").trim().toLowerCase(),
+      amount: Number(item?.amount ?? 0),
+      unit: String(item?.unit ?? "").trim().toLowerCase(),
+      sourceIngredients: (item?.sourceIngredients ?? []).map((source) => ({
+        recipeID: String(source?.recipeID ?? "").trim().toLowerCase(),
+        ingredientName: String(source?.ingredientName ?? "").trim().toLowerCase(),
+        unit: String(source?.unit ?? "").trim().toLowerCase(),
+      })).sort((lhs, rhs) => stableJSONStringify(lhs).localeCompare(stableJSONStringify(rhs))),
+    })).sort((lhs, rhs) => stableJSONStringify(lhs).localeCompare(stableJSONStringify(rhs))),
+    recipeContext,
+  };
+  return crypto.createHash("sha256").update(stableJSONStringify(payload)).digest("hex");
+}
+
+function readGrocerySpecCache(key) {
+  const cached = grocerySpecCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > GROCERY_SPEC_CACHE_TTL_MS) {
+    grocerySpecCache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeGrocerySpecCache(key, value) {
+  grocerySpecCache.set(key, { value, createdAt: Date.now() });
+  while (grocerySpecCache.size > GROCERY_SPEC_CACHE_MAX_ENTRIES) {
+    const firstKey = grocerySpecCache.keys().next().value;
+    grocerySpecCache.delete(firstKey);
+  }
 }
 
 function buildCoverageSummary(originalItems = [], specItems = []) {
@@ -129,7 +200,7 @@ function buildCoverageSummary(originalItems = [], specItems = []) {
 // ── POST /v1/grocery/spec ──────────────────────────────────────────────────────
 router.post("/grocery/spec", async (req, res) => {
   const startedAt = Date.now();
-  const { items, plan = null } = req.body ?? {};
+  const { items, plan = null, bypass_cache: bypassCacheRaw = false, bypassCache: bypassCacheCamel = false } = req.body ?? {};
   const normalizedItems = normalizeIncomingItems(items);
   if (!Array.isArray(normalizedItems) || normalizedItems.length === 0) {
     return res.json({
@@ -144,6 +215,26 @@ router.post("/grocery/spec", async (req, res) => {
   }
 
   try {
+    const cacheKey = grocerySpecCacheKey(normalizedItems, plan);
+    const shouldBypassCache = Boolean(bypassCacheRaw || bypassCacheCamel);
+    if (!shouldBypassCache) {
+      const cached = readGrocerySpecCache(cacheKey);
+      if (cached) {
+        console.log(
+          "[grocery/spec] cache_hit",
+          JSON.stringify({
+            itemCount: normalizedItems.length,
+            resolvedCount: cached.items?.length ?? 0,
+            durationMs: Date.now() - startedAt,
+          })
+        );
+        return res.json({
+          ...cached,
+          cache: { status: "hit" },
+        });
+      }
+    }
+
     const shoppingSpec = await buildShoppingSpecEntries({
       originalItems: normalizedItems,
       plan,
@@ -159,11 +250,13 @@ router.post("/grocery/spec", async (req, res) => {
         reconciliationSummary: shoppingSpec?.reconciliationSummary ?? null,
       })
     );
-    return res.json({
+    const payload = {
       items: specItems,
       coverageSummary,
       reconciliationSummary: shoppingSpec?.reconciliationSummary ?? null,
-    });
+    };
+    writeGrocerySpecCache(cacheKey, payload);
+    return res.json(payload);
   } catch (error) {
     console.error(
       "[grocery/spec] error:",

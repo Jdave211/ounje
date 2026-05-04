@@ -1,57 +1,3 @@
-const SAFE_DESCRIPTOR_WORDS = new Set([
-  "additional",
-  "boneless",
-  "boxed",
-  "chopped",
-  "cooked",
-  "crushed",
-  "diced",
-  "drained",
-  "fresh",
-  "frozen",
-  "grated",
-  "ground",
-  "instant",
-  "large",
-  "medium",
-  "minced",
-  "optional",
-  "organic",
-  "peeled",
-  "prepared",
-  "raw",
-  "ripe",
-  "shredded",
-  "sliced",
-  "small",
-  "skinless",
-  "thawed",
-  "whole",
-]);
-
-const PACKAGE_WORDS = new Set([
-  "bag",
-  "bags",
-  "box",
-  "boxes",
-  "can",
-  "cans",
-  "carton",
-  "cartons",
-  "container",
-  "containers",
-  "cup",
-  "cups",
-  "jar",
-  "jars",
-  "pack",
-  "packs",
-  "packet",
-  "packets",
-  "package",
-  "packages",
-]);
-
 const CONNECTOR_WORDS = new Set(["a", "an", "and", "for", "of", "or", "the", "to", "with"]);
 
 function normalizeText(value) {
@@ -140,16 +86,14 @@ function extractAlternativeParts(rawName) {
 
 function canonicalTokensForName(rawName) {
   const { primary, alternatives } = extractAlternativeParts(rawName);
-  const primaryTokens = tokenize(primary || rawName);
-  const filtered = primaryTokens.filter((token, index, tokens) => {
+  const rawTokens = tokenize(rawName);
+  const filtered = rawTokens.filter((token) => {
     if (CONNECTOR_WORDS.has(token)) return false;
-    if (SAFE_DESCRIPTOR_WORDS.has(token)) return false;
-    if (PACKAGE_WORDS.has(token) && tokens.length > 1) return false;
     return true;
   });
 
   return {
-    tokens: filtered.length ? filtered : primaryTokens,
+    tokens: filtered.length ? filtered : rawTokens,
     primary,
     alternatives,
   };
@@ -185,7 +129,7 @@ function applySourceCollationToItem(item) {
   const sourceEdgeIDs = sourceEdgeIDsForItem(item);
   return {
     ...item,
-    name: collation.canonicalName || rawName,
+    name: rawName,
     originalName: item?.originalName ?? rawName,
     shoppingCollation: {
       ...collation,

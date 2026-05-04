@@ -1,0 +1,3655 @@
+import SwiftUI
+import Foundation
+import UIKit
+import AVKit
+import WebKit
+
+struct RecipeDetailExperienceView: View {
+    let presentedRecipe: PresentedRecipeDetail
+    let onOpenCart: () -> Void
+    let onDismiss: (() -> Void)?
+    let transitionNamespace: Namespace.ID?
+    let onOpenToastDestination: ((AppToastDestination) -> Void)?
+    @ObservedObject private var toastCenter: AppToastCenter
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var savedStore: SavedRecipesStore
+    @StateObject private var viewModel: RecipeDetailViewModel
+    @State private var relatedPresentedRecipe: PresentedRecipeDetail?
+    @State private var servingsCount = 4
+    @State private var baseServingsCount = 4
+    @State private var shouldScrollToSteps = false
+    @State private var showShareSheet = false
+    @State private var showStorySheet = false
+    @State private var showAskSheet = false
+    @State private var showInlineVideo = false
+    @State private var showInlineVideoFullscreen = false
+    @State private var shouldResumeInlineVideoAfterFullscreen = false
+    @State private var inlineVideoPlayer: AVPlayer?
+    @State private var resolvedVideo: RecipeResolvedVideoData?
+    @State private var isResolvingVideo = false
+    @State private var webVideoAction: RecipeWebVideoAction = .none
+    @State private var detailChromeVisible = false
+
+    private let detailBackground = OunjePalette.background
+    private let sectionDivider = OunjePalette.stroke
+
+    private var transitionContext: RecipeTransitionContext? {
+        guard let transitionNamespace else { return nil }
+        return RecipeTransitionContext(namespace: transitionNamespace, recipeID: presentedRecipe.id)
+    }
+
+    init(
+        presentedRecipe: PresentedRecipeDetail,
+        onOpenCart: @escaping () -> Void,
+        toastCenter: AppToastCenter,
+        onDismiss: (() -> Void)? = nil,
+        transitionNamespace: Namespace.ID? = nil,
+        onOpenToastDestination: ((AppToastDestination) -> Void)? = nil
+    ) {
+        self.presentedRecipe = presentedRecipe
+        self.onOpenCart = onOpenCart
+        self.onDismiss = onDismiss
+        self.transitionNamespace = transitionNamespace
+        self.onOpenToastDestination = onOpenToastDestination
+        _toastCenter = ObservedObject(wrappedValue: toastCenter)
+        _viewModel = StateObject(wrappedValue: RecipeDetailViewModel(initialDetail: presentedRecipe.initialDetail))
+    }
+
+    private var detail: RecipeDetailData? {
+        viewModel.detail
+    }
+
+    private var recipeID: String {
+        detail?.id ?? presentedRecipe.id
+    }
+
+    private var isInCurrentPrep: Bool {
+        store.latestPlan?.recipes.contains(where: { $0.recipe.id == recipeID }) ?? (presentedRecipe.plannedRecipe != nil)
+    }
+
+    private var replaceablePrepRecipeID: String? {
+        guard let adaptedFromRecipeID = presentedRecipe.adaptedFromRecipeID,
+              adaptedFromRecipeID != recipeID,
+              store.latestPlan?.recipes.contains(where: { $0.recipe.id == adaptedFromRecipeID }) == true,
+              !isInCurrentPrep
+        else {
+            return nil
+        }
+        return adaptedFromRecipeID
+    }
+
+    private var primaryBottomActionTitle: String {
+        if replaceablePrepRecipeID != nil { return "Replace" }
+        return isInCurrentPrep ? "Remove" : "Add"
+    }
+
+    private var ingredientSecondaryActionTitle: String {
+        if replaceablePrepRecipeID != nil { return "Replace in prep" }
+        return isInCurrentPrep ? "Remove from prep" : "Add to next prep"
+    }
+
+    private var servingsScale: Double {
+        Double(max(1, servingsCount)) / Double(max(1, baseServingsCount))
+    }
+
+    private var imageCandidates: [URL] {
+        detail?.imageCandidates ?? presentedRecipe.recipeCard.imageCandidates
+    }
+
+    private var titleText: String {
+        detail?.title ?? presentedRecipe.recipeCard.title
+    }
+
+    private var descriptionText: String? {
+        if let detailDescription = detail?.description, !detailDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return detailDescription
+        }
+        guard let fallback = presentedRecipe.recipeCard.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !fallback.isEmpty
+        else {
+            return nil
+        }
+
+        let blockedFallbacks = [
+            "Scheduled for this prep cycle.",
+            "Carried over from your last cycle.",
+            "Find your next meal"
+        ]
+        if blockedFallbacks.contains(fallback) {
+            return nil
+        }
+
+        return fallback
+    }
+
+    private var authorLine: String {
+        detail?.authorLine ?? presentedRecipe.recipeCard.authorLabel
+    }
+
+    private var externalURL: URL? {
+        detail?.originalURL ?? presentedRecipe.recipeCard.destinationURL
+    }
+
+    private var authorURL: URL? {
+        guard let raw = detail?.authorURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        return URL(string: raw)
+    }
+
+    private var videoSourceURL: URL? {
+        // Watch should only appear for recipes that explicitly have a DB video URL.
+        detail?.attachedVideoURL
+    }
+
+    private var resolvedVideoURL: URL? {
+        resolvedVideo?.url
+    }
+
+    private var hasVideoSource: Bool {
+        videoSourceURL != nil
+    }
+
+    private var shareItems: [Any] {
+        var items: [Any] = [titleText]
+        if let url = externalURL {
+            items.append(url)
+        } else if let fallback = resolvedVideoURL {
+            items.append(fallback)
+        }
+        return items
+    }
+
+    private var detailMetrics: [RecipeDetailMetric] {
+        guard let detail else { return [] }
+        return detail.detailsGrid.map { metric in
+            guard metric.title == "Servings" else { return metric }
+            return RecipeDetailMetric(title: metric.title, value: "\(max(1, servingsCount))")
+        }
+    }
+
+    private var ingredientItems: [RecipeDetailIngredient] {
+        guard let detail else { return [] }
+        if !detail.ingredients.isEmpty {
+            return detail.ingredients.map { $0.scaled(by: servingsScale) }
+        }
+
+        var seen = Set<String>()
+        return detail.steps
+            .flatMap(\.ingredients)
+            .filter { ingredient in
+                let key = ingredient.displayName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard !key.isEmpty else { return false }
+                return seen.insert(key).inserted
+            }
+            .map { $0.scaled(by: servingsScale) }
+    }
+
+    private var instructionSteps: [RecipeDetailStep] {
+        guard let detail else { return [] }
+        return detail.steps.map { step in
+            step.replacingIngredients(step.ingredients.map { $0.scaled(by: servingsScale) })
+        }
+    }
+
+    private var isLoadingResolvedDetail: Bool {
+        viewModel.isLoading && detail == nil
+    }
+
+    private var detailLoadFailed: Bool {
+        !viewModel.isLoading && detail == nil && viewModel.errorMessage != nil
+    }
+
+    private var isLoadingSimilarRecipes: Bool {
+        viewModel.isLoadingSimilarRecipes && detail != nil && viewModel.similarRecipes.isEmpty
+    }
+
+    private var subtitleLine: String? {
+        guard let detail else { return nil }
+        let line = detail.authorLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        if line.isEmpty || line.caseInsensitiveCompare("Ounje source") == .orderedSame || line.caseInsensitiveCompare("Source pending") == .orderedSame {
+            return nil
+        }
+        return line
+    }
+
+    private var summaryLine: String? {
+        guard let text = descriptionText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        let collapsed = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !collapsed.isEmpty else { return nil }
+        return collapsed
+    }
+
+    private func toggleInlineVideo() {
+        if showInlineVideo {
+            pauseInlineVideo()
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                showInlineVideo = false
+            }
+            return
+        }
+
+        Task {
+            guard let preparedVideo = await prepareInlineVideoIfNeeded() else { return }
+            if preparedVideo.supportsNativePlayback, let videoURL = preparedVideo.url {
+                let player = AVPlayer(url: videoURL)
+                player.play()
+                await MainActor.run {
+                    inlineVideoPlayer = player
+                }
+            } else {
+                await MainActor.run {
+                    inlineVideoPlayer = nil
+                }
+            }
+
+            await MainActor.run {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                    showInlineVideo = true
+                }
+            }
+        }
+    }
+
+    private func closeInlineVideo() {
+        pauseInlineVideo()
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            showInlineVideo = false
+        }
+    }
+
+    private func seekInlineVideo(delta: Double) {
+        if let inlineVideoPlayer {
+            let currentSeconds = inlineVideoPlayer.currentTime().seconds
+            guard currentSeconds.isFinite else { return }
+            let target = max(0, currentSeconds + delta)
+            inlineVideoPlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+            return
+        }
+
+        webVideoAction = RecipeWebVideoAction(kind: .seek(seconds: delta))
+    }
+
+    private func togglePlayback() {
+        if let player = inlineVideoPlayer {
+            if player.timeControlStatus == .playing {
+                player.pause()
+            } else {
+                player.play()
+            }
+            return
+        }
+
+        webVideoAction = RecipeWebVideoAction(kind: .togglePlayback)
+    }
+
+    private func pauseInlineVideo() {
+        inlineVideoPlayer?.pause()
+        webVideoAction = RecipeWebVideoAction(kind: .pause)
+    }
+
+    private func prepareInlineVideoIfNeeded() async -> RecipeResolvedVideoData? {
+        if let resolvedVideo, resolvedVideo.url != nil, resolvedVideo.mode != .unavailable {
+            return resolvedVideo
+        }
+
+        guard let videoSourceURL else { return nil }
+
+        await MainActor.run {
+            isResolvingVideo = true
+        }
+        defer {
+            Task { @MainActor in
+                isResolvingVideo = false
+            }
+        }
+
+        do {
+            let resolved = try await RecipeVideoResolveService.shared.resolveVideo(from: videoSourceURL)
+            await MainActor.run {
+                resolvedVideo = resolved
+            }
+            return resolved
+        } catch {
+            let fallback = RecipeVideoURLResolver.fallbackVideo(from: videoSourceURL)
+            await MainActor.run {
+                resolvedVideo = fallback
+            }
+            return fallback
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let safeTop = geometry.safeAreaInsets.top
+            let pageWidth = geometry.size.width
+            let heroSize = min(pageWidth * 0.74, 312)
+            let heroTopCrop = heroSize * 0.16
+            let heroTopBleed: CGFloat = 18
+            let heroHeight = max(160, heroSize - heroTopCrop - 8)
+            let ingredientColumns = Self.ingredientGridColumns(for: pageWidth)
+            ScrollViewReader { proxy in
+                ZStack(alignment: .bottom) {
+                    detailBackground
+                        .ignoresSafeArea()
+
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ZStack(alignment: .top) {
+                                Color.clear
+                                    .frame(height: heroHeight)
+                                    .overlay(alignment: .topTrailing) {
+                                        RecipeDetailHeroImage(candidates: imageCandidates)
+                                            .modifier(RecipeImageTransitionModifier(transitionContext: transitionContext))
+                                            .frame(width: heroSize, height: heroSize)
+                                            .offset(x: heroSize * 0.04, y: -(heroTopCrop + heroTopBleed))
+                                            .allowsHitTesting(false)
+                                    }
+                                    .overlay(alignment: .topTrailing) {
+                                        if hasVideoSource {
+                                            RecipeDetailTopVideoButton(isActive: showInlineVideo) {
+                                                toggleInlineVideo()
+                                            }
+                                            .padding(.trailing, 20)
+                                            .padding(.top, max(safeTop - 2, 0) + 52 + 10)
+                                        }
+                                    }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                            VStack(alignment: .leading, spacing: 30) {
+                                RecipeModalTitle(text: titleText)
+                                    .modifier(RecipeTitleTransitionModifier(transitionContext: transitionContext))
+
+                                VStack(alignment: .leading, spacing: 16) {
+                                    if subtitleLine != nil || externalURL != nil {
+                                        HStack(spacing: 8) {
+                                            if let subtitleLine {
+                                                Text(subtitleLine)
+                                                    .font(.system(size: 15, weight: .medium))
+                                                    .foregroundStyle(OunjePalette.secondaryText)
+                                            }
+
+                                            if let externalURL {
+                                                if subtitleLine != nil {
+                                                    Text("•")
+                                                        .foregroundStyle(OunjePalette.secondaryText)
+                                                }
+
+                                                Button("See original link") {
+                                                    openURL(externalURL)
+                                                }
+                                                .font(.system(size: 15, weight: .medium))
+                                                .foregroundStyle(OunjePalette.softCream)
+                                                .buttonStyle(.plain)
+                                                .underline()
+                                            }
+                                        }
+                                    }
+
+                                    HStack(spacing: 8) {
+                                        RecipeDetailCompactActionButton(
+                                            title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Save",
+                                            systemImage: savedStore.isSaved(presentedRecipe.recipeCard) ? "bookmark.fill" : "bookmark",
+                                            compact: true
+                                        ) {
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+                                                savedStore.toggle(presentedRecipe.recipeCard)
+                                            }
+                                        }
+
+                                        RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
+                                            showAskSheet = true
+                                        }
+
+                                        if hasVideoSource {
+                                            RecipeDetailCompactActionButton(title: "Watch", systemImage: "play.fill", compact: true) {
+                                                toggleInlineVideo()
+                                            }
+                                        }
+
+                                        RecipeDetailCompactActionButton(title: "Story", showsInstagramGlyph: true, compact: true) {
+                                            showStorySheet = true
+                                        }
+                                    }
+                                }
+                                .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 12, delay: 0.04))
+
+                                if let summaryLine {
+                                    Text(summaryLine)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(OunjePalette.secondaryText)
+                                        .lineLimit(nil)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 14, delay: 0.06))
+                                }
+
+                                Group {
+                                    if isLoadingResolvedDetail {
+                                        RecipeDetailLoadingSections()
+                                    } else if detailLoadFailed {
+                                        RecipeDetailLoadFailedState(message: viewModel.errorMessage ?? "We couldn't load the full recipe.") {
+                                            Task { await viewModel.load(for: presentedRecipe.id) }
+                                        }
+                                    } else {
+                                        if !detailMetrics.isEmpty {
+                                            VStack(alignment: .leading, spacing: 16) {
+                                                RecipeDetailSectionHeader(title: "Details")
+
+                                                RecipeDetailMetricsGrid(metrics: detailMetrics)
+
+                                                if let detailFootnote = detail?.detailFootnote, !detailFootnote.isEmpty {
+                                                    Text(detailFootnote)
+                                                        .font(.system(size: 14, weight: .medium))
+                                                        .foregroundStyle(OunjePalette.secondaryText)
+                                                        .fixedSize(horizontal: false, vertical: true)
+                                                        .padding(.top, 2)
+                                                }
+                                            }
+                                        }
+
+                                        if !ingredientItems.isEmpty {
+                                            VStack(alignment: .leading, spacing: 20) {
+                                                RecipeDetailSectionHeader(title: "Ingredients")
+
+                                                LazyVGrid(
+                                                    columns: ingredientColumns,
+                                                    spacing: 24
+                                                ) {
+                                                    ForEach(ingredientItems, id: \.stableID) { ingredient in
+                                                        RecipeIngredientTile(ingredient: ingredient)
+                                                    }
+                                                }
+
+                                                ingredientSecondaryButton
+                                            }
+                                            .padding(.top, detailMetrics.isEmpty ? 6 : 20)
+                                        }
+
+                                        if !instructionSteps.isEmpty {
+                                            VStack(alignment: .leading, spacing: 12) {
+                                                RecipeDetailSectionHeader(title: "Cooking Steps")
+                                                    .id("steps-anchor")
+
+                                                VStack(spacing: 0) {
+                                                    ForEach(instructionSteps, id: \.number) { step in
+                                                        RecipeStepBlock(
+                                                            step: step,
+                                                            ingredientMatches: matchingIngredientChips(for: step, ingredients: ingredientItems),
+                                                            dividerColor: sectionDivider
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            .padding(.top, ingredientItems.isEmpty ? 8 : 26)
+                                        }
+
+                                        if detail != nil && (isLoadingSimilarRecipes || !viewModel.similarRecipes.isEmpty) {
+                                            RecipeDetailEnjoySection(
+                                                recipes: viewModel.similarRecipes,
+                                                isLoading: isLoadingSimilarRecipes,
+                                                onSelectRecipe: { recipe in
+                                                    relatedPresentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 18, delay: 0.09))
+                            }
+                            .frame(maxWidth: 820, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 0)
+                            .padding(.bottom, 160)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    .scrollIndicators(.hidden)
+                    .onChange(of: shouldScrollToSteps) { shouldScroll in
+                        guard shouldScroll else { return }
+                        withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                            proxy.scrollTo("steps-anchor", anchor: .top)
+                        }
+                        shouldScrollToSteps = false
+                    }
+
+                    RecipeCookBottomBar(
+                        servingsCount: $servingsCount,
+                        actionTitle: primaryBottomActionTitle
+                    ) {
+                        handlePrimaryBottomAction()
+                    }
+                    .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 22, delay: 0.1))
+                }
+                .overlay(alignment: .top) {
+                    LinearGradient(
+                        colors: [
+                            detailBackground,
+                            detailBackground.opacity(0.82),
+                            detailBackground.opacity(0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: safeTop + 30)
+                    .ignoresSafeArea(edges: .top)
+                    .allowsHitTesting(false)
+                }
+                .overlay(alignment: .top) {
+                    HStack(alignment: .top) {
+                        RecipeDetailTopIconButton(symbolName: "arrow.left") {
+                            closeExperience()
+                        }
+                        Spacer()
+                        RecipeDetailTopIconButton(symbolName: "arrow.up.right") {
+                            showShareSheet = true
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, max(safeTop - 2, 0))
+                    .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: -8, delay: 0.02))
+                }
+                .overlay(alignment: .topTrailing) {
+                    if showInlineVideo, let resolvedVideo, let resolvedURL = resolvedVideo.url {
+                        VStack(alignment: .trailing, spacing: 10) {
+                            VStack(spacing: 8) {
+                                HStack(spacing: 8) {
+                                    RecipeVideoControlButton(symbol: "backward.end.fill") {
+                                        seekInlineVideo(delta: -5)
+                                    }
+
+                                    RecipeVideoControlButton(symbol: "forward.end.fill") {
+                                        seekInlineVideo(delta: 5)
+                                    }
+                                }
+
+                                HStack(spacing: 8) {
+                                    RecipeVideoControlButton(symbol: "arrow.up.left.and.arrow.down.right") {
+                                        pauseInlineVideo()
+                                        shouldResumeInlineVideoAfterFullscreen = false
+                                        showInlineVideoFullscreen = true
+                                    }
+
+                                    RecipeVideoControlButton(symbol: "xmark") {
+                                        closeInlineVideo()
+                                    }
+                                }
+                            }
+
+                            RecipeInlineVideoCard(
+                                video: resolvedVideo,
+                                url: resolvedURL,
+                                player: inlineVideoPlayer,
+                                webAction: $webVideoAction
+                            ) {
+                                togglePlayback()
+                            }
+                        }
+                        .padding(.trailing, 18)
+                        .padding(.top, safeTop + 188)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .zIndex(4)
+                    }
+                }
+                .frame(width: pageWidth, alignment: .topLeading)
+                .clipped()
+            }
+            .overlay(alignment: .top) {
+                if let toast = toastCenter.toast {
+                    AppToastBanner(
+                        toast: toast,
+                        onTap: toast.destination == nil ? nil : {
+                            handleToastTap(toast)
+                        }
+                    )
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .allowsHitTesting(toast.destination != nil || toast.action != nil)
+                }
+            }
+            .task(id: presentedRecipe.id) {
+                triggerChromeReveal()
+                let loadedCount = presentedRecipe.plannedRecipe?.servings ?? viewModel.detail?.displayServings ?? 4
+                baseServingsCount = max(1, loadedCount)
+                servingsCount = max(1, loadedCount)
+                await viewModel.load(for: presentedRecipe.id)
+            }
+        }
+        .background(detailBackground.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showShareSheet) {
+            RecipeShareSheet(activityItems: shareItems)
+                .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showStorySheet) {
+            RecipeStoryShareSheet(
+                recipeTitle: titleText,
+                recipeSubtitle: subtitleLine ?? summaryLine,
+                imageCandidates: imageCandidates,
+                recipeURL: externalURL,
+                onFallbackShare: {
+                    showShareSheet = true
+                }
+            )
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showAskSheet) {
+            RecipeAskSheet(
+                recipeTitle: titleText,
+                recipeSubtitle: subtitleLine ?? summaryLine,
+                recipeID: recipeID,
+                userID: store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
+                profile: store.profile,
+                onOpenAdaptedRecipe: { result in
+                    relatedPresentedRecipe = PresentedRecipeDetail(
+                        recipeCard: result.recipeCard,
+                        initialDetail: result.recipeDetail,
+                        adaptedFromRecipeID: result.adaptedFromRecipeID ?? recipeID
+                    )
+                    showAskSheet = false
+                }
+            )
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(item: $relatedPresentedRecipe) { recipe in
+            RecipeDetailExperienceView(
+                presentedRecipe: recipe,
+                onOpenCart: onOpenCart,
+                toastCenter: toastCenter,
+                onOpenToastDestination: onOpenToastDestination
+            )
+            .environmentObject(savedStore)
+            .environmentObject(store)
+        }
+        .fullScreenCover(isPresented: $showInlineVideoFullscreen, onDismiss: {
+            guard shouldResumeInlineVideoAfterFullscreen else { return }
+            shouldResumeInlineVideoAfterFullscreen = false
+            togglePlayback()
+        }) {
+            Group {
+                if let resolvedVideo, let resolvedURL = resolvedVideo.url {
+                    RecipeFullscreenVideoExperience(
+                        video: resolvedVideo,
+                        url: resolvedURL,
+                        onMinimize: {
+                            shouldResumeInlineVideoAfterFullscreen = true
+                            showInlineVideoFullscreen = false
+                        }
+                    )
+                } else {
+                    Color.black.ignoresSafeArea()
+                }
+            }
+        }
+        .task(id: videoSourceURL?.absoluteString ?? "no-video") {
+            guard videoSourceURL != nil else {
+                resolvedVideo = nil
+                return
+            }
+            _ = await prepareInlineVideoIfNeeded()
+        }
+        .onAppear {
+            triggerChromeReveal()
+        }
+        .onChange(of: servingsCount) { newValue in
+            guard isInCurrentPrep else { return }
+            guard newValue != baseServingsCount else { return }
+            Task { await persistPrepServingsChange(newValue) }
+        }
+    }
+
+    private func closeExperience() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func handleToastTap(_ toast: AppToast) {
+        guard let destination = toast.destination else { return }
+        toastCenter.dismiss()
+        if let onOpenToastDestination {
+            onOpenToastDestination(destination)
+            return
+        }
+
+        switch destination {
+        case .recipe(let recipe):
+            relatedPresentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
+        case .appTab(.cart):
+            onOpenCart()
+        case .appTab, .recipeImportQueue:
+            closeExperience()
+        }
+    }
+
+    private func triggerChromeReveal() {
+        detailChromeVisible = false
+        DispatchQueue.main.async {
+            withAnimation(OunjeMotion.screenSpring.delay(0.01)) {
+                detailChromeVisible = true
+            }
+        }
+    }
+
+    private var ingredientSecondaryButton: some View {
+        Button {
+            Task {
+                if let replaceablePrepRecipeID {
+                    await replaceRecipeInPrep(sourceRecipeID: replaceablePrepRecipeID)
+                } else if isInCurrentPrep {
+                    await removeCurrentRecipeFromPrep()
+                } else {
+                    await addCurrentRecipeToPrep()
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isInCurrentPrep ? "minus.circle" : "wand.and.stars")
+                Text(ingredientSecondaryActionTitle)
+            }
+            .font(.system(size: 18, weight: .medium))
+            .foregroundStyle(OunjePalette.primaryText)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(
+                        isInCurrentPrep
+                            ? OunjePalette.surface
+                            : OunjePalette.accent.opacity(0.22)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(
+                                isInCurrentPrep
+                                    ? OunjePalette.stroke
+                                    : OunjePalette.accent.opacity(0.38),
+                                lineWidth: 1
+                            )
+                    )
+            )
+            .shadow(
+                color: isInCurrentPrep ? .clear : OunjePalette.accent.opacity(0.08),
+                radius: 10,
+                x: 0,
+                y: 5
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @MainActor
+    private func handlePrimaryBottomAction() {
+        Task {
+            if let replaceablePrepRecipeID {
+                await replaceRecipeInPrep(sourceRecipeID: replaceablePrepRecipeID)
+            } else if isInCurrentPrep {
+                await removeCurrentRecipeFromPrep()
+            } else {
+                await addCurrentRecipeToPrep()
+            }
+        }
+    }
+
+    @MainActor
+    private func addCurrentRecipeToPrep() async {
+        guard let detail else { return }
+        let recipe = recipeFromDetail(detail)
+        baseServingsCount = max(1, servingsCount)
+        toastCenter.show(
+            title: "Added to next prep",
+            subtitle: titleText,
+            systemImage: "wand.and.stars",
+            thumbnailURLString: toastPreviewImageURLString(for: detail),
+            destination: .appTab(.prep)
+        )
+        Task {
+            await Task.yield()
+            await store.updateLatestPlan(with: recipe, servings: servingsCount)
+        }
+    }
+
+    @MainActor
+    private func replaceRecipeInPrep(sourceRecipeID: String) async {
+        guard let detail else { return }
+        let recipe = recipeFromDetail(detail)
+        baseServingsCount = max(1, servingsCount)
+        toastCenter.show(
+            title: "Prep recipe replaced",
+            subtitle: titleText,
+            systemImage: "arrow.triangle.2.circlepath",
+            thumbnailURLString: toastPreviewImageURLString(for: detail),
+            destination: .appTab(.prep)
+        )
+        Task {
+            await store.removeRecipeFromLatestPlan(recipeID: sourceRecipeID)
+            await store.updateLatestPlan(with: recipe, servings: servingsCount)
+        }
+    }
+
+    @MainActor
+    private func persistPrepServingsChange(_ newServings: Int) async {
+        guard let detail else { return }
+        let recipe = recipeFromDetail(detail)
+        await store.updateLatestPlan(with: recipe, servings: newServings)
+        baseServingsCount = max(1, newServings)
+    }
+
+    @MainActor
+    private func removeCurrentRecipeFromPrep() async {
+        let recipeToRestore = detail.map(recipeFromDetail)
+        let restoreServings = max(1, baseServingsCount)
+        toastCenter.show(
+            title: "Removed from next prep",
+            subtitle: titleText,
+            systemImage: "minus.circle.fill",
+            destination: nil,
+            actionTitle: "Undo",
+            action: { [store, toastCenter] in
+                guard let recipeToRestore else { return }
+                Task {
+                    await store.updateLatestPlan(with: recipeToRestore, servings: restoreServings)
+                    await MainActor.run {
+                        toastCenter.dismiss()
+                    }
+                }
+            }
+        )
+        Task {
+            await Task.yield()
+            await store.removeRecipeFromLatestPlan(recipeID: recipeID)
+        }
+    }
+
+    private func recipeFromDetail(_ detail: RecipeDetailData) -> Recipe {
+        let ingredientSource = detail.ingredients.isEmpty ? detail.steps.flatMap(\.ingredients) : detail.ingredients
+        let ingredients = ingredientSource.map { ingredient in
+            let measurement = Self.parsedIngredientMeasurement(from: ingredient.quantityText)
+            return RecipeIngredient(
+                name: ingredient.displayTitle,
+                amount: measurement?.amount ?? 1,
+                unit: measurement?.unit ?? "ct",
+                estimatedUnitPrice: 0
+            )
+        }
+
+        return Recipe(
+            id: detail.id,
+            title: detail.title,
+            cuisine: Self.cuisinePreference(from: detail),
+            prepMinutes: resolvedRecipeDurationMinutes(from: detail),
+            servings: max(1, servingsCount),
+            storageFootprint: .medium,
+            tags: Self.recipeTags(from: detail),
+            ingredients: ingredients,
+            cardImageURLString: detail.discoverCardImageURLString ?? detail.imageURL?.absoluteString,
+            heroImageURLString: detail.heroImageURLString ?? detail.imageURL?.absoluteString,
+            source: detail.source ?? detail.sourcePlatform ?? detail.authorLine
+        )
+    }
+
+    private func toastPreviewImageURLString(for detail: RecipeDetailData) -> String? {
+        let recipeImageCandidates = [
+            detail.discoverCardImageURLString,
+            detail.heroImageURLString,
+            detail.imageURL?.absoluteString
+        ]
+
+        if let recipeImage = recipeImageCandidates
+            .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .first(where: { !$0.isEmpty }) {
+            return recipeImage
+        }
+
+        return detail.ingredients
+            .compactMap(\.imageURL)
+            .map(\.absoluteString)
+            .first
+    }
+
+    private static func recipeTags(from detail: RecipeDetailData) -> [String] {
+        let rawTags = detail.dietaryTags + detail.flavorTags + detail.cuisineTags + detail.occasionTags
+        let contextualTags = [
+            detail.recipeType,
+            detail.category,
+            detail.subcategory,
+            detail.cookMethod,
+            detail.mainProtein
+        ].compactMap { $0 }
+
+        var seen = Set<String>()
+        return (rawTags + contextualTags)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0).inserted }
+    }
+
+    private static func parsedIngredientMeasurement(from raw: String?) -> (amount: Double, unit: String)? {
+        guard let raw else { return nil }
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        let pattern = #"^\s*((?:\d+\s+)?\d+/\d+|\d+(?:\.\d+)?)\s*(.*)$"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+            let match = regex.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+            let amountRange = Range(match.range(at: 1), in: normalized)
+        else {
+            return nil
+        }
+
+        let amountText = String(normalized[amountRange])
+        let amount = Self.parseIngredientAmount(amountText)
+        let remainderRange = Range(match.range(at: 2), in: normalized)
+        let unit = remainderRange.map { String(normalized[$0]).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        guard amount > 0 else { return nil }
+        return (amount: amount, unit: unit.isEmpty ? "ct" : unit)
+    }
+
+    private static func parseIngredientAmount(_ text: String) -> Double {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains(" ") {
+            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
+            if parts.count == 2, let whole = Double(parts[0]), let fraction = parseSimpleFraction(String(parts[1])) {
+                return whole + fraction
+            }
+        }
+
+        if let fraction = parseSimpleFraction(trimmed) {
+            return fraction
+        }
+
+        return Double(trimmed) ?? 0
+    }
+
+    private static func parseSimpleFraction(_ text: String) -> Double? {
+        let parts = text.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count == 2,
+              let numerator = Double(parts[0]),
+              let denominator = Double(parts[1]),
+              denominator != 0 else {
+            return nil
+        }
+        return numerator / denominator
+    }
+
+    private static func cuisinePreference(from detail: RecipeDetailData) -> CuisinePreference {
+        let candidates = detail.cuisineTags + [detail.category, detail.subcategory, detail.cookMethod, detail.mainProtein].compactMap { $0 }
+        for candidate in candidates {
+            let normalized = candidate
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "-", with: "")
+                .lowercased()
+
+            if let match = CuisinePreference.allCases.first(where: { $0.rawValue.lowercased() == normalized }) {
+                return match
+            }
+        }
+
+        return .american
+    }
+
+    private static func ingredientGridColumns(for pageWidth: CGFloat) -> [GridItem] {
+        let count: Int
+        let spacing: CGFloat
+        if pageWidth < 360 {
+            count = 3
+            spacing = 12
+        } else if pageWidth < 760 {
+            count = 4
+            spacing = 12
+        } else {
+            count = 5
+            spacing = 14
+        }
+
+        return Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .top), count: count)
+    }
+
+    private func ingredientTileTint(for index: Int) -> Color {
+        let palette: [Color] = [
+            OunjePalette.panel,
+            OunjePalette.surface,
+            OunjePalette.elevated,
+            OunjePalette.panel
+        ]
+        return palette[index % palette.count]
+    }
+
+    private func recipeIngredientBadge(for ingredient: String) -> String {
+        let normalized = ingredient.lowercased()
+        if normalized.contains("chicken") { return "🍗" }
+        if normalized.contains("turkey") { return "🦃" }
+        if normalized.contains("beef") || normalized.contains("steak") || normalized.contains("pork") { return "🥩" }
+        if normalized.contains("salmon") || normalized.contains("fish") || normalized.contains("shrimp") || normalized.contains("tilapia") { return "🐟" }
+        if normalized.contains("egg") { return "🥚" }
+        if normalized.contains("broccoli") { return "🥦" }
+        if normalized.contains("spinach") || normalized.contains("lettuce") || normalized.contains("kale") { return "🥬" }
+        if normalized.contains("carrot") { return "🥕" }
+        if normalized.contains("potato") { return "🥔" }
+        if normalized.contains("rice") { return "🍚" }
+        if normalized.contains("pasta") || normalized.contains("noodle") { return "🍝" }
+        if normalized.contains("cheese") || normalized.contains("cheddar") || normalized.contains("parmesan") { return "🧀" }
+        if normalized.contains("milk") || normalized.contains("cream") { return "🥛" }
+        if normalized.contains("bread") || normalized.contains("bun") { return "🍞" }
+        if normalized.contains("tomato") { return "🍅" }
+        if normalized.contains("pepper") { return "🫑" }
+        if normalized.contains("garlic") { return "🧄" }
+        if normalized.contains("onion") { return "🧅" }
+        if normalized.contains("lemon") || normalized.contains("lime") { return "🍋" }
+        if normalized.contains("bean") { return "🫘" }
+        if normalized.contains("mushroom") { return "🍄" }
+        if normalized.contains("oil") { return "🫒" }
+        if normalized.contains("salt") { return "🧂" }
+        if normalized.contains("water") || normalized.contains("broth") { return "🥣" }
+        return "＋"
+    }
+
+    private func matchingIngredientChips(for step: RecipeDetailStep, ingredients: [RecipeDetailIngredient]) -> [String] {
+        if !step.ingredients.isEmpty {
+            return step.ingredients.prefix(4).map(\.lineText)
+        }
+
+        guard !ingredients.isEmpty else { return [] }
+        let tokens = Set(
+            step.text
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count > 2 }
+        )
+
+        return ingredients.filter { ingredient in
+            let ingredientTokens = Set(
+                ingredient.lineText
+                    .lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { $0.count > 2 }
+            )
+            return !tokens.isDisjoint(with: ingredientTokens)
+        }
+        .prefix(4)
+        .map(\.lineText)
+    }
+}
+
+struct RecipeModalTitle: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .sleeDisplayFont(44)
+            .foregroundStyle(OunjePalette.primaryText)
+            .multilineTextAlignment(.leading)
+            .lineSpacing(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct RecipeDetailSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 28, weight: .regular, design: .serif))
+            .foregroundStyle(OunjePalette.softCream)
+    }
+}
+
+struct RecipeDetailHeroImage: View {
+    let candidates: [URL]
+    @StateObject private var loader = DiscoverRecipeImageLoader()
+
+    var body: some View {
+        ZStack {
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
+            } else if loader.isLoading {
+                RecipeDetailHeroImagePlaceholder()
+            } else {
+                VStack(spacing: 18) {
+                    Image(systemName: "fork.knife")
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                    Text("Recipe preview")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+            }
+        }
+        .task(id: candidates.map(\.absoluteString).joined(separator: "|")) {
+            await loader.load(from: candidates)
+        }
+    }
+}
+
+struct RecipeDetailHeroImagePlaceholder: View {
+    @State private var shimmerOffset: CGFloat = -1.2
+    @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Circle()
+            .fill(OunjePalette.surface.opacity(0.92))
+            .overlay(
+                Circle()
+                    .stroke(OunjePalette.softCream.opacity(0.12), lineWidth: 1)
+            )
+            .modifier(LoadingSheen(offset: shimmerOffset))
+            .scaleEffect(reduceMotion ? 1 : (pulse ? 1.018 : 0.986))
+            .shadow(color: .black.opacity(0.12), radius: 16, y: 7)
+            .accessibilityLabel("Loading recipe image")
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+                withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
+                    shimmerOffset = 1.35
+                }
+            }
+    }
+}
+
+struct RecipeDetailTopIconButton: View {
+    let symbolName: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbolName)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+                .frame(width: 52, height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(OunjePalette.surface.opacity(0.96))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct RecipeDetailTopVideoButton: View {
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        let baseFill: AnyShapeStyle = isActive
+            ? AnyShapeStyle(OunjePalette.softCream.opacity(0.96))
+            : AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.20),
+                        OunjePalette.accent.opacity(0.20),
+                        OunjePalette.panel.opacity(0.58)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+
+        Button(action: action) {
+            Image(systemName: "play.fill")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(isActive ? Color.black.opacity(0.88) : OunjePalette.softCream)
+                .frame(width: 52, height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(baseFill)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .opacity(isActive ? 0 : 1)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(isActive ? 0.10 : 0.20),
+                                            Color.white.opacity(0.02)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .blendMode(.screen)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(isActive ? 0.24 : 0.18), lineWidth: 1)
+                        )
+                )
+                .shadow(color: isActive ? OunjePalette.softCream.opacity(0.16) : .black.opacity(0.16), radius: 10, y: 6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct FloatingSavedSearchButton: View {
+    let isActive: Bool
+    let transitionNamespace: Namespace.ID
+    let action: () -> Void
+    @State private var iconScale: CGFloat = 1
+
+    var body: some View {
+        let baseFill: AnyShapeStyle = isActive
+            ? AnyShapeStyle(OunjePalette.softCream.opacity(0.96))
+            : AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.20),
+                        OunjePalette.accent.opacity(0.20),
+                        OunjePalette.panel.opacity(0.58)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+
+        Button {
+            withAnimation(.spring(response: 0.16, dampingFraction: 0.72)) {
+                iconScale = 0.84
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.74)) {
+                    iconScale = 1
+                }
+            }
+            action()
+        } label: {
+            ZStack {
+                Capsule(style: .continuous)
+                    .fill(baseFill)
+                    .matchedGeometryEffect(id: "saved-search-shell", in: transitionNamespace)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .opacity(isActive ? 0 : 1)
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(isActive ? 0.10 : 0.20),
+                                        Color.white.opacity(0.02)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .blendMode(.screen)
+                    )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(Color.white.opacity(isActive ? 0.24 : 0.18), lineWidth: 1)
+                    )
+
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 17, weight: .bold))
+                    .scaleEffect(iconScale)
+                    .foregroundStyle(isActive ? Color.black.opacity(0.88) : OunjePalette.softCream.opacity(0.88))
+                    .matchedGeometryEffect(id: "saved-search-icon", in: transitionNamespace)
+            }
+            .frame(width: 52, height: 52)
+            .shadow(color: isActive ? OunjePalette.softCream.opacity(0.16) : .black.opacity(0.16), radius: 10, y: 6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct SavedRecipesSearchField: View {
+    @Binding var text: String
+    let placeholder: String
+    @Binding var isExpanded: Bool
+    let transitionNamespace: Namespace.ID
+    @FocusState private var isFocused: Bool
+
+    private var hasQuery: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(OunjePalette.softCream.opacity(0.9))
+                .matchedGeometryEffect(id: "saved-search-icon", in: transitionNamespace)
+
+            TextField("", text: $text, prompt: Text(placeholder).foregroundColor(OunjePalette.softCream.opacity(0.34)))
+                .font(.system(size: 17, weight: .medium, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .focused($isFocused)
+
+            Spacer(minLength: 0)
+
+            Button {
+                if hasQuery {
+                    text = ""
+                } else {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isExpanded = false
+                    }
+                }
+            } label: {
+                Image(systemName: hasQuery ? "xmark.circle.fill" : "xmark")
+                    .font(.system(size: hasQuery ? 18 : 15, weight: .semibold))
+                    .foregroundStyle(OunjePalette.softCream.opacity(hasQuery ? 0.44 : 0.34))
+                    .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
+        .background(
+            ZStack {
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                OunjePalette.surface.opacity(0.98),
+                                OunjePalette.panel.opacity(0.96),
+                                OunjePalette.accent.opacity(0.12)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .matchedGeometryEffect(id: "saved-search-shell", in: transitionNamespace)
+
+                Capsule(style: .continuous)
+                    .stroke(OunjePalette.stroke.opacity(0.94), lineWidth: 1)
+            }
+        )
+        .shadow(color: Color.black.opacity(0.22), radius: 22, y: 10)
+        .onAppear {
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
+        .onChange(of: isExpanded) { newValue in
+            if newValue {
+                DispatchQueue.main.async {
+                    isFocused = true
+                }
+            } else {
+                isFocused = false
+            }
+        }
+    }
+}
+
+struct RecipeInlineVideoCard: View {
+    let video: RecipeResolvedVideoData
+    let url: URL
+    let player: AVPlayer?
+    @Binding var webAction: RecipeWebVideoAction
+    let onTap: () -> Void
+
+    var body: some View {
+        ZStack {
+            Group {
+                if video.supportsNativePlayback, let player {
+                    RecipeNativeVideoView(player: player, videoGravity: .resizeAspectFill)
+                } else {
+                    RecipeInlineWebVideoView(video: video, url: url, action: $webAction)
+                }
+            }
+            .allowsHitTesting(false)
+
+            Color.clear
+                .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .onTapGesture(perform: onTap)
+        }
+        .frame(width: 168, height: 248)
+        .clipped()
+        .frame(width: 168)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(OunjePalette.panel)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.28), radius: 14, y: 8)
+    }
+}
+
+struct RecipeVideoControlButton: View {
+    let symbol: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+                .frame(width: 42, height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(OunjePalette.surface.opacity(0.96))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct RecipeFullscreenVideoExperience: View {
+    let video: RecipeResolvedVideoData
+    let url: URL
+    let onMinimize: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    @State private var webAction: RecipeWebVideoAction = .none
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topTrailing) {
+                Color.black.ignoresSafeArea()
+
+                Group {
+                    if video.supportsNativePlayback {
+                        if let player {
+                            ZStack {
+                                RecipeNativeVideoView(player: player, videoGravity: .resizeAspect)
+                                    .allowsHitTesting(false)
+
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        if player.timeControlStatus == .playing {
+                                            player.pause()
+                                        } else {
+                                            player.play()
+                                        }
+                                    }
+                            }
+                        } else {
+                            ProgressView()
+                                .tint(OunjePalette.softCream)
+                        }
+                    } else {
+                        RecipeInlineWebVideoView(video: video, url: url, action: $webAction)
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .ignoresSafeArea()
+
+                HStack(spacing: 10) {
+                    RecipeDetailTopIconButton(symbolName: "pip.exit") {
+                        onMinimize()
+                    }
+
+                    RecipeDetailTopIconButton(symbolName: "xmark") {
+                        dismiss()
+                    }
+                }
+                .padding(.trailing, 20)
+                .padding(.top, geometry.safeAreaInsets.top + 10)
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .onAppear {
+            guard video.supportsNativePlayback, player == nil else { return }
+            let nextPlayer = AVPlayer(url: url)
+            nextPlayer.play()
+            player = nextPlayer
+        }
+        .onDisappear {
+            player?.pause()
+            webAction = RecipeWebVideoAction(kind: .pause)
+        }
+    }
+}
+
+enum RecipeVideoURLResolver {
+    static func fallbackVideo(from source: URL) -> RecipeResolvedVideoData {
+        let resolvedURL = inAppPlayableURL(from: source)
+        let mode: RecipeResolvedVideoData.PlaybackMode = supportsNativePlayback(resolvedURL ?? source) ? .native : .embed
+        return RecipeResolvedVideoData(
+            modeRawValue: mode.rawValue,
+            provider: source.host,
+            sourceURLString: source.absoluteString,
+            resolvedURLString: resolvedURL?.absoluteString ?? source.absoluteString,
+            posterURLString: nil,
+            durationSeconds: nil
+        )
+    }
+
+    static func inAppPlayableURL(from source: URL) -> URL? {
+        guard let scheme = source.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        if supportsNativePlayback(source) {
+            return source
+        }
+
+        let host = source.host?.lowercased() ?? ""
+        if host.contains("instagram.com") {
+            return instagramEmbedURL(from: source)
+        }
+        if host.contains("tiktok.com") {
+            return tiktokEmbedURL(from: source)
+        }
+        if host == "youtu.be" || host.contains("youtube.com") || host.contains("youtube-nocookie.com") {
+            return youtubeEmbedURL(from: source)
+        }
+        if host.contains("vimeo.com") {
+            return vimeoEmbedURL(from: source)
+        }
+
+        return source
+    }
+
+    static func supportsNativePlayback(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["mp4", "m4v", "mov", "m3u8"].contains(ext)
+    }
+
+    private static func instagramEmbedURL(from source: URL) -> URL? {
+        let components = source.pathComponents.filter { $0 != "/" }
+        let kinds = Set(["reel", "p", "tv"])
+        guard let kindIndex = components.firstIndex(where: { kinds.contains($0.lowercased()) }),
+              kindIndex + 1 < components.count else {
+            return nil
+        }
+        let kind = components[kindIndex].lowercased()
+        let mediaID = components[kindIndex + 1]
+        return URL(string: "https://www.instagram.com/\(kind)/\(mediaID)/embed/captioned/")
+    }
+
+    private static func tiktokEmbedURL(from source: URL) -> URL? {
+        let components = source.pathComponents.filter { $0 != "/" }
+        if components.contains("embed"), let original = URL(string: source.absoluteString) {
+            return original
+        }
+        guard let videoIndex = components.firstIndex(of: "video"),
+              videoIndex + 1 < components.count else {
+            return nil
+        }
+        let videoID = components[videoIndex + 1]
+        return URL(string: "https://www.tiktok.com/embed/v2/\(videoID)?autoplay=1")
+    }
+
+    private static func youtubeEmbedURL(from source: URL) -> URL? {
+        let host = source.host?.lowercased() ?? ""
+        let components = source.pathComponents.filter { $0 != "/" }
+        var videoID: String?
+
+        if host == "youtu.be" {
+            videoID = components.first
+        } else if components.first == "watch" || source.path == "/watch" {
+            let queryItems = URLComponents(url: source, resolvingAgainstBaseURL: false)?.queryItems
+            videoID = queryItems?.first(where: { $0.name == "v" })?.value
+        } else if let shortsIndex = components.firstIndex(of: "shorts"), shortsIndex + 1 < components.count {
+            videoID = components[shortsIndex + 1]
+        } else if let embedIndex = components.firstIndex(of: "embed"), embedIndex + 1 < components.count {
+            videoID = components[embedIndex + 1]
+        }
+
+        guard let videoID, !videoID.isEmpty else { return nil }
+        return URL(string: "https://www.youtube.com/embed/\(videoID)?playsinline=1&autoplay=1&rel=0")
+    }
+
+    private static func vimeoEmbedURL(from source: URL) -> URL? {
+        let components = source.pathComponents.filter { $0 != "/" }
+        if components.first == "video", components.count >= 2 {
+            return URL(string: "https://player.vimeo.com/video/\(components[1])?autoplay=1")
+        }
+        guard let numericID = components.reversed().first(where: { $0.allSatisfy(\.isNumber) }) else {
+            return nil
+        }
+        return URL(string: "https://player.vimeo.com/video/\(numericID)?autoplay=1")
+    }
+}
+
+struct RecipeInlineWebVideoView: UIViewRepresentable {
+    let video: RecipeResolvedVideoData
+    let url: URL
+    @Binding var action: RecipeWebVideoAction
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.userContentController.add(context.coordinator, name: "ounjeVideoState")
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        context.coordinator.webView = webView
+        webView.navigationDelegate = context.coordinator
+        webView.isOpaque = false
+        webView.backgroundColor = UIColor.black
+        webView.scrollView.backgroundColor = UIColor.black
+        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+        context.coordinator.render(video: video, url: url, in: webView)
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        context.coordinator.render(video: video, url: url, in: uiView)
+
+        if context.coordinator.lastActionID != action.id {
+            context.coordinator.lastActionID = action.id
+            context.coordinator.apply(action: action)
+        }
+    }
+
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "ounjeVideoState")
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        weak var webView: WKWebView?
+        var lastActionID: UUID?
+        private var loadedSignature: String?
+        private var currentMode: RecipeResolvedVideoData.PlaybackMode = .unavailable
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {}
+
+        func render(video: RecipeResolvedVideoData, url: URL, in webView: WKWebView) {
+            let signature = "\(video.mode.rawValue)|\(video.provider ?? "video")|\(url.absoluteString)"
+            guard loadedSignature != signature else { return }
+
+            loadedSignature = signature
+            currentMode = video.mode
+
+            if video.usesHostedIframe {
+                webView.loadHTMLString(Self.iframeWrapperHTML(for: video, url: url), baseURL: URL(string: "https://iframe.ly"))
+            } else {
+                webView.load(URLRequest(url: url))
+            }
+        }
+
+        func apply(action: RecipeWebVideoAction) {
+            guard let webView else { return }
+
+            let script: String?
+            switch action.kind {
+            case .none:
+                script = nil
+            case .togglePlayback:
+                script = "window.ounjeTogglePlayback && window.ounjeTogglePlayback();"
+            case let .seek(seconds):
+                script = "window.ounjeSeekBy && window.ounjeSeekBy(\(seconds));"
+            case .pause:
+                script = "window.ounjePauseVideo && window.ounjePauseVideo();"
+            }
+
+            guard let script else { return }
+            webView.evaluateJavaScript(script, completionHandler: nil)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            guard navigationAction.targetFrame == nil,
+                  let url = navigationAction.request.url else {
+                return nil
+            }
+
+            if shouldAllow(url: url) {
+                webView.load(URLRequest(url: url))
+            }
+            return nil
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.allow)
+                return
+            }
+
+            if shouldAllow(url: url) {
+                decisionHandler(.allow)
+            } else {
+                decisionHandler(.cancel)
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard currentMode != .iframe else { return }
+            webView.evaluateJavaScript(Self.videoOnlyJavaScript, completionHandler: nil)
+        }
+
+        private func shouldAllow(url: URL) -> Bool {
+            guard let scheme = url.scheme?.lowercased() else { return false }
+            return ["http", "https", "about", "data", "blob"].contains(scheme)
+        }
+
+        private static func iframeWrapperHTML(for video: RecipeResolvedVideoData, url: URL) -> String {
+            let source = htmlEscaped(url.absoluteString)
+            let provider = (video.provider ?? "video").lowercased()
+            if provider.contains("tiktok") {
+                return tiktokPlayerHTML(src: source)
+            }
+            return iframelyPlayerHTML(src: source)
+        }
+
+        private static func tiktokPlayerHTML(src: String) -> String {
+            """
+            <!doctype html>
+            <html>
+            <head>
+              <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+              <style>
+                html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+                iframe { border: 0; width: 100vw; height: 100vh; background: #000; }
+              </style>
+            </head>
+            <body>
+              <iframe
+                id="ounjePlayer"
+                src="\(src)"
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowfullscreen
+                scrolling="no">
+              </iframe>
+              <script>
+                const iframe = document.getElementById('ounjePlayer');
+                let currentTime = 0;
+                let paused = false;
+
+                function post(type, value) {
+                  if (!iframe || !iframe.contentWindow) return false;
+                  const payload = { 'x-tiktok-player': true, type: type };
+                  if (value !== undefined) payload.value = value;
+                  iframe.contentWindow.postMessage(payload, '*');
+                  return true;
+                }
+
+                window.addEventListener('message', function(event) {
+                  try {
+                    const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                    if (!data || data['x-tiktok-player'] !== true) return;
+
+                    const type = String(data.type || '');
+                    const value = data.value;
+                    if (type === 'onStateChange') {
+                      const state = String(value || '').toLowerCase();
+                      paused = !(state === 'playing' || state === 'play' || state === '1');
+                    }
+
+                    if (type === 'onCurrentTime') {
+                      const next = Number((value && (value.currentTime || value.current_time || value.time)) ?? value ?? 0);
+                      if (Number.isFinite(next)) currentTime = next;
+                    }
+                  } catch (_) {}
+                });
+
+                window.ounjeTogglePlayback = function() {
+                  post(paused ? 'play' : 'pause');
+                  paused = !paused;
+                  return true;
+                };
+
+                window.ounjeSeekBy = function(seconds) {
+                  const next = Math.max(0, currentTime + seconds);
+                  currentTime = next;
+                  post('seekTo', next);
+                  return true;
+                };
+
+                window.ounjePauseVideo = function() {
+                  paused = true;
+                  post('pause');
+                  return true;
+                };
+              </script>
+            </body>
+            </html>
+            """
+        }
+
+        private static func iframelyPlayerHTML(src: String) -> String {
+            """
+            <!doctype html>
+            <html>
+            <head>
+              <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+              <style>
+                html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+                iframe { border: 0; width: 100vw; height: 100vh; background: #000; }
+              </style>
+              <script src="https://cdn.embed.ly/player-0.1.0.min.js"></script>
+            </head>
+            <body>
+              <iframe
+                id="ounjePlayer"
+                src="\(src)"
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowfullscreen
+                scrolling="no">
+              </iframe>
+              <script>
+                const iframe = document.getElementById('ounjePlayer');
+                let player = null;
+                let paused = false;
+                let currentTime = 0;
+
+                function boot() {
+                  if (!window.playerjs || !iframe) return;
+                  player = new playerjs.Player(iframe);
+
+                  player.on('ready', function() {
+                    try { player.play(); paused = false; } catch (_) {}
+                  });
+                  player.on('play', function() { paused = false; });
+                  player.on('pause', function() { paused = true; });
+                  player.on('timeupdate', function(data) {
+                    const next = Number((data && (data.seconds || data.currentTime || data.time)) ?? 0);
+                    if (Number.isFinite(next)) currentTime = next;
+                  });
+                }
+
+                if (document.readyState === 'loading') {
+                  document.addEventListener('DOMContentLoaded', boot);
+                } else {
+                  boot();
+                }
+
+                window.ounjeTogglePlayback = function() {
+                  if (!player) return false;
+                  try {
+                    if (paused) { player.play(); paused = false; }
+                    else { player.pause(); paused = true; }
+                  } catch (_) {}
+                  return true;
+                };
+
+                window.ounjeSeekBy = function(seconds) {
+                  if (!player) return false;
+                  const next = Math.max(0, currentTime + seconds);
+                  currentTime = next;
+                  try { player.setCurrentTime(next); } catch (_) {}
+                  return true;
+                };
+
+                window.ounjePauseVideo = function() {
+                  if (!player) return false;
+                  paused = true;
+                  try { player.pause(); } catch (_) {}
+                  return true;
+                };
+              </script>
+            </body>
+            </html>
+            """
+        }
+
+        private static func htmlEscaped(_ value: String) -> String {
+            value
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "'", with: "&#39;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+        }
+
+        private static let videoOnlyJavaScript = """
+        (function() {
+          function rebuildIntoVideoOnly() {
+            const videos = Array.from(document.querySelectorAll('video'));
+            if (!videos.length) return false;
+            videos.sort((a, b) => {
+              const aSize = (a.videoWidth || a.clientWidth || 0) * (a.videoHeight || a.clientHeight || 0);
+              const bSize = (b.videoWidth || b.clientWidth || 0) * (b.videoHeight || b.clientHeight || 0);
+              return bSize - aSize;
+            });
+            const sourceVideo = videos[0];
+            const src = sourceVideo.currentSrc || sourceVideo.src;
+            const poster = sourceVideo.poster || "";
+            if (!src) return false;
+
+            if (!window.ounjeVideo || window.ounjeVideo.dataset.src !== src) {
+              const video = document.createElement('video');
+              video.src = src;
+              if (poster) video.poster = poster;
+              video.autoplay = true;
+              video.loop = true;
+              video.controls = false;
+              video.muted = false;
+              video.playsInline = true;
+              video.preload = 'auto';
+              video.dataset.src = src;
+              video.style.width = '100%';
+              video.style.height = '100%';
+              video.style.objectFit = 'cover';
+              video.style.background = '#000';
+
+              document.documentElement.style.background = '#000';
+              document.documentElement.style.margin = '0';
+              document.documentElement.style.overflow = 'hidden';
+              document.body.style.background = '#000';
+              document.body.style.margin = '0';
+              document.body.style.overflow = 'hidden';
+              document.body.style.width = '100vw';
+              document.body.style.height = '100vh';
+              document.body.innerHTML = '';
+              document.body.appendChild(video);
+              window.ounjeVideo = video;
+              video.play().catch(() => {});
+            }
+            return true;
+          }
+
+          window.ounjeTogglePlayback = function() {
+            if (!window.ounjeVideo) return false;
+            if (window.ounjeVideo.paused) {
+              window.ounjeVideo.play().catch(() => {});
+            } else {
+              window.ounjeVideo.pause();
+            }
+            return true;
+          };
+
+          window.ounjeSeekBy = function(seconds) {
+            if (!window.ounjeVideo) return false;
+            const duration = Number.isFinite(window.ounjeVideo.duration) ? window.ounjeVideo.duration : 0;
+            const nextTime = Math.max(0, window.ounjeVideo.currentTime + seconds);
+            window.ounjeVideo.currentTime = duration > 0 ? Math.min(duration, nextTime) : nextTime;
+            return true;
+          };
+
+          window.ounjePauseVideo = function() {
+            if (!window.ounjeVideo) return false;
+            window.ounjeVideo.pause();
+            return true;
+          };
+
+          if (!rebuildIntoVideoOnly()) {
+            let attempts = 0;
+            const timer = setInterval(function() {
+              attempts += 1;
+              if (rebuildIntoVideoOnly() || attempts > 120) {
+                clearInterval(timer);
+              }
+            }, 250);
+          }
+        })();
+        """
+    }
+}
+
+struct RecipeNativeVideoView: UIViewRepresentable {
+    let player: AVPlayer
+    let videoGravity: AVLayerVideoGravity
+
+    func makeUIView(context: Context) -> PlayerContainerView {
+        let view = PlayerContainerView()
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = videoGravity
+        view.backgroundColor = .black
+        return view
+    }
+
+    func updateUIView(_ uiView: PlayerContainerView, context: Context) {
+        uiView.playerLayer.player = player
+        uiView.playerLayer.videoGravity = videoGravity
+    }
+}
+
+final class PlayerContainerView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+    var playerLayer: AVPlayerLayer {
+        layer as! AVPlayerLayer
+    }
+}
+
+struct RecipeShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
+    case healthier
+    case spicy
+    case fatLoss
+    case moreProtein
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .healthier: return "Healthier"
+        case .spicy: return "Spicier"
+        case .fatLoss: return "Fat loss"
+        case .moreProtein: return "More protein"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .healthier: return "Cleaner, lighter, still good."
+        case .spicy: return "Turn the heat up."
+        case .fatLoss: return "Lower calories, keep it filling."
+        case .moreProtein: return "Boost protein and stay balanced."
+        }
+    }
+
+    var promptSeed: String {
+        switch self {
+        case .healthier:
+            return "Make this healthier while keeping the dish satisfying, practical, and close to the original."
+        case .spicy:
+            return "Make this spicier without breaking the dish. Keep the heat balanced and cuisine-appropriate."
+        case .fatLoss:
+            return "Make this better for fat loss with lower calorie density, better satiety, and a realistic grocery list."
+        case .moreProtein:
+            return "Make this higher in protein while keeping the dish flavorful and still true to the original."
+        }
+    }
+
+    var systemImageName: String {
+        switch self {
+        case .healthier: return "leaf.fill"
+        case .spicy: return "flame.fill"
+        case .fatLoss: return "scalemass"
+        case .moreProtein: return "bolt.heart.fill"
+        }
+    }
+}
+
+struct RecipeAdaptationResponse: Decodable {
+    let adaptedRecipe: RecipeAdaptationRecipe
+    let recipeID: String?
+    let adaptedFromRecipeID: String?
+    let recipeCard: DiscoverRecipeCardData
+    let recipeDetail: RecipeDetailData
+    let changeSummary: String?
+    let pairingTerms: [String]
+    let styleExamplesUsed: [String]
+    let modelMode: String
+    let model: String
+
+    enum CodingKeys: String, CodingKey {
+        case adaptedRecipe = "adapted_recipe"
+        case recipeID = "recipe_id"
+        case adaptedFromRecipeID = "adapted_from_recipe_id"
+        case recipeCard = "recipe_card"
+        case recipeDetail = "recipe_detail"
+        case changeSummary = "change_summary"
+        case pairingTerms = "pairing_terms"
+        case styleExamplesUsed = "style_examples_used"
+        case modelMode = "model_mode"
+        case model
+    }
+}
+
+struct RecipeAdaptationRecipe: Decodable, Identifiable {
+    let title: String
+    let summary: String
+    let cookTimeText: String
+    let ingredients: [String]
+    let steps: [String]
+    let substitutions: [String]
+    let pairingNotes: [String]
+    let dietaryFit: [String]
+
+    var id: String { title }
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case summary
+        case cookTimeText = "cook_time_text"
+        case ingredients
+        case steps
+        case substitutions
+        case pairingNotes = "pairing_notes"
+        case dietaryFit = "dietary_fit"
+    }
+}
+
+struct RecipeAdaptationRequestPayload: Codable {
+    let recipeID: String
+    let userID: String
+    let adaptationPrompt: String
+    let profile: UserProfile?
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+        case userID = "user_id"
+        case adaptationPrompt = "adaptation_prompt"
+        case profile
+    }
+}
+
+actor RecipeAdaptationService {
+    static let shared = RecipeAdaptationService()
+
+    private var cache: [String: RecipeAdaptationResponse] = [:]
+
+    func adapt(recipeID: String, userID: String?, prompt: String, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
+        let normalizedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !recipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !normalizedUserID.isEmpty,
+              !normalizedPrompt.isEmpty else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        let cacheKey = "\(normalizedUserID.lowercased())::\(recipeID.lowercased())::\(normalizedPrompt.lowercased())"
+        if let cached = cache[cacheKey] {
+            return cached
+        }
+
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                let adapted = try await adapt(baseURL: baseURL, recipeID: recipeID, userID: normalizedUserID, prompt: normalizedPrompt, profile: profile)
+                cache[cacheKey] = adapted
+                return adapted
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    private func adapt(baseURL: String, recipeID: String, userID: String, prompt: String, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/adapt") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(
+            RecipeAdaptationRequestPayload(
+                recipeID: recipeID,
+                userID: userID,
+                adaptationPrompt: prompt,
+                profile: profile
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to adapt recipe (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(RecipeAdaptationResponse.self, from: data)
+    }
+}
+
+@MainActor
+final class RecipeAdaptationViewModel: ObservableObject {
+    @Published private(set) var result: RecipeAdaptationResponse?
+    @Published private(set) var isGenerating = false
+    @Published var errorMessage: String?
+
+    func clearResult() {
+        result = nil
+        errorMessage = nil
+    }
+
+    @discardableResult
+    func adapt(recipeID: String, userID: String?, prompt: String, profile: UserProfile?) async -> RecipeAdaptationResponse? {
+        isGenerating = true
+        errorMessage = nil
+        defer { isGenerating = false }
+
+        do {
+            let adapted = try await RecipeAdaptationService.shared.adapt(recipeID: recipeID, userID: userID, prompt: prompt, profile: profile)
+            result = adapted
+            return adapted
+        } catch {
+            result = nil
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+}
+
+struct RecipeAskSheet: View {
+    let recipeTitle: String
+    let recipeSubtitle: String?
+    let recipeID: String
+    let userID: String?
+    let profile: UserProfile?
+    let onOpenAdaptedRecipe: (RecipeAdaptationResponse) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var viewModel = RecipeAdaptationViewModel()
+    @State private var selectedIntent: RecipeAlterationIntent = .healthier
+    @State private var promptText: String = ""
+
+    private var canGenerate: Bool {
+        !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !(userID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            && !viewModel.isGenerating
+    }
+
+    var body: some View {
+        ZStack {
+            OunjePalette.background.ignoresSafeArea()
+
+            if let result = viewModel.result {
+                RecipeAdaptationResultSheet(
+                    recipeTitle: recipeTitle,
+                    recipeSubtitle: recipeSubtitle,
+                    result: result,
+                    isGenerating: viewModel.isGenerating,
+                    onAskAgain: {
+                        viewModel.clearResult()
+                    },
+                    onDone: {
+                        dismiss()
+                    }
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    Capsule()
+                        .fill(OunjePalette.elevated)
+                        .frame(width: 88, height: 6)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 8)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        SleeScriptDisplayText("Ask this recipe.", size: 28, color: OunjePalette.primaryText)
+                        Text("Tell Ounje what to change and it will rewrite the recipe with the same guardrails, style, and ingredients logic.")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(recipeTitle)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .lineLimit(2)
+
+                            if let recipeSubtitle, !recipeSubtitle.isEmpty {
+                                Text(recipeSubtitle)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Quick asks")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                            ForEach(RecipeAlterationIntent.allCases) { intent in
+                                Button {
+                                    selectedIntent = intent
+                                    promptText = intent.promptSeed
+                                } label: {
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: intent.systemImageName)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundStyle(selectedIntent == intent ? OunjePalette.softCream.opacity(0.98) : OunjePalette.primaryText)
+                                            .frame(width: 18)
+
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(intent.title)
+                                                .sleeDisplayFont(16)
+                                                .foregroundStyle(OunjePalette.primaryText)
+
+                                            Text(intent.subtitle)
+                                                .font(.system(size: 11.5, weight: .medium))
+                                                .foregroundStyle(selectedIntent == intent ? OunjePalette.primaryText.opacity(0.74) : OunjePalette.secondaryText)
+                                                .multilineTextAlignment(.leading)
+                                                .lineLimit(2)
+                                        }
+
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 13)
+                                    .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                            .fill(
+                                                selectedIntent == intent
+                                                    ? AnyShapeStyle(
+                                                        LinearGradient(
+                                                            colors: [
+                                                                OunjePalette.surface.opacity(0.98),
+                                                                OunjePalette.panel.opacity(0.98),
+                                                                OunjePalette.accent.opacity(0.28)
+                                                            ],
+                                                            startPoint: .topLeading,
+                                                            endPoint: .bottomTrailing
+                                                        )
+                                                    )
+                                                    : AnyShapeStyle(OunjePalette.surface.opacity(0.96))
+                                            )
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                            .stroke(
+                                                selectedIntent == intent ? OunjePalette.accent.opacity(0.46) : OunjePalette.stroke.opacity(0.84),
+                                                lineWidth: 1
+                                            )
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Your ask")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+
+                        ZStack(alignment: .topLeading) {
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .fill(OunjePalette.surface.opacity(0.96))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                        .stroke(OunjePalette.stroke.opacity(0.86), lineWidth: 1)
+                                )
+
+                            TextEditor(text: $promptText)
+                                .scrollContentBackground(.hidden)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .padding(11)
+                                .frame(minHeight: 118)
+                                .tint(OunjePalette.accent)
+
+                            if promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text("Say what you want more of, less of, or what should feel different.")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.8))
+                                    .padding(.horizontal, 17)
+                                    .padding(.vertical, 18)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                    }
+
+                    if let errorMessage = viewModel.errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.red.opacity(0.9))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button(action: dismiss.callAsFunction) {
+                            Text("Cancel")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(OunjePalette.surface.opacity(0.94))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            let trimmed = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let finalPrompt = trimmed.isEmpty ? selectedIntent.promptSeed : trimmed
+                            Task {
+                                if let result = await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: finalPrompt, profile: profile) {
+                                    onOpenAdaptedRecipe(result)
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            Text(viewModel.isGenerating ? "Generating..." : "Ask Ounje")
+                                .sleeDisplayFont(19)
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [
+                                                    OunjePalette.accent.opacity(0.94),
+                                                    OunjePalette.accent.opacity(0.78)
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canGenerate)
+                        .opacity(canGenerate ? 1 : 0.72)
+                    }
+
+                    if viewModel.isGenerating {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(OunjePalette.accent)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 2)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 20)
+            }
+        }
+        .onAppear {
+            if promptText.isEmpty {
+                promptText = selectedIntent.promptSeed
+            }
+        }
+    }
+}
+
+struct RecipeAdaptationResultSheet: View {
+    let recipeTitle: String
+    let recipeSubtitle: String?
+    let result: RecipeAdaptationResponse
+    let isGenerating: Bool
+    let onAskAgain: () -> Void
+    let onDone: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Capsule()
+                .fill(OunjePalette.elevated)
+                .frame(width: 88, height: 6)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+
+            VStack(alignment: .leading, spacing: 6) {
+                SleeScriptDisplayText("Recipe rewrite.", size: 28, color: OunjePalette.primaryText)
+                Text("Ounje adapted your recipe and kept the dish grounded.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recipeTitle)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(2)
+
+                    if let recipeSubtitle, !recipeSubtitle.isEmpty {
+                        Text(recipeSubtitle)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .lineLimit(2)
+                    }
+                }
+            }
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(result.adaptedRecipe.title)
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text(result.adaptedRecipe.summary)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(18)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(OunjePalette.surface.opacity(0.96))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                    .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                            )
+                    )
+
+                    if !result.pairingTerms.isEmpty {
+                        RecipeAdaptationSection(title: "Pairing hints", items: result.pairingTerms)
+                    }
+
+                    RecipeAdaptationSection(title: "Ingredients", items: result.adaptedRecipe.ingredients)
+                    RecipeAdaptationSection(title: "Steps", items: result.adaptedRecipe.steps, numbered: true)
+
+                    if !result.adaptedRecipe.substitutions.isEmpty {
+                        RecipeAdaptationSection(title: "Substitutions", items: result.adaptedRecipe.substitutions)
+                    }
+
+                    if !result.adaptedRecipe.pairingNotes.isEmpty {
+                        RecipeAdaptationSection(title: "Pairing notes", items: result.adaptedRecipe.pairingNotes)
+                    }
+
+                    if !result.adaptedRecipe.dietaryFit.isEmpty {
+                        RecipeAdaptationSection(title: "Dietary fit", items: result.adaptedRecipe.dietaryFit)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Cook time")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                        Text(result.adaptedRecipe.cookTimeText)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                    }
+                }
+                .padding(.bottom, 4)
+            }
+
+            HStack(spacing: 12) {
+                Button(action: onAskAgain) {
+                    Text("Ask again")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(OunjePalette.surface.opacity(0.94))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onDone) {
+                    Text("Done")
+                        .sleeDisplayFont(19)
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            OunjePalette.accent.opacity(0.94),
+                                            OunjePalette.accent.opacity(0.78)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 20)
+    }
+}
+
+struct RecipeAdaptationSection: View {
+    let title: String
+    let items: [String]
+    var numbered: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(numbered ? "\(index + 1)." : "•")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(OunjePalette.accent)
+                        Text(item)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.96))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                    )
+            )
+        }
+    }
+}
+
+struct RecipeStoryShareSheet: View {
+    let recipeTitle: String
+    let recipeSubtitle: String?
+    let imageCandidates: [URL]
+    let recipeURL: URL?
+    let onFallbackShare: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var loader = DiscoverRecipeImageLoader()
+    @State private var isSharing = false
+    @State private var statusMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Capsule()
+                .fill(OunjePalette.elevated)
+                .frame(width: 88, height: 6)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+
+            VStack(alignment: .leading, spacing: 6) {
+                SleeScriptDisplayText("Add to Story.", size: 28, color: OunjePalette.primaryText)
+                Text("Drop this recipe into Instagram Story with a link sticker so people can tap straight back into Ounje.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(recipeTitle)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(2)
+
+                if let recipeSubtitle, !recipeSubtitle.isEmpty {
+                    Text(recipeSubtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(2)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Preview")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+
+                RecipeStoryShareArtworkView(
+                    title: recipeTitle,
+                    subtitle: recipeSubtitle,
+                    image: loader.image
+                )
+                .frame(height: 420)
+                .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                )
+                .task(id: imageCandidates.map(\.absoluteString).joined(separator: "|")) {
+                    await loader.load(from: imageCandidates)
+                }
+            }
+
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Cancel")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(OunjePalette.surface.opacity(0.94))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    Task {
+                        await shareToInstagramStory()
+                    }
+                } label: {
+                    Text(isSharing ? "Opening..." : "Share to Instagram")
+                        .sleeDisplayFont(18)
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            OunjePalette.accent.opacity(0.94),
+                                            OunjePalette.accent.opacity(0.78)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(isSharing)
+                .opacity(isSharing ? 0.72 : 1)
+            }
+
+            Button {
+                dismiss()
+                onFallbackShare()
+            } label: {
+                Text("More share options")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 20)
+        .background(OunjePalette.background.ignoresSafeArea())
+        .task {
+            if loader.image == nil {
+                await loader.load(from: imageCandidates)
+            }
+        }
+    }
+
+    private func shareToInstagramStory() async {
+        isSharing = true
+        defer { isSharing = false }
+
+        let renderedImage = renderRecipeStoryArtwork(
+            title: recipeTitle,
+            subtitle: recipeSubtitle,
+            recipeImage: loader.image
+        )
+
+        guard let backgroundData = renderedImage.jpegData(compressionQuality: 0.93) ?? renderedImage.pngData() else {
+            statusMessage = "Couldn’t prepare the Story image."
+            return
+        }
+
+        var payload: [String: Any] = [
+            "com.instagram.sharedSticker.backgroundImage": backgroundData
+        ]
+        if let recipeURL {
+            payload["com.instagram.sharedSticker.contentURL"] = recipeURL.absoluteString
+        }
+
+        UIPasteboard.general.setItems(
+            [payload],
+            options: [.expirationDate: Date().addingTimeInterval(5 * 60)]
+        )
+
+        guard let instagramStoryURL = URL(string: "instagram-stories://share"),
+              UIApplication.shared.canOpenURL(instagramStoryURL) else {
+            statusMessage = "Instagram isn’t available on this device."
+            return
+        }
+
+        let opened = await withCheckedContinuation { continuation in
+            UIApplication.shared.open(instagramStoryURL, options: [:]) { success in
+                continuation.resume(returning: success)
+            }
+        }
+
+        if opened {
+            dismiss()
+        } else {
+            statusMessage = "Instagram couldn’t open the Story share."
+        }
+    }
+}
+
+struct RecipeStoryShareArtworkView: View {
+    let title: String
+    let subtitle: String?
+    let image: UIImage?
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    OunjePalette.panel,
+                    OunjePalette.surface,
+                    OunjePalette.background
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            VStack(alignment: .leading, spacing: 0) {
+                ZStack(alignment: .bottomLeading) {
+                    if let image {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        LinearGradient(
+                            colors: [
+                                OunjePalette.accent.opacity(0.52),
+                                OunjePalette.panel.opacity(0.94)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        .overlay(
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 54, weight: .semibold))
+                                .foregroundStyle(OunjePalette.softCream.opacity(0.88))
+                        )
+                    }
+
+                    LinearGradient(
+                        colors: [
+                            .clear,
+                            .black.opacity(0.18),
+                            .black.opacity(0.82)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            InstagramGlyphIcon(size: 34)
+                            Spacer(minLength: 0)
+                        }
+
+                        Text(title)
+                            .font(.system(size: 42, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.82)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if let subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.82))
+                                .lineLimit(4)
+                                .minimumScaleFactor(0.86)
+                        }
+
+                        Text("Tap the link sticker to open it in Ounje.")
+                            .font(.system(size: 18, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.74))
+                    }
+                    .padding(26)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 1240)
+                .clipped()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 12) {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(OunjePalette.accent.opacity(0.18))
+                            .frame(width: 54, height: 54)
+                            .overlay(
+                                Image(systemName: "link")
+                                    .font(.system(size: 22, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.primaryText)
+                            )
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Ounje")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                            Text("Recipe story share")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                        }
+                    }
+
+                    Text("Recipe card created in Ounje")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+                .padding(26)
+            }
+        }
+    }
+}
+
+@MainActor
+private func renderRecipeStoryArtwork(title: String, subtitle: String?, recipeImage: UIImage?) -> UIImage {
+    let targetSize = CGSize(width: 1080, height: 1920)
+    let rootView = RecipeStoryShareArtworkView(title: title, subtitle: subtitle, image: recipeImage)
+        .frame(width: targetSize.width, height: targetSize.height)
+        .preferredColorScheme(.dark)
+    let controller = UIHostingController(rootView: rootView)
+    controller.view.bounds = CGRect(origin: .zero, size: targetSize)
+    controller.view.backgroundColor = .clear
+    controller.view.setNeedsLayout()
+    controller.view.layoutIfNeeded()
+
+    let renderer = UIGraphicsImageRenderer(size: targetSize)
+    return renderer.image { _ in
+        controller.view.drawHierarchy(in: CGRect(origin: .zero, size: targetSize), afterScreenUpdates: true)
+    }
+}
+
+struct RecipeDetailActionButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 16, weight: .medium))
+            }
+            .foregroundStyle(OunjePalette.primaryText)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(OunjePalette.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct RecipeDetailCompactActionButton: View {
+    let title: String
+    var systemImage: String? = nil
+    var showsInstagramGlyph: Bool = false
+    var compact: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if showsInstagramGlyph {
+                    InstagramGlyphIcon(size: compact ? 15 : 17)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: compact ? 14 : 16, weight: .semibold))
+                }
+                Text(title)
+                    .font(.system(size: compact ? 15 : 16, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(OunjePalette.primaryText)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, compact ? 10 : 16)
+            .padding(.vertical, compact ? 12 : 14)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(OunjePalette.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct InstagramGlyphIcon: View {
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .stroke(OunjePalette.primaryText, lineWidth: max(1.6, size * 0.12))
+                .frame(width: size, height: size)
+
+            Circle()
+                .stroke(OunjePalette.primaryText, lineWidth: max(1.4, size * 0.11))
+                .frame(width: size * 0.42, height: size * 0.42)
+
+            Circle()
+                .fill(OunjePalette.primaryText)
+                .frame(width: size * 0.14, height: size * 0.14)
+                .offset(x: size * 0.23, y: -size * 0.23)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+struct RecipeDetailMetricsGrid: View {
+    let metrics: [RecipeDetailMetric]
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 0) {
+            ForEach(Array(metrics.enumerated()), id: \.offset) { index, metric in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(metric.title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                    Text(metric.value)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .allowsTightening(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 94, alignment: .topLeading)
+                .padding(16)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(index >= 3 ? OunjePalette.stroke : .clear)
+                        .frame(height: index >= 3 ? 1 : 0)
+                }
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(index % 3 == 0 ? .clear : OunjePalette.stroke)
+                        .frame(width: index % 3 == 0 ? 0 : 1)
+                }
+            }
+        }
+        .background(
+            Rectangle()
+                .fill(OunjePalette.background)
+                .overlay(
+                    Rectangle()
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+enum IngredientMonogramFormatter {
+    static func monogram(for name: String) -> String {
+        let parts = name
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { $0.rangeOfCharacter(from: .letters) != nil }
+            .filter { $0.count > 1 }
+
+        if parts.count >= 2 {
+            let initials = parts.prefix(2).compactMap { $0.first.map { String($0).uppercased() } }.joined()
+            if !initials.isEmpty {
+                return initials
+            }
+        }
+
+        if let first = parts.first {
+            let pair = String(first.prefix(2)).uppercased()
+            if !pair.isEmpty {
+                return pair
+            }
+        }
+
+        return "•"
+    }
+}
+
+struct RecipeIngredientTile: View {
+    let ingredient: RecipeDetailIngredient
+    @StateObject private var loader = DiscoverRecipeImageLoader()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(OunjePalette.panel)
+
+                if let image = loader.image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                } else if loader.isLoading {
+                    ProgressView()
+                        .tint(OunjePalette.softCream)
+                } else {
+                    Text(IngredientMonogramFormatter.monogram(for: ingredient.displayTitle))
+                        .sleeDisplayFont(22)
+                        .foregroundStyle(OunjePalette.softCream.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                }
+
+            }
+            .frame(height: 70)
+            .task(id: ingredient.stableID) {
+                if let url = ingredient.imageURL {
+                    await loader.load(from: [url])
+                }
+            }
+
+            Text(ingredient.displayTitle)
+                .sleeDisplayFont(14)
+                .foregroundStyle(OunjePalette.primaryText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let quantityText = ingredient.displayQuantityText, !quantityText.isEmpty {
+                Text(quantityText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+struct RecipeStepBlock: View {
+    let step: RecipeDetailStep
+    let ingredientMatches: [String]
+    let dividerColor: Color
+
+    private let contentLeadingInset: CGFloat = 68
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 20) {
+                Text(String(format: "%02d", step.number))
+                    .biroHeaderFont(32)
+                    .foregroundStyle(OunjePalette.softCream)
+                    .frame(width: 48, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(step.text)
+                        .font(.system(size: 18, weight: .regular))
+                        .lineSpacing(4)
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let tipText = step.tipText, !tipText.isEmpty {
+                        Text(tipText)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if !ingredientMatches.isEmpty {
+                GeometryReader { geometry in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(ingredientMatches, id: \.self) { match in
+                                Text(match)
+                                    .sleeDisplayFont(14)
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(OunjePalette.panel.opacity(0.92))
+                                            .overlay(
+                                                Capsule(style: .continuous)
+                                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                                            )
+                                    )
+                            }
+                        }
+                        .padding(.leading, contentLeadingInset)
+                        .padding(.trailing, 18)
+                        .frame(minWidth: geometry.size.width + 92, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 52)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 24)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(dividerColor)
+                .frame(height: 1)
+        }
+    }
+}
+
+struct RecipeDetailEnjoySection: View {
+    let recipes: [DiscoverRecipeCardData]
+    let isLoading: Bool
+    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
+    @State private var revealedRecipeIDs: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Spacer(minLength: 0)
+
+                Text("Enjoy.")
+                    .sleeDisplayFont(38)
+                    .foregroundStyle(OunjePalette.softCream.opacity(0.9))
+                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 34)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    if isLoading {
+                        ForEach(0..<3, id: \.self) { _ in
+                            RecipeEnjoyMiniCardPlaceholder()
+                        }
+                    } else {
+                        ForEach(Array(recipes.enumerated()), id: \.element.id) { index, recipe in
+                            RecipeEnjoyMiniCard(recipe: recipe) {
+                                onSelectRecipe(recipe)
+                            }
+                            .modifier(
+                                StaggeredRevealModifier(
+                                    isVisible: revealedRecipeIDs.contains(recipe.id),
+                                    delay: Double(index) * 0.055,
+                                    xOffset: 16,
+                                    yOffset: 8
+                                )
+                            )
+                        }
+                    }
+                }
+                .padding(.trailing, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 30)
+        .padding(.bottom, 10)
+        .onAppear {
+            revealRecipes(immediately: true)
+        }
+        .onChange(of: recipeRevealKey) { _ in
+            revealRecipes(immediately: false)
+        }
+        .onChange(of: isLoading) { loading in
+            guard !loading else { return }
+            revealRecipes(immediately: revealedRecipeIDs.isEmpty)
+        }
+    }
+
+    private var recipeRevealKey: String {
+        recipes.map(\.id).joined(separator: "|")
+    }
+
+    private func revealRecipes(immediately: Bool) {
+        guard !isLoading else { return }
+        let ids = recipes.map(\.id)
+        guard !ids.isEmpty else {
+            revealedRecipeIDs = []
+            return
+        }
+
+        if immediately {
+            revealedRecipeIDs = Set(ids)
+            return
+        }
+
+        revealedRecipeIDs = revealedRecipeIDs.intersection(Set(ids))
+        let missingIDs = ids.filter { !revealedRecipeIDs.contains($0) }
+
+        for (index, id) in missingIDs.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.055) {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                    _ = revealedRecipeIDs.insert(id)
+                }
+            }
+        }
+    }
+}
+
+struct RecipeEnjoyMiniCard: View {
+    let recipe: DiscoverRecipeCardData
+    let onSelect: () -> Void
+
+    var body: some View {
+        DiscoverRemoteRecipeCard(recipe: recipe) {
+            onSelect()
+        }
+        .frame(width: 240)
+    }
+}
+
+struct RecipeEnjoyMiniCardPlaceholder: View {
+    var body: some View {
+        DiscoverRecipeCardLoadingPlaceholder(width: 240)
+    }
+}
+
+struct FlexibleTagCloud: View {
+    let tags: [String]
+
+    var body: some View {
+        WrappingHStack(tags, id: \.self, spacing: 10, lineSpacing: 12) { tag in
+            Text(tag)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(OunjePalette.primaryText)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(OunjePalette.panel)
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+        }
+    }
+}
+
+struct RecipeCookBottomBar: View {
+    @Binding var servingsCount: Int
+    let actionTitle: String
+    let onPrimaryAction: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let availableWidth = proxy.size.width - 32
+            let actionButtonWidth = min(max(118, availableWidth * 0.30), 142)
+
+            HStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Button {
+                        servingsCount = max(1, servingsCount - 1)
+                    } label: {
+                        Image(systemName: "minus")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+
+                    Text("\(servingsCount) servings")
+                        .sleeDisplayFont(19)
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .fixedSize(horizontal: true, vertical: false)
+
+                    Button {
+                        servingsCount += 1
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .frame(minHeight: 50)
+                .padding(.leading, 6)
+
+                Spacer(minLength: 20)
+
+                Button(action: onPrimaryAction) {
+                    Text(actionTitle)
+                        .sleeDisplayFont(21)
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(actionTitle == "Remove" ? OunjePalette.surface : OunjePalette.accent)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(
+                                            actionTitle == "Remove"
+                                                ? OunjePalette.stroke
+                                                : Color.white.opacity(0.14),
+                                            lineWidth: 1
+                                        )
+                                )
+                        )
+                        .shadow(
+                            color: (actionTitle == "Remove" ? Color.black : OunjePalette.accent).opacity(0.12),
+                            radius: 7,
+                            x: 0,
+                            y: 3
+                        )
+                }
+                .frame(width: actionButtonWidth)
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 7)
+            .padding(.bottom, 9)
+        }
+        .frame(height: 72)
+        .background(
+            OunjePalette.background
+                .overlay(
+                    Rectangle()
+                        .fill(OunjePalette.stroke)
+                        .frame(height: 1),
+                    alignment: .top
+                )
+                .ignoresSafeArea(edges: .bottom)
+        )
+    }
+}
+
+struct RecipeDetailLoadingSections: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 16) {
+                RecipeDetailSectionHeader(title: "Details")
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(OunjePalette.surface)
+                    .frame(height: 282)
+                    .redacted(reason: .placeholder)
+            }
+
+            VStack(alignment: .leading, spacing: 20) {
+                RecipeDetailSectionHeader(title: "Ingredients")
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 18) {
+                    ForEach(0..<8, id: \.self) { _ in
+                        VStack(alignment: .leading, spacing: 10) {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .fill(OunjePalette.surface)
+                                .frame(height: 96)
+                                .redacted(reason: .placeholder)
+
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(OunjePalette.surface)
+                                .frame(height: 14)
+                                .redacted(reason: .placeholder)
+
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(OunjePalette.surface)
+                                .frame(width: 48, height: 12)
+                                .redacted(reason: .placeholder)
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                RecipeDetailSectionHeader(title: "Cooking Steps")
+                ForEach(0..<3, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .frame(height: 118)
+                        .redacted(reason: .placeholder)
+                }
+            }
+        }
+    }
+}
+
+struct RecipeDetailLoadFailedState: View {
+    let message: String
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            RecipeDetailSectionHeader(title: "Recipe unavailable")
+
+            Text(message)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Try again", action: onRetry)
+                .buttonStyle(PrimaryPillButtonStyle())
+                .frame(maxWidth: 180)
+        }
+        .padding(24)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(OunjePalette.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+struct WrappingHStack<Data: RandomAccessCollection, ID: Hashable, Content: View>: View where Data.Element: Hashable {
+    let data: Data
+    let id: KeyPath<Data.Element, ID>
+    let spacing: CGFloat
+    let lineSpacing: CGFloat
+    let content: (Data.Element) -> Content
+
+    @State private var totalHeight: CGFloat = .zero
+
+    init(_ data: Data, id: KeyPath<Data.Element, ID>, spacing: CGFloat, lineSpacing: CGFloat, @ViewBuilder content: @escaping (Data.Element) -> Content) {
+        self.data = data
+        self.id = id
+        self.spacing = spacing
+        self.lineSpacing = lineSpacing
+        self.content = content
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            generateContent(in: geometry)
+        }
+        .frame(height: totalHeight)
+    }
+
+    private func generateContent(in geometry: GeometryProxy) -> some View {
+        var width = CGFloat.zero
+        var height = CGFloat.zero
+
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(data), id: id) { item in
+                content(item)
+                    .padding(.trailing, spacing)
+                    .padding(.bottom, lineSpacing)
+                    .alignmentGuide(.leading) { dimension in
+                        if abs(width - dimension.width) > geometry.size.width {
+                            width = 0
+                            height -= dimension.height + lineSpacing
+                        }
+                        let result = width
+                        if item[keyPath: id] == data.last?[keyPath: id] {
+                            width = 0
+                        } else {
+                            width -= dimension.width + spacing
+                        }
+                        return result
+                    }
+                    .alignmentGuide(.top) { _ in
+                        let result = height
+                        if item[keyPath: id] == data.last?[keyPath: id] {
+                            height = 0
+                        }
+                        return result
+                    }
+            }
+        }
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear {
+                        totalHeight = proxy.size.height
+                    }
+                    .onChange(of: proxy.size.height) { newValue in
+                        totalHeight = newValue
+                    }
+            }
+        )
+    }
+}
+

@@ -19,7 +19,19 @@ services:
       - key: OUNJE_RUNTIME_ENV
         value: production
       - key: OUNJE_ENABLE_RECIPE_INGESTION_POLLING
-        value: "false"
+        value: "true"
+      - key: RECIPE_INGESTION_BATCH_SIZE
+        value: "1"
+      - key: RECIPE_INGESTION_POLL_MS
+        value: "20000"
+      - key: OUNJE_ENABLE_AI_CALL_LOGGING
+        value: "true"
+      - key: AUTOSHOP_MANUAL_BETA_ONLY
+        value: "true"
+      - key: OUNJE_AI_DAILY_SPEND_LIMIT_USD
+        value: "8"
+      - key: OUNJE_AI_USER_DAILY_SPEND_LIMIT_USD
+        value: "3"
       - key: OPENAI_API_KEY
         sync: false
       - key: SUPABASE_URL
@@ -64,6 +76,12 @@ services:
         value: production
       - key: OUNJE_RUNTIME_ENV
         value: production
+      - key: OUNJE_ENABLE_AI_CALL_LOGGING
+        value: "true"
+      - key: OUNJE_AI_DAILY_SPEND_LIMIT_USD
+        value: "8"
+      - key: OUNJE_AI_USER_DAILY_SPEND_LIMIT_USD
+        value: "3"
       - key: RECIPE_INGESTION_BATCH_SIZE
         value: "4"
       - key: RECIPE_INGESTION_POLL_MS

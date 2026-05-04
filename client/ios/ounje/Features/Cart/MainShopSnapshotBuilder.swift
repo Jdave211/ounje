@@ -546,20 +546,13 @@ enum MainShopSnapshotBuilder {
     }
 
     private static func canonicalMainShopDisplayName(_ rawName: String) -> String {
-        var normalized = normalizedIngredientKey(rawName)
+        let normalized = normalizedIngredientKey(rawName)
         guard !normalized.isEmpty else { return prettyShoppingName(rawName) }
-
-        if let orRange = normalized.range(of: " or ") {
-            normalized = String(normalized[..<orRange.lowerBound])
-        }
-        if let slashRange = normalized.range(of: " / ") {
-            normalized = String(normalized[..<slashRange.lowerBound])
-        }
 
         let tokens = normalized
             .split(separator: " ")
             .map { normalizedMainShopToken(String($0)) }
-            .filter { !$0.isEmpty && !mainShopDescriptorTokens.contains($0) }
+            .filter { !$0.isEmpty }
         let canonical = tokens.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         return prettyShoppingName(canonical.isEmpty ? normalized : canonical)
     }
@@ -570,7 +563,7 @@ enum MainShopSnapshotBuilder {
         let tokens = normalized
             .split(separator: " ")
             .map { normalizedMainShopToken(String($0)) }
-            .filter { !mainShopDescriptorTokens.contains($0) }
+            .filter { !$0.isEmpty }
         let key = tokens.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         return key.isEmpty ? normalized : key
     }
@@ -594,68 +587,8 @@ enum MainShopSnapshotBuilder {
     }
 
     private static func isExcludedMainShopIngredient(_ value: String) -> Bool {
-        [
-            "water",
-            "cold water",
-            "warm water",
-            "hot water",
-            "boiling water",
-            "ice water",
-            "filtered water"
-        ].contains(normalizedIngredientKey(value))
+        false
     }
-
-    private static let mainShopDescriptorTokens: Set<String> = [
-        "baby",
-        "boneless",
-        "dried",
-        "extra",
-        "fresh",
-        "frozen",
-        "grated",
-        "ground",
-        "kosher",
-        "lean",
-        "light",
-        "low",
-        "mild",
-        "natural",
-        "organic",
-        "pure",
-        "reduced",
-        "salted",
-        "shredded",
-        "skinless",
-        "smoked",
-        "sweet",
-        "thin",
-        "unsalted",
-        "virgin",
-        "whole",
-        "and",
-        "or",
-        "cooked",
-        "instant",
-        "cup",
-        "cups",
-        "prepared",
-        "bag",
-        "bags",
-        "box",
-        "boxes",
-        "can",
-        "cans",
-        "carton",
-        "cartons",
-        "jar",
-        "jars",
-        "pack",
-        "packs",
-        "packet",
-        "packets",
-        "package",
-        "packages"
-    ]
 
     private static func mergedSourceIngredients(
         _ lhs: [GroceryItemSource],

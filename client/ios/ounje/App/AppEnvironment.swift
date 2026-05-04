@@ -44,6 +44,9 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var isBillingBusy = false
     @Published var billingStatusMessage: String?
     @Published var manualInstacartRerunQueuedAt: Date?
+    @Published var isManualAutoshopRunning = false
+    @Published var manualAutoshopErrorMessage: String?
+    @Published var isDeactivatingAccount = false
     @Published var isGenerating = false
     @Published var isRefreshingPrepRecipes = false
     @Published private(set) var latestPlanRevision = 0
@@ -89,6 +92,7 @@ final class MealPlanningAppStore: ObservableObject {
     private var hasPersistedOnboardingState = false
     private var pendingCartSyncIntent: PendingCartSyncIntent?
     private var remoteMealPrepCycleLoadState: RemoteMealPrepCycleLoadState = .notRequested
+    private var activeAutoPrepGenerationKey: String?
     @Published private(set) var hiddenMainShopItemKeys: Set<String> = []
     private var hiddenMainShopPlanID: UUID?
     private var cachedLiveUserID: String?
@@ -98,6 +102,10 @@ final class MealPlanningAppStore: ObservableObject {
 
     init() {
         loadState()
+    }
+
+    var isAutoshopManualBetaOnly: Bool {
+        true
     }
 
     var nextRunDate: Date? {
@@ -428,6 +436,10 @@ final class MealPlanningAppStore: ObservableObject {
                 authProvider: session.provider
             )
             guard authStateRevision == bootstrapRevision else { return }
+            if remoteState.isDeactivated {
+                resetAll()
+                return
+            }
 
             let cachedCompleted = isOnboarded && profile != nil
             let resolvedOnboarded = remoteState.onboarded || cachedCompleted
@@ -494,9 +506,6 @@ final class MealPlanningAppStore: ObservableObject {
             guard authStateRevision == bootstrapRevision else { return }
             await emitLifecycleNotificationsIfNeeded(trigger: "bootstrap")
             await emitEngagementNudgesIfNeeded()
-            if latestInstacartRun?.normalizedStatusKind == "partial" {
-                await maybeStartInstacartRunIfNeeded(trigger: "bootstrap_partial_retry")
-            }
 
             if resolvedOnboarded != remoteState.onboarded ||
                 recoveredProfile != nil && remoteState.profile == nil ||
@@ -606,8 +615,6 @@ final class MealPlanningAppStore: ObservableObject {
                 _ = await persistLatestPlanRemotelyIfPossible(plan)
             }
             await emitMealPrepReadyNotification(plan: plan)
-            await enqueueCartSyncForLatestPlan(trigger: "plan_generated", resetSyncedState: true)
-            await maybeStartInstacartRunIfNeeded(trigger: "plan_generated", force: true)
         }
         return latestPlan?.id == plan.id ? latestPlan : plan
     }
@@ -655,21 +662,105 @@ final class MealPlanningAppStore: ObservableObject {
         await PlannedRecipeRefreshService.shared.refreshedPlannedRecipes(from: recipes)
     }
 
-    func rerunInstacartShopping() async {
-        guard latestPlan != nil else { return }
-        _ = await rebuildLatestPlanGroceriesIfNeeded(force: true)
-        _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
-        await maybeStartInstacartRunIfNeeded(trigger: "manual_instacart_rerun", force: true)
-    }
-
-    func requestInstacartShoppingRerun() async {
+    func startManualAutoshopRun(trigger: String = "prep_overlay") async {
+        guard !isManualAutoshopRunning else { return }
+        guard let session = await freshTrackingSession() ?? authSession else {
+            manualAutoshopErrorMessage = "Sign in again before running Autoshop beta."
+            return
+        }
+        guard let profile, profile.deliveryAddress.isComplete else {
+            manualAutoshopErrorMessage = "Add a delivery address before running Autoshop beta."
+            return
+        }
+        guard latestPlan != nil else {
+            manualAutoshopErrorMessage = "Generate a prep before running Autoshop beta."
+            return
+        }
         if hasBlockingInstacartActivity {
-            manualInstacartRerunQueuedAt = .now
+            manualAutoshopErrorMessage = "A cart run is already in progress."
+            await loadLatestInstacartRun()
+            await loadLatestGroceryOrder()
             return
         }
 
+        isManualAutoshopRunning = true
+        manualAutoshopErrorMessage = nil
+        defer { isManualAutoshopRunning = false }
+
+        if let latestPlanArtifactRefreshTask {
+            await latestPlanArtifactRefreshTask.value
+        }
+
+        _ = await rebuildLatestPlanGroceriesIfNeeded(force: true)
+        guard await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: latestPlan?.mainShopSnapshot?.items.isEmpty != false) else {
+            manualAutoshopErrorMessage = "Main Shop is still syncing. Try again in a moment."
+            return
+        }
+
+        guard let latestPlan,
+              latestPlan.bestQuote?.provider == .instacart,
+              !latestPlan.groceryItems.isEmpty,
+              latestPlan.mainShopSnapshot?.items.isEmpty == false
+        else {
+            manualAutoshopErrorMessage = "Autoshop beta needs a synced Instacart cart first."
+            return
+        }
+
+        let cartSignature = automationCartSignature(for: latestPlan.groceryItems)
+        let deliveryAnchor = automationAnchorString(for: profile.scheduledDeliveryDate())
+
+        do {
+            let response = try await InstacartAutomationAPIService.shared.startRun(
+                items: latestPlan.groceryItems,
+                mealPlan: latestPlan,
+                userID: session.userID,
+                accessToken: session.accessToken,
+                deliveryAddress: profile.deliveryAddress,
+                manualIntent: true,
+                trigger: trigger
+            )
+            automationState = updatedAutomationState {
+                $0.lastCartSyncForDeliveryAt = deliveryAnchor
+                $0.lastCartSyncPlanID = latestPlan.id
+                $0.lastCartSignature = cartSignature
+                $0.lastInstacartRunID = response.runID
+                $0.lastInstacartRunStatus = response.normalizedStatus
+                $0.lastGeneratedReason = "manual_beta:\(trigger)"
+            }
+            clearPendingCartSyncIntentIfMatched(
+                planID: latestPlan.id,
+                cartSignature: cartSignature,
+                deliveryAnchor: deliveryAnchor
+            )
+            manualInstacartRerunQueuedAt = nil
+            saveAutomationStateCache()
+            persistAutomationStateIfPossible()
+            await hydrateInstacartArtifacts(
+                runID: response.runID,
+                groceryOrderID: response.groceryOrderID,
+                session: session
+            )
+            await emitLifecycleNotificationsIfNeeded(trigger: "manual_autoshop_started")
+        } catch {
+            manualAutoshopErrorMessage = error.localizedDescription
+            automationState = updatedAutomationState {
+                $0.lastInstacartRunStatus = "failed"
+                $0.lastGeneratedReason = "manual_beta_failed:\(trigger)"
+            }
+            saveAutomationStateCache()
+            persistAutomationStateIfPossible()
+            await loadLatestInstacartRun()
+            await loadLatestGroceryOrder()
+        }
+    }
+
+    func rerunInstacartShopping() async {
+        await startManualAutoshopRun(trigger: "manual_instacart_rerun")
+    }
+
+    func requestInstacartShoppingRerun() async {
         manualInstacartRerunQueuedAt = nil
-        await rerunInstacartShopping()
+        await startManualAutoshopRun(trigger: "manual_instacart_rerun")
     }
 
     func updateLatestPlan(with recipe: Recipe, servings: Int) async {
@@ -716,7 +807,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func ensureFreshPlanIfNeeded() async {
-        guard hasResolvedInitialState, isOnboarded, profile?.isPlanningReady == true else { return }
+        guard hasResolvedInitialState, isOnboarded, let profile, profile.isPlanningReady else { return }
         guard !isHydratingRemoteState else { return }
         if let latestPlan, !latestPlan.recipes.isEmpty {
             return
@@ -724,7 +815,15 @@ final class MealPlanningAppStore: ObservableObject {
         guard remoteMealPrepCycleLoadState.confirmsNoUsablePrep else {
             return
         }
-        await runAutomationPassIfNeeded(trigger: "ensure_fresh_plan")
+        let userID = resolvedLiveUserID ?? authSession?.userID ?? "anonymous"
+        let generationKey = "\(userID)::\(automationAnchorString(for: profile.scheduledDeliveryDate()))"
+        guard activeAutoPrepGenerationKey != generationKey else { return }
+        activeAutoPrepGenerationKey = generationKey
+        defer {
+            if activeAutoPrepGenerationKey == generationKey {
+                activeAutoPrepGenerationKey = nil
+            }
+        }
         if latestPlan?.recipes.isEmpty != false {
             await generatePlan()
         }
@@ -905,15 +1004,9 @@ final class MealPlanningAppStore: ObservableObject {
             if !Task.isCancelled, let refreshedPlan = self.latestPlan, refreshedPlan.id == planID {
                 _ = await self.persistLatestPlanRemotelyIfPossible(refreshedPlan)
                 await self.emitMealPrepReadyNotification(plan: refreshedPlan)
-                await self.enqueueCartSyncForLatestPlan(trigger: "plan_generated", resetSyncedState: true)
             }
 
             self.latestPlanArtifactRefreshTask = nil
-            await self.maybeStartInstacartRunIfNeeded(
-                trigger: "plan_generated",
-                force: true,
-                allowPlanRepair: false
-            )
         }
     }
 
@@ -1083,6 +1176,9 @@ final class MealPlanningAppStore: ObservableObject {
         billingStatusMessage = nil
         isGenerating = false
         isRefreshingPrepRecipes = false
+        isManualAutoshopRunning = false
+        manualAutoshopErrorMessage = nil
+        isDeactivatingAccount = false
         pendingCartSyncIntent = nil
         prepRecipeOverrides = []
         remoteMealPrepCycleLoadState = .notRequested
@@ -1112,12 +1208,29 @@ final class MealPlanningAppStore: ObservableObject {
         isHydratingRemoteState = false
         isCompletingOnboarding = false
         activeHistoryUserID = nil
+        activeAutoPrepGenerationKey = nil
         isRunningAutomationPass = false
         cachedAuthenticatedEntryRoute = nil
         hasPersistedOnboardingState = false
     }
 
     func signOutToWelcome() {
+        resetAll()
+    }
+
+    func deactivateAccount() async throws {
+        guard !isDeactivatingAccount else { return }
+        guard let session = await freshTrackingSession() ?? authSession else {
+            throw OunjeAccountServiceError.requestFailed("Sign in again before deleting your account.")
+        }
+
+        isDeactivatingAccount = true
+        defer { isDeactivatingAccount = false }
+
+        try await OunjeAccountService.shared.deactivateAccount(
+            userID: session.userID,
+            accessToken: session.accessToken
+        )
         resetAll()
     }
 
@@ -1319,7 +1432,6 @@ final class MealPlanningAppStore: ObservableObject {
             _ = await self.persistLatestPlanRemotelyIfPossible(refreshedPlan)
             _ = await self.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
             self.latestPlanArtifactRefreshTask = nil
-            await self.maybeStartInstacartRunIfNeeded(trigger: "prep_edited", force: true)
         }
     }
 
@@ -2088,7 +2200,8 @@ final class MealPlanningAppStore: ObservableObject {
         guard !hasBlockingInstacartActivity else { return }
 
         if pendingCartSyncIntent != nil {
-            await maybeStartInstacartRunIfNeeded(trigger: pendingCartSyncIntent?.trigger ?? "queued_cart_sync", force: true)
+            pendingCartSyncIntent = nil
+            savePendingCartSyncIntentCache()
             return
         }
 
@@ -2180,7 +2293,10 @@ final class MealPlanningAppStore: ObservableObject {
     @discardableResult
     private func persistLatestPlanRemotelyIfPossible(_ plan: MealPlan) async -> Bool {
         guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return false }
-        guard !plan.recipes.isEmpty else { return false }
+        guard isUsablePersistedPlan(plan) else {
+            print("[MealPlanningAppStore] Skipping remote meal prep cycle persistence for incomplete plan \(plan.id) with \(plan.recipes.count) recipes")
+            return false
+        }
 
         do {
             try await SupabaseMealPrepCycleService.shared.upsertMealPrepCycle(
@@ -2227,7 +2343,6 @@ final class MealPlanningAppStore: ObservableObject {
             let needsGroceryRebuild = latestPlan.map { latestPlanNeedsGroceryRebuild($0) } ?? false
             _ = await rebuildLatestPlanGroceriesIfNeeded(force: needsGroceryRebuild)
             _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
-            await enqueueCartSyncForLatestPlan(trigger: trigger, resetSyncedState: true)
         }
         automationState = updatedAutomationState {
             $0.lastEvaluatedAt = ISO8601DateFormatter().string(from: .now)
@@ -2243,12 +2358,8 @@ final class MealPlanningAppStore: ObservableObject {
            latestRun.normalizedStatusKind == "partial" || latestRun.normalizedStatusKind == "failed" || !isCurrentPlanRun(latestRun) {
             latestInstacartRun = nil
         }
-        if forceCartSync, hasBlockingInstacartActivity {
-            manualInstacartRerunQueuedAt = .now
-        }
         saveAutomationStateCache()
         persistAutomationStateIfPossible()
-        await maybeStartInstacartRunIfNeeded(trigger: trigger, force: forceCartSync)
     }
 
     func runAutomationPassIfNeeded(trigger: String) async {
@@ -2303,11 +2414,10 @@ final class MealPlanningAppStore: ObservableObject {
             return
         }
 
-        await maybeStartInstacartRunIfNeeded(
-            trigger: trigger,
-            allowPlanRepair: !isPassiveStartupTrigger
-        )
-        await maybeAdvanceGroceryCheckoutIfNeeded(trigger: trigger)
+        if !isPassiveStartupTrigger {
+            _ = await rebuildLatestPlanGroceriesIfNeeded(force: false)
+            _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
+        }
     }
 
     private func shouldGeneratePlan(for profile: UserProfile, nextDelivery: Date) -> Bool {
@@ -2348,6 +2458,7 @@ final class MealPlanningAppStore: ObservableObject {
         force: Bool = false,
         allowPlanRepair: Bool = true
     ) async {
+        guard !isAutoshopManualBetaOnly else { return }
         if let latestPlanArtifactRefreshTask {
             await latestPlanArtifactRefreshTask.value
         }
@@ -2662,6 +2773,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func maybeAdvanceGroceryCheckoutIfNeeded(trigger: String) async {
+        guard !isAutoshopManualBetaOnly else { return }
         guard let profile,
               let latestGroceryOrder,
               latestGroceryOrder.normalizedProvider == "instacart"
@@ -3658,9 +3770,15 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func isUsablePersistedPlan(_ plan: MealPlan) -> Bool {
         guard !plan.recipes.isEmpty else { return false }
+        guard plan.recipes.count >= minimumUsablePersistedPlanRecipeCount else { return false }
         return !plan.recipes.contains(where: { recipe in
             recipe.recipe.isLegacySeedRecipe || recipe.recipe.isKnownSampleRecipe
         })
+    }
+
+    private var minimumUsablePersistedPlanRecipeCount: Int {
+        guard let profile else { return 1 }
+        return max(1, min(10, profile.consumption.mealsPerWeek))
     }
 
     private func recordCompletedMealPrepCycleIfNeeded(for plan: MealPlan) async {

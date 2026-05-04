@@ -11,12 +11,22 @@ import { fileURLToPath } from "node:url";
 import api_router from "./api/index.js";
 import { runRecipeIngestionWorkerBatch } from "./lib/recipe-ingestion.js";
 import { startRecipeFineTunePolling } from "./lib/recipe-model-registry.js";
+import { withAIUsageContext } from "./lib/openai-usage-logger.js";
 
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use(cors());
+app.use((req, _res, next) => {
+  withAIUsageContext({
+    service: "ounje-api",
+    route: req.path,
+    method: req.method,
+    user_id: req.body?.user_id ?? req.body?.userID ?? req.query?.user_id ?? req.query?.userID ?? req.headers["x-user-id"],
+    request_id: req.headers["x-request-id"] ?? req.headers["x-render-request-id"],
+  }, next);
+});
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(serverDir, "..");

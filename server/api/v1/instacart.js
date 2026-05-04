@@ -17,6 +17,7 @@ import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const AUTOSHOP_MANUAL_BETA_ONLY = String(process.env.AUTOSHOP_MANUAL_BETA_ONLY ?? "true").trim().toLowerCase() !== "false";
 
 function extractBearerToken(authorizationHeader) {
   const value = String(authorizationHeader ?? "").trim();
@@ -26,7 +27,13 @@ function extractBearerToken(authorizationHeader) {
 }
 
 function normalizeText(value) {
-  return String(value ?? "").trim();
+    return String(value ?? "").trim();
+}
+
+function coerceBoolean(value) {
+  if (value === true) return true;
+  const normalized = normalizeText(value).toLowerCase();
+  return ["1", "true", "yes", "y"].includes(normalized);
 }
 
 function slugifyRunPart(value, fallback = "instacart") {
@@ -1043,8 +1050,17 @@ router.post("/instacart/runs", async (req, res) => {
       meal_plan_id: mealPlanID = null,
       delivery_address: deliveryAddress = null,
       retry_context: rawRetryContext = null,
+      manual_intent: rawManualIntent = false,
     } = req.body ?? {};
     const retryContext = normalizeRetryContext(rawRetryContext);
+    const manualIntent = coerceBoolean(rawManualIntent);
+
+    if (AUTOSHOP_MANUAL_BETA_ONLY && !manualIntent) {
+      return res.status(409).json({
+        error: "Autoshop beta requires manual start",
+        code: "autoshop_manual_beta_required",
+      });
+    }
 
     const normalizedItems = normalizeIncomingItems(items);
     if (!Array.isArray(normalizedItems) || normalizedItems.length === 0) {
@@ -1079,10 +1095,14 @@ router.post("/instacart/runs", async (req, res) => {
         items: resolvedItems,
         requestedItemCount: normalizedItems.length,
         resolvedItemCount: resolvedItems.length,
+        plan_id: mealPlanID,
+        item_count: resolvedItems.length,
         deliveryAddress,
         preferredStore,
         strictStore: Boolean(strictStore),
         retryContext,
+        source: manualIntent ? "manual_beta" : "automation",
+        trigger: normalizeText(req.body?.trigger) || (manualIntent ? "manual_beta" : "automatic"),
       },
     });
 
@@ -1110,10 +1130,13 @@ router.post("/instacart/runs", async (req, res) => {
         jobID: job.id,
         runID,
         itemCount: resolvedItems.length,
+        source: manualIntent ? "manual_beta" : "automation",
       },
       updates: {
         tracking_title: "Instacart run queued",
-        tracking_detail: "Ounje queued this cart for the automation worker.",
+        tracking_detail: manualIntent
+          ? "Ounje queued this cart from your Autoshop beta tap."
+          : "Ounje queued this cart for the automation worker.",
         last_tracked_at: new Date().toISOString(),
       },
     }).catch(() => {});

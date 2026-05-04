@@ -1,5 +1,4 @@
 import { chromium } from "playwright";
-import OpenAI from "openai";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
@@ -7,6 +6,7 @@ import { loadProviderSession } from "./provider-session-store.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { installCaptchaHooksScript, maybeSolveCaptcha } from "./twocaptcha.js";
 import { createNotificationEvent } from "./notification-events.js";
+import { createLoggedOpenAI } from "./openai-usage-logger.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const INSTACART_TRACKER_MODEL = process.env.INSTACART_TRACKER_MODEL ?? "gpt-5-nano";
@@ -15,7 +15,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const INSTACART_TRACKING_ARTIFACT_DIR = process.env.INSTACART_TRACKING_ARTIFACT_DIR
   ?? path.resolve(process.cwd(), "server/logs/instacart-tracking");
 
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "instacart-order-tracker" }) : null;
 
 function getSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {

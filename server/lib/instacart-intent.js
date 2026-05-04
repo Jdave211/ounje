@@ -1,20 +1,19 @@
-import OpenAI from "openai";
 import "dotenv/config";
 import { normalizeRecipeDetail } from "./recipe-detail-utils.js";
 import {
   applySourceCollationToItem,
   buildSourceEdgeCoverageSummary,
   canonicalizeIngredientName,
-  mergeCanonicalShoppingEntries,
   sourceEdgeIDsForItem,
 } from "./main-shop-collation.js";
+import { createLoggedOpenAI, withAIUsageContext } from "./openai-usage-logger.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const INTENT_MODEL = process.env.INSTACART_QUERY_MODEL ?? "gpt-5-mini";
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "instacart-intent" }) : null;
 const RECIPE_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 const recipeDetailRecordCache = new Map();
 
@@ -237,32 +236,7 @@ const MAIN_SHOP_LEXICAL_STOP_WORDS = new Set([
   "with",
 ]);
 
-const MAIN_SHOP_FINALIZER_EXCLUSIONS = new Set([
-  "water",
-]);
-
-const MAIN_SHOP_PHRASE_REPLACEMENTS = [
-  [/\bbird['’]?\s*eye\s+chil(?:i|ies|is|y|ly|le|es)\b/gu, "bird eye chili"],
-  [/\bboneless\s+skinless\s+chicken\s+breasts?\b/gu, "chicken breast"],
-  [/\bboneless\s+skinless\s+chicken\s+thighs?\b/gu, "chicken thigh"],
-  [/\bbone[-\s]?in\s+skin[-\s]?on\s+chicken\s+breasts?\b/gu, "chicken breast"],
-  [/\bbone[-\s]?in\s+skin[-\s]?on\s+chicken\s+thighs?\b/gu, "chicken thigh"],
-  [/\bbone[-\s]?in\s+chicken\s+breasts?\b/gu, "chicken breast"],
-  [/\bbone[-\s]?in\s+chicken\s+thighs?\b/gu, "chicken thigh"],
-  [/\bskin[-\s]?on\s+chicken\s+breasts?\b/gu, "chicken breast"],
-  [/\bskin[-\s]?on\s+chicken\s+thighs?\b/gu, "chicken thigh"],
-  [/\bcooked\s+chicken\s+breasts?\b/gu, "chicken breast"],
-  [/\bcooked\s+chicken\s+thighs?\b/gu, "chicken thigh"],
-  [/\bshredded\s+chicken\s+breasts?\b/gu, "chicken breast"],
-  [/\bshredded\s+chicken\s+thighs?\b/gu, "chicken thigh"],
-  [/\bheirloom\s+tomatoes?\b/gu, "tomato"],
-  [/\bboxed\s+sweet\s+potatoes?\b/gu, "sweet potato"],
-  [/\borganic\s+avocados?\b/gu, "avocado"],
-  [/\b(?:wild|sockeye|atlantic|king)\s+salmon\b/gu, "salmon"],
-  [/\bgreen\s+onions?\b/gu, "green onion"],
-  [/\bspring\s+onions?\b/gu, "green onion"],
-  [/\bscallions?\b/gu, "green onion"],
-];
+const MAIN_SHOP_FINALIZER_EXCLUSIONS = new Set();
 
 const GENERIC_INGREDIENT_BUCKETS = new Set([
   "spice",
@@ -376,15 +350,11 @@ function normalizeMainShopFamilyName(value) {
   let normalized = normalizeText(value);
   if (!normalized) return "";
 
-  for (const [pattern, replacement] of MAIN_SHOP_PHRASE_REPLACEMENTS) {
-    normalized = normalized.replace(pattern, replacement);
-  }
-
   const tokens = normalized
     .split(" ")
     .map(normalizeMainShopToken)
     .filter(Boolean)
-    .filter((token) => !MAIN_SHOP_DESCRIPTOR_WORDS.has(token));
+    .filter((token) => !MAIN_SHOP_LEXICAL_STOP_WORDS.has(token));
 
   return tokens.join(" ").trim();
 }
@@ -392,10 +362,6 @@ function normalizeMainShopFamilyName(value) {
 function deriveFallbackSearchQuery(value, itemContext = {}) {
   let normalized = normalizeText(value).toLowerCase();
   if (!normalized) return "";
-
-  for (const [pattern, replacement] of MAIN_SHOP_PHRASE_REPLACEMENTS) {
-    normalized = normalized.replace(pattern, replacement);
-  }
 
   const tokens = normalized
     .split(" ")
@@ -452,7 +418,6 @@ function lexicalMainShopTokens(value) {
     .split(" ")
     .map(normalizeMainShopToken)
     .filter(Boolean)
-    .filter((token) => !MAIN_SHOP_DESCRIPTOR_WORDS.has(token))
     .filter((token) => !MAIN_SHOP_LEXICAL_STOP_WORDS.has(token));
 }
 
@@ -624,17 +589,11 @@ function buildShoppingSpecCleanupPrompt(clusters) {
     "You are cleaning a grocery shopping graph after recipe parsing.",
     "For each cluster, decide whether the items are the same grocery family and should be merged into one main-shop row.",
     "Every item is backed by sourceEdgeIDs. Merge decisions must preserve those sourceEdgeIDs; do not create or imply new source ingredients.",
-    "Merge spelling variants, pluralization variants, and descriptor-only variants such as shredded vs plain, cooked vs raw, or boneless skinless vs the base grocery family.",
-    "Merge packaging/prep-only variants such as instant rice cup, cooked rice, rice cup, or chopped cilantro when the head grocery is the same.",
-    "If a name is an explicit alternative such as A or B, choose one canonical shopping family and keep the unchosen name as an alternate, not a separate main-shop row.",
-    "Collapse obvious grocery variants like heirloom tomato, boxed sweet potato, organic avocado, or wild salmon into the plain grocery family when the recipe does not ask for the specialty form.",
-    "Lexically related names were intentionally grouped for review. Only merge them when they truly represent the same shoppable grocery.",
-    "Do not merge different grocery families just because they share a broad word.",
-    "Keep these separate: chicken breast vs chicken thigh, chili powder vs chili pepper, green onion vs yellow onion, lettuce vs cabbage, rice vs cauliflower rice.",
-    "Review pairs like garlic + garlic clove, salmon + salmon fillet, oil + olive oil, and bird eye chilies + bird eye chily with the recipe context before deciding.",
-    "Good merge examples: bird eye chilies + bird eye chily; shredded chicken breast + chicken breast.",
-    "Descriptor-only examples that should usually merge: cilantro + chopped cilantro, parsley + chopped parsley.",
-    "If one item is an explicit alternative or compound, keep it separate: rice vs rice or cauliflower rice.",
+    "Merge only when the names and recipe context point to the same shoppable grocery, product form, cut, or store search target.",
+    "Keep items separate when wording changes the grocery identity, required cut, product family, dietary substitute, preparation requirement, or store-search target.",
+    "Prep, packaging, size, and quality words may be descriptors, but only when they do not change what the shopper must buy.",
+    "If a source name contains an explicit alternative such as A or B, A / B, or A (or B), treat it as one source demand unless recipe context clearly requires buying both.",
+    "Lexically related names were intentionally grouped for review. Shared words are not proof of sameness.",
     "When merged, return the best canonicalName and preferredDisplayName for the shopper.",
     "Use mergeAmountStrategy = sum when the amounts are additive, and max when different measurements are only alternate ways of representing one packaged grocery.",
     "Return JSON only.",
@@ -643,10 +602,29 @@ function buildShoppingSpecCleanupPrompt(clusters) {
   ].join("\n");
 }
 
-async function resolveMainShopClusterDecisions(clusters) {
+async function resolveMainShopClusterDecisions(clusters, resolver = null) {
+  if (typeof resolver === "function") {
+    const resolved = await resolver(clusters);
+    if (resolved instanceof Map) return resolved;
+    if (Array.isArray(resolved)) {
+      return new Map(resolved.map((entry) => [entry.index, entry]));
+    }
+    if (resolved && typeof resolved === "object") {
+      return new Map(Object.entries(resolved).map(([key, value]) => [Number(key), value]));
+    }
+    return new Map();
+  }
+
   if (!openai || clusters.length === 0) return new Map();
 
-  const response = await openai.chat.completions.create({
+  const response = await withAIUsageContext({
+    service: "instacart-intent",
+    operation: "main_shop_cluster_adjudication",
+    metadata: {
+      cluster_count: clusters.length,
+      source_edge_count: clusters.reduce((total, cluster) => total + (cluster?.items?.length ?? 0), 0),
+    },
+  }, () => openai.chat.completions.create({
     model: INTENT_MODEL,
     ...chatCompletionTemperatureParams(INTENT_MODEL),
     response_format: {
@@ -692,11 +670,11 @@ async function resolveMainShopClusterDecisions(clusters) {
     messages: [
       {
         role: "system",
-        content: "You clean grocery shopping clusters. Keep only true grocery-family duplicates together and preserve distinct groceries.",
+        content: "You clean grocery shopping clusters. Decide merge/keep from source-backed recipe context and preserve distinct groceries.",
       },
       { role: "user", content: buildShoppingSpecCleanupPrompt(clusters) },
     ],
-  });
+  }));
 
   const content = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(content);
@@ -800,6 +778,7 @@ function mergeShoppingSpecCluster(items, decision = {}) {
   const mergedContext = {
     ...(representative.shoppingContext ?? {}),
     canonicalName,
+    canonicalKey: canonicalName,
     familyKey: canonicalName,
     clusterSize: sortedItems.length,
     mergeDecision: decision.merge ? "merged" : "kept",
@@ -829,8 +808,20 @@ function mergeShoppingSpecCluster(items, decision = {}) {
     unit: preferredUnit ?? representative.unit ?? "item",
     estimatedPrice: sortedItems.reduce((sum, item) => sum + Number(item.estimatedPrice ?? 0), 0),
     sourceIngredients,
+    sourceEdgeIDs: uniqueStrings(sortedItems.flatMap((item) =>
+      item?.sourceEdgeIDs
+        ?? item?.shoppingContext?.sourceEdgeIDs
+        ?? sourceEdgeIDsForItem(item)
+    ), 80),
+    alternativeNames: uniqueStrings(sortedItems.flatMap((item) =>
+      item?.alternativeNames
+        ?? item?.shoppingContext?.alternativeNames
+        ?? []
+    ), 24),
+    coverageState: sourceIngredients.length ? "covered" : "fallback",
     sourceRecipes,
     shoppingContext: mergedContext,
+    canonicalKey: canonicalName,
     confidence: Math.max(...sortedItems.map((item) => Number(item.confidence ?? 0)), Number(decision.confidence ?? 0)),
     reason: [
       decision.reason,
@@ -841,9 +832,9 @@ function mergeShoppingSpecCluster(items, decision = {}) {
   };
 }
 
-async function reconcileShoppingSpecEntries(entries = []) {
+async function reconcileShoppingSpecEntries(entries = [], { clusterDecisionResolver = null } = {}) {
   if (!Array.isArray(entries) || entries.length === 0) {
-    return { items: [], summary: { clusterCount: 0, mergedClusterCount: 0, keptClusterCount: 0, lexicalAdjudicationGroupCount: 0 } };
+    return { items: [], summary: { clusterCount: 0, mergedClusterCount: 0, keptClusterCount: 0, lexicalAdjudicationGroupCount: 0, fallbackExactMergeCount: 0 } };
   }
 
   const keyedClusters = new Map();
@@ -900,12 +891,13 @@ async function reconcileShoppingSpecEntries(entries = []) {
     });
   let decisions = new Map();
   try {
-    decisions = await resolveMainShopClusterDecisions(adjudicationClusters);
+    decisions = await resolveMainShopClusterDecisions(adjudicationClusters, clusterDecisionResolver);
   } catch {}
 
   const items = [];
   let mergedClusterCount = 0;
   let keptClusterCount = 0;
+  let fallbackExactMergeCount = 0;
   const consumedClusterKeys = new Set();
 
   for (const group of adjudicationGroups) {
@@ -938,6 +930,9 @@ async function reconcileShoppingSpecEntries(entries = []) {
     const merged = mergeShoppingSpecCluster(flattenedItems, decision ?? {});
     if (merged) {
       mergedClusterCount += flattenedItems.length > 1 ? 1 : 0;
+      if (!decision && participatingClusters.length === 1 && flattenedItems.length > 1) {
+        fallbackExactMergeCount += 1;
+      }
       items.push(merged);
     }
   }
@@ -963,6 +958,7 @@ async function reconcileShoppingSpecEntries(entries = []) {
       mergedClusterCount,
       keptClusterCount,
       lexicalAdjudicationGroupCount: adjudicationClusters.length,
+      fallbackExactMergeCount,
     },
   };
 }
@@ -1769,12 +1765,27 @@ function buildItemContext(originalItem, recipeLookup) {
 }
 
 function shouldResolveWithLLM(context) {
+  const normalizedQuery = String(context?.normalizedQuery ?? "").trim();
+  const sourceNames = Array.isArray(context?.sourceIngredientNames) ? context.sourceIngredientNames : [];
+  const sourceNameSurface = sourceNames.join(" ");
+  const combinedNameSurface = `${normalizedQuery} ${sourceNameSurface}`.toLowerCase();
+  const hasExplicitAlternative = /\b(?:or|substitute|swap|instead)\b|\/|\([^)]*\bor\b[^)]*\)/i.test(combinedNameSurface);
+  const hasOptionalOrQualifiedSource = /\b(?:optional|additional|extra|garnish|topping|to taste)\b/i.test(combinedNameSurface);
+  const hasFormChangingStepCue = (context?.matchingStepSnippets ?? []).some((entry) =>
+    /\b(?:raw|cooked|dried|fresh|frozen|ripe|unripe|shredded|block|ground|whole|boneless|skinless|bone[-\s]?in|wrapper|noodle|powder|paste|sauce|dressing|marinade)\b/i
+      .test(String(entry?.text ?? ""))
+  );
+  const hasConflictingSourceNames = sourceNames.length > 1
+    && new Set(sourceNames.map(normalizeText).filter(Boolean)).size > 1
+    && Number(context?.confidence ?? 1) < 0.75;
+
   return (
-    AMBIGUOUS_QUERY_SET.has(context.normalizedQuery) ||
-    context.preferredForms.length > 0 ||
-    context.matchingStepSnippets.length > 0 ||
-    context.sourceIngredientNames.length > 0 ||
-    context.sourceIngredientNames.some((name) => /additional|optional|or |\(|\)|-|crispy|creamy|tangy|salad|sauce/i.test(name))
+    AMBIGUOUS_QUERY_SET.has(normalizedQuery) ||
+    GENERIC_INGREDIENT_BUCKETS.has(normalizedQuery) ||
+    hasExplicitAlternative ||
+    hasOptionalOrQualifiedSource ||
+    hasFormChangingStepCue ||
+    hasConflictingSourceNames
   );
 }
 
@@ -1789,11 +1800,10 @@ function buildIntentPrompt(items) {
     "- Standardize the ingredient into the exact or closest store-search-friendly form that still matches the recipe.",
     "- Treat each input as a source-backed shopping demand. Keep the canonical family aligned with the provided sourceEdgeIDs; never split one source ingredient into multiple rows unless it is an explicit multi-component prepared item.",
     "- If the input name contains an alternative such as A or B, A / B, or A (or B), choose the first practical shopping ingredient as the canonical item and put the other names in alternateQueries or avoidForms as appropriate. Do not create a second shopping row for the unchosen alternative.",
-    "- Prefer the true grocery family over prep adjectives: shredded chicken breast should standardize to chicken breast, bird eye chilies should standardize to bird eye chili, and similar form-only variants should collapse to the shoppable base grocery.",
-    "- Packaging and prep words like cooked, instant, prepared, cup, bag, pack, chopped, shredded, fresh, frozen, boneless, skinless, boxed, and organic are descriptors unless the recipe clearly requires them as a product form.",
+    "- Prefer the shoppable grocery identity over words that are only prep, packaging, size, or quality descriptors, but keep descriptors when they change what the shopper must buy.",
     "- Use step context to infer form: raw vs cooked, shredded vs block, romaine vs mixed greens, granulated sugar vs icing sugar, fresh herb vs dried spice, wrappers vs noodles.",
     "- Do not invent a different ingredient family.",
-    "- Keep materially different groceries separate: chicken breast vs chicken thigh, rice vs cauliflower rice, green onion vs onion, chili powder vs chili pepper, coconut milk vs coconut water.",
+    "- Keep materially different groceries separate when wording changes ingredient identity, cut, product family, dietary substitute, or required form.",
     "- If the recipe text implies a specific descriptor, keep it in requiredDescriptors.",
     "- Mark pantry staples honestly. Salt, pepper, common oils, and common seasoning jars should usually be pantry staples unless the recipe makes them the hero.",
     "- Mark optional items honestly. Optional toppings or garnish-only extras can be optional.",
@@ -1819,7 +1829,13 @@ function buildIntentPrompt(items) {
 async function resolveAmbiguousIntents(items) {
   if (!openai || items.length === 0) return new Map();
 
-  const response = await openai.chat.completions.create({
+  const response = await withAIUsageContext({
+    service: "instacart-intent",
+    operation: "shopping_intent_resolution",
+    metadata: {
+      item_count: items.length,
+    },
+  }, () => openai.chat.completions.create({
     model: INTENT_MODEL,
     ...chatCompletionTemperatureParams(INTENT_MODEL),
     response_format: {
@@ -1900,7 +1916,7 @@ async function resolveAmbiguousIntents(items) {
       { role: "system", content: "You are Ounje's grocery spec standardizer. Standardize recipe ingredients into the exact shopping form a grocer search should use." },
       { role: "user", content: buildIntentPrompt(items) },
     ],
-  });
+  }));
 
   const content = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(content);
@@ -2003,11 +2019,11 @@ export async function resolveShoppingIntents({ originalItems, normalizedEntries 
         ? deterministicQuery
         : (resolved?.canonicalName || query || context.normalizedQuery || originalItems[index]?.name || "")
     ).trim();
-    const canonicalName = collation.canonicalName
-      || normalizeMainShopFamilyName(rawCanonicalName)
+    const canonicalName = normalizeMainShopFamilyName(rawCanonicalName)
       || normalizeMainShopFamilyName(deterministicQuery)
+      || collation.canonicalName
       || rawCanonicalName;
-    const canonicalKey = collation.canonicalKey || normalizeMainShopFamilyName(canonicalName) || canonicalName;
+    const canonicalKey = normalizeMainShopFamilyName(canonicalName) || collation.canonicalKey || canonicalName;
     const role = String(resolved?.role || context.role || "ingredient").trim();
     const isPantryStaple = Boolean(resolved?.isPantryStaple ?? context.isPantryStaple ?? false);
     const isOptional = Boolean(resolved?.isOptional ?? context.isOptional ?? exactness === "optional");
@@ -2086,13 +2102,9 @@ export async function resolveShoppingIntents({ originalItems, normalizedEntries 
   });
 }
 
-export async function buildShoppingSpecEntries({ originalItems, plan = null }) {
+export async function buildShoppingSpecEntries({ originalItems, plan = null, clusterDecisionResolver = null }) {
   const recipeLookup = await buildRecipeLookup(plan, originalItems);
   const expandedItems = (originalItems ?? []).flatMap((item) => {
-    const bucketKind = genericBucketKindForName(item?.name ?? item?.canonicalName ?? "");
-    if (bucketKind) {
-      return [];
-    }
     return deconstructCompositeItem(item);
   });
   const resolvedItems = await resolveShoppingIntents({
@@ -2100,17 +2112,15 @@ export async function buildShoppingSpecEntries({ originalItems, plan = null }) {
     plan,
   });
 
-  const collapsedByKey = new Map();
+  const resolvedEntries = [];
 
   for (let index = 0; index < resolvedItems.length; index += 1) {
     const resolved = resolvedItems[index];
     const original = expandedItems[index] ?? {};
     const shoppingContext = resolved.shoppingContext ?? {};
     const collation = original.shoppingCollation ?? canonicalizeIngredientName(original.name ?? resolved.query ?? "");
-    const canonicalName = String(collation.canonicalName || shoppingContext.canonicalName || resolved.canonicalName || resolved.query || original.name || "").trim();
-    const roleKey = String(shoppingContext.role ?? "ingredient").trim().toLowerCase();
-    const canonicalKey = String(collation.canonicalKey || shoppingContext.canonicalKey || normalizedMergeKey(canonicalName)).trim();
-    const key = [canonicalKey, roleKey].join("::");
+    const canonicalName = String(shoppingContext.canonicalName || resolved.canonicalName || resolved.query || collation.canonicalName || original.name || "").trim();
+    const canonicalKey = String(shoppingContext.canonicalKey || normalizedMergeKey(canonicalName) || collation.canonicalKey).trim();
     const sourceEdgeIDs = collation.sourceEdgeIDs ?? sourceEdgeIDsForItem(original);
     const alternativeNames = uniqueStrings([
       ...(collation.alternativeNames ?? []),
@@ -2146,79 +2156,12 @@ export async function buildShoppingSpecEntries({ originalItems, plan = null }) {
       reason: resolved.reason,
     };
 
-    if (collapsedByKey.has(key)) {
-      const existing = collapsedByKey.get(key);
-      if (shouldPreferMergeMax(existing, nextEntry)) {
-        existing.amount = Math.max(existing.amount, nextEntry.amount);
-      } else {
-        existing.amount += nextEntry.amount;
-      }
-      existing.estimatedPrice += nextEntry.estimatedPrice;
-      existing.sourceIngredients = [
-        ...existing.sourceIngredients,
-        ...nextEntry.sourceIngredients,
-      ]
-        .filter(Boolean)
-        .filter((source, sourceIndex, sourceArray) =>
-          sourceArray.findIndex((candidate) =>
-            String(candidate?.recipeID ?? "").trim() === String(source?.recipeID ?? "").trim()
-            && normalizeText(candidate?.ingredientName) === normalizeText(source?.ingredientName)
-            && String(candidate?.unit ?? "").trim().toLowerCase() === String(source?.unit ?? "").trim().toLowerCase()
-          ) === sourceIndex
-        );
-      existing.sourceRecipes = [...new Set([...(existing.sourceRecipes ?? []), ...(nextEntry.sourceRecipes ?? [])])];
-      existing.sourceEdgeIDs = uniqueStrings([...(existing.sourceEdgeIDs ?? []), ...sourceEdgeIDs], 80);
-      existing.alternativeNames = uniqueStrings([...(existing.alternativeNames ?? []), ...alternativeNames], 24);
-      existing.coverageState = existing.sourceEdgeIDs.length ? "covered" : "fallback";
-      existing.shoppingContext = {
-        ...existing.shoppingContext,
-        canonicalKey,
-        familyKey: canonicalKey,
-        sourceEdgeIDs: existing.sourceEdgeIDs,
-        alternativeNames: existing.alternativeNames,
-        coverageState: existing.coverageState,
-        sourceIngredientNames: uniqueStrings([
-          ...(existing.shoppingContext?.sourceIngredientNames ?? []),
-          ...(shoppingContext.sourceIngredientNames ?? []),
-        ], 14),
-        recipeTitles: uniqueStrings([
-          ...(existing.shoppingContext?.recipeTitles ?? []),
-          ...(shoppingContext.recipeTitles ?? []),
-        ], 10),
-        searchQueries: uniqueStrings([
-          ...(existing.shoppingContext?.searchQueries ?? []),
-          ...(shoppingContext.searchQueries ?? []),
-        ], 8),
-        verificationTerms: uniqueStrings([
-          ...(existing.shoppingContext?.verificationTerms ?? []),
-          ...(shoppingContext.verificationTerms ?? []),
-        ], 8),
-        fallbackSearchQuery: existing.shoppingContext?.fallbackSearchQuery ?? shoppingContext.fallbackSearchQuery ?? null,
-        shoppingForm: existing.shoppingContext?.shoppingForm ?? shoppingContext.shoppingForm ?? null,
-        expectedPurchaseUnit: existing.shoppingContext?.expectedPurchaseUnit ?? shoppingContext.expectedPurchaseUnit ?? null,
-        quantityStrategy: existing.shoppingContext?.quantityStrategy ?? shoppingContext.quantityStrategy ?? null,
-        minimumContainedQuantity: existing.shoppingContext?.minimumContainedQuantity != null && Number.isFinite(Number(existing.shoppingContext?.minimumContainedQuantity))
-          ? Number(existing.shoppingContext.minimumContainedQuantity)
-          : shoppingContext.minimumContainedQuantity != null && Number.isFinite(Number(shoppingContext.minimumContainedQuantity))
-            ? Number(shoppingContext.minimumContainedQuantity)
-            : null,
-        desiredPackageCount: existing.shoppingContext?.desiredPackageCount != null && Number.isFinite(Number(existing.shoppingContext?.desiredPackageCount))
-          ? Number(existing.shoppingContext.desiredPackageCount)
-          : shoppingContext.desiredPackageCount != null && Number.isFinite(Number(shoppingContext.desiredPackageCount))
-            ? Number(shoppingContext.desiredPackageCount)
-            : null,
-        quantityReason: existing.shoppingContext?.quantityReason ?? shoppingContext.quantityReason ?? null,
-      };
-      existing.confidence = Math.max(existing.confidence ?? 0, nextEntry.confidence ?? 0);
-      collapsedByKey.set(key, existing);
-    } else {
-      collapsedByKey.set(key, nextEntry);
-    }
+    resolvedEntries.push(nextEntry);
   }
 
-  const reconciled = await reconcileShoppingSpecEntries([...collapsedByKey.values()]);
+  const reconciled = await reconcileShoppingSpecEntries(resolvedEntries, { clusterDecisionResolver });
 
-  const finalItems = mergeCanonicalShoppingEntries(reconciled.items.map((entry) => {
+  const finalItems = reconciled.items.map((entry) => {
     const packageRule = entry.shoppingContext?.packageRule ?? null;
     const quantityStrategy = String(entry.shoppingContext?.quantityStrategy ?? "").trim();
     const purchaseAmount = quantityStrategy === "single_package_minimum_count"
@@ -2236,8 +2179,17 @@ export async function buildShoppingSpecEntries({ originalItems, plan = null }) {
       amount: purchaseAmount,
       unit: purchaseUnit,
     };
-  }));
+  });
   const sourceCoverage = buildSourceEdgeCoverageSummary(expandedItems, finalItems);
+  const coveredSourceEdgeIDs = finalItems.flatMap((item) =>
+    item?.sourceEdgeIDs
+      ?? item?.shoppingContext?.sourceEdgeIDs
+      ?? sourceEdgeIDsForItem(item)
+  );
+  const duplicateSourceEdgeIDs = uniqueStrings(
+    coveredSourceEdgeIDs.filter((id, index, values) => values.indexOf(id) !== index),
+    80
+  );
 
   return {
     items: finalItems,
@@ -2245,11 +2197,12 @@ export async function buildShoppingSpecEntries({ originalItems, plan = null }) {
       ...reconciled.summary,
       expandedItemCount: expandedItems.length,
       resolvedItemCount: resolvedItems.length,
-      collapsedItemCount: collapsedByKey.size,
+      preReconciliationItemCount: resolvedEntries.length,
       canonicalGroupCount: finalItems.length,
       sourceEdgeCount: sourceCoverage.sourceEdgeCount,
       coveredSourceEdgeCount: sourceCoverage.coveredSourceEdgeCount,
       uncoveredSourceEdgeIDs: sourceCoverage.uncoveredSourceEdgeIDs,
+      duplicateSourceEdgeIDs,
       alternativeCount: finalItems.reduce((sum, item) => sum + (Array.isArray(item.alternativeNames) ? item.alternativeNames.length : 0), 0),
       llmAdjudicationCount: reconciled.summary.lexicalAdjudicationGroupCount ?? 0,
     },

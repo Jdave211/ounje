@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import dotenv from "dotenv";
-import OpenAI, { fileFromPath } from "openai";
+import { fileFromPath } from "openai";
 import { nanoid } from "nanoid";
 import { createWorker, OEM } from "tesseract.js";
 import ytdl from "youtube-dl-exec";
@@ -17,6 +17,7 @@ import { findRecipeStyleExamples } from "./recipe-corpus.js";
 import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
+import { createLoggedOpenAI, isOpenAIQuotaError, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
 
 import {
   normalizeRecipeDetail as canonicalizeRecipeDetail,
@@ -37,11 +38,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const RECIPE_IMAGE_BUCKET = process.env.RECIPE_IMAGE_BUCKET ?? "recipe-images";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const RECIPE_INGESTION_MODEL = process.env.RECIPE_INGESTION_MODEL ?? "gpt-4o-mini";
-const RECIPE_SEARCH_SYNTHESIS_MODEL = process.env.RECIPE_SEARCH_SYNTHESIS_MODEL ?? "gpt-5.4-nano";
+const RECIPE_SEARCH_SYNTHESIS_MODEL = process.env.RECIPE_SEARCH_SYNTHESIS_MODEL ?? "gpt-5-nano";
 const RECIPE_IMPORT_COMPLETION_MODEL = process.env.RECIPE_IMPORT_COMPLETION_MODEL ?? "gpt-5-nano";
 const RECIPE_GATE_MODEL = process.env.RECIPE_GATE_MODEL ?? "gpt-5-nano";
 const RECIPE_IMAGE_RESTYLE_MODEL = process.env.RECIPE_IMAGE_RESTYLE_MODEL ?? "gpt-image-1";
-const RECIPE_IMAGE_CHECK_MODEL = process.env.RECIPE_IMAGE_CHECK_MODEL ?? RECIPE_INGESTION_MODEL;
+const RECIPE_IMAGE_CHECK_MODEL = process.env.RECIPE_IMAGE_CHECK_MODEL ?? RECIPE_GATE_MODEL;
 const ENABLE_IMPORTED_RECIPE_IMAGE_GEN = ["1", "true", "yes"].includes(String(process.env.ENABLE_IMPORTED_RECIPE_IMAGE_GEN ?? "").trim().toLowerCase());
 const PLAYWRIGHT_FALLBACK_PATH = "/Users/davejaga/.openclaw/skills/playwright-scraper-skill/node_modules/playwright/index.js";
 const DEFAULT_USER_AGENT =
@@ -57,9 +58,14 @@ const RECIPE_INGESTION_WORKER_CONCURRENCY = Math.max(
 const IMAGE_TEMPLATE_DIR = path.resolve(__dirname, "../../image_gen_templates");
 const execFile = promisify(execFileCallback);
 
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-ingestion" }) : null;
+verifyAIUsageLoggingConfiguration({ service: "recipe-ingestion" });
 let ocrWorkerPromise = null;
 let recipeImageBucketReadyPromise = null;
+
+function withRecipeAIStage(operation, fn) {
+  return withAIUsageContext({ operation }, fn);
+}
 
 const PUBLIC_RECIPE_TABLE_CONFIG = {
   recipeTable: "recipes",
@@ -205,12 +211,15 @@ Rules:
 - Preserve the identity of the imported dish from the original source evidence.
 - Use web recipe references only to complete weak or missing structure, not to replace the dish with something adjacent.
 - Improve ingredient sizing, timings, servings, nutrition text, and missing or sparse steps when the imported recipe is clearly incomplete.
+- For short social videos with weak/no transcript, infer useful mainstream ingredient quantities when the dish identity is clear and web references support a plausible common range.
+- Best-guess quantities are allowed for common dishes, but keep them conservative and ordinary for the stated serving size.
 - Do not collapse distinct grocery items into generic buckets. If the source or web references expose individual ingredients, keep them as individual shoppable rows instead of "spices", "seasoning", "sauce", or similar umbrella labels.
 - Preserve ingredients like honey, paprika, chili powder, garlic powder, fresh herbs, and other concrete grocery items explicitly when the source supports them.
 - If web references disagree, prefer the most mainstream consensus version that still matches the original source.
 - Never add niche embellishments that are not needed to make the recipe cookable.
 - Do not remove strong source-supported details from the imported recipe.
-- If a field is still uncertain, leave it null rather than forcing certainty.
+- If a quantity would be arbitrary even for a mainstream version of this dish, leave it null rather than forcing certainty.
+- Add quality_flags entries for inferred work, especially quantities_inferred when you fill missing quantity_text values by inference.
 - Do not include commentary outside the JSON object.`;
 
 const RECIPE_IMAGE_RESTYLE_CHECK_PROMPT = `You are checking whether a generated food image is acceptable for Ounje.
@@ -263,6 +272,12 @@ function uniqueStrings(values) {
     result.push(normalized);
   }
   return result;
+}
+
+function normalizeStringArray(value, limit = 12) {
+  if (Array.isArray(value)) return uniqueStrings(value).slice(0, limit);
+  const normalized = normalizeText(value);
+  return normalized ? [normalized].slice(0, limit) : [];
 }
 
 function isUserImportedRecipeID(value) {
@@ -543,6 +558,33 @@ function buildDedupeKey({ sourceUrl = null, canonicalUrl = null, sourceText = nu
   const candidate = cleanURL(canonicalUrl) || cleanURL(sourceUrl) || normalizeText(sourceText).slice(0, 3000);
   if (!candidate) return null;
   return crypto.createHash("sha256").update(candidate).digest("hex");
+}
+
+function isCanonicalCacheableSource(sourceType, sourceURL) {
+  const host = hostForURL(sourceURL);
+  const type = normalizeText(sourceType).toLowerCase();
+  return ["tiktok", "instagram", "youtube"].includes(type)
+    || host.includes("tiktok.com")
+    || host.includes("instagram.com")
+    || host.includes("youtube.com")
+    || host.includes("youtu.be");
+}
+
+function isOpenAITerminalModelError(error) {
+  const status = Number(error?.status ?? error?.code ?? 0);
+  const message = String(error?.message ?? error?.error?.message ?? "").toLowerCase();
+  return status === 400 && (
+    message.includes("model")
+    || message.includes("unsupported")
+    || message.includes("does not exist")
+    || message.includes("invalid_request")
+  );
+}
+
+function isResumableIngestionJob(job) {
+  if (!job || job.status !== "failed") return false;
+  if (!isCanonicalCacheableSource(job.source_type, job.canonical_url ?? job.source_url)) return false;
+  return Boolean(job.normalized_at || job.fetched_at || job.evidence_bundle_id);
 }
 
 function nowIso() {
@@ -1018,7 +1060,7 @@ async function assessRecipeLikelihood(source) {
     };
   }
 
-  const response = await openai.chat.completions.create({
+  const response = await withRecipeAIStage("recipe_import.gate", () => openai.chat.completions.create({
     model: RECIPE_GATE_MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -1071,7 +1113,7 @@ async function assessRecipeLikelihood(source) {
         ].join("\n"),
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -1503,10 +1545,10 @@ async function fetchPromptRecipeExamples(prompt, limit = 5) {
   }
 
   try {
-    const embedding = await openai.embeddings.create({
+    const embedding = await withRecipeAIStage("recipe_import.prompt_examples_embedding", () => openai.embeddings.create({
       model: "text-embedding-3-small",
       input: prompt,
-    });
+    }));
     const vector = embedding.data?.[0]?.embedding ?? [];
     if (!vector.length) return [];
 
@@ -1559,6 +1601,23 @@ async function fetchJobRow(jobID) {
       [`id=eq.${encodeURIComponent(jobID)}`]
     );
   }
+}
+
+async function fetchLatestJobArtifact(jobID, artifactType) {
+  if (!jobID || !artifactType) return null;
+  const rows = await fetchRows(
+    "recipe_ingestion_artifacts",
+    "id,job_id,artifact_type,content_type,source_url,text_content,raw_json,metadata,created_at",
+    {
+      filters: [
+        `job_id=eq.${encodeURIComponent(jobID)}`,
+        `artifact_type=eq.${encodeURIComponent(artifactType)}`,
+      ],
+      order: ["created_at.desc"],
+      limit: 1,
+    }
+  );
+  return rows[0] ?? null;
 }
 
 function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
@@ -1720,7 +1779,82 @@ async function findExistingJobForRequest(request, dedupeKey) {
   const existing = rows[0] ?? null;
   if (!existing) return null;
 
-  return ["failed"].includes(existing.status) ? null : existing;
+  return existing.status === "failed" && !isResumableIngestionJob(existing) ? null : existing;
+}
+
+async function findCompletedCanonicalImportForRequest(request, { canonicalURL = null, dedupeKey = null, excludeJobID = null } = {}) {
+  const cacheableURL = cleanURL(canonicalURL ?? request.canonical_url ?? request.source_url ?? null);
+  const cacheDedupeKey = dedupeKey ?? buildDedupeKey({
+    sourceUrl: request.source_url,
+    canonicalUrl: cacheableURL,
+    sourceText: request.source_text,
+  });
+  if (!cacheableURL && !cacheDedupeKey) return null;
+  if (!isCanonicalCacheableSource(request.source_type, cacheableURL ?? request.source_url)) return null;
+
+  const userFilter = request.user_id
+    ? `user_id=eq.${encodeURIComponent(request.user_id)}`
+    : "user_id=is.null";
+
+  const sourceFilters = [];
+  if (cacheableURL) {
+    sourceFilters.push(`canonical_url.eq.${encodeURIComponent(cacheableURL)}`);
+    sourceFilters.push(`source_url.eq.${encodeURIComponent(cacheableURL)}`);
+  }
+  if (cacheDedupeKey) {
+    sourceFilters.push(`dedupe_key.eq.${encodeURIComponent(cacheDedupeKey)}`);
+  }
+  if (!sourceFilters.length) return null;
+
+  const filters = [
+    userFilter,
+    `status=in.${buildInClause(["saved", "draft", "needs_review"])}`,
+    "recipe_id=not.is.null",
+    `or=(${sourceFilters.join(",")})`,
+  ];
+  if (excludeJobID) {
+    filters.push(`id=neq.${encodeURIComponent(excludeJobID)}`);
+  }
+
+  const rows = await fetchRows(
+    "recipe_ingestion_jobs",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    {
+      filters,
+      order: ["completed_at.desc", "saved_at.desc", "updated_at.desc", "created_at.desc"],
+      limit: 1,
+    }
+  );
+
+  return rows[0] ?? null;
+}
+
+async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, canonicalURL = null } = {}) {
+  if (!cachedJob?.recipe_id) return null;
+  const now = nowIso();
+  const completed = await appendJobEvent(job.id, "canonical_cache_hit", {
+    worker_id: workerID,
+    cached_job_id: cachedJob.id,
+    recipe_id: cachedJob.recipe_id,
+  }, {
+    status: "saved",
+    canonical_url: canonicalURL ?? cachedJob.canonical_url ?? cachedJob.source_url ?? job.canonical_url ?? job.source_url ?? null,
+    dedupe_recipe_id: cachedJob.recipe_id,
+    recipe_id: cachedJob.recipe_id,
+    review_state: cachedJob.review_state ?? "approved",
+    confidence_score: cachedJob.confidence_score ?? job.confidence_score ?? null,
+    quality_flags: uniqueStrings([...(job.quality_flags ?? []), "canonical_cache_hit"]),
+    review_reason: cachedJob.review_reason ?? job.review_reason ?? null,
+    error_message: null,
+    saved_at: job.saved_at ?? now,
+    completed_at: now,
+  });
+  const recipe = await fetchRecipeCardProjection(cachedJob.recipe_id).catch(() => null);
+  const recipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
+  return formatJobResponse(completed, {
+    recipe,
+    recipe_detail: recipeDetail,
+  });
 }
 
 async function createJobRow(request) {
@@ -1734,6 +1868,14 @@ async function createJobRow(request) {
   const existing = await findExistingJobForRequest(request, dedupeKey);
   if (existing) {
     return existing;
+  }
+
+  const completedCanonical = await findCompletedCanonicalImportForRequest(request, {
+    canonicalURL: request.canonical_url ?? request.source_url ?? null,
+    dedupeKey,
+  });
+  if (completedCanonical) {
+    return completedCanonical;
   }
 
   const created = await insertRecipeIngestionJobRow({
@@ -2201,7 +2343,7 @@ async function checkGeneratedRecipeImage({
           "Image 2 is the empty plate/bowl template.",
         ];
 
-  const response = await openai.chat.completions.create({
+  const response = await withRecipeAIStage("recipe_import.image_check", async () => openai.chat.completions.create({
     model: RECIPE_IMAGE_CHECK_MODEL,
     temperature: 0,
     response_format: { type: "json_object" },
@@ -2230,7 +2372,7 @@ async function checkGeneratedRecipeImage({
         ],
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -2308,14 +2450,14 @@ export async function maybeGenerateImportedRecipeImage(recipeDetail, source, { a
             await fileFromPath(templateFile),
           ];
 
-      const imageResponse = await openai.images.edit({
+      const imageResponse = await withRecipeAIStage("recipe_import.image_restyle", () => openai.images.edit({
         model: RECIPE_IMAGE_RESTYLE_MODEL,
         image: imageInputs,
         prompt,
         size: "1536x1024",
         quality: "high",
         output_format: "png",
-      });
+      }));
 
       const b64 = imageResponse.data?.[0]?.b64_json ?? null;
       if (!b64) continue;
@@ -2838,7 +2980,9 @@ function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
     cuisine_tags: normalized.cuisine_tags,
     occasion_tags: normalized.occasion_tags,
     main_protein: normalized.main_protein,
-    cook_method: normalized.cook_method,
+    cook_method: config.recipeTable === PUBLIC_RECIPE_TABLE_CONFIG.recipeTable
+      ? normalizeStringArray(normalized.cook_method, 6)
+      : normalizeText(Array.isArray(normalized.cook_method) ? normalized.cook_method[0] : normalized.cook_method) || null,
     discover_brackets: discoverBrackets,
     discover_brackets_enriched_at: discoverBrackets.length ? nowIso() : null,
     ...recipeRowExtras,
@@ -3141,7 +3285,7 @@ async function persistNormalizedRecipe(
         id: recipeID,
       };
 
-  if (userID) {
+  if (userID && ["saved", "prepped"].includes(String(targetState ?? "").trim())) {
     await upsertSavedRecipeForUser(userID, recipeDetail);
     if (targetState === "prepped") {
       await upsertPrepOverrideForUser(userID, recipeDetail);
@@ -3649,10 +3793,10 @@ async function transcribeShortVideo(videoPath) {
     const stat = await fsp.stat(audioPath).catch(() => null);
     if (!stat || stat.size === 0) return "";
 
-    const transcript = await openai.audio.transcriptions.create({
+    const transcript = await withRecipeAIStage("recipe_import.short_video_transcription", () => openai.audio.transcriptions.create({
       file: fs.createReadStream(audioPath),
       model: SHORT_VIDEO_TRANSCRIBE_MODEL,
-    });
+    }));
     return normalizeText(transcript?.text ?? "");
   } catch {
     return "";
@@ -4173,7 +4317,7 @@ async function extractRecipeWithModel(source) {
 
   content.push(...collectRecipeEvidenceImageInputs(source, { maxCount: 4 }));
 
-  const response = await openai.chat.completions.create({
+  const response = await withRecipeAIStage("recipe_import.extract", () => openai.chat.completions.create({
     model: RECIPE_INGESTION_MODEL,
     temperature: 0.1,
     response_format: { type: "json_object" },
@@ -4187,7 +4331,7 @@ async function extractRecipeWithModel(source) {
         content,
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -4207,7 +4351,7 @@ async function synthesizeRecipeFromPrompt(source) {
   }
 
   for (const attempt of [1, 2, 3]) {
-    const response = await openai.chat.completions.create({
+    const response = await withRecipeAIStage("recipe_import.concept_synthesis", () => openai.chat.completions.create({
       model: RECIPE_INGESTION_MODEL,
       temperature: attempt === 1 ? 0.3 : attempt === 2 ? 0.18 : 0.1,
       response_format: { type: "json_object" },
@@ -4245,7 +4389,7 @@ async function synthesizeRecipeFromPrompt(source) {
           ].join("\n"),
         },
       ],
-    });
+    }));
 
     const rawContent = response.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(rawContent);
@@ -4279,7 +4423,7 @@ async function synthesizeRecipeFromRecipeSearch(source) {
   }
 
   const recipeSources = Array.isArray(source.recipe_sources) ? source.recipe_sources.slice(0, 8) : [];
-  const response = await openai.chat.completions.create({
+  const response = await withRecipeAIStage("recipe_import.recipe_search_synthesis", () => openai.chat.completions.create({
     model: RECIPE_SEARCH_SYNTHESIS_MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -4330,7 +4474,7 @@ async function synthesizeRecipeFromRecipeSearch(source) {
         ].join("\n"),
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -4350,7 +4494,7 @@ async function verifyRecipeSearchSynthesis(normalizedRecipe, source) {
   }
 
   const recipeSources = Array.isArray(source.recipe_sources) ? source.recipe_sources.slice(0, 8) : [];
-  const response = await openai.chat.completions.create({
+  const response = await withRecipeAIStage("recipe_import.recipe_search_verify", () => openai.chat.completions.create({
     model: RECIPE_SEARCH_SYNTHESIS_MODEL,
     response_format: { type: "json_object" },
     messages: [
@@ -4387,7 +4531,7 @@ async function verifyRecipeSearchSynthesis(normalizedRecipe, source) {
         ].join("\n"),
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -4477,7 +4621,10 @@ function recipeCoreMetrics(recipe) {
 
 function recipeNeedsCompletionPass(recipe) {
   const metrics = recipeCoreMetrics(recipe);
+  const sparseQuantities = metrics.ingredientCount >= 3
+    && metrics.missingIngredientQuantities >= Math.ceil(metrics.ingredientCount * 0.5);
   return metrics.needsRepair
+    || sparseQuantities
     || !normalizeText(recipe?.servings_text)
     || !Number.isFinite(recipe?.servings_count)
     || !normalizeText(recipe?.cook_time_text)
@@ -4499,6 +4646,36 @@ function buildRecipeCompletionQuery(recipe, source) {
     .map((part) => normalizeText(part))
     .find(Boolean)
     ?? raw.slice(0, 120);
+}
+
+function ingredientQuantityCompletionChanges(beforeRecipe, afterRecipe) {
+  const beforeIngredients = Array.isArray(beforeRecipe?.ingredients) ? beforeRecipe.ingredients : [];
+  const afterIngredients = Array.isArray(afterRecipe?.ingredients) ? afterRecipe.ingredients : [];
+  const changes = [];
+
+  for (const before of beforeIngredients) {
+    const beforeName = normalizeText(before?.display_name ?? before?.name ?? "");
+    if (!beforeName || normalizeText(before?.quantity_text ?? before?.quantity ?? "")) continue;
+    const match = afterIngredients.find((candidate) => (
+      ingredientNameMatches(candidate?.display_name ?? candidate?.name, beforeName)
+        && normalizeText(candidate?.quantity_text ?? candidate?.quantity ?? "")
+    ));
+    if (!match) continue;
+    changes.push({
+      display_name: beforeName,
+      quantity_text: normalizeText(match.quantity_text ?? match.quantity ?? "") || null,
+    });
+  }
+
+  return changes;
+}
+
+function recipeReferenceSummaryForArtifact(recipeSources) {
+  return (recipeSources ?? []).map((entry) => ({
+    title: entry.title ?? null,
+    site_name: entry.site_name ?? null,
+    source_url: entry.canonical_url ?? entry.source_url ?? null,
+  })).filter((entry) => entry.title || entry.source_url);
 }
 
 function mergeCompletedRecipe(baseRecipe, completedRecipe) {
@@ -4555,7 +4732,7 @@ function mergeCompletedRecipe(baseRecipe, completedRecipe) {
   };
 }
 
-async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source) {
+async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, { jobID = null } = {}) {
   if (!openai || source.source_type === "recipe_search" || !recipeNeedsCompletionPass(normalizedRecipe)) {
     return {
       recipe: normalizedRecipe,
@@ -4597,7 +4774,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source) {
     };
   }
 
-  const response = await openai.chat.completions.create({
+  const response = await withRecipeAIStage("recipe_import.web_completion", () => openai.chat.completions.create({
     model: RECIPE_IMPORT_COMPLETION_MODEL,
     temperature: 0.08,
     response_format: { type: "json_object" },
@@ -4675,16 +4852,41 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source) {
         ].join("\n"),
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
   const completedRecipe = coerceStructuredRecipeCandidate(parsed.recipe ?? parsed, source);
   const mergedRecipe = mergeCompletedRecipe(normalizedRecipe, completedRecipe);
+  const filledQuantities = ingredientQuantityCompletionChanges(normalizedRecipe, mergedRecipe);
+  const qualityFlags = uniqueStrings([
+    ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
+    ...(filledQuantities.length ? ["quantities_inferred"] : []),
+    ...(JSON.stringify(mergedRecipe) !== JSON.stringify(normalizedRecipe) ? ["web_completion_applied"] : []),
+  ]);
+  if (jobID) {
+    await storeArtifact(jobID, {
+      artifact_type: "quantity_completion",
+      content_type: "application/json",
+      source_url: source.canonical_url ?? source.source_url ?? null,
+      raw_json: compactJSON({
+        completion_query: completionQuery,
+        filled_quantities: filledQuantities,
+        reference_sources: recipeReferenceSummaryForArtifact(recipeSources),
+        quality_flags: qualityFlags,
+        review_reason: normalizeText(parsed.review_reason ?? "") || null,
+      }),
+      metadata: {
+        model: RECIPE_IMPORT_COMPLETION_MODEL,
+        filled_quantity_count: filledQuantities.length,
+        reference_count: recipeSources.length,
+      },
+    }).catch(() => {});
+  }
 
   return {
     recipe: mergedRecipe,
-    quality_flags: Array.isArray(parsed.quality_flags) ? parsed.quality_flags : [],
+    quality_flags: qualityFlags,
     review_reason: normalizeText(parsed.review_reason ?? "") || null,
     applied: JSON.stringify(mergedRecipe) !== JSON.stringify(normalizedRecipe),
   };
@@ -4890,8 +5092,8 @@ async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
     return normalizedRecipe;
   }
 
-  const response = await openai.chat.completions.create({
-    model: RECIPE_INGESTION_MODEL,
+  const response = await withRecipeAIStage("recipe_import.light_fill", () => openai.chat.completions.create({
+    model: RECIPE_IMPORT_COMPLETION_MODEL,
     temperature: 0.05,
     response_format: { type: "json_object" },
     messages: [
@@ -4936,7 +5138,7 @@ async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
         ].join("\n"),
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -4946,12 +5148,14 @@ async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
 function recipeNeedsSecondaryFill(recipe) {
   const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
   const missingIngredientQuantities = ingredients.filter((ingredient) => !normalizeText(ingredient.quantity_text)).length;
+  const hasAnyIngredientQuantity = missingIngredientQuantities < ingredients.length;
+  const missingServings = !normalizeText(recipe?.servings_text) && !Number.isFinite(recipe?.servings_count);
+  const missingCookTime = !normalizeText(recipe?.cook_time_text) && !Number.isFinite(recipe?.cook_time_minutes);
+  const criticallySparseQuantities = ingredients.length >= 3
+    && missingIngredientQuantities >= Math.ceil(ingredients.length * 0.75)
+    && !hasAnyIngredientQuantity;
 
-  return !normalizeText(recipe?.servings_text)
-    || !Number.isFinite(recipe?.servings_count)
-    || !normalizeText(recipe?.est_calories_text)
-    || !Number.isFinite(recipe?.calories_kcal)
-    || missingIngredientQuantities > 0;
+  return missingServings || missingCookTime || criticallySparseQuantities;
 }
 
 async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
@@ -5005,8 +5209,8 @@ async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
     ...collectRecipeEvidenceImageInputs(source, { maxCount: 3 }),
   ];
 
-  const response = await openai.chat.completions.create({
-    model: RECIPE_INGESTION_MODEL,
+  const response = await withRecipeAIStage("recipe_import.secondary_fill", () => openai.chat.completions.create({
+    model: RECIPE_IMPORT_COMPLETION_MODEL,
     temperature: 0.02,
     response_format: { type: "json_object" },
     messages: [
@@ -5019,7 +5223,7 @@ async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
         content,
       },
     ],
-  });
+  }));
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -5073,7 +5277,7 @@ async function repairSparseImportedRecipe(normalizedRecipe, source) {
   }
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await withRecipeAIStage("recipe_import.sparse_repair", () => openai.chat.completions.create({
       model: RECIPE_INGESTION_MODEL,
       temperature: 0.12,
       response_format: { type: "json_object" },
@@ -5115,7 +5319,7 @@ async function repairSparseImportedRecipe(normalizedRecipe, source) {
           ].join("\n"),
         },
       ],
-    });
+    }));
 
     const rawContent = response.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(rawContent);
@@ -5142,7 +5346,7 @@ async function repairSparseImportedRecipe(normalizedRecipe, source) {
     : normalizedRecipe;
 }
 
-async function buildNormalizedRecipe(source, { accessToken = null } = {}) {
+async function buildNormalizedRecipe(source, { accessToken = null, jobID = null } = {}) {
   const directStructured = source.structured_recipe
     ? coerceStructuredRecipeCandidate(
         {
@@ -5200,7 +5404,7 @@ async function buildNormalizedRecipe(source, { accessToken = null } = {}) {
   if (source.source_type !== "concept_prompt") {
     normalized = await repairSparseImportedRecipe(normalized, source);
     normalized = await enrichRecipeLowRiskFields(normalized, source);
-    const completion = await completeImportedRecipeWithWebEvidence(normalized, source);
+    const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
     normalized = completion.recipe;
     modelResult.quality_flags = uniqueStrings([
       ...(modelResult.quality_flags ?? []),
@@ -5353,7 +5557,7 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     ? payload.sources.map((entry) => normalizeImportPayload({ ...payload, ...entry }))
     : [normalizeImportPayload(payload)];
 
-  const processInline = payload.process_inline !== false && payload.processInline !== false && options.processInline !== false;
+  const processInline = shouldProcessImportInline(payload, options);
   const results = [];
 
   for (const request of requests) {
@@ -5361,25 +5565,32 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
       throw new Error("Provide a source URL, pasted recipe text, or media attachment.");
     }
 
-    // Keep enqueue fast for background mode; canonical expansion can happen in worker processing.
-    const resolvedSourceURL = processInline && request.source_url
-      ? await expandCanonicalSourceURL(request.source_url, request.source_type)
-      : null;
+    // Keep enqueue fast and observable. Canonical expansion happens during worker processing.
     const queuedRequest = {
       ...request,
-      source_url: resolvedSourceURL ?? request.source_url ?? null,
-      canonical_url: resolvedSourceURL ?? request.source_url ?? null,
+      source_url: request.source_url ?? null,
+      canonical_url: request.source_url ?? null,
     };
 
     const job = await createJobRow(queuedRequest);
     if (processInline) {
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
     } else {
-      results.push(formatJobResponse(job));
+      results.push(formatJobResponse(job, { processing_mode: "queued" }));
     }
   }
 
   return Array.isArray(payload.sources) ? results : results[0];
+}
+
+function shouldProcessImportInline(payload = {}, options = {}) {
+  const allowInline = ["1", "true", "yes", "on"].includes(
+    String(process.env.OUNJE_ALLOW_INLINE_RECIPE_IMPORT ?? "").trim().toLowerCase()
+  ) && String(process.env.NODE_ENV ?? "development").trim().toLowerCase() !== "production";
+  const requestedInline = payload.process_inline === true
+    || payload.processInline === true
+    || options.processInline === true;
+  return allowInline && requestedInline;
 }
 
 export async function fetchRecipeIngestionJob(jobID) {
@@ -5400,6 +5611,18 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     throw new Error("Recipe ingestion job could not be found.");
   }
 
+  return withAIUsageContext({
+    service: "recipe-ingestion",
+    route: "worker:recipe-ingestion",
+    operation: "recipe_ingestion_job",
+    user_id: existingJob.user_id,
+    job_id: existingJob.id,
+    metadata: {
+      worker_id: workerID,
+      source_type: existingJob.source_type ?? null,
+      target_state: existingJob.target_state ?? null,
+    },
+  }, async () => {
   if (["saved", "needs_review", "draft"].includes(existingJob.status)) {
     const recipe = existingJob.recipe_id ? await fetchRecipeCardProjection(existingJob.recipe_id) : null;
     return formatJobResponse(existingJob, { recipe });
@@ -5417,6 +5640,11 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     ...requestPayload,
     source_url: await expandCanonicalSourceURL(requestPayload.source_url, requestPayload.source_type) ?? requestPayload.source_url ?? null,
   };
+  const canonicalDedupeKey = buildDedupeKey({
+    sourceUrl: existingJob.source_url ?? requestPayload.source_url,
+    canonicalUrl: requestPayload.source_url,
+    sourceText: requestPayload.source_text,
+  });
   requestPayload = {
     ...requestPayload,
     access_token: accessToken ?? requestPayload.access_token ?? null,
@@ -5433,8 +5661,53 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
   });
 
   try {
-    const source = await extractSourceMaterial(requestPayload);
-    if (["tiktok", "instagram", "youtube", "media_video", "media_image"].includes(source.source_type)) {
+    if (requestPayload.source_url && requestPayload.source_url !== existingJob.canonical_url) {
+      await patchRecipeIngestionJobRow(existingJob.id, {
+        canonical_url: requestPayload.source_url,
+        dedupe_key: canonicalDedupeKey ?? existingJob.dedupe_key ?? null,
+        request_payload: {
+          ...(existingJob.request_payload ?? {}),
+          canonical_url: requestPayload.source_url,
+          source_url: existingJob.source_url ?? requestPayload.source_url,
+        },
+      }).catch(() => {});
+    }
+
+    const cachedCanonical = await findCompletedCanonicalImportForRequest(requestPayload, {
+      canonicalURL: requestPayload.source_url,
+      dedupeKey: canonicalDedupeKey,
+      excludeJobID: existingJob.id,
+    });
+    if (cachedCanonical) {
+      return await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
+        workerID,
+        canonicalURL: requestPayload.source_url,
+      });
+    }
+
+    const resumedSourceArtifact = await fetchLatestJobArtifact(existingJob.id, "source_evidence_bundle").catch(() => null);
+    const source = resumedSourceArtifact?.raw_json && existingJob.fetched_at
+      ? {
+          ...(resumedSourceArtifact.raw_json ?? {}),
+          source_provenance_json: resumedSourceArtifact.raw_json,
+        }
+      : await extractSourceMaterial(requestPayload);
+
+    if (resumedSourceArtifact?.raw_json && existingJob.fetched_at) {
+      job = await appendJobEvent(existingJob.id, "resumed_from_source_evidence", {
+        worker_id: workerID,
+        artifact_id: resumedSourceArtifact.id,
+      }, {
+        status: "fetching",
+        canonical_url: source.canonical_url ?? requestPayload.source_url,
+        fetched_at: existingJob.fetched_at,
+      });
+    }
+
+    const resumedNormalizedArtifact = await fetchLatestJobArtifact(existingJob.id, "normalized_recipe").catch(() => null);
+    const hasResumableNormalizedRecipe = Boolean(resumedNormalizedArtifact?.raw_json && existingJob.normalized_at);
+
+    if (!hasResumableNormalizedRecipe && ["tiktok", "instagram", "youtube", "media_video", "media_image"].includes(source.source_type)) {
       const recipeGate = await assessRecipeLikelihood(source);
       await storeArtifact(existingJob.id, {
         artifact_type: "recipe_gate_assessment",
@@ -5468,48 +5741,76 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
         return formatJobResponse(job);
       }
     }
-    const evidenceBundle = await storeEvidenceBundle(existingJob.id, source.source_provenance_json ?? buildSourceProvenanceRecord(source));
-    job = await appendJobEvent(existingJob.id, "evidence_bundle_stored", {
-      worker_id: workerID,
-      evidence_bundle_id: evidenceBundle.id,
-    }, {
-      evidence_bundle_id: evidenceBundle.id,
-    });
-    for (const artifact of source.artifacts ?? []) {
-      await storeArtifact(existingJob.id, artifact);
-    }
-    await storeArtifact(existingJob.id, {
-      artifact_type: "source_evidence_bundle",
-      content_type: "application/json",
-      source_url: source.canonical_url ?? requestPayload.source_url ?? null,
-      raw_json: compactJSON(evidenceBundle.evidence_json ?? evidenceBundle),
-      metadata: {
+
+    if (!resumedSourceArtifact?.raw_json || !existingJob.fetched_at) {
+      const evidenceBundle = await storeEvidenceBundle(existingJob.id, source.source_provenance_json ?? buildSourceProvenanceRecord(source));
+      job = await appendJobEvent(existingJob.id, "evidence_bundle_stored", {
+        worker_id: workerID,
         evidence_bundle_id: evidenceBundle.id,
-        source_type: source.source_type ?? null,
-        frame_count: evidenceBundle.frame_count ?? null,
-      },
-    });
+      }, {
+        evidence_bundle_id: evidenceBundle.id,
+      });
+      for (const artifact of source.artifacts ?? []) {
+        await storeArtifact(existingJob.id, artifact);
+      }
+      await storeArtifact(existingJob.id, {
+        artifact_type: "source_evidence_bundle",
+        content_type: "application/json",
+        source_url: source.canonical_url ?? requestPayload.source_url ?? null,
+        raw_json: compactJSON(evidenceBundle.evidence_json ?? evidenceBundle),
+        metadata: {
+          evidence_bundle_id: evidenceBundle.id,
+          source_type: source.source_type ?? null,
+          frame_count: evidenceBundle.frame_count ?? null,
+        },
+      });
+    }
 
     job = await appendJobEvent(existingJob.id, "parsing", { worker_id: workerID }, {
       status: "parsing",
       canonical_url: source.canonical_url ?? requestPayload.source_url,
-      fetched_at: nowIso(),
+      fetched_at: existingJob.fetched_at ?? nowIso(),
     });
 
-    const extraction = await buildNormalizedRecipe(source, {
-      accessToken: requestPayload.access_token ?? null,
-    });
-    await storeArtifact(existingJob.id, {
-      artifact_type: "normalized_recipe",
-      content_type: "application/json",
-      raw_json: compactJSON(extraction.normalized_recipe),
-      metadata: {
-        quality_flags: extraction.quality_flags,
-        confidence_score: extraction.confidence_score,
-        review_state: extraction.review_state,
-        review_reason: extraction.review_reason,
-      },
-    });
+    const extraction = hasResumableNormalizedRecipe
+      ? {
+          normalized_recipe: resumedNormalizedArtifact.raw_json,
+          quality_flags: Array.isArray(resumedNormalizedArtifact.metadata?.quality_flags)
+            ? resumedNormalizedArtifact.metadata.quality_flags
+            : uniqueStrings([...(existingJob.quality_flags ?? []), "resumed_normalized_recipe"]),
+          confidence_score: Number.isFinite(Number(resumedNormalizedArtifact.metadata?.confidence_score))
+            ? Number(resumedNormalizedArtifact.metadata.confidence_score)
+            : existingJob.confidence_score ?? 0.72,
+          review_state: normalizeText(resumedNormalizedArtifact.metadata?.review_state ?? existingJob.review_state) || "approved",
+          review_reason: resumedNormalizedArtifact.metadata?.review_reason ?? existingJob.review_reason ?? null,
+        }
+      : await buildNormalizedRecipe(source, {
+        accessToken: requestPayload.access_token ?? null,
+        jobID: existingJob.id,
+      });
+
+    if (hasResumableNormalizedRecipe) {
+      job = await appendJobEvent(existingJob.id, "resumed_from_normalized_recipe", {
+        worker_id: workerID,
+        artifact_id: resumedNormalizedArtifact.id,
+      }, {
+        status: "normalized",
+        canonical_url: source.canonical_url ?? requestPayload.source_url,
+        normalized_at: existingJob.normalized_at,
+      });
+    } else {
+      await storeArtifact(existingJob.id, {
+        artifact_type: "normalized_recipe",
+        content_type: "application/json",
+        raw_json: compactJSON(extraction.normalized_recipe),
+        metadata: {
+          quality_flags: extraction.quality_flags,
+          confidence_score: extraction.confidence_score,
+          review_state: extraction.review_state,
+          review_reason: extraction.review_reason,
+        },
+      });
+    }
 
     job = await appendJobEvent(existingJob.id, "normalized", {
       confidence_score: extraction.confidence_score,
@@ -5588,10 +5889,17 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       recipe_detail: persisted.recipe_detail,
     });
   } catch (error) {
-    const terminal = nextAttempt >= Number(existingJob.max_attempts ?? 3);
+    const quotaError = isOpenAIQuotaError(error);
+    const modelError = isOpenAITerminalModelError(error);
+    const terminal = quotaError || modelError || nextAttempt >= Number(existingJob.max_attempts ?? 3);
     job = await appendJobEvent(existingJob.id, terminal ? "failed" : "retryable", {
       worker_id: workerID,
       error_message: error.message,
+      terminal_reason: quotaError
+        ? "openai_quota_or_rate_limit"
+        : modelError
+          ? "openai_model_error"
+          : null,
     }, {
       status: terminal ? "failed" : "retryable",
       completed_at: terminal ? nowIso() : null,
@@ -5604,6 +5912,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
 
     throw error;
   }
+  });
 }
 
 export async function runRecipeIngestionWorkerBatch({ workerID = `daemon_${nanoid(8)}`, batchSize = 3 } = {}) {
@@ -5639,3 +5948,17 @@ export async function runRecipeIngestionWorkerBatch({ workerID = `daemon_${nanoi
 
   return processed;
 }
+
+export {
+  RECIPE_GATE_MODEL,
+  RECIPE_IMPORT_COMPLETION_MODEL,
+  RECIPE_INGESTION_MODEL,
+  RECIPE_SEARCH_SYNTHESIS_MODEL,
+  persistNormalizedRecipe,
+  recipeNeedsCompletionPass,
+  recipeNeedsSecondaryFill,
+  shouldProcessImportInline,
+  isCanonicalCacheableSource,
+  isOpenAITerminalModelError,
+  isResumableIngestionJob,
+};
