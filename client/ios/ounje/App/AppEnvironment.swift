@@ -2294,7 +2294,7 @@ final class MealPlanningAppStore: ObservableObject {
     private func persistLatestPlanRemotelyIfPossible(_ plan: MealPlan) async -> Bool {
         guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return false }
         guard isUsablePersistedPlan(plan) else {
-            print("[MealPlanningAppStore] Skipping remote meal prep cycle persistence for incomplete plan \(plan.id) with \(plan.recipes.count) recipes")
+            print("[MealPlanningAppStore] Skipping remote meal prep cycle persistence for unsupported plan \(plan.id) with \(plan.recipes.count) recipes")
             return false
         }
 
@@ -3770,15 +3770,9 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func isUsablePersistedPlan(_ plan: MealPlan) -> Bool {
         guard !plan.recipes.isEmpty else { return false }
-        guard plan.recipes.count >= minimumUsablePersistedPlanRecipeCount else { return false }
         return !plan.recipes.contains(where: { recipe in
             recipe.recipe.isLegacySeedRecipe || recipe.recipe.isKnownSampleRecipe
         })
-    }
-
-    private var minimumUsablePersistedPlanRecipeCount: Int {
-        guard let profile else { return 1 }
-        return max(1, min(10, profile.consumption.mealsPerWeek))
     }
 
     private func recordCompletedMealPrepCycleIfNeeded(for plan: MealPlan) async {

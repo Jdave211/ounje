@@ -236,6 +236,13 @@ struct FirstLoginOnboardingView: View {
         store.effectivePricingTier
     }
 
+    private var paywallPresentationBinding: Binding<Bool> {
+        Binding(
+            get: { OunjeLaunchFlags.paywallsEnabled && isPaywallPresented },
+            set: { isPaywallPresented = $0 }
+        )
+    }
+
     private var favoriteFoodOptions: [String] {
         let cuisineSuggestions = selectedCuisines.flatMap { cuisineFavoriteFoodSuggestions[$0] ?? [] }
         let countrySignals = selectedCuisineCountries.flatMap { cuisineCountryFavoriteSuggestions[$0] ?? [] }
@@ -436,7 +443,7 @@ struct FirstLoginOnboardingView: View {
                 }
             )
         }
-        .fullScreenCover(isPresented: $isPaywallPresented) {
+        .fullScreenCover(isPresented: paywallPresentationBinding) {
             OunjePlusPaywallSheet(initialTier: paywallInitialTier)
         }
     }
@@ -1111,16 +1118,17 @@ struct FirstLoginOnboardingView: View {
             }
 
             ForEach(selectableOrderingAutonomyOptions) { option in
+                let isLocked = isOrderingAutonomyLocked(option)
                 OnboardingAutonomyCard(
                     title: option.title,
                     subtitle: autonomySubtitle(for: option),
                     isSelected: orderingAutonomy == option,
-                    isLocked: !selectedPricingTier.supports(option),
+                    isLocked: isLocked,
                     accent: currentStepAccent
                 ) {
-                    if selectedPricingTier.supports(option) {
+                    if isOrderingAutonomySelectable(option) {
                         orderingAutonomy = option
-                    } else {
+                    } else if OunjeLaunchFlags.paywallsEnabled {
                         paywallInitialTier = OunjePricingTier.minimumTier(for: option)
                         isPaywallPresented = true
                     }
@@ -1140,7 +1148,7 @@ struct FirstLoginOnboardingView: View {
             )
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("Instacart connection")
+                Text("Instacart connection beta")
                     .font(.custom("Slee_handwritting-Regular", size: 20))
                     .foregroundStyle(OunjePalette.secondaryText)
 
@@ -1191,6 +1199,11 @@ struct FirstLoginOnboardingView: View {
                 Text("Delivery address & instructions")
                     .font(.custom("Slee_handwritting-Regular", size: 20))
                     .foregroundStyle(OunjePalette.secondaryText)
+
+                Text("We only use your address for grocery delivery, delivery estimates, and nearby food context.")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Button {
                     isAddressSheetPresented = true
@@ -1751,6 +1764,17 @@ struct FirstLoginOnboardingView: View {
         case .fullyAutonomousGuardrails:
             return "Autonomous buying stays off while beta hardens."
         }
+    }
+
+    private func isOrderingAutonomySelectable(_ option: OrderingAutonomyLevel) -> Bool {
+        if !OunjeLaunchFlags.paywallsEnabled {
+            return option == .approvalRequired
+        }
+        return selectedPricingTier.supports(option)
+    }
+
+    private func isOrderingAutonomyLocked(_ option: OrderingAutonomyLevel) -> Bool {
+        !isOrderingAutonomySelectable(option)
     }
 
     private func selectAddressSuggestion(_ suggestion: AddressSuggestion) async {

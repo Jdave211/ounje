@@ -1487,7 +1487,7 @@ private struct MealPlannerShellView: View {
 
     private var hasQueuedSharedImportWork: Bool {
         sharedImportInbox.envelopes.contains { envelope in
-            envelope.shouldAutoProcess || envelope.isRetryNeeded
+            envelope.shouldAutoProcess
         }
     }
 
@@ -1568,7 +1568,6 @@ private struct MealPlannerShellView: View {
                 var processingEnvelope = envelope
                 let existingJobID = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let shouldPollExistingJob = !existingJobID.isEmpty
-                    && (envelope.attemptCount ?? 0) > 0
                     && !envelope.isRetryNeeded
                 let nextAttemptCount = shouldPollExistingJob
                     ? (processingEnvelope.attemptCount ?? 0)
@@ -1711,7 +1710,7 @@ private struct MealPlannerShellView: View {
                         updatedAt: Date()
                     )
                     try? SharedRecipeImportInbox.update(queuedEnvelope)
-                    if (envelope.attemptCount ?? 0) <= 1 {
+                    if !shouldPollExistingJob && (envelope.attemptCount ?? 0) <= 1 {
                         toastCenter.show(
                             title: "Import queued",
                             subtitle: envelope.resolvedSourceText.isEmpty ? "Ounje is pulling your recipe in now." : envelope.resolvedSourceText,
@@ -2200,60 +2199,22 @@ private struct CookbookTabView: View {
         !savedStore.savedRecipes.isEmpty
     }
 
+    private var activeImportProgressItem: SharedRecipeImportEnvelope? {
+        sharedImportInbox.envelopes.first(where: \.isLiveQueueState)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        BiroScriptDisplayText("Cookbook", size: 30, color: OunjePalette.primaryText)
-                        Text(selectedSection.subtitle)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.92)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    Button {
-                        openImportQueue()
-                    } label: {
-                        PulsingTrayIcon(
-                            count: sharedImportInbox.badgeCount,
-                            isPulsing: sharedImportInbox.queuedCount > 0
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        openComposer(context: selectedSection == .prepped ? .prepped : .saved)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Import")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                        }
-                            .foregroundStyle(OunjePalette.primaryText)
-                            .padding(.horizontal, 14)
-                            .frame(height: 42)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(OunjePalette.surface)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                            .stroke(OunjePalette.stroke, lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
+                cookbookHeader
 
                 CookbookSectionTabs(
                     selection: $selectedSection,
                     tabs: sectionTabs
                 )
                 .zIndex(20)
+
+                activeImportTracker
 
                 ZStack(alignment: .topLeading) {
                     currentSectionContent
@@ -2372,6 +2333,65 @@ private struct CookbookTabView: View {
                     isSavedSearchExpanded = false
                 }
             }
+        }
+    }
+
+    private var cookbookHeader: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 4) {
+                BiroScriptDisplayText("Cookbook", size: 30, color: OunjePalette.primaryText)
+                Text(selectedSection.subtitle)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.92)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                openImportQueue()
+            } label: {
+                PulsingTrayIcon(
+                    count: sharedImportInbox.badgeCount,
+                    isPulsing: sharedImportInbox.queuedCount > 0
+                )
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                openComposer(context: selectedSection == .prepped ? .prepped : .saved)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Import")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(OunjePalette.primaryText)
+                .padding(.horizontal, 14)
+                .frame(height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private var activeImportTracker: some View {
+        if let activeImportProgressItem {
+            SharedRecipeImportProgressCard(
+                item: activeImportProgressItem,
+                onTap: { openImportQueue() }
+            )
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -2645,7 +2665,7 @@ private struct SharedRecipeImportQueueSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     if selectedTab == .queued, let activeProgressItem {
-                        SharedRecipeImportProgressCard(item: activeProgressItem)
+                        SharedRecipeImportProgressCard(item: activeProgressItem, onTap: nil)
                     }
                     subtitle
                     content
@@ -5263,6 +5283,7 @@ private enum RecipeImportProgressStage: Int, CaseIterable {
 
 private struct SharedRecipeImportProgressCard: View {
     let item: SharedRecipeImportEnvelope
+    let onTap: (() -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
@@ -5283,64 +5304,102 @@ private struct SharedRecipeImportProgressCard: View {
         }
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(OunjePalette.accent.opacity(0.16))
-                        .frame(width: 42, height: 42)
-                        .scaleEffect(isPulsing && !reduceMotion ? 1.12 : 0.94)
-                        .opacity(isPulsing && !reduceMotion ? 0.45 : 0.82)
-
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(OunjePalette.accent)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Importing recipe")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-                    Text(subtitle)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(2)
-                }
+    private var sourceLabel: String {
+        let sourceURL = item.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !sourceURL.isEmpty {
+            if let host = URL(string: sourceURL)?.host?.replacingOccurrences(of: "www.", with: ""), !host.isEmpty {
+                return host
             }
+            return sourceURL
+        }
 
-            HStack(spacing: 7) {
-                ForEach(RecipeImportProgressStage.allCases, id: \.self) { stage in
-                    VStack(spacing: 6) {
-                        Capsule(style: .continuous)
-                            .fill(stage.rawValue <= currentStage.rawValue ? OunjePalette.accent : OunjePalette.stroke.opacity(0.72))
-                            .frame(height: 4)
+        let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !sourceText.isEmpty {
+            return sourceText.components(separatedBy: .newlines).first ?? sourceText
+        }
 
-                        Text(stage.title)
-                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                            .foregroundStyle(stage == currentStage ? OunjePalette.primaryText : OunjePalette.secondaryText.opacity(0.72))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                    }
-                    .frame(maxWidth: .infinity)
+        return "shared recipe"
+    }
+
+    private var progressFraction: CGFloat {
+        let maxIndex = max(RecipeImportProgressStage.allCases.count - 1, 1)
+        return CGFloat(currentStage.rawValue) / CGFloat(maxIndex)
+    }
+
+    var body: some View {
+        Group {
+            if let onTap {
+                Button(action: onTap) {
+                    content
                 }
+                .buttonStyle(.plain)
+            } else {
+                content
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.86))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(OunjePalette.accent.opacity(0.34), lineWidth: 1)
-                )
-        )
         .onAppear {
             guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
                 isPulsing = true
             }
         }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: currentStage == .saved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(OunjePalette.accent)
+                    .frame(width: 22, height: 22)
+                    .scaleEffect(isPulsing && !reduceMotion && currentStage != .saved ? 1.06 : 1)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Importing recipe")
+                        .sleeDisplayFont(21)
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text(subtitle)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(currentStage.title)
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(OunjePalette.softCream.opacity(0.78))
+                    .lineLimit(1)
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(OunjePalette.stroke.opacity(0.8))
+
+                    Capsule(style: .continuous)
+                        .fill(OunjePalette.accent)
+                        .frame(width: max(18, proxy.size.width * progressFraction))
+                        .shadow(color: OunjePalette.accent.opacity(isPulsing && !reduceMotion ? 0.38 : 0.12), radius: 8, x: 0, y: 0)
+                }
+            }
+            .frame(height: 4)
+
+            Text(sourceLabel)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(OunjePalette.secondaryText.opacity(0.8))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.58))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(OunjePalette.accent.opacity(0.22), lineWidth: 1)
+                )
+        )
     }
 }
 

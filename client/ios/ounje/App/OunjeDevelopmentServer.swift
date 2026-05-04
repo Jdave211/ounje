@@ -1,5 +1,9 @@
 import Foundation
 
+enum OunjeLaunchFlags {
+    static let paywallsEnabled = false
+}
+
 enum OunjeDevelopmentServer {
     static let productionBaseURL = "https://ounje-idbl.onrender.com"
 

@@ -147,7 +147,7 @@ struct ProfileTabView: View {
         .sheet(isPresented: $isBudgetSheetPresented) {
             ProfileBudgetSheet()
         }
-        .fullScreenCover(isPresented: $isPaywallPresented) {
+        .fullScreenCover(isPresented: paywallPresentationBinding) {
             OunjePlusPaywallSheet(initialTier: paywallInitialTier)
         }
         .sheet(isPresented: $isFeedbackPresented) {
@@ -189,6 +189,13 @@ struct ProfileTabView: View {
 
     private var profileDisplayName: String {
         accountDisplayName.isEmpty ? "Ounje" : accountDisplayName
+    }
+
+    private var paywallPresentationBinding: Binding<Bool> {
+        Binding(
+            get: { OunjeLaunchFlags.paywallsEnabled && isPaywallPresented },
+            set: { isPaywallPresented = $0 }
+        )
     }
 
     private var profileGridActions: [ProfileGridActionModel] {
@@ -235,8 +242,10 @@ struct ProfileTabView: View {
     private var primaryProfileRows: [ProfileMinimalRowModel] {
         guard let profile else { return [] }
 
-        return [
-            .init(
+        var rows: [ProfileMinimalRowModel] = []
+
+        if OunjeLaunchFlags.paywallsEnabled {
+            rows.append(.init(
                 title: "Plan",
                 detail: "\(profileMembershipTier.title) · \(profileMembershipSummary)",
                 value: "Open",
@@ -244,7 +253,10 @@ struct ProfileTabView: View {
                     paywallInitialTier = profileMembershipTier
                     isPaywallPresented = true
                 }
-            ),
+            ))
+        }
+
+        rows.append(contentsOf: [
             .init(
                 title: "Recurring meals",
                 detail: recurringRecipeSummary,
@@ -263,7 +275,9 @@ struct ProfileTabView: View {
                     isCadencePickerPresented = true
                 }
             )
-        ]
+        ])
+
+        return rows
     }
 
     private var secondaryProfileRows: [ProfileMinimalRowModel] {
@@ -673,6 +687,20 @@ struct ProfileSettingsPage: View {
         return provider.connected ? "checkmark.circle.fill" : "xmark.circle.fill"
     }
 
+    private var membershipPresentationBinding: Binding<Bool> {
+        Binding(
+            get: { OunjeLaunchFlags.paywallsEnabled && isMembershipPresented },
+            set: { isMembershipPresented = $0 }
+        )
+    }
+
+    private var settingsOrderingAutonomyOptions: [OrderingAutonomyLevel] {
+        if !OunjeLaunchFlags.paywallsEnabled {
+            return [.approvalRequired]
+        }
+        return OrderingAutonomyLevel.allCases.filter { $0 != .suggestOnly }
+    }
+
     private var notificationStatusTitle: String {
         notificationCenter.authorizationStatus.ounjeSettingsTitle
     }
@@ -689,30 +717,43 @@ struct ProfileSettingsPage: View {
         URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/terms")
     }
 
+    private var accountSectionRows: [ProfileSettingsMenuRowModel] {
+        var rows: [ProfileSettingsMenuRowModel] = []
+
+        if OunjeLaunchFlags.paywallsEnabled {
+            rows.append(
+                ProfileSettingsMenuRowModel(
+                    icon: "creditcard.fill",
+                    iconTint: OunjePalette.secondaryText,
+                    title: "Membership",
+                    detail: "Current plan and billing access",
+                    trailingValue: currentTier.title,
+                    trailingTint: OunjePalette.secondaryText,
+                    action: { isMembershipPresented = true }
+                )
+            )
+        }
+
+        rows.append(
+            ProfileSettingsMenuRowModel(
+                icon: "slider.horizontal.3",
+                iconTint: OunjePalette.secondaryText,
+                title: "Autoshop beta",
+                detail: "Launching real soon. Cart runs are manual for now.",
+                trailingValue: "Manual",
+                trailingTint: OunjePalette.secondaryText,
+                action: { isAutonomyPickerPresented = true }
+            )
+        )
+
+        return rows
+    }
+
     private var sections: [ProfileSettingsSectionModel] {
         [
             ProfileSettingsSectionModel(
                 title: "Account",
-                rows: [
-                    ProfileSettingsMenuRowModel(
-                        icon: "creditcard.fill",
-                        iconTint: OunjePalette.secondaryText,
-                        title: "Membership",
-                        detail: "Current plan and billing access",
-                        trailingValue: currentTier.title,
-                        trailingTint: OunjePalette.secondaryText,
-                        action: { isMembershipPresented = true }
-                    ),
-                    ProfileSettingsMenuRowModel(
-                        icon: "slider.horizontal.3",
-                        iconTint: OunjePalette.secondaryText,
-                        title: "Autoshop beta",
-                        detail: "Launching real soon. Cart runs are manual for now.",
-                        trailingValue: "Manual",
-                        trailingTint: OunjePalette.secondaryText,
-                        action: { isAutonomyPickerPresented = true }
-                    )
-                ]
+                rows: accountSectionRows
             ),
             ProfileSettingsSectionModel(
                 title: "Connections",
@@ -889,7 +930,7 @@ struct ProfileSettingsPage: View {
                 Text("Choose who you want to reach.")
             }
         }
-        .sheet(isPresented: $isMembershipPresented) {
+        .sheet(isPresented: membershipPresentationBinding) {
             MembershipSettingsSheet(currentTier: currentTier)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -923,13 +964,15 @@ struct ProfileSettingsPage: View {
         }
         .confirmationDialog("Ordering autonomy", isPresented: $isAutonomyPickerPresented, titleVisibility: .visible) {
             if let profile = store.profile {
-                ForEach(OrderingAutonomyLevel.allCases.filter { $0 != .suggestOnly }) { autonomy in
+                ForEach(settingsOrderingAutonomyOptions) { autonomy in
                     Button(autonomy.title) {
-                        if currentTier.supports(autonomy) {
+                        if !OunjeLaunchFlags.paywallsEnabled, autonomy != .approvalRequired {
+                            return
+                        } else if currentTier.supports(autonomy) {
                             var updated = profile
                             updated.orderingAutonomy = autonomy
                             store.updateProfile(updated)
-                        } else {
+                        } else if OunjeLaunchFlags.paywallsEnabled {
                             isMembershipPresented = true
                         }
                     }

@@ -514,11 +514,7 @@ struct MealsPrepCarousel: View {
                 recipeTransitionNamespace: recipeTransitionNamespace
             )
         } else if plannedRecipes.isEmpty {
-            PrepEmptyState(
-                title: "No meals in this prep yet",
-                detail: "Generate a fresh cycle and your scheduled meals will show up here.",
-                symbolName: "fork.knife.circle"
-            )
+            PrepShareImportEmptyState()
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 14) {
@@ -720,6 +716,41 @@ struct MealPrepLoadingCard: View {
                 .stroke(.white.opacity(0.05), lineWidth: 1)
         )
         .shadow(color: .black.opacity(pulse ? 0.16 : 0.1), radius: pulse ? 16 : 10, x: 0, y: pulse ? 10 : 6)
+    }
+}
+
+struct PrepShareImportEmptyState: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(OunjePalette.accent)
+                    .frame(width: 28, height: 28)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Share from TikTok")
+                        .sleeDisplayFont(24)
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Text("Send a recipe to Ounje and it can land here for your next prep.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "play.rectangle.fill")
+                Text("TikTok or Instagram share sheet")
+            }
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(OunjePalette.softCream.opacity(0.74))
+            .padding(.leading, 40)
+        }
+        .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
