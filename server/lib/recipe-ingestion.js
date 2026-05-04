@@ -67,6 +67,12 @@ function withRecipeAIStage(operation, fn) {
   return withAIUsageContext({ operation }, fn);
 }
 
+function chatCompletionTemperatureParams(model, temperature) {
+  const normalized = String(model ?? "").trim().toLowerCase();
+  if (normalized.startsWith("gpt-5")) return {};
+  return Number.isFinite(Number(temperature)) ? { temperature } : {};
+}
+
 const PUBLIC_RECIPE_TABLE_CONFIG = {
   recipeTable: "recipes",
   ingredientTable: "recipe_ingredients",
@@ -2345,7 +2351,7 @@ async function checkGeneratedRecipeImage({
 
   const response = await withRecipeAIStage("recipe_import.image_check", async () => openai.chat.completions.create({
     model: RECIPE_IMAGE_CHECK_MODEL,
-    temperature: 0,
+    ...chatCompletionTemperatureParams(RECIPE_IMAGE_CHECK_MODEL, 0),
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: RECIPE_IMAGE_RESTYLE_CHECK_PROMPT },
@@ -2610,6 +2616,29 @@ function parseQuantityAmount(text) {
   const raw = normalizeText(text);
   if (!raw) return null;
   if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  const vulgarFractions = {
+    "¼": 0.25,
+    "½": 0.5,
+    "¾": 0.75,
+    "⅐": 1 / 7,
+    "⅑": 1 / 9,
+    "⅒": 0.1,
+    "⅓": 1 / 3,
+    "⅔": 2 / 3,
+    "⅕": 0.2,
+    "⅖": 0.4,
+    "⅗": 0.6,
+    "⅘": 0.8,
+    "⅙": 1 / 6,
+    "⅚": 5 / 6,
+    "⅛": 0.125,
+    "⅜": 0.375,
+    "⅝": 0.625,
+    "⅞": 0.875,
+  };
+  if (vulgarFractions[raw] != null) return vulgarFractions[raw];
+  const compactVulgar = raw.match(/^(\d+)([¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])$/u);
+  if (compactVulgar) return Number(compactVulgar[1]) + vulgarFractions[compactVulgar[2]];
   if (/^\d+\s+\d\/\d$/.test(raw)) {
     const [whole, fraction] = raw.split(/\s+/, 2);
     const [numerator, denominator] = fraction.split("/").map(Number);
@@ -2627,13 +2656,14 @@ function parseQuantityAmount(text) {
 function parseIngredientMeasurement(quantityText) {
   const raw = normalizeText(quantityText);
   if (!raw) return null;
-  const match = raw.match(/^(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?)(?:\s+(.*))?$/);
+  const match = raw.match(/^(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]?|[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])\s*([a-zA-Z][a-zA-Z.-]*)?(?:\s+(.*))?$/u);
   if (!match) return null;
   const amount = parseQuantityAmount(match[1]);
   if (amount == null) return null;
+  const unitParts = [match[2], match[3]].filter(Boolean).join(" ");
   return {
     amount,
-    unit: normalizeText(match[2] ?? "") || "ct",
+    unit: normalizeText(unitParts) || "ct",
   };
 }
 
@@ -4319,7 +4349,7 @@ async function extractRecipeWithModel(source) {
 
   const response = await withRecipeAIStage("recipe_import.extract", () => openai.chat.completions.create({
     model: RECIPE_INGESTION_MODEL,
-    temperature: 0.1,
+    ...chatCompletionTemperatureParams(RECIPE_INGESTION_MODEL, 0.1),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -4353,7 +4383,7 @@ async function synthesizeRecipeFromPrompt(source) {
   for (const attempt of [1, 2, 3]) {
     const response = await withRecipeAIStage("recipe_import.concept_synthesis", () => openai.chat.completions.create({
       model: RECIPE_INGESTION_MODEL,
-      temperature: attempt === 1 ? 0.3 : attempt === 2 ? 0.18 : 0.1,
+      ...chatCompletionTemperatureParams(RECIPE_INGESTION_MODEL, attempt === 1 ? 0.3 : attempt === 2 ? 0.18 : 0.1),
       response_format: { type: "json_object" },
       messages: [
         {
@@ -4776,7 +4806,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
 
   const response = await withRecipeAIStage("recipe_import.web_completion", () => openai.chat.completions.create({
     model: RECIPE_IMPORT_COMPLETION_MODEL,
-    temperature: 0.08,
+    ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.08),
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT },
@@ -5094,7 +5124,7 @@ async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
 
   const response = await withRecipeAIStage("recipe_import.light_fill", () => openai.chat.completions.create({
     model: RECIPE_IMPORT_COMPLETION_MODEL,
-    temperature: 0.05,
+    ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.05),
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: RECIPE_LIGHT_FILL_SYSTEM_PROMPT },
@@ -5211,7 +5241,7 @@ async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
 
   const response = await withRecipeAIStage("recipe_import.secondary_fill", () => openai.chat.completions.create({
     model: RECIPE_IMPORT_COMPLETION_MODEL,
-    temperature: 0.02,
+    ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.02),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -5279,7 +5309,7 @@ async function repairSparseImportedRecipe(normalizedRecipe, source) {
   try {
     const response = await withRecipeAIStage("recipe_import.sparse_repair", () => openai.chat.completions.create({
       model: RECIPE_INGESTION_MODEL,
-      temperature: 0.12,
+      ...chatCompletionTemperatureParams(RECIPE_INGESTION_MODEL, 0.12),
       response_format: { type: "json_object" },
       messages: [
         {

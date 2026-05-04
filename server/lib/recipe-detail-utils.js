@@ -222,6 +222,24 @@ const UNITS = new Set([
   "extra-large", "jumbo"
 ]);
 
+function splitCompactQuantityUnit(value) {
+  const normalized = normalizeRecipeLine(value);
+  if (!normalized) return null;
+  const unitAlternation = [...UNITS]
+    .sort((left, right) => right.length - left.length)
+    .map((unit) => unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const pattern = new RegExp(`^((?:\\d+\\s+)?\\d+\\/\\d+|\\d+-\\d+\\/\\d+|\\d+(?:\\.\\d+)?[${FRACTION_CHARACTER_PATTERN}]?|[${FRACTION_CHARACTER_PATTERN}])\\s*(${unitAlternation})$`, "i");
+  const match = normalized.match(pattern);
+  if (!match) return null;
+  const quantity = parseQuantityToken(match[1]);
+  if (quantity == null) return null;
+  return {
+    quantity,
+    unit: match[2],
+  };
+}
+
 function parseQuantityToken(token) {
   if (!token) return null;
   const normalized = token.trim();
@@ -261,6 +279,9 @@ function parseQuantityToken(token) {
 function parseQuantityAndUnitText(value) {
   const normalized = normalizeRecipeLine(value);
   if (!normalized) return { quantity: null, unit: null };
+
+  const compact = splitCompactQuantityUnit(normalized);
+  if (compact) return compact;
 
   const tokens = normalized.split(/\s+/).filter(Boolean);
   if (!tokens.length) return { quantity: null, unit: null };
