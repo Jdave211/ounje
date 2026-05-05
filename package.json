@@ -20,6 +20,8 @@
     "recipes:ingestion-worker": "node server/scripts/recipe_ingestion_worker.mjs",
     "recipes:ingestion-once": "node server/scripts/recipe_ingestion_worker.mjs --once",
     "recipes:ingestion-smoke-ai-logging": "node server/scripts/smoke-recipe-ingestion-ai-logging.mjs",
+    "recipes:adaptation-contracts": "node server/scripts/test-recipe-adaptation-contracts.mjs",
+    "recipes:adaptation-smoke": "node server/scripts/smoke-recipe-adaptation-live.mjs",
     "automation:worker": "node server/scripts/automation_worker.mjs",
     "automation:worker:vm": "NODE_ENV=production node server/scripts/automation_worker.mjs --worker-id vm_automation_worker --lock-seconds 900",
     "instacart:test-cart": "node server/scripts/test-instacart-cart.mjs watermelon",

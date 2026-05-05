@@ -661,6 +661,109 @@ struct RecipeDetailRelatedResponse: Decodable {
     let recipes: [DiscoverRecipeCardData]
 }
 
+struct RecipeShareLinkResponse: Decodable {
+    let shareID: String
+    let recipeID: String?
+    let urlString: String
+    let appURLString: String?
+    let webURLString: String?
+
+    enum CodingKeys: String, CodingKey {
+        case shareID = "share_id"
+        case recipeID = "recipe_id"
+        case urlString = "url"
+        case appURLString = "app_url"
+        case webURLString = "web_url"
+    }
+
+    var shareURL: URL? {
+        URL(string: webURLString ?? urlString)
+    }
+}
+
+struct RecipeShareLinkResolveResponse: Decodable {
+    let shareID: String
+    let recipeID: String?
+    let recipeCard: DiscoverRecipeCardData
+    let recipeDetail: RecipeDetailData
+
+    enum CodingKeys: String, CodingKey {
+        case shareID = "share_id"
+        case recipeID = "recipe_id"
+        case recipeCard = "recipe_card"
+        case recipeDetail = "recipe_detail"
+    }
+}
+
+private struct RecipeShareLinkCreateRequest: Encodable {
+    let recipeID: String
+    let userID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+        case userID = "user_id"
+    }
+}
+
+private struct RecipeSimilarRequest: Encodable {
+    let recipe: RecipeSimilarContext
+    let limit: Int
+}
+
+private struct RecipeSimilarContext: Encodable {
+    let id: String
+    let title: String
+    let description: String
+    let recipeType: String?
+    let category: String?
+    let mainProtein: String?
+    let cuisineTags: [String]
+    let flavorTags: [String]
+    let occasionTags: [String]
+    let ingredients: [RecipeSimilarIngredient]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case description
+        case recipeType = "recipe_type"
+        case category
+        case mainProtein = "main_protein"
+        case cuisineTags = "cuisine_tags"
+        case flavorTags = "flavor_tags"
+        case occasionTags = "occasion_tags"
+        case ingredients
+    }
+
+    init(detail: RecipeDetailData) {
+        id = detail.id
+        title = detail.title
+        description = detail.description
+        recipeType = detail.recipeType
+        category = detail.category
+        mainProtein = detail.mainProtein
+        cuisineTags = detail.cuisineTags
+        flavorTags = detail.flavorTags
+        occasionTags = detail.occasionTags
+        ingredients = detail.ingredients.map(RecipeSimilarIngredient.init)
+    }
+}
+
+private struct RecipeSimilarIngredient: Encodable {
+    let name: String
+    let displayName: String
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case displayName = "display_name"
+    }
+
+    init(ingredient: RecipeDetailIngredient) {
+        name = ingredient.displayName
+        displayName = ingredient.displayName
+    }
+}
+
 struct RecipeResolvedVideoData: Decodable, Hashable {
     enum PlaybackMode: String {
         case native
@@ -743,9 +846,9 @@ final class RecipeDetailViewModel: ObservableObject {
         self.detail = initialDetail
     }
 
-    func load(for recipeID: String) async {
+    func load(for recipeID: String, similarFallbackRecipeID: String? = nil) async {
         if detail?.id == recipeID {
-            scheduleSimilarRecipesLoad(for: recipeID)
+            scheduleSimilarRecipesLoad(for: recipeID, fallbackRecipeID: similarFallbackRecipeID)
             return
         }
 
@@ -761,25 +864,25 @@ final class RecipeDetailViewModel: ObservableObject {
 
         do {
             detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
-            scheduleSimilarRecipesLoad(for: recipeID)
+            scheduleSimilarRecipesLoad(for: recipeID, fallbackRecipeID: similarFallbackRecipeID)
         } catch {
             similarRecipes = []
             errorMessage = error.localizedDescription
         }
     }
 
-    private func scheduleSimilarRecipesLoad(for recipeID: String) {
+    private func scheduleSimilarRecipesLoad(for recipeID: String, fallbackRecipeID: String? = nil) {
         guard detail?.id == recipeID, similarRecipes.isEmpty else { return }
         similarLoadTask?.cancel()
         isLoadingSimilarRecipes = true
         similarLoadTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
-            await self?.loadSimilarRecipes(for: recipeID)
+            await self?.loadSimilarRecipes(for: recipeID, fallbackRecipeID: fallbackRecipeID)
         }
     }
 
-    private func loadSimilarRecipes(for recipeID: String) async {
+    private func loadSimilarRecipes(for recipeID: String, fallbackRecipeID: String? = nil) async {
         guard detail?.id == recipeID, similarRecipes.isEmpty else { return }
 
         isLoadingSimilarRecipes = true
@@ -788,10 +891,40 @@ final class RecipeDetailViewModel: ObservableObject {
         do {
             let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(id: recipeID)
             guard detail?.id == recipeID else { return }
-            similarRecipes = recipes
+            if !recipes.isEmpty {
+                similarRecipes = recipes
+                return
+            }
         } catch {
             guard detail?.id == recipeID else { return }
-            similarRecipes = []
+            print("[RecipeDetail] similar recipe load failed for \(recipeID): \(error.localizedDescription)")
+        }
+
+        if let fallbackRecipeID,
+           fallbackRecipeID != recipeID,
+           !fallbackRecipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            do {
+                let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(id: fallbackRecipeID)
+                guard detail?.id == recipeID else { return }
+                if !recipes.isEmpty {
+                    similarRecipes = recipes
+                    return
+                }
+            } catch {
+                print("[RecipeDetail] fallback similar recipe load failed for \(fallbackRecipeID): \(error.localizedDescription)")
+            }
+        }
+
+        if let detail {
+            do {
+                let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(detail: detail)
+                guard self.detail?.id == recipeID else { return }
+                similarRecipes = recipes
+            } catch {
+                guard self.detail?.id == recipeID else { return }
+                print("[RecipeDetail] detail-context similar recipe load failed for \(recipeID): \(error.localizedDescription)")
+                similarRecipes = []
+            }
         }
     }
 }
@@ -836,6 +969,70 @@ actor RecipeDetailService {
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 
+    func fetchSimilarRecipes(detail: RecipeDetailData) async throws -> [DiscoverRecipeCardData] {
+        let cacheKey = "detail::\(detail.id)"
+        if let cached = similarCache[cacheKey] {
+            return cached
+        }
+
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                let recipes = try await fetchSimilarRecipes(baseURL: baseURL, detail: detail)
+                similarCache[cacheKey] = recipes
+                return recipes
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    func createShareLink(recipeID: String, userID: String?) async throws -> RecipeShareLinkResponse {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await createShareLink(baseURL: baseURL, recipeID: recipeID, userID: userID)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    func resolveShareLink(shareID: String) async throws -> RecipeShareLinkResolveResponse {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                return try await resolveShareLink(baseURL: baseURL, shareID: shareID)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    nonisolated static func shareID(from url: URL) -> String? {
+        if url.scheme == "net.ounje" {
+            let components = url.pathComponents.filter { $0 != "/" }
+            if url.host == "r", let first = components.first { return first }
+            if components.first == "r", components.count > 1 { return components[1] }
+            return nil
+        }
+
+        guard let host = url.host?.lowercased(),
+              host == "ounje-idbl.onrender.com",
+              url.pathComponents.count >= 3,
+              url.pathComponents[1] == "r"
+        else {
+            return nil
+        }
+        return url.pathComponents[2]
+    }
+
     private func fetchSimilarRecipes(baseURL: String, id: String) async throws -> [DiscoverRecipeCardData] {
         guard let url = URL(string: "\(baseURL)/v1/recipe/detail/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/similar?limit=5") else {
             throw SupabaseProfileStateError.invalidRequest
@@ -858,6 +1055,77 @@ actor RecipeDetailService {
         let decoded = try JSONDecoder().decode(RecipeDetailRelatedResponse.self, from: data)
         similarCache[id] = decoded.recipes
         return decoded.recipes
+    }
+
+    private func fetchSimilarRecipes(baseURL: String, detail: RecipeDetailData) async throws -> [DiscoverRecipeCardData] {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/similar") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(RecipeSimilarRequest(recipe: .init(detail: detail), limit: 5))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to load similar recipes (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        let decoded = try JSONDecoder().decode(RecipeDetailRelatedResponse.self, from: data)
+        return decoded.recipes
+    }
+
+    private func createShareLink(baseURL: String, recipeID: String, userID: String?) async throws -> RecipeShareLinkResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/share-links") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(RecipeShareLinkCreateRequest(recipeID: recipeID, userID: userID))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to create recipe share link (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(RecipeShareLinkResponse.self, from: data)
+    }
+
+    private func resolveShareLink(baseURL: String, shareID: String) async throws -> RecipeShareLinkResolveResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/share-links/\(shareID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? shareID)") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to open shared recipe (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(RecipeShareLinkResolveResponse.self, from: data)
     }
 
     private func fetchRecipeDetailFromBackend(id: String) async throws -> RecipeDetailData {
@@ -1478,4 +1746,3 @@ struct SupabaseRecipeStepIngredientRow: Decodable {
         case sortOrder = "sort_order"
     }
 }
-

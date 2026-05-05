@@ -12,6 +12,7 @@ import api_router from "./api/index.js";
 import { runRecipeIngestionWorkerBatch } from "./lib/recipe-ingestion.js";
 import { startRecipeFineTunePolling } from "./lib/recipe-model-registry.js";
 import { withAIUsageContext } from "./lib/openai-usage-logger.js";
+import { renderRecipeSharePage, resolveRecipeShareLink } from "./lib/recipe-share-links.js";
 
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
 
@@ -53,6 +54,40 @@ function getHealthSupabaseClient() {
 }
 
 app.use(api_router);
+
+app.get("/.well-known/apple-app-site-association", (_req, res) => {
+  res.type("application/json").send({
+    applinks: {
+      apps: [],
+      details: [
+        {
+          appIDs: ["U8FPZXV6X6.net.ounje"],
+          components: [
+            {
+              "/": "/r/*",
+              comment: "Open shared Ounje recipes in the app.",
+            },
+          ],
+          paths: ["/r/*"],
+        },
+      ],
+    },
+  });
+});
+
+app.get("/r/:shareID", async (req, res) => {
+  try {
+    const link = await resolveRecipeShareLink(req.params.shareID);
+    if (!link) {
+      return res.status(404).type("html").send("<!doctype html><title>Recipe not found</title><p>Recipe link not found.</p>");
+    }
+    return res.type("html").send(renderRecipeSharePage(link));
+  } catch (error) {
+    console.error("[recipe-share-page] render failed:", error.message);
+    return res.status(500).type("html").send("<!doctype html><title>Recipe unavailable</title><p>Recipe link is temporarily unavailable.</p>");
+  }
+});
+
 function escapeHTML(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

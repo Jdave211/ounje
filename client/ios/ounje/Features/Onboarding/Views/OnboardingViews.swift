@@ -1104,7 +1104,7 @@ struct FirstLoginOnboardingView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingStepHeader(
                 title: "Autoshop beta",
-                subtitle: "Launching real soon.",
+                subtitle: "Ounje builds the cart. You review and buy.",
                 turtlePlacement: .trailing
             )
 
@@ -1169,7 +1169,7 @@ struct FirstLoginOnboardingView: View {
                             Text(onboardingInstacartConnectionTitle)
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(OunjePalette.primaryText)
-                            Text("Autoshop beta. Connect here or finish it later in the app.")
+                            Text("Ounje only adds groceries to your cart. You choose when to buy.")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(OunjePalette.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1758,11 +1758,11 @@ struct FirstLoginOnboardingView: View {
         case .suggestOnly:
             return "The app builds a plan, but the user stays in full control."
         case .approvalRequired:
-            return "Start cart building yourself when prep is ready."
+            return "Ounje fills the cart, then you review and buy."
         case .autoOrderWithinBudget:
-            return "Autoshop will launch here after beta."
+            return "Auto-buying is off. We do not purchase for you."
         case .fullyAutonomousGuardrails:
-            return "Autonomous buying stays off while beta hardens."
+            return "Full checkout stays manual. You make the purchase."
         }
     }
 
@@ -1850,7 +1850,7 @@ struct FirstLoginOnboardingView: View {
             case .budget:
                 return "Set the target spend and how hard Ounje should defend it."
             case .ordering:
-                return "Launching real soon. Cart runs are manual for now."
+                return "Ounje can fill the cart. You still make the purchase."
             case .address:
                 return "Connect your cart lane and add delivery details when you're ready."
             }
@@ -1871,7 +1871,7 @@ struct FirstLoginOnboardingView: View {
             case .budget:
                 return "Set the cart guardrails."
             case .ordering:
-                return "Keep cart runs manual while beta hardens."
+                return "Pick how Ounje should hand the cart back to you."
             case .address:
                 return "Set the handoff details for checkout."
             }

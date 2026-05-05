@@ -29,7 +29,13 @@ import {
   getDiscoverPresetTitles,
   recipeHasDiscoverBracket,
 } from "../../lib/discover-brackets.js";
-import { annotateAIUsageContext, createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
+import { createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
+import { createOrReuseRecipeShareLink, resolveRecipeShareLink } from "../../lib/recipe-share-links.js";
+import {
+  getRecipeAdaptationContract,
+  mergeEditSummaries,
+  validateAdaptedRecipe,
+} from "../../lib/recipe-adaptation-contracts.js";
 
 const recipe_router = express.Router();
 
@@ -262,7 +268,15 @@ const RECIPE_ADAPT_SCHEMA = {
       type: "array",
       minItems: 3,
       maxItems: 24,
-      items: { type: "string" },
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          display_name: { type: "string" },
+          quantity_text: { type: "string" },
+        },
+        required: ["display_name", "quantity_text"],
+      },
     },
     steps: {
       type: "array",
@@ -285,8 +299,64 @@ const RECIPE_ADAPT_SCHEMA = {
       maxItems: 8,
       items: { type: "string" },
     },
+    change_summary: { type: "string" },
+    edit_summary: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        changed_ingredients: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        changed_quantities: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        changed_steps: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        added_ingredients: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        removed_ingredients: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        validation_notes: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+      },
+      required: [
+        "changed_ingredients",
+        "changed_quantities",
+        "changed_steps",
+        "added_ingredients",
+        "removed_ingredients",
+        "validation_notes",
+      ],
+    },
   },
-  required: ["title", "summary", "cook_time_text", "ingredients", "steps", "substitutions", "pairing_notes", "dietary_fit"],
+  required: [
+    "title",
+    "summary",
+    "cook_time_text",
+    "ingredients",
+    "steps",
+    "substitutions",
+    "pairing_notes",
+    "dietary_fit",
+    "change_summary",
+    "edit_summary",
+  ],
 };
 
 const RECIPE_ADAPT_SYSTEM_PROMPT = `You are Ounje's recipe adaptation model.
@@ -296,13 +366,26 @@ You take a base recipe, a user profile, and an adaptation goal, then return a re
 Rules:
 - Respect allergies, hard restrictions, and "never include" foods as absolute.
 - Keep the core identity of the dish unless the request explicitly asks for a large change.
+- Treat the request as a whole-recipe rewrite, not a local text patch.
+- Inspect the entire base recipe before changing anything: ingredient list, quantities, units, recipe steps, prep/cook time, servings, nutrition/diet tags, cuisine/flavor tags, title, summary, and downstream grocery implications.
+- When changing an ingredient, update all affected quantities, units, steps, timing, tags, and summary so the recipe remains internally consistent.
+- When changing a quantity, keep the ingredient line and any step references aligned.
+- When changing method or timing, update the steps and cook_time_text together.
+- Use the user profile to respect allergies, dislikes, cooking rhythm, budget, household size, and preference context when provided.
+- Treat adaptation_contract as binding. Apply every required action, avoid every forbidden ingredient or method, and satisfy the validation hints.
+- If repair_context is provided, directly fix every listed validation failure before returning the final recipe.
 - If asked to make it quicker, simplify ingredients and shorten steps without making it incoherent.
 - If asked to make it spicier, add heat in a cuisine-appropriate way.
 - If asked to make it higher-protein, increase protein plausibly.
+- If asked to make it vegetarian, remove meat, seafood, gelatin, meat stock, fish sauce, and animal broth from ingredients and steps, then add a satisfying vegetarian protein or plant-forward base.
+- If asked to make it dairy-free, remove dairy ingredients and update the texture/fat source with practical substitutions.
+- If asked for less sugar, reduce sweetener quantities or replace sugary components, then update steps that rely on sweetness, glazing, caramelization, or dessert texture.
 - Use the provided flavor-pairing hints as soft guidance, not mandatory additions.
+- Return a concise change_summary and an edit_summary listing what changed across ingredients, quantities, and steps.
 - Return only valid JSON matching the schema.
-- Ingredients should be practical grocery-list style lines.
-- Steps should be short, concrete, and sequential.
+- Do not return an unchanged copy of the base recipe. The title, ingredient list, quantities, and steps should clearly reflect the adaptation goal.
+- Ingredients must be practical grocery-list objects with display_name and quantity_text. Every ingredient needs a useful quantity_text; use "to taste" only for seasonings or finishing ingredients where exact amounts would be misleading.
+- Steps should be short, concrete, sequential, and updated to reference changed ingredients and quantities where relevant.
 - Do not mention unavailable tools or unsupported cooking methods unless they are already implied by the base recipe.`;
 
 const RECIPE_SHAPE_SYSTEM_PROMPT = `You are Ounje's recipe shaping model.
@@ -474,6 +557,84 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
   }
 });
 
+recipe_router.post("/recipe/share-links", async (req, res) => {
+  const recipeId = String(req.body?.recipe_id ?? req.body?.recipeID ?? "").trim();
+  const userID = String(req.body?.user_id ?? req.body?.userID ?? "").trim() || null;
+
+  if (!recipeId) {
+    return res.status(400).json({ error: "recipe_id is required." });
+  }
+
+  try {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      return res.status(500).json({ error: "Recipe share links require Supabase configuration." });
+    }
+
+    const recipe = await fetchRecipeById(recipeId);
+    if (!recipe) {
+      return res.status(404).json({ error: "Recipe not found." });
+    }
+
+    const [recipeIngredients, recipeSteps] = await Promise.all([
+      fetchRecipeIngredientRows(recipeId),
+      fetchRecipeStepRows(recipeId),
+    ]);
+    const stepIngredients = recipeSteps.length
+      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id))
+      : [];
+    const recipeDetail = normalizeRecipeDetail(recipe, {
+      recipeIngredients,
+      recipeSteps,
+      stepIngredients,
+    });
+    const recipeCard = toRecipeCardPayload(recipeDetail);
+
+    const link = await createOrReuseRecipeShareLink({
+      recipeID: recipeId,
+      recipeKind: recipeId.startsWith("uir_") ? "user_import" : "public",
+      userID,
+      snapshot: {
+        version: 1,
+        recipe_card: recipeCard,
+        recipe_detail: recipeDetail,
+      },
+    });
+
+    return res.status(201).json({
+      share_id: link.share_id,
+      recipe_id: link.recipe_id,
+      url: link.url,
+      app_url: link.app_url,
+      web_url: link.web_url,
+    });
+  } catch (error) {
+    console.error("[recipe/share-links] create failed:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+recipe_router.get("/recipe/share-links/:shareID", async (req, res) => {
+  try {
+    const link = await resolveRecipeShareLink(req.params.shareID);
+    if (!link) {
+      return res.status(404).json({ error: "Recipe share link not found." });
+    }
+    const snapshot = link.snapshot_json ?? {};
+    return res.json({
+      share_id: link.share_id,
+      recipe_id: link.recipe_id,
+      url: link.url,
+      app_url: link.app_url,
+      web_url: link.web_url,
+      recipe_card: snapshot.recipe_card ?? null,
+      recipe_detail: snapshot.recipe_detail ?? null,
+    });
+  } catch (error) {
+    console.error("[recipe/share-links] resolve failed:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
   const recipeId = String(req.params.id ?? "").trim();
   const requestedLimit = Number.parseInt(String(req.query.limit ?? "5"), 10);
@@ -553,7 +714,7 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
 
     const embedding = await embedTextCached(semanticQuery, "text-embedding-3-small");
     const semanticMatches = await callRecipeRpc("match_recipes_basic", {
-      query_embedding: embedding,
+      query_embedding: toPgVector(embedding),
       match_count: 32,
     });
 
@@ -564,7 +725,8 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
     )];
 
     if (!candidateIDs.length) {
-      return res.json({ recipes: [], rankingMode: "similar_semantic_empty" });
+      const fallback = await fallbackSimilarRecipeCards({ detail, recipeId, limit });
+      return res.json({ recipes: fallback, rankingMode: "similar_fallback_contextual_empty_semantic" });
     }
 
     const candidates = await fetchRecipesByIds(candidateIDs.slice(0, 24));
@@ -611,12 +773,50 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
       limit,
     });
 
+    const recipePayloads = curatedRecipes.map(({ recipe: candidate }) => toRecipeCardPayload(candidate));
+    if (!recipePayloads.length) {
+      const fallback = await fallbackSimilarRecipeCards({ detail, recipeId, limit });
+      return res.json({ recipes: fallback, rankingMode: "similar_fallback_contextual_empty_curation" });
+    }
+
     return res.json({
-      recipes: curatedRecipes.map(({ recipe: candidate }) => toRecipeCardPayload(candidate)),
+      recipes: recipePayloads,
       rankingMode: "similar_semantic_flavorgraph",
     });
   } catch (error) {
     console.error("[recipe/detail/similar] failed:", error.message);
+    try {
+      const fallback = await fetchLatestRecipes(Math.max(limit + 1, 12));
+      return res.json({
+        recipes: fallback
+          .filter((recipe) => String(recipe.id) !== recipeId)
+          .slice(0, limit)
+          .map(toRecipeCardPayload),
+        rankingMode: "similar_fallback_latest_after_error",
+      });
+    } catch {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+});
+
+recipe_router.post("/recipe/similar", async (req, res) => {
+  const requestedLimit = Number.parseInt(String(req.body?.limit ?? req.query.limit ?? "5"), 10);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(3, Math.min(requestedLimit, 8))
+    : 5;
+  const detail = normalizeSimilarRecipeInput(req.body?.recipe ?? req.body ?? {});
+  const recipeId = String(detail.id ?? "").trim();
+
+  if (!String(detail.title ?? "").trim()) {
+    return res.status(400).json({ error: "Provide recipe title or detail context." });
+  }
+
+  try {
+    const recipes = await fallbackSimilarRecipeCards({ detail, recipeId, limit });
+    return res.json({ recipes, rankingMode: "similar_fallback_contextual_detail" });
+  } catch (error) {
+    console.error("[recipe/similar] fallback failed:", error.message);
     return res.status(500).json({ error: error.message });
   }
 });
@@ -2307,8 +2507,7 @@ async function fetchRecipeDetailForAdaptation(recipeId, fallbackRecipe = null) {
 }
 
 function adaptedIngredientRows(lines = []) {
-  return (Array.isArray(lines) ? lines : [])
-    .flatMap((line) => parseIngredientObjects(line))
+  return parseIngredientObjects(lines)
     .filter(Boolean)
     .map((ingredient, index) => ({
       display_name: ingredient.display_name ?? ingredient.name,
@@ -2319,7 +2518,18 @@ function adaptedIngredientRows(lines = []) {
     .filter((ingredient) => ingredient.display_name);
 }
 
-function buildAdaptedRecipeCandidate({ baseDetail, adaptedRecipe, adaptationPrompt }) {
+function buildAdaptedRecipeCandidate({
+  baseDetail,
+  adaptedRecipe,
+  adaptationPrompt,
+  adaptationContract = null,
+  validationStatus = "passed",
+  computedEditSummary = null,
+  validationFailures = [],
+  intentKey = "",
+  intentLabel = "",
+  rerollNonce = "",
+}) {
   const ingredients = adaptedIngredientRows(adaptedRecipe.ingredients);
   const steps = parseStructuredInstructionSteps(adaptedRecipe.steps ?? [], ingredients).map((step, index) => ({
     number: step.number ?? index + 1,
@@ -2363,7 +2573,13 @@ function buildAdaptedRecipeCandidate({ baseDetail, adaptedRecipe, adaptationProm
     attached_video_url: baseDetail.attached_video_url ?? null,
     detail_footnote: `Adapted from ${baseDetail.title}.`,
     image_caption: baseDetail.image_caption ?? null,
-    dietary_tags: Array.isArray(baseDetail.dietary_tags) ? baseDetail.dietary_tags : [],
+    dietary_tags: uniqueStrings([
+      ...(Array.isArray(baseDetail.dietary_tags) ? baseDetail.dietary_tags : []),
+      ...(Array.isArray(adaptedRecipe.dietary_fit) ? adaptedRecipe.dietary_fit : []),
+      adaptationContract?.key === "vegetarian" ? "vegetarian" : null,
+      adaptationContract?.key === "dairy_free" ? "dairy-free" : null,
+      adaptationContract?.key === "low_carb" ? "low-carb" : null,
+    ], 12),
     flavor_tags: Array.isArray(baseDetail.flavor_tags) ? baseDetail.flavor_tags : [],
     cuisine_tags: Array.isArray(baseDetail.cuisine_tags) ? baseDetail.cuisine_tags : [],
     occasion_tags: Array.isArray(baseDetail.occasion_tags) ? baseDetail.occasion_tags : [],
@@ -2375,18 +2591,37 @@ function buildAdaptedRecipeCandidate({ baseDetail, adaptedRecipe, adaptationProm
     source_provenance_json: {
       kind: "recipe_adaptation",
       adapted_from_recipe_id: baseDetail.id,
+      adapted_from_title: baseDetail.title ?? null,
       adaptation_prompt: adaptationPrompt,
+      intent_key: intentKey || adaptationContract?.key || null,
+      intent_label: intentLabel || adaptationContract?.label || null,
+      reroll_nonce: rerollNonce || null,
+      adaptation_contract: adaptationContract,
+      validation_status: validationStatus,
+      validation_failures: validationFailures,
+      chat_messages: [
+        {
+          role: "user",
+          content: adaptationPrompt,
+        },
+        {
+          role: "assistant",
+          content: adaptedRecipe?.change_summary || adaptedRecipe?.summary || adaptedRecipe?.title || "Recipe rewritten for preview.",
+        },
+      ],
+      edit_summary: mergeEditSummaries(adaptedRecipe?.edit_summary ?? {}, computedEditSummary ?? {}),
     },
   };
 }
 
-function adaptationDedupeKey({ userID, recipeID, prompt }) {
+function adaptationDedupeKey({ userID, recipeID, prompt, rerollNonce = "" }) {
   const digest = crypto
     .createHash("sha256")
     .update(JSON.stringify({
       userID: String(userID ?? ""),
       recipeID: String(recipeID ?? ""),
       prompt: String(prompt ?? "").trim().toLowerCase(),
+      rerollNonce: String(rerollNonce ?? ""),
       nonce: Date.now(),
     }))
     .digest("hex")
@@ -2394,11 +2629,163 @@ function adaptationDedupeKey({ userID, recipeID, prompt }) {
   return `adapt:${digest}`;
 }
 
+function adaptationRecipePayloadFromDetail(detail) {
+  const ingredients = (detail.ingredients ?? [])
+    .map((ingredient) => [ingredient.quantity_text, ingredient.display_name ?? ingredient.name]
+      .filter(Boolean)
+      .join(" ")
+      .trim())
+    .filter(Boolean);
+  const steps = (detail.steps ?? [])
+    .map((step) => String(step.text ?? step.instruction_text ?? "").trim())
+    .filter(Boolean);
+
+  return {
+    title: detail.title ?? "",
+    summary: detail.description ?? "",
+    cook_time_text: detail.cook_time_text ?? "",
+    ingredients,
+    steps,
+    substitutions: [],
+    pairing_notes: [],
+    dietary_fit: Array.isArray(detail.dietary_tags) ? detail.dietary_tags : [],
+  };
+}
+
+function adaptationResponseFromDetail({ detail, row, adaptedFromRecipeID }) {
+  const provenance = row?.source_provenance_json ?? {};
+  return {
+    adapted_recipe: adaptationRecipePayloadFromDetail(detail),
+    recipe_id: detail.id,
+    adapted_from_recipe_id: adaptedFromRecipeID ?? provenance.adapted_from_recipe_id ?? null,
+    recipe_card: toRecipeCardPayload(detail),
+    recipe_detail: detail,
+    change_summary: provenance?.chat_messages?.find((message) => message?.role === "assistant")?.content ?? detail.description ?? null,
+    edit_summary: provenance?.edit_summary ?? null,
+    validation_status: provenance?.validation_status ?? null,
+    pairing_terms: [],
+    style_examples_used: [],
+    model_mode: "persisted_recipe_adaptation",
+    model: "persisted",
+  };
+}
+
+async function runRecipeAdaptationCompletion({
+  baseDetail,
+  adaptationPrompt,
+  profile,
+  pairingTerms,
+  styleExamples,
+  adaptationContract,
+  repairContext = null,
+  userID = null,
+  recipeID = null,
+}) {
+  const model = getActiveRecipeRewriteModel();
+  const requestPayload = {
+    model,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "recipe_adaptation",
+        strict: true,
+        schema: RECIPE_ADAPT_SCHEMA,
+      },
+    },
+    messages: [
+      { role: "system", content: RECIPE_ADAPT_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            adaptation_prompt: adaptationPrompt,
+            adaptation_contract: adaptationContract,
+            repair_context: repairContext,
+            profile,
+            base_recipe: baseDetail,
+            flavor_pairing_hints: pairingTerms,
+            style_examples: styleExamples,
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+
+  if (!/^gpt-5/i.test(model)) {
+    requestPayload.temperature = repairContext ? 0.35 : 0.55;
+  }
+
+  const completion = await withAIUsageContext({
+    route: "POST /v1/recipe/adapt",
+    operation: repairContext ? "recipe-adapt-repair" : "recipe-adapt",
+    user_id: userID,
+    recipe_id: recipeID,
+    intent_key: adaptationContract?.key ?? null,
+    service: "recipe-api",
+  }, () => openai.chat.completions.create(requestPayload));
+
+  const content = completion?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("The model returned no recipe adaptation.");
+  }
+
+  return JSON.parse(content);
+}
+
+recipe_router.get("/recipe/adapt/history", async (req, res) => {
+  const userID = String(req.query.user_id ?? "").trim();
+  const recipeID = String(req.query.recipe_id ?? "").trim();
+  const limit = Math.max(1, Math.min(parseInt(String(req.query.limit ?? "8"), 10) || 8, 20));
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return res.status(500).json({ error: "Recipe adaptation history requires Supabase configuration." });
+  }
+  if (!userID || !recipeID) {
+    return res.status(400).json({ error: "recipe_id and user_id are required." });
+  }
+
+  try {
+    const rows = await fetchSupabaseTableRows(
+      "user_import_recipes",
+      "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count,source_provenance_json,created_at,updated_at",
+      [
+        `user_id=eq.${encodeURIComponent(userID)}`,
+        "source_platform=eq.Ounje",
+      ],
+      ["updated_at.desc", "created_at.desc"],
+      80
+    );
+
+    const matches = [];
+    for (const row of rows) {
+      const provenance = row?.source_provenance_json ?? {};
+      if (provenance.kind !== "recipe_adaptation") continue;
+      if (String(provenance.adapted_from_recipe_id ?? "").trim() !== recipeID) continue;
+
+      const detail = await fetchRecipeDetailForAdaptation(row.id, row);
+      if (!detail) continue;
+      matches.push(adaptationResponseFromDetail({ detail, row, adaptedFromRecipeID: recipeID }));
+      if (matches.length >= limit) break;
+    }
+
+    return res.json({ history: matches });
+  } catch (error) {
+    console.error("[recipe/adapt/history] fetch failed:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 recipe_router.post("/recipe/adapt", async (req, res) => {
   const {
     recipe_id: recipeId = "",
     recipe = null,
     adaptation_prompt: adaptationPrompt = "",
+    intent_key: intentKey = "",
+    intent_label: intentLabel = "",
+    reroll_nonce: rerollNonce = "",
+    strict_edit_validation: strictEditValidation = true,
     profile = null,
     user_id: userID = null,
   } = req.body ?? {};
@@ -2427,54 +2814,82 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
       limit: 10,
     });
 
-    const completion = await openai.chat.completions.create({
-      model: getActiveRecipeRewriteModel(),
-      temperature: 0.55,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "recipe_adaptation",
-          strict: true,
-          schema: RECIPE_ADAPT_SCHEMA,
-        },
-      },
-      messages: [
-        { role: "system", content: RECIPE_ADAPT_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: JSON.stringify(
-            {
-              adaptation_prompt: adaptationPrompt,
-              profile,
-              base_recipe: baseDetail,
-              flavor_pairing_hints: pairingTerms,
-              style_examples: styleExamples,
-            },
-            null,
-            2
-          ),
-        },
-      ],
+    const adaptationContract = getRecipeAdaptationContract(intentKey, intentLabel, adaptationPrompt);
+    const strictValidation = strictEditValidation !== false;
+    let adaptedRecipe = await runRecipeAdaptationCompletion({
+      baseDetail,
+      adaptationPrompt,
+      profile,
+      pairingTerms,
+      styleExamples,
+      adaptationContract,
+      userID: normalizedUserID,
+      recipeID: baseDetail.id,
     });
 
-    const content = completion?.choices?.[0]?.message?.content;
-    if (typeof content !== "string" || !content.trim()) {
-      return res.status(502).json({ error: "The model returned no recipe adaptation." });
+    let validation = validateAdaptedRecipe({
+      baseDetail,
+      adaptedRecipe,
+      contract: adaptationContract,
+      strict: strictValidation,
+    });
+    let validationStatus = "passed";
+
+    if (!validation.valid && strictValidation) {
+      adaptedRecipe = await runRecipeAdaptationCompletion({
+        baseDetail,
+        adaptationPrompt,
+        profile,
+        pairingTerms,
+        styleExamples,
+        adaptationContract,
+        userID: normalizedUserID,
+        recipeID: baseDetail.id,
+        repairContext: {
+          validation_failures: validation.failures,
+          instruction: "Return a corrected full recipe. Do not preserve invalid ingredients, unchanged steps, or title-only edits.",
+        },
+      });
+      const repairedValidation = validateAdaptedRecipe({
+        baseDetail,
+        adaptedRecipe,
+        contract: adaptationContract,
+        strict: strictValidation,
+      });
+      if (!repairedValidation.valid) {
+        return res.status(422).json({
+          error: "Ounje could not produce a reliable recipe rewrite for that request.",
+          validation_failures: repairedValidation.failures,
+        });
+      }
+      validation = repairedValidation;
+      validationStatus = "repaired";
     }
 
-    const adaptedRecipe = JSON.parse(content);
+    const finalEditSummary = mergeEditSummaries(adaptedRecipe.edit_summary ?? {}, validation.editSummary ?? {});
+    adaptedRecipe = {
+      ...adaptedRecipe,
+      edit_summary: finalEditSummary,
+    };
     const normalizedCandidate = buildAdaptedRecipeCandidate({
       baseDetail,
       adaptedRecipe,
       adaptationPrompt,
+      adaptationContract,
+      validationStatus,
+      computedEditSummary: validation.editSummary,
+      validationFailures: validation.failures,
+      intentKey,
+      intentLabel,
+      rerollNonce,
     });
     const persisted = await persistNormalizedRecipe(normalizedCandidate, {
       userID: normalizedUserID,
       targetState: "adapted_preview",
-      dedupeKey: adaptationDedupeKey({ userID, recipeID: baseDetail.id, prompt: adaptationPrompt }),
+      dedupeKey: adaptationDedupeKey({ userID, recipeID: baseDetail.id, prompt: adaptationPrompt, rerollNonce }),
       reviewState: "adapted_preview",
       confidenceScore: 0.92,
-      qualityFlags: ["recipe_adaptation_preview"],
+      qualityFlags: ["recipe_adaptation_preview", `adapt_intent_${adaptationContract.key}`],
     });
 
     return res.json({
@@ -2483,7 +2898,9 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
       adapted_from_recipe_id: baseDetail.id,
       recipe_card: toRecipeCardPayload({ id: persisted.recipe_id, ...persisted.recipe_card }),
       recipe_detail: persisted.recipe_detail,
-      change_summary: adaptedRecipe.summary ?? null,
+      change_summary: adaptedRecipe.change_summary ?? adaptedRecipe.summary ?? null,
+      edit_summary: finalEditSummary,
+      validation_status: validationStatus,
       pairing_terms: pairingTerms,
       style_examples_used: styleExamples.map((example) => example.title),
       model_mode: "flavorgraph_llm_recipe_adaptation",
@@ -4938,7 +5355,7 @@ function recipeTableConfigForID(recipeID) {
       };
 }
 
-async function fetchSupabaseTableRows(tableName, select, filters = [], orderClauses = []) {
+async function fetchSupabaseTableRows(tableName, select, filters = [], orderClauses = [], limit = null) {
   let url = `${SUPABASE_URL}/rest/v1/${tableName}?select=${encodeURIComponent(select)}`;
 
   for (const filter of filters) {
@@ -4947,6 +5364,9 @@ async function fetchSupabaseTableRows(tableName, select, filters = [], orderClau
 
   for (const orderClause of orderClauses) {
     if (orderClause) url += `&order=${orderClause}`;
+  }
+  if (limit != null) {
+    url += `&limit=${Math.max(1, Math.min(Number(limit) || 1, 500))}`;
   }
 
   const response = await fetch(url, {
@@ -5070,6 +5490,81 @@ async function fetchRecipeStepIngredientRows(stepIDs) {
 
 function normalizeRecipeDetail(recipe, related = {}) {
   return canonicalizeRecipeDetail(recipe, related);
+}
+
+function normalizeSimilarRecipeInput(value = {}) {
+  const recipe = value && typeof value === "object" ? value : {};
+  return {
+    id: String(recipe.id ?? "").trim(),
+    title: String(recipe.title ?? "").trim(),
+    description: String(recipe.description ?? "").trim(),
+    recipe_type: recipe.recipe_type ?? recipe.recipeType ?? null,
+    category: recipe.category ?? null,
+    main_protein: recipe.main_protein ?? recipe.mainProtein ?? null,
+    cuisine_tags: Array.isArray(recipe.cuisine_tags) ? recipe.cuisine_tags : (Array.isArray(recipe.cuisineTags) ? recipe.cuisineTags : []),
+    flavor_tags: Array.isArray(recipe.flavor_tags) ? recipe.flavor_tags : (Array.isArray(recipe.flavorTags) ? recipe.flavorTags : []),
+    occasion_tags: Array.isArray(recipe.occasion_tags) ? recipe.occasion_tags : (Array.isArray(recipe.occasionTags) ? recipe.occasionTags : []),
+    ingredients: Array.isArray(recipe.ingredients) ? recipe.ingredients : [],
+  };
+}
+
+async function fallbackSimilarRecipeCards({ detail, recipeId, limit }) {
+  const sourceTitle = normalizeSearchName(detail?.title);
+  const sourceType = normalizeSearchName(detail?.recipe_type ?? detail?.category);
+  const sourceProtein = normalizeSearchName(detail?.main_protein);
+  const sourceTags = new Set([
+    ...(detail?.cuisine_tags ?? []),
+    ...(detail?.flavor_tags ?? []),
+    ...(detail?.occasion_tags ?? []),
+  ].map(normalizeSearchName).filter(Boolean));
+  const sourceIngredients = new Set(
+    (detail?.ingredients ?? [])
+      .map((ingredient) => normalizeSearchName(ingredient?.display_name ?? ingredient?.name ?? ""))
+      .filter(Boolean)
+  );
+  const seedTerms = uniqueStrings([
+    detail?.title,
+    detail?.recipe_type,
+    detail?.category,
+    detail?.main_protein,
+    ...(detail?.cuisine_tags ?? []),
+    ...(detail?.flavor_tags ?? []),
+    ...(detail?.occasion_tags ?? []),
+    ...Array.from(sourceIngredients).slice(0, 6),
+  ], 16);
+
+  const latest = await fetchLatestRecipes(Math.max(limit + 20, 32));
+  return latest
+    .filter((recipe) => String(recipe.id) !== String(recipeId))
+    .map((recipe, index) => {
+      const candidateType = normalizeSearchName(recipe.recipe_type ?? recipe.category);
+      const candidateProtein = normalizeSearchName(recipe.main_protein);
+      const candidateTags = [
+        ...(recipe.cuisine_tags ?? []),
+        ...(recipe.flavor_tags ?? []),
+        ...(recipe.occasion_tags ?? []),
+      ].map(normalizeSearchName).filter(Boolean);
+      const candidateIngredients = extractCandidateIngredientNames(recipe).map(normalizeSearchName).filter(Boolean);
+      const tagOverlap = candidateTags.reduce((count, tag) => count + (sourceTags.has(tag) ? 1 : 0), 0);
+      const ingredientOverlap = candidateIngredients.reduce((count, ingredient) => count + (sourceIngredients.has(ingredient) ? 1 : 0), 0);
+      const typeOverlap = sourceType && candidateType === sourceType ? 2 : 0;
+      const proteinOverlap = sourceProtein && candidateProtein === sourceProtein ? 1.6 : 0;
+      const titlePenalty = sourceTitle && normalizeSearchName(recipe.title) === sourceTitle ? -10 : 0;
+      return {
+        recipe,
+        score:
+          typeOverlap
+          + proteinOverlap
+          + tagOverlap * 0.9
+          + ingredientOverlap * 0.55
+          + scoreFlavorAlignment(recipe, seedTerms, []) * 0.9
+          + (1 / (index + 8))
+          + titlePenalty,
+      };
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+    .map(({ recipe }) => toRecipeCardPayload(recipe));
 }
 
 function normalizeSearchName(value) {

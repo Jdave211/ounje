@@ -170,6 +170,7 @@ enum CartSupportWarmupService {
 struct CartTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var toastCenter: AppToastCenter
+    @Environment(\.openURL) private var openURL
     @Binding var selectedTab: AppTab
     @Binding var focusedRecipeID: String?
     @State private var displayMode: CartDisplayMode = .reconciled
@@ -626,6 +627,20 @@ struct CartTabView: View {
                     CartUnmatchedItemsNotice(summary: boxedCartCoverageSummary)
                 }
 
+                CartBuyNowPanel(
+                    disabledReason: cartBuyNowDisabledReason,
+                    statusMessage: cartBuyNowStatusMessage,
+                    statusTone: cartBuyNowStatusTone,
+                    actionURL: currentInstacartCartURL,
+                    onBuyNow: startCartBuyNowRun,
+                    onRetry: startCartBuyNowRun,
+                    onOpenInstacart: {
+                        if let url = currentInstacartCartURL {
+                            openURL(url)
+                        }
+                    }
+                )
+
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text("Shop list")
                         .font(.system(size: 18, weight: .bold))
@@ -708,6 +723,129 @@ struct CartTabView: View {
         displayMode == .reconciled
             && isCartWorkAnimating
             && !visibleReconciledCartItems.isEmpty
+    }
+
+    private var cartBuyNowDisabledReason: String? {
+        guard let latestPlan = store.latestPlan, !latestPlan.recipes.isEmpty else {
+            return "Generate a prep first."
+        }
+        guard visibleReconciledCartItems.isEmpty == false else {
+            return store.isRefreshingMainShopSnapshot || isLoadingIngredients
+                ? "Shop list is syncing."
+                : "No visible shop items to send."
+        }
+        guard store.profile?.deliveryAddress.isComplete == true else {
+            return "Add your delivery address first."
+        }
+        guard latestPlan.bestQuote?.provider == .instacart else {
+            return "Connect Instacart first."
+        }
+        if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
+            return "Cart build already running."
+        }
+        return nil
+    }
+
+    private var cartBuyNowStatusMessage: String? {
+        if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
+            return "Building your Instacart cart..."
+        }
+        if let error = store.manualAutoshopErrorMessage, !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return error
+        }
+        guard let run = store.latestInstacartRun else { return nil }
+        switch run.normalizedStatusKind {
+        case "queued", "running":
+            return "Building your Instacart cart..."
+        case "completed":
+            if run.unresolvedCount > 0 || run.shortfallCount > 0 || run.partialSuccess {
+                return "A few items need review"
+            }
+            return "Cart ready for review"
+        case "partial":
+            return "A few items need review"
+        case "failed":
+            return run.topIssue ?? "Cart build failed. Try again."
+        default:
+            return nil
+        }
+    }
+
+    private var cartBuyNowStatusTone: CartBuyNowPanel.StatusTone {
+        if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
+            return .running
+        }
+        if store.manualAutoshopErrorMessage != nil {
+            return .failed
+        }
+        switch store.latestInstacartRun?.normalizedStatusKind {
+        case "queued", "running":
+            return .running
+        case "completed":
+            if (store.latestInstacartRun?.unresolvedCount ?? 0) > 0
+                || (store.latestInstacartRun?.shortfallCount ?? 0) > 0
+                || store.latestInstacartRun?.partialSuccess == true {
+                return .partial
+            }
+            return .complete
+        case "partial":
+            return .partial
+        case "failed":
+            return .failed
+        default:
+            return .idle
+        }
+    }
+
+    private var currentInstacartCartURL: URL? {
+        if let url = store.latestInstacartRun?.trackingURL {
+            return url
+        }
+        guard let raw = store.latestGroceryOrder?.providerTrackingURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        return URL(string: raw)
+    }
+
+    private var visibleMainShopKeysForAutoshop: Set<String> {
+        Set(
+            visibleReconciledCartItems.flatMap { item in
+                [
+                    item.removalKey,
+                    item.name,
+                ]
+                .compactMap { $0 }
+                .map(Self.normalizedIngredientKey)
+                .filter { !$0.isEmpty }
+            }
+        )
+    }
+
+    private var visibleMainShopQuantityOverridesForAutoshop: [String: Int] {
+        visibleReconciledCartItems.reduce(into: [:]) { result, item in
+            guard let override = mainShopQuantityOverrides[item.id], override > 0 else { return }
+            [
+                item.removalKey,
+                item.name,
+            ]
+            .compactMap { $0 }
+            .map(Self.normalizedIngredientKey)
+            .filter { !$0.isEmpty }
+            .forEach { result[$0] = override }
+        }
+    }
+
+    private func startCartBuyNowRun() {
+        let allowedKeys = visibleMainShopKeysForAutoshop
+        let quantityOverrides = visibleMainShopQuantityOverridesForAutoshop
+        Task {
+            await store.startManualAutoshopRun(
+                trigger: "cart_buy_now",
+                allowedMainShopItemKeys: allowedKeys,
+                quantityOverridesByMainShopKey: quantityOverrides
+            )
+        }
     }
 
     private func shouldShowMainShopDemarcation(
@@ -2672,6 +2810,135 @@ struct CartMainShopUpdatingBanner: View {
                 pulse = true
             }
         }
+    }
+}
+
+struct CartBuyNowPanel: View {
+    enum StatusTone {
+        case idle
+        case running
+        case complete
+        case partial
+        case failed
+    }
+
+    let disabledReason: String?
+    let statusMessage: String?
+    let statusTone: StatusTone
+    let actionURL: URL?
+    let onBuyNow: () -> Void
+    let onRetry: () -> Void
+    let onOpenInstacart: () -> Void
+
+    private var isRunning: Bool {
+        statusTone == .running
+    }
+
+    private var canRetry: Bool {
+        statusTone == .failed && disabledReason == nil
+    }
+
+    private var iconName: String {
+        switch statusTone {
+        case .running:
+            return "cart.badge.plus"
+        case .complete:
+            return "checkmark.circle.fill"
+        case .partial:
+            return "exclamationmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .idle:
+            return "cart"
+        }
+    }
+
+    private var iconColor: Color {
+        switch statusTone {
+        case .complete:
+            return OunjePalette.accent
+        case .partial:
+            return Color(hex: "F4C95D")
+        case .failed:
+            return Color(hex: "D96B5F")
+        default:
+            return OunjePalette.softCream
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(iconColor.opacity(0.14))
+                    if isRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(iconColor)
+                    } else {
+                        Image(systemName: iconName)
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(iconColor)
+                    }
+                }
+                .frame(width: 42, height: 42)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Buy now")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Text("Adds this shop list to Instacart. You finish checkout there.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let statusMessage {
+                        Text(statusMessage)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(iconColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    } else if let disabledReason {
+                        Text(disabledReason)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button(action: canRetry ? onRetry : onBuyNow) {
+                    Text(canRetry ? "Retry" : "Buy now")
+                        .font(.system(size: 14, weight: .bold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryPillButtonStyle())
+                .disabled(disabledReason != nil || isRunning)
+                .opacity(disabledReason != nil || isRunning ? 0.52 : 1)
+
+                if actionURL != nil {
+                    Button(action: onOpenInstacart) {
+                        Text("Open Instacart")
+                            .font(.system(size: 14, weight: .bold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(SecondaryPillButtonStyle())
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
     }
 }
 

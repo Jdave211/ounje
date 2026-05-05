@@ -662,7 +662,11 @@ final class MealPlanningAppStore: ObservableObject {
         await PlannedRecipeRefreshService.shared.refreshedPlannedRecipes(from: recipes)
     }
 
-    func startManualAutoshopRun(trigger: String = "prep_overlay") async {
+    func startManualAutoshopRun(
+        trigger: String = "prep_overlay",
+        allowedMainShopItemKeys: Set<String>? = nil,
+        quantityOverridesByMainShopKey: [String: Int] = [:]
+    ) async {
         guard !isManualAutoshopRunning else { return }
         guard let session = await freshTrackingSession() ?? authSession else {
             manualAutoshopErrorMessage = "Sign in again before running Autoshop beta."
@@ -697,13 +701,25 @@ final class MealPlanningAppStore: ObservableObject {
             return
         }
 
-        guard let latestPlan,
+        guard var latestPlan,
               latestPlan.bestQuote?.provider == .instacart,
               !latestPlan.groceryItems.isEmpty,
               latestPlan.mainShopSnapshot?.items.isEmpty == false
         else {
             manualAutoshopErrorMessage = "Autoshop beta needs a synced Instacart cart first."
             return
+        }
+
+        if let allowedMainShopItemKeys {
+            latestPlan = filterPlanForManualAutoshopRun(
+                latestPlan,
+                allowedMainShopItemKeys: allowedMainShopItemKeys,
+                quantityOverridesByMainShopKey: quantityOverridesByMainShopKey
+            )
+            guard latestPlan.mainShopSnapshot?.items.isEmpty == false else {
+                manualAutoshopErrorMessage = "There are no visible shop items to send."
+                return
+            }
         }
 
         let cartSignature = automationCartSignature(for: latestPlan.groceryItems)
@@ -761,6 +777,65 @@ final class MealPlanningAppStore: ObservableObject {
     func requestInstacartShoppingRerun() async {
         manualInstacartRerunQueuedAt = nil
         await startManualAutoshopRun(trigger: "manual_instacart_rerun")
+    }
+
+    private func filterPlanForManualAutoshopRun(
+        _ plan: MealPlan,
+        allowedMainShopItemKeys: Set<String>,
+        quantityOverridesByMainShopKey: [String: Int]
+    ) -> MealPlan {
+        let allowedKeys = Set(allowedMainShopItemKeys.map(Self.normalizedCartKey).filter { !$0.isEmpty })
+        let normalizedOverrides = quantityOverridesByMainShopKey.reduce(into: [String: Int]()) { result, entry in
+            let normalizedKey = Self.normalizedCartKey(entry.key)
+            guard !normalizedKey.isEmpty else { return }
+            result[normalizedKey] = max(1, entry.value)
+        }
+        guard !allowedKeys.isEmpty,
+              var snapshot = plan.mainShopSnapshot else {
+            return plan
+        }
+
+        let filteredItems = snapshot.items.compactMap { item -> MainShopSnapshotItem? in
+            let keys = mainShopKeys(for: item)
+            guard keys.contains(where: { allowedKeys.contains($0) }) else { return nil }
+            guard let override = keys.compactMap({ normalizedOverrides[$0] }).first else {
+                return item
+            }
+            var adjustedItem = item
+            adjustedItem.quantityText = overriddenQuantityText(item.quantityText, count: override)
+            return adjustedItem
+        }
+        snapshot.items = filteredItems
+
+        var filteredPlan = plan
+        filteredPlan.mainShopSnapshot = snapshot
+        return filteredPlan
+    }
+
+    private func mainShopKeys(for item: MainShopSnapshotItem) -> [String] {
+        Self.normalizedUnique([
+            item.removalKey,
+            item.canonicalKey,
+            item.name,
+            item.sourceEdgeIDs?.joined(separator: " "),
+        ].compactMap { $0 })
+    }
+
+    private func overriddenQuantityText(_ quantityText: String, count: Int) -> String {
+        let trimmed = quantityText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return count == 1 ? "1 item" : "\(count) items"
+        }
+
+        let pattern = #"^\s*\d+(?:\.\d+)?\s*(.*)$"#
+        if let range = trimmed.range(of: pattern, options: .regularExpression) {
+            let unit = trimmed[range]
+                .replacingOccurrences(of: #"^\s*\d+(?:\.\d+)?\s*"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return unit.isEmpty ? "\(count)" : "\(count) \(unit)"
+        }
+
+        return "\(count) \(trimmed)"
     }
 
     func updateLatestPlan(with recipe: Recipe, servings: Int) async {

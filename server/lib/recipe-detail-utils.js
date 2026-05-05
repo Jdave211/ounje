@@ -369,14 +369,16 @@ function parseIngredientLine(line) {
 
 function normalizeIngredientObject(value) {
   if (!value || typeof value !== "object") return null;
-  const rawName = normalizeRecipeLine(value.name ?? value.ingredient ?? value.label ?? "");
-  const split = splitIngredientQuantityPrefix(rawName, value.quantity ?? value.amount ?? value.qty ?? null);
+  const rawName = normalizeRecipeLine(value.display_name ?? value.name ?? value.ingredient ?? value.label ?? "");
+  const rawQuantityText = value.quantity_text ?? value.amount_text ?? value.quantity ?? value.amount ?? value.qty ?? null;
+  const split = splitIngredientQuantityPrefix(rawName, rawQuantityText);
   const name = split.displayName;
   if (!name) return null;
 
-  const quantityRaw = value.quantity ?? value.amount ?? value.qty ?? null;
+  const quantityRaw = value.quantity ?? value.amount ?? value.qty ?? value.quantity_text ?? value.amount_text ?? null;
   const quantity = typeof quantityRaw === "number" ? quantityRaw : parseQuantityToken(String(split.quantityText ?? quantityRaw ?? "").trim());
   const unit = normalizeRecipeLine(value.unit ?? value.measure ?? "") || null;
+  const quantityText = split.quantityText || normalizeRecipeLine(value.quantity_text ?? value.amount_text ?? "") || null;
   const note = normalizeRecipeLine(value.note ?? value.notes ?? "") || null;
   const imageHint = normalizeRecipeLine(value.image_hint ?? value.imageHint ?? name).toLowerCase() || name.toLowerCase();
 
@@ -384,7 +386,7 @@ function normalizeIngredientObject(value) {
     id: null,
     ingredient_id: null,
     display_name: name,
-    quantity_text: [quantity != null ? String(quantity) : null, unit].filter(Boolean).join(" ").trim() || null,
+    quantity_text: quantityText || [quantity != null ? String(quantity) : null, unit].filter(Boolean).join(" ").trim() || null,
     image_url: null,
     sort_order: null,
     name,

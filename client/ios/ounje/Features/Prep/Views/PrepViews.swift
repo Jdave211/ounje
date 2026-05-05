@@ -3145,62 +3145,17 @@ struct PrepDeliveryMapPlaceholderCard: View {
     var visualState: PrepDeliveryMapVisualState = .loadingProfile
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack {
             Image("TorontoPrepMapPlaceholder")
                 .resizable()
                 .scaledToFill()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .saturation(0.08)
+                .contrast(0.82)
+                .brightness(-0.08)
                 .clipped()
 
-            LinearGradient(
-                colors: [
-                    OunjePalette.background.opacity(0.18),
-                    OunjePalette.background.opacity(0.34),
-                    OunjePalette.background.opacity(0.86)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-
-            HStack {
-                Spacer()
-                PrepMapStateGlyph(visualState: visualState, accent: accent)
-                    .frame(width: 44, height: 44)
-            }
-            .frame(maxHeight: .infinity, alignment: .top)
-            .padding(14)
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 7) {
-                    Image(systemName: statusSymbolName)
-                        .font(.system(size: 11, weight: .bold))
-                    Text(statusTitle)
-                        .font(.system(size: 11, weight: .bold))
-                }
-                .foregroundStyle(accent)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(OunjePalette.background.opacity(0.72))
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(accent.opacity(0.25), lineWidth: 1)
-                        )
-                )
-
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(OunjePalette.primaryText)
-
-                Text(detail)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            OunjePalette.background.opacity(0.46)
         }
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
@@ -3209,35 +3164,6 @@ struct PrepDeliveryMapPlaceholderCard: View {
         )
     }
 
-    private var statusTitle: String {
-        switch visualState {
-        case .loadingProfile:
-            return "Loading base"
-        case .resolvingAddress:
-            return "Mapping route"
-        case .missingAddress:
-            return "Home base needed"
-        case .addressLookupFailed:
-            return "Check address"
-        case .resolved:
-            return "Route ready"
-        }
-    }
-
-    private var statusSymbolName: String {
-        switch visualState {
-        case .loadingProfile:
-            return "icloud.and.arrow.down.fill"
-        case .resolvingAddress:
-            return "location.magnifyingglass"
-        case .missingAddress:
-            return "mappin.and.ellipse"
-        case .addressLookupFailed:
-            return "exclamationmark.triangle.fill"
-        case .resolved:
-            return "checkmark"
-        }
-    }
 }
 
 struct PrepMapStateGlyph: View {

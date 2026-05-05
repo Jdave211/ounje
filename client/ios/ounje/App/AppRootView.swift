@@ -1239,17 +1239,7 @@ private struct MealPlannerShellView: View {
             }
         }
         .onOpenURL { url in
-            guard SharedRecipeImportInbox.isShareImportURL(url) else { return }
-            withAnimation(OunjeMotion.heroSpring) {
-                requestedImportQueueTab = .queued
-                selectedTab = .cookbook
-            }
-            Task {
-                await sharedImportInbox.refresh()
-                await processPendingSharedImports(scope: .queued)
-                await refreshSharedImportState()
-                lastSharedImportRefreshAt = .now
-            }
+            handleIncomingURL(url)
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
@@ -1459,6 +1449,44 @@ private struct MealPlannerShellView: View {
                 presentedRecipe = nil
                 selectedTab = tab
             }
+        }
+    }
+
+    private func handleIncomingURL(_ url: URL) {
+        if let shareID = RecipeDetailService.shareID(from: url) {
+            Task { await openSharedRecipeLink(shareID) }
+            return
+        }
+
+        guard SharedRecipeImportInbox.isShareImportURL(url) else { return }
+        withAnimation(OunjeMotion.heroSpring) {
+            requestedImportQueueTab = .queued
+            selectedTab = .cookbook
+        }
+        Task {
+            await sharedImportInbox.refresh()
+            await processPendingSharedImports(scope: .queued)
+            await refreshSharedImportState()
+            lastSharedImportRefreshAt = .now
+        }
+    }
+
+    @MainActor
+    private func openSharedRecipeLink(_ shareID: String) async {
+        do {
+            let resolved = try await RecipeDetailService.shared.resolveShareLink(shareID: shareID)
+            withAnimation(OunjeMotion.heroSpring) {
+                presentedRecipe = PresentedRecipeDetail(
+                    recipeCard: resolved.recipeCard,
+                    initialDetail: resolved.recipeDetail
+                )
+            }
+        } catch {
+            toastCenter.show(
+                title: "Recipe link unavailable",
+                subtitle: "Try opening it again in a moment.",
+                systemImage: "link.badge.plus"
+            )
         }
     }
 

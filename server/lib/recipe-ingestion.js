@@ -3005,6 +3005,7 @@ function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
     attached_video_url: normalized.attached_video_url,
     detail_footnote: normalized.detail_footnote,
     image_caption: normalized.image_caption,
+    source_provenance_json: normalized.source_provenance_json ?? null,
     dietary_tags: normalized.dietary_tags,
     flavor_tags: normalized.flavor_tags,
     cuisine_tags: normalized.cuisine_tags,

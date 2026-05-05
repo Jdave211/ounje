@@ -22,6 +22,8 @@ struct RecipeDetailExperienceView: View {
     @State private var baseServingsCount = 4
     @State private var shouldScrollToSteps = false
     @State private var showShareSheet = false
+    @State private var isPreparingShareLink = false
+    @State private var preparedShareItems: [Any] = []
     @State private var showStorySheet = false
     @State private var showAskSheet = false
     @State private var showInlineVideo = false
@@ -154,7 +156,7 @@ struct RecipeDetailExperienceView: View {
         videoSourceURL != nil
     }
 
-    private var shareItems: [Any] {
+    private var fallbackShareItems: [Any] {
         var items: [Any] = [titleText]
         if let url = externalURL {
             items.append(url)
@@ -225,6 +227,31 @@ struct RecipeDetailExperienceView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !collapsed.isEmpty else { return nil }
         return collapsed
+    }
+
+    private func handleShareTap() {
+        guard !isPreparingShareLink else { return }
+        isPreparingShareLink = true
+        Task { @MainActor in
+            defer { isPreparingShareLink = false }
+            do {
+                let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID
+                let response = try await RecipeDetailService.shared.createShareLink(recipeID: recipeID, userID: userID)
+                guard let shareURL = response.shareURL else {
+                    throw SupabaseProfileStateError.invalidResponse
+                }
+                preparedShareItems = [titleText, shareURL]
+                showShareSheet = true
+            } catch {
+                preparedShareItems = fallbackShareItems
+                toastCenter.show(
+                    title: "Sharing source link",
+                    subtitle: "Ounje link was unavailable.",
+                    systemImage: "square.and.arrow.up"
+                )
+                showShareSheet = true
+            }
+        }
     }
 
     private func toggleInlineVideo() {
@@ -415,9 +442,6 @@ struct RecipeDetailExperienceView: View {
                                             }
                                         }
 
-                                        RecipeDetailCompactActionButton(title: "Story", showsInstagramGlyph: true, compact: true) {
-                                            showStorySheet = true
-                                        }
                                     }
                                 }
                                 .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 12, delay: 0.04))
@@ -549,8 +573,8 @@ struct RecipeDetailExperienceView: View {
                             closeExperience()
                         }
                         Spacer()
-                        RecipeDetailTopIconButton(symbolName: "arrow.up.right") {
-                            showShareSheet = true
+                        RecipeDetailTopIconButton(symbolName: "arrow.up.right", isLoading: isPreparingShareLink) {
+                            handleShareTap()
                         }
                     }
                     .padding(.horizontal, 20)
@@ -621,13 +645,13 @@ struct RecipeDetailExperienceView: View {
                 let loadedCount = presentedRecipe.plannedRecipe?.servings ?? viewModel.detail?.displayServings ?? 4
                 baseServingsCount = max(1, loadedCount)
                 servingsCount = max(1, loadedCount)
-                await viewModel.load(for: presentedRecipe.id)
+                await viewModel.load(for: presentedRecipe.id, similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID)
             }
         }
         .background(detailBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showShareSheet) {
-            RecipeShareSheet(activityItems: shareItems)
+            RecipeShareSheet(activityItems: preparedShareItems.isEmpty ? fallbackShareItems : preparedShareItems)
                 .ignoresSafeArea()
         }
         .sheet(isPresented: $showStorySheet) {
@@ -647,16 +671,12 @@ struct RecipeDetailExperienceView: View {
                 recipeTitle: titleText,
                 recipeSubtitle: subtitleLine ?? summaryLine,
                 recipeID: recipeID,
+                baseImageURL: imageCandidates.first,
                 userID: store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
                 profile: store.profile,
-                onOpenAdaptedRecipe: { result in
-                    relatedPresentedRecipe = PresentedRecipeDetail(
-                        recipeCard: result.recipeCard,
-                        initialDetail: result.recipeDetail,
-                        adaptedFromRecipeID: result.adaptedFromRecipeID ?? recipeID
-                    )
-                    showAskSheet = false
-                }
+                onOpenCart: onOpenCart,
+                toastCenter: toastCenter,
+                onOpenToastDestination: onOpenToastDestination
             )
             .ignoresSafeArea()
         }
@@ -1169,24 +1189,27 @@ struct RecipeDetailHeroImagePlaceholder: View {
 
 struct RecipeDetailTopIconButton: View {
     let symbolName: String
+    var isLoading = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbolName)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(OunjePalette.primaryText)
-                .frame(width: 52, height: 52)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(OunjePalette.surface.opacity(0.96))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                        )
-                )
+            ZStack {
+                if isLoading {
+                    ProgressView()
+                        .tint(OunjePalette.primaryText)
+                        .scaleEffect(0.82)
+                } else {
+                    Image(systemName: symbolName)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                }
+            }
+            .frame(width: 52, height: 52)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isLoading)
     }
 }
 
@@ -2053,26 +2076,117 @@ struct RecipeShareSheet: UIViewControllerRepresentable {
 enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
     case healthier
     case spicy
-    case fatLoss
+    case quick
     case moreProtein
+    case extraVeggies
+    case lessSugar
+    case kidFriendly
+    case sweeter
+    case budgetFriendly
+    case mealPrep
+    case lighter
+    case dairyFree
+    case vegetarian
+    case lowCarb
+    case comfort
+    case crispy
 
     var id: String { rawValue }
 
+    var intentKey: String {
+        switch self {
+        case .healthier: return "healthier"
+        case .spicy: return "spicy"
+        case .quick: return "quick"
+        case .moreProtein: return "more_protein"
+        case .extraVeggies: return "extra_veggies"
+        case .lessSugar: return "less_sugar"
+        case .kidFriendly: return "kid_friendly"
+        case .sweeter: return "sweeter"
+        case .budgetFriendly: return "budget_friendly"
+        case .mealPrep: return "meal_prep"
+        case .lighter: return "lighter"
+        case .dairyFree: return "dairy_free"
+        case .vegetarian: return "vegetarian"
+        case .lowCarb: return "low_carb"
+        case .comfort: return "comfort"
+        case .crispy: return "crispy"
+        }
+    }
+
     var title: String {
         switch self {
-        case .healthier: return "Healthier"
-        case .spicy: return "Spicier"
-        case .fatLoss: return "Fat loss"
+        case .healthier: return "Healthy"
+        case .spicy: return "Spicy"
+        case .quick: return "Quick"
         case .moreProtein: return "More protein"
+        case .extraVeggies: return "Extra veggies"
+        case .lessSugar: return "Less sugar"
+        case .kidFriendly: return "Kid friendly"
+        case .sweeter: return "Sweeter"
+        case .budgetFriendly: return "Budget friendly"
+        case .mealPrep: return "Meal prep"
+        case .lighter: return "Lighter"
+        case .dairyFree: return "Dairy-free"
+        case .vegetarian: return "Vegetarian"
+        case .lowCarb: return "Low carb"
+        case .comfort: return "Comfort"
+        case .crispy: return "Crunchy"
+        }
+    }
+
+    var displayTitle: String {
+        switch self {
+        case .healthier: return "Make it healthy"
+        case .spicy: return "Make it spicy"
+        case .quick: return "Make it quick"
+        case .moreProtein: return "More protein"
+        case .extraVeggies: return "More veggies"
+        case .lessSugar: return "Less sugar"
+        case .kidFriendly: return "Kid-friendly"
+        case .sweeter: return "Make it sweet"
+        case .budgetFriendly: return "Budget-friendly"
+        case .mealPrep: return "Make it prep-ready"
+        case .lighter: return "Make it lighter"
+        case .dairyFree: return "Make it dairy-free"
+        case .vegetarian: return "Make it vegetarian"
+        case .lowCarb: return "Make it low carb"
+        case .comfort: return "More comfort"
+        case .crispy: return "Make it crunchy"
+        }
+    }
+
+    var pillWidth: CGFloat {
+        switch self {
+        case .mealPrep, .vegetarian, .dairyFree:
+            return 176
+        case .budgetFriendly:
+            return 160
+        case .kidFriendly, .moreProtein, .extraVeggies, .lessSugar, .lowCarb:
+            return 146
+        case .healthier, .spicy, .quick, .sweeter, .lighter, .comfort, .crispy:
+            return 140
         }
     }
 
     var subtitle: String {
         switch self {
-        case .healthier: return "Cleaner, lighter, still good."
-        case .spicy: return "Turn the heat up."
-        case .fatLoss: return "Lower calories, keep it filling."
-        case .moreProtein: return "Boost protein and stay balanced."
+        case .healthier: return "Fresh, balanced, still satisfying."
+        case .spicy: return "More heat, still balanced."
+        case .quick: return "Shorter prep, fewer fussy steps."
+        case .moreProtein: return "Boost protein without flattening flavor."
+        case .extraVeggies: return "Work more produce into the dish."
+        case .lessSugar: return "Dial sweetness down cleanly."
+        case .kidFriendly: return "Gentler flavors, easy to eat."
+        case .sweeter: return "Lean into dessert energy."
+        case .budgetFriendly: return "Keep it smart on groceries."
+        case .mealPrep: return "Make it hold up for later."
+        case .lighter: return "Less heavy, same comfort."
+        case .dairyFree: return "Skip dairy without losing body."
+        case .vegetarian: return "Plant-forward, not boring."
+        case .lowCarb: return "Reduce starch where it makes sense."
+        case .comfort: return "Make it cozier and richer."
+        case .crispy: return "Add crunch and texture."
         }
     }
 
@@ -2082,10 +2196,34 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return "Make this healthier while keeping the dish satisfying, practical, and close to the original."
         case .spicy:
             return "Make this spicier without breaking the dish. Keep the heat balanced and cuisine-appropriate."
-        case .fatLoss:
-            return "Make this better for fat loss with lower calorie density, better satiety, and a realistic grocery list."
+        case .quick:
+            return "Make this recipe faster and simpler for a busy weeknight while preserving the core flavor and texture."
         case .moreProtein:
-            return "Make this higher in protein while keeping the dish flavorful and still true to the original."
+            return "Make this higher in protein. Add or increase a plausible protein source, then update quantities and cooking steps so the recipe still works."
+        case .extraVeggies:
+            return "Add more vegetables in a way that feels natural to the recipe, keeps the dish balanced, and does not water it down."
+        case .lessSugar:
+            return "Reduce the sugar and sweetness. Change sweetener quantities or swaps, then update any glaze, caramelization, dessert texture, or sauce steps affected by the change."
+        case .kidFriendly:
+            return "Make this more kid friendly with gentler seasoning, familiar textures, and practical serving ideas."
+        case .sweeter:
+            return "Make this sweeter and more dessert-like without making it one-note or cloying."
+        case .budgetFriendly:
+            return "Make this more budget friendly by using affordable ingredients and practical swaps while keeping the dish appealing."
+        case .mealPrep:
+            return "Make this better for meal prep so it reheats well, stores cleanly, and keeps its texture."
+        case .lighter:
+            return "Make this lighter and less heavy while preserving the dish's comfort and flavor."
+        case .dairyFree:
+            return "Make this dairy-free. Remove dairy ingredients, use realistic substitutions, and update quantities and steps so the texture and flavor still work."
+        case .vegetarian:
+            return "Make this vegetarian. Remove meat, seafood, gelatin, meat stock, and fish sauce; add a satisfying plant-forward protein or base; update quantities, steps, and tags."
+        case .lowCarb:
+            return "Make this lower carb by reducing starch thoughtfully without turning it into a different dish."
+        case .comfort:
+            return "Make this more comforting, cozy, and rich while keeping the recipe practical."
+        case .crispy:
+            return "Make this crunchier with better texture contrast while keeping the original dish recognizable."
         }
     }
 
@@ -2093,8 +2231,62 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         switch self {
         case .healthier: return "leaf.fill"
         case .spicy: return "flame.fill"
-        case .fatLoss: return "scalemass"
-        case .moreProtein: return "bolt.heart.fill"
+        case .quick: return "timer"
+        case .moreProtein: return "dumbbell.fill"
+        case .extraVeggies: return "carrot.fill"
+        case .lessSugar: return "birthday.cake.fill"
+        case .kidFriendly: return "person.2.fill"
+        case .sweeter: return "drop.fill"
+        case .budgetFriendly: return "dollarsign.circle.fill"
+        case .mealPrep: return "takeoutbag.and.cup.and.straw.fill"
+        case .lighter: return "wind"
+        case .dairyFree: return "drop.fill"
+        case .vegetarian: return "leaf.circle.fill"
+        case .lowCarb: return "chart.line.downtrend.xyaxis"
+        case .comfort: return "mug.fill"
+        case .crispy: return "circle.grid.cross.fill"
+        }
+    }
+
+    var iconColor: Color {
+        switch self {
+        case .healthier:
+            return Color(hex: "6DDF7B")
+        case .spicy:
+            return Color(hex: "FF6B4A")
+        case .quick:
+            return Color(hex: "FFD05A")
+        case .moreProtein:
+            return Color(hex: "E89B62")
+        case .extraVeggies, .vegetarian:
+            return Color(hex: "7ED957")
+        case .lessSugar:
+            return Color(hex: "FFB86B")
+        case .lighter:
+            return Color(hex: "8FD6FF")
+        case .kidFriendly:
+            return Color(hex: "FF8BCB")
+        case .sweeter:
+            return Color(hex: "DDAA45")
+        case .budgetFriendly:
+            return Color(hex: "5DDC8B")
+        case .mealPrep:
+            return Color(hex: "B8A27A")
+        case .dairyFree:
+            return Color(hex: "A7D8FF")
+        case .lowCarb:
+            return Color(hex: "FFB35C")
+        case .comfort:
+            return Color(hex: "D9A16E")
+        case .crispy:
+            return Color(hex: "F4C95D")
+        }
+    }
+
+    static var inspirationPages: [[RecipeAlterationIntent]] {
+        let intents = RecipeAlterationIntent.allCases
+        return stride(from: 0, to: intents.count, by: 3).map { start in
+            Array(intents[start..<min(start + 3, intents.count)])
         }
     }
 }
@@ -2106,10 +2298,12 @@ struct RecipeAdaptationResponse: Decodable {
     let recipeCard: DiscoverRecipeCardData
     let recipeDetail: RecipeDetailData
     let changeSummary: String?
+    let editSummary: RecipeAdaptationEditSummary?
     let pairingTerms: [String]
     let styleExamplesUsed: [String]
     let modelMode: String
     let model: String
+    let validationStatus: String?
 
     enum CodingKeys: String, CodingKey {
         case adaptedRecipe = "adapted_recipe"
@@ -2118,10 +2312,30 @@ struct RecipeAdaptationResponse: Decodable {
         case recipeCard = "recipe_card"
         case recipeDetail = "recipe_detail"
         case changeSummary = "change_summary"
+        case editSummary = "edit_summary"
         case pairingTerms = "pairing_terms"
         case styleExamplesUsed = "style_examples_used"
         case modelMode = "model_mode"
         case model
+        case validationStatus = "validation_status"
+    }
+}
+
+struct RecipeAdaptationEditSummary: Decodable {
+    let changedIngredients: [String]
+    let changedQuantities: [String]
+    let changedSteps: [String]
+    let addedIngredients: [String]?
+    let removedIngredients: [String]?
+    let validationNotes: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case changedIngredients = "changed_ingredients"
+        case changedQuantities = "changed_quantities"
+        case changedSteps = "changed_steps"
+        case addedIngredients = "added_ingredients"
+        case removedIngredients = "removed_ingredients"
+        case validationNotes = "validation_notes"
     }
 }
 
@@ -2147,28 +2361,102 @@ struct RecipeAdaptationRecipe: Decodable, Identifiable {
         case pairingNotes = "pairing_notes"
         case dietaryFit = "dietary_fit"
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decode(String.self, forKey: .title)
+        summary = try container.decode(String.self, forKey: .summary)
+        cookTimeText = try container.decode(String.self, forKey: .cookTimeText)
+        if let stringIngredients = try? container.decode([String].self, forKey: .ingredients) {
+            ingredients = stringIngredients
+        } else {
+            let structuredIngredients = (try? container.decode([RecipeAdaptationIngredientPayload].self, forKey: .ingredients)) ?? []
+            ingredients = structuredIngredients.map(\.lineText)
+        }
+        steps = try container.decode([String].self, forKey: .steps)
+        substitutions = try container.decode([String].self, forKey: .substitutions)
+        pairingNotes = try container.decode([String].self, forKey: .pairingNotes)
+        dietaryFit = try container.decode([String].self, forKey: .dietaryFit)
+    }
+}
+
+private struct RecipeAdaptationIngredientPayload: Decodable {
+    let displayName: String
+    let quantityText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+        case quantityText = "quantity_text"
+    }
+
+    var lineText: String {
+        [quantityText, displayName]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
 }
 
 struct RecipeAdaptationRequestPayload: Codable {
     let recipeID: String
     let userID: String
     let adaptationPrompt: String
+    let intentKey: String?
+    let intentLabel: String?
+    let rerollNonce: String
+    let strictEditValidation: Bool
     let profile: UserProfile?
 
     enum CodingKeys: String, CodingKey {
         case recipeID = "recipe_id"
         case userID = "user_id"
         case adaptationPrompt = "adaptation_prompt"
+        case intentKey = "intent_key"
+        case intentLabel = "intent_label"
+        case rerollNonce = "reroll_nonce"
+        case strictEditValidation = "strict_edit_validation"
         case profile
     }
+}
+
+struct RecipeAdaptationHistoryResponse: Decodable {
+    let history: [RecipeAdaptationResponse]
 }
 
 actor RecipeAdaptationService {
     static let shared = RecipeAdaptationService()
 
-    private var cache: [String: RecipeAdaptationResponse] = [:]
+    private var historyCache: [String: RecipeAdaptationResponse] = [:]
 
-    func adapt(recipeID: String, userID: String?, prompt: String, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
+    func latestHistory(recipeID: String, userID: String?) async throws -> RecipeAdaptationResponse? {
+        let normalizedRecipeID = recipeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !normalizedRecipeID.isEmpty, !normalizedUserID.isEmpty else {
+            return nil
+        }
+
+        let cacheKey = "\(normalizedUserID.lowercased())::\(normalizedRecipeID.lowercased())::history"
+        if let cached = historyCache[cacheKey] {
+            return cached
+        }
+
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                let history = try await latestHistory(baseURL: baseURL, recipeID: normalizedRecipeID, userID: normalizedUserID)
+                if let history {
+                    historyCache[cacheKey] = history
+                }
+                return history
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    func adapt(recipeID: String, userID: String?, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
         let normalizedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !recipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -2177,16 +2465,19 @@ actor RecipeAdaptationService {
             throw SupabaseProfileStateError.invalidRequest
         }
 
-        let cacheKey = "\(normalizedUserID.lowercased())::\(recipeID.lowercased())::\(normalizedPrompt.lowercased())"
-        if let cached = cache[cacheKey] {
-            return cached
-        }
-
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                let adapted = try await adapt(baseURL: baseURL, recipeID: recipeID, userID: normalizedUserID, prompt: normalizedPrompt, profile: profile)
-                cache[cacheKey] = adapted
+                let adapted = try await adapt(
+                    baseURL: baseURL,
+                    recipeID: recipeID,
+                    userID: normalizedUserID,
+                    prompt: normalizedPrompt,
+                    intent: intent,
+                    profile: profile
+                )
+                let historyKey = "\(normalizedUserID.lowercased())::\(recipeID.lowercased())::history"
+                historyCache[historyKey] = adapted
                 return adapted
             } catch {
                 lastError = error
@@ -2196,7 +2487,7 @@ actor RecipeAdaptationService {
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 
-    private func adapt(baseURL: String, recipeID: String, userID: String, prompt: String, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
+    private func adapt(baseURL: String, recipeID: String, userID: String, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/adapt") else {
             throw SupabaseProfileStateError.invalidRequest
         }
@@ -2210,6 +2501,10 @@ actor RecipeAdaptationService {
                 recipeID: recipeID,
                 userID: userID,
                 adaptationPrompt: prompt,
+                intentKey: intent?.intentKey,
+                intentLabel: intent?.displayTitle,
+                rerollNonce: UUID().uuidString,
+                strictEditValidation: true,
                 profile: profile
             )
         )
@@ -2226,12 +2521,42 @@ actor RecipeAdaptationService {
 
         return try JSONDecoder().decode(RecipeAdaptationResponse.self, from: data)
     }
+
+    private func latestHistory(baseURL: String, recipeID: String, userID: String) async throws -> RecipeAdaptationResponse? {
+        var components = URLComponents(string: "\(baseURL)/v1/recipe/adapt/history")
+        components?.queryItems = [
+            URLQueryItem(name: "recipe_id", value: recipeID),
+            URLQueryItem(name: "user_id", value: userID),
+            URLQueryItem(name: "limit", value: "1"),
+        ]
+        guard let url = components?.url else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to load recipe ask history (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        let decoded = try JSONDecoder().decode(RecipeAdaptationHistoryResponse.self, from: data)
+        return decoded.history.first
+    }
 }
 
 @MainActor
 final class RecipeAdaptationViewModel: ObservableObject {
     @Published private(set) var result: RecipeAdaptationResponse?
     @Published private(set) var isGenerating = false
+    @Published private(set) var isLoadingHistory = false
     @Published var errorMessage: String?
 
     func clearResult() {
@@ -2239,14 +2564,26 @@ final class RecipeAdaptationViewModel: ObservableObject {
         errorMessage = nil
     }
 
+    func loadHistory(recipeID: String, userID: String?) async {
+        guard result == nil, !isGenerating, !isLoadingHistory else { return }
+        isLoadingHistory = true
+        defer { isLoadingHistory = false }
+
+        do {
+            result = try await RecipeAdaptationService.shared.latestHistory(recipeID: recipeID, userID: userID)
+        } catch {
+            // History is best-effort; the Ask sheet should still be usable when it misses.
+        }
+    }
+
     @discardableResult
-    func adapt(recipeID: String, userID: String?, prompt: String, profile: UserProfile?) async -> RecipeAdaptationResponse? {
+    func adapt(recipeID: String, userID: String?, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?) async -> RecipeAdaptationResponse? {
         isGenerating = true
         errorMessage = nil
         defer { isGenerating = false }
 
         do {
-            let adapted = try await RecipeAdaptationService.shared.adapt(recipeID: recipeID, userID: userID, prompt: prompt, profile: profile)
+            let adapted = try await RecipeAdaptationService.shared.adapt(recipeID: recipeID, userID: userID, prompt: prompt, intent: intent, profile: profile)
             result = adapted
             return adapted
         } catch {
@@ -2261,243 +2598,396 @@ struct RecipeAskSheet: View {
     let recipeTitle: String
     let recipeSubtitle: String?
     let recipeID: String
+    let baseImageURL: URL?
     let userID: String?
     let profile: UserProfile?
-    let onOpenAdaptedRecipe: (RecipeAdaptationResponse) -> Void
+    let onOpenCart: () -> Void
+    let toastCenter: AppToastCenter
+    let onOpenToastDestination: ((AppToastDestination) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var savedStore: SavedRecipesStore
+    @EnvironmentObject private var store: MealPlanningAppStore
     @StateObject private var viewModel = RecipeAdaptationViewModel()
-    @State private var selectedIntent: RecipeAlterationIntent = .healthier
-    @State private var promptText: String = ""
+    @State private var selectedIntent: RecipeAlterationIntent?
+    @State private var presentedAdaptedRecipe: PresentedRecipeDetail?
+    @State private var isAddingAdaptedRecipeToPrep = false
 
     private var canGenerate: Bool {
-        !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !(userID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        !(userID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
             && !viewModel.isGenerating
+    }
+
+    private func submit(_ intent: RecipeAlterationIntent) {
+        guard canGenerate else { return }
+        selectedIntent = intent
+        Task {
+            await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: intent.promptSeed, intent: intent, profile: profile)
+        }
+    }
+
+    private func openAdaptedRecipePreview(_ result: RecipeAdaptationResponse) {
+        presentedAdaptedRecipe = PresentedRecipeDetail(
+            recipeCard: result.recipeCard,
+            initialDetail: result.recipeDetail,
+            adaptedFromRecipeID: result.adaptedFromRecipeID ?? recipeID
+        )
+    }
+
+    private func addAdaptedRecipeToPrep(_ result: RecipeAdaptationResponse) {
+        guard !isAddingAdaptedRecipeToPrep else { return }
+        isAddingAdaptedRecipeToPrep = true
+
+        Task { @MainActor in
+            defer { isAddingAdaptedRecipeToPrep = false }
+
+            let detail = result.recipeDetail
+            let servings = max(1, detail.displayServings)
+            let adaptedRecipe = recipePlanModel(
+                from: detail,
+                targetServings: servings,
+                fallbackRecipe: nil
+            )
+            let sourceRecipeID = (result.adaptedFromRecipeID ?? recipeID)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldReplaceOriginal = !sourceRecipeID.isEmpty
+                && sourceRecipeID != adaptedRecipe.id
+                && (store.latestPlan?.recipes.contains { $0.recipe.id == sourceRecipeID } == true)
+
+            if shouldReplaceOriginal {
+                await store.removeRecipeFromLatestPlan(recipeID: sourceRecipeID)
+            }
+
+            await store.updateLatestPlan(with: adaptedRecipe, servings: servings)
+            toastCenter.show(
+                title: shouldReplaceOriginal ? "Prep recipe replaced" : "Added to prep",
+                subtitle: detail.title,
+                systemImage: shouldReplaceOriginal ? "arrow.triangle.2.circlepath" : "plus.circle.fill",
+                thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
+                destination: .appTab(.prep)
+            )
+        }
     }
 
     var body: some View {
         ZStack {
             OunjePalette.background.ignoresSafeArea()
 
-            if let result = viewModel.result {
-                RecipeAdaptationResultSheet(
-                    recipeTitle: recipeTitle,
-                    recipeSubtitle: recipeSubtitle,
-                    result: result,
-                    isGenerating: viewModel.isGenerating,
-                    onAskAgain: {
-                        viewModel.clearResult()
-                    },
-                    onDone: {
-                        dismiss()
-                    }
-                )
-            } else {
-                VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 18) {
+                ZStack {
                     Capsule()
                         .fill(OunjePalette.elevated)
                         .frame(width: 88, height: 6)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 8)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        SleeScriptDisplayText("Ask this recipe.", size: 28, color: OunjePalette.primaryText)
-                        Text("Tell Ounje what to change and it will rewrite the recipe with the same guardrails, style, and ingredients logic.")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(recipeTitle)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .lineLimit(2)
-
-                            if let recipeSubtitle, !recipeSubtitle.isEmpty {
-                                Text(recipeSubtitle)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-                                    .lineLimit(2)
-                            }
-                        }
-                        .padding(.top, 2)
-                    }
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Quick asks")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(OunjePalette.secondaryText)
-
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                            ForEach(RecipeAlterationIntent.allCases) { intent in
-                                Button {
-                                    selectedIntent = intent
-                                    promptText = intent.promptSeed
-                                } label: {
-                                    HStack(alignment: .top, spacing: 12) {
-                                        Image(systemName: intent.systemImageName)
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundStyle(selectedIntent == intent ? OunjePalette.softCream.opacity(0.98) : OunjePalette.primaryText)
-                                            .frame(width: 18)
-
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(intent.title)
-                                                .sleeDisplayFont(16)
-                                                .foregroundStyle(OunjePalette.primaryText)
-
-                                            Text(intent.subtitle)
-                                                .font(.system(size: 11.5, weight: .medium))
-                                                .foregroundStyle(selectedIntent == intent ? OunjePalette.primaryText.opacity(0.74) : OunjePalette.secondaryText)
-                                                .multilineTextAlignment(.leading)
-                                                .lineLimit(2)
-                                        }
-
-                                        Spacer(minLength: 0)
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 13)
-                                    .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                            .fill(
-                                                selectedIntent == intent
-                                                    ? AnyShapeStyle(
-                                                        LinearGradient(
-                                                            colors: [
-                                                                OunjePalette.surface.opacity(0.98),
-                                                                OunjePalette.panel.opacity(0.98),
-                                                                OunjePalette.accent.opacity(0.28)
-                                                            ],
-                                                            startPoint: .topLeading,
-                                                            endPoint: .bottomTrailing
-                                                        )
-                                                    )
-                                                    : AnyShapeStyle(OunjePalette.surface.opacity(0.96))
-                                            )
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                            .stroke(
-                                                selectedIntent == intent ? OunjePalette.accent.opacity(0.46) : OunjePalette.stroke.opacity(0.84),
-                                                lineWidth: 1
-                                            )
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Your ask")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(OunjePalette.secondaryText)
-
-                        ZStack(alignment: .topLeading) {
-                            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(OunjePalette.surface.opacity(0.96))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                        .stroke(OunjePalette.stroke.opacity(0.86), lineWidth: 1)
-                                )
-
-                            TextEditor(text: $promptText)
-                                .scrollContentBackground(.hidden)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .padding(11)
-                                .frame(minHeight: 118)
-                                .tint(OunjePalette.accent)
-
-                            if promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Text("Say what you want more of, less of, or what should feel different.")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.8))
-                                    .padding(.horizontal, 17)
-                                    .padding(.vertical, 18)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                    }
-
-                    if let errorMessage = viewModel.errorMessage {
-                        Text(errorMessage)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.red.opacity(0.9))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    HStack(spacing: 12) {
+                    HStack {
+                        Spacer()
                         Button(action: dismiss.callAsFunction) {
-                            Text("Cancel")
-                                .font(.system(size: 16, weight: .semibold))
+                            Image(systemName: "xmark")
+                                .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(OunjePalette.primaryText)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(OunjePalette.surface.opacity(0.94))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
-                                )
+                                .frame(width: 42, height: 42)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Close")
+                    }
+                }
+                .padding(.top, 6)
+
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .center) {
+                        SleeScriptDisplayText("Ask Ounje", size: 30, color: OunjePalette.primaryText)
+
+                        Spacer(minLength: 12)
 
                         Button {
-                            let trimmed = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let finalPrompt = trimmed.isEmpty ? selectedIntent.promptSeed : trimmed
-                            Task {
-                                if let result = await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: finalPrompt, profile: profile) {
-                                    onOpenAdaptedRecipe(result)
-                                    dismiss()
-                                }
-                            }
+                            viewModel.clearResult()
+                            selectedIntent = nil
                         } label: {
-                            Text(viewModel.isGenerating ? "Generating..." : "Ask Ounje")
-                                .sleeDisplayFont(19)
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54)
+                            Text("Clear chat")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
+                                .padding(.horizontal, 15)
+                                .frame(height: 38)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [
-                                                    OunjePalette.accent.opacity(0.94),
-                                                    OunjePalette.accent.opacity(0.78)
-                                                ],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(OunjePalette.surface.opacity(0.88))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(OunjePalette.stroke.opacity(0.85), lineWidth: 1)
                                 )
                         }
                         .buttonStyle(.plain)
-                        .disabled(!canGenerate)
-                        .opacity(canGenerate ? 1 : 0.72)
                     }
 
-                    if viewModel.isGenerating {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(OunjePalette.accent)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 2)
+                    (
+                        Text("Bonjour.")
+                            .fontWeight(.bold)
+                        + Text(" Did you have a special request about this ")
+                        + Text(recipeTitle)
+                            .underline(true, color: OunjePalette.primaryText.opacity(0.86))
+                        + Text(" recipe? I can modify it based on your dietary restrictions, taste preferences and more. Just ask!")
+                    )
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if viewModel.isGenerating {
+                    RecipeAskGeneratingPanel()
+                        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                } else if let result = viewModel.result {
+                    RecipeAskInlineResultPanel(
+                        result: result,
+                        baseImageURL: baseImageURL,
+                        isSaved: savedStore.isSaved(result.recipeCard),
+                        isAddingToPrep: isAddingAdaptedRecipeToPrep,
+                        onAskAgain: {
+                            viewModel.clearResult()
+                            selectedIntent = nil
+                        },
+                        onSave: {
+                            if !savedStore.isSaved(result.recipeCard) {
+                                savedStore.toggle(result.recipeCard)
+                            }
+                        },
+                        onOpenPreview: {
+                            openAdaptedRecipePreview(result)
+                        },
+                        onAddToPrep: {
+                            addAdaptedRecipeToPrep(result)
+                        }
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                }
+
+                if let errorMessage = viewModel.errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.red.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                RecipeInspirationSwiper(
+                    selectedIntent: selectedIntent,
+                    isGenerating: viewModel.isGenerating,
+                    canGenerate: canGenerate,
+                    rotationSeed: recipeID,
+                    onSelect: submit
+                )
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 100)
+        }
+        .task(id: "\(userID ?? "")::\(recipeID)") {
+            await viewModel.loadHistory(recipeID: recipeID, userID: userID)
+        }
+        .fullScreenCover(item: $presentedAdaptedRecipe) { recipe in
+            RecipeDetailExperienceView(
+                presentedRecipe: recipe,
+                onOpenCart: onOpenCart,
+                toastCenter: toastCenter,
+                onOpenToastDestination: onOpenToastDestination
+            )
+            .environmentObject(savedStore)
+            .environmentObject(store)
+        }
+    }
+}
+
+struct RecipeAskGeneratingPanel: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Great! Give me a few seconds while I prepare a different recipe for you.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(OunjePalette.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ProgressView()
+                .progressViewStyle(.circular)
+                .tint(OunjePalette.primaryText.opacity(0.72))
+                .scaleEffect(1.08)
+        }
+        .padding(.top, 6)
+    }
+}
+
+struct RecipeAskInlineResultPanel: View {
+    let result: RecipeAdaptationResponse
+    let baseImageURL: URL?
+    let isSaved: Bool
+    let isAddingToPrep: Bool
+    let onAskAgain: () -> Void
+    let onSave: () -> Void
+    let onOpenPreview: () -> Void
+    let onAddToPrep: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Great! Give me a few seconds while I prepare a different recipe for you.")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(OunjePalette.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            RecipeAdaptedPreviewCard(result: result, baseImageURL: baseImageURL, onOpen: onOpenPreview)
+
+            HStack(spacing: 8) {
+                Button(action: onAskAgain) {
+                    Text("Try again")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 38)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(OunjePalette.surface.opacity(0.94))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button(action: onSave) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(isSaved ? "Saved" : "Save")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 38)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(OunjePalette.surface.opacity(0.94))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isSaved)
+
+                Button(action: onAddToPrep) {
+                    Text(isAddingToPrep ? "Adding" : "Add")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 38)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            OunjePalette.accent.opacity(0.94),
+                                            OunjePalette.accent.opacity(0.78)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(isAddingToPrep)
+                .opacity(isAddingToPrep ? 0.72 : 1)
+            }
+        }
+        .padding(.top, 6)
+    }
+}
+
+struct RecipeInspirationSwiper: View {
+    let selectedIntent: RecipeAlterationIntent?
+    let isGenerating: Bool
+    let canGenerate: Bool
+    let rotationSeed: String
+    let onSelect: (RecipeAlterationIntent) -> Void
+
+    private var intents: [RecipeAlterationIntent] {
+        let all = RecipeAlterationIntent.allCases
+        guard !all.isEmpty else { return [] }
+        let offset = rotationSeed.unicodeScalars.reduce(0) { partial, scalar in
+            (partial + Int(scalar.value)) % all.count
+        }
+        guard offset > 0 else { return all }
+        return Array(all[offset...]) + Array(all[..<offset])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Need some inspiration? Try these")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 9) {
+                    ForEach(intents) { intent in
+                        Button {
+                            onSelect(intent)
+                        } label: {
+                            RecipeAdaptationIntentPill(
+                                intent: intent,
+                                isSelected: selectedIntent == intent,
+                                isDisabled: isGenerating || !canGenerate
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isGenerating || !canGenerate)
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 20)
+                .padding(.trailing, 20)
             }
+            .padding(.horizontal, -20)
+            .frame(height: 46)
         }
-        .onAppear {
-            if promptText.isEmpty {
-                promptText = selectedIntent.promptSeed
-            }
+    }
+}
+
+struct RecipeAdaptationIntentPill: View {
+    let intent: RecipeAlterationIntent
+    let isSelected: Bool
+    let isDisabled: Bool
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(intent.displayTitle)
+                .font(.system(size: 13.2, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Image(systemName: intent.systemImageName)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(intent.iconColor)
+                .symbolRenderingMode(.hierarchical)
         }
+            .padding(.horizontal, 12)
+            .frame(height: 44, alignment: .center)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(isSelected ? OunjePalette.accent.opacity(0.12) : OunjePalette.surface.opacity(0.88))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? OunjePalette.accent.opacity(0.86) : Color.white.opacity(0.32),
+                        lineWidth: isSelected ? 1.25 : 1
+                    )
+            )
+            .scaleEffect(isSelected ? 1.01 : 1)
+            .opacity(isDisabled && !isSelected ? 0.58 : 1)
+            .animation(OunjeMotion.quickSpring, value: isSelected)
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 }
 
@@ -2507,7 +2997,10 @@ struct RecipeAdaptationResultSheet: View {
     let result: RecipeAdaptationResponse
     let isGenerating: Bool
     let onAskAgain: () -> Void
-    let onDone: () -> Void
+    let isSaved: Bool
+    let onSave: () -> Void
+    let onOpenPreview: () -> Void
+    let onAddToPrep: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -2517,85 +3010,21 @@ struct RecipeAdaptationResultSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 8)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 14) {
                 SleeScriptDisplayText("Recipe rewrite.", size: 28, color: OunjePalette.primaryText)
-                Text("Ounje adapted your recipe and kept the dish grounded.")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
+                Text("Great. Ounje made a new version while keeping the dish grounded.")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(OunjePalette.primaryText)
                     .fixedSize(horizontal: false, vertical: true)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(recipeTitle)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(OunjePalette.primaryText)
-                        .lineLimit(2)
-
-                    if let recipeSubtitle, !recipeSubtitle.isEmpty {
-                        Text(recipeSubtitle)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .lineLimit(2)
-                    }
-                }
             }
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(result.adaptedRecipe.title)
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundStyle(OunjePalette.primaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
 
-                        Text(result.adaptedRecipe.summary)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(18)
-                    .background(
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .fill(OunjePalette.surface.opacity(0.96))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                    .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
-                            )
-                    )
-
-                    if !result.pairingTerms.isEmpty {
-                        RecipeAdaptationSection(title: "Pairing hints", items: result.pairingTerms)
-                    }
-
-                    RecipeAdaptationSection(title: "Ingredients", items: result.adaptedRecipe.ingredients)
-                    RecipeAdaptationSection(title: "Steps", items: result.adaptedRecipe.steps, numbered: true)
-
-                    if !result.adaptedRecipe.substitutions.isEmpty {
-                        RecipeAdaptationSection(title: "Substitutions", items: result.adaptedRecipe.substitutions)
-                    }
-
-                    if !result.adaptedRecipe.pairingNotes.isEmpty {
-                        RecipeAdaptationSection(title: "Pairing notes", items: result.adaptedRecipe.pairingNotes)
-                    }
-
-                    if !result.adaptedRecipe.dietaryFit.isEmpty {
-                        RecipeAdaptationSection(title: "Dietary fit", items: result.adaptedRecipe.dietaryFit)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Cook time")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                        Text(result.adaptedRecipe.cookTimeText)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(OunjePalette.primaryText)
-                    }
-                }
-                .padding(.bottom, 4)
-            }
+            RecipeAdaptedPreviewCard(result: result, onOpen: onOpenPreview)
 
             HStack(spacing: 12) {
                 Button(action: onAskAgain) {
-                    Text("Ask again")
+                    Text("Try again")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(OunjePalette.primaryText)
                         .frame(maxWidth: .infinity)
@@ -2611,9 +3040,31 @@ struct RecipeAdaptationResultSheet: View {
                 }
                 .buttonStyle(.plain)
 
-                Button(action: onDone) {
-                    Text("Done")
-                        .sleeDisplayFont(19)
+                Button(action: onSave) {
+                    HStack(spacing: 8) {
+                        Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text(isSaved ? "Saved" : "Save")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 54)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(OunjePalette.surface.opacity(0.94))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isSaved)
+
+                Button(action: onAddToPrep) {
+                    Text("Add")
+                        .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(OunjePalette.primaryText)
                         .frame(maxWidth: .infinity)
                         .frame(height: 54)
@@ -2637,6 +3088,86 @@ struct RecipeAdaptationResultSheet: View {
         .padding(.horizontal, 20)
         .padding(.top, 16)
         .padding(.bottom, 20)
+    }
+}
+
+struct RecipeAdaptedPreviewCard: View {
+    let result: RecipeAdaptationResponse
+    let baseImageURL: URL?
+    let onOpen: () -> Void
+
+    init(result: RecipeAdaptationResponse, baseImageURL: URL? = nil, onOpen: @escaping () -> Void) {
+        self.result = result
+        self.baseImageURL = baseImageURL
+        self.onOpen = onOpen
+    }
+
+    private var imageURL: URL? {
+        if let baseImageURL {
+            return baseImageURL
+        }
+        return [result.recipeCard.imageURLString, result.recipeCard.heroImageURLString]
+            .compactMap { $0 }
+            .compactMap(URL.init(string:))
+            .first
+    }
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(result.adaptedRecipe.title)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+
+                    Text(cardMetaText)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        OunjePalette.elevated
+                    }
+                }
+                .frame(width: 62, height: 62)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText.opacity(0.82))
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.96))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var cardMetaText: String {
+        let ingredientCount = result.adaptedRecipe.ingredients.count
+        let cookTime = result.adaptedRecipe.cookTimeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cookTime.isEmpty {
+            return "\(ingredientCount) ingredients"
+        }
+        return "\(cookTime), \(ingredientCount) ingredients"
     }
 }
 
@@ -3652,4 +4183,3 @@ struct WrappingHStack<Data: RandomAccessCollection, ID: Hashable, Content: View>
         )
     }
 }
-
