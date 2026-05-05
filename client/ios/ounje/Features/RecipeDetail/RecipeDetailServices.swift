@@ -839,6 +839,7 @@ final class RecipeDetailViewModel: ObservableObject {
     @Published private(set) var similarRecipes: [DiscoverRecipeCardData] = []
     @Published private(set) var isLoading = false
     @Published private(set) var isLoadingSimilarRecipes = false
+    @Published private(set) var hasLoadedSimilarRecipes = false
     @Published private(set) var errorMessage: String?
     private var similarLoadTask: Task<Void, Never>?
 
@@ -855,6 +856,7 @@ final class RecipeDetailViewModel: ObservableObject {
         similarLoadTask?.cancel()
         similarRecipes = []
         isLoadingSimilarRecipes = false
+        hasLoadedSimilarRecipes = false
         isLoading = true
         errorMessage = nil
 
@@ -867,6 +869,7 @@ final class RecipeDetailViewModel: ObservableObject {
             scheduleSimilarRecipesLoad(for: recipeID, fallbackRecipeID: similarFallbackRecipeID)
         } catch {
             similarRecipes = []
+            hasLoadedSimilarRecipes = false
             errorMessage = error.localizedDescription
         }
     }
@@ -886,7 +889,10 @@ final class RecipeDetailViewModel: ObservableObject {
         guard detail?.id == recipeID, similarRecipes.isEmpty else { return }
 
         isLoadingSimilarRecipes = true
-        defer { isLoadingSimilarRecipes = false }
+        defer {
+            isLoadingSimilarRecipes = false
+            hasLoadedSimilarRecipes = true
+        }
 
         do {
             let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(id: recipeID)

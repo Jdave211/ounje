@@ -105,6 +105,19 @@ struct RecipeDetailExperienceView: View {
         detail?.title ?? presentedRecipe.recipeCard.title
     }
 
+    private var isAdaptedRecipe: Bool {
+        if presentedRecipe.adaptedFromRecipeID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return true
+        }
+        if detail?.source?.localizedCaseInsensitiveContains("adaptation") == true {
+            return true
+        }
+        if detail?.detailFootnote?.localizedCaseInsensitiveContains("Adapted from") == true {
+            return true
+        }
+        return false
+    }
+
     private var descriptionText: String? {
         if let detailDescription = detail?.description, !detailDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return detailDescription
@@ -392,7 +405,7 @@ struct RecipeDetailExperienceView: View {
                             .frame(maxWidth: .infinity, alignment: .topLeading)
 
                             VStack(alignment: .leading, spacing: 30) {
-                                RecipeModalTitle(text: titleText)
+                                RecipeModalTitle(text: titleText, isAdapted: isAdaptedRecipe)
                                     .modifier(RecipeTitleTransitionModifier(transitionContext: transitionContext))
 
                                 VStack(alignment: .leading, spacing: 16) {
@@ -433,11 +446,13 @@ struct RecipeDetailExperienceView: View {
                                         }
 
                                         RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
+                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                             showAskSheet = true
                                         }
 
                                         if hasVideoSource {
                                             RecipeDetailCompactActionButton(title: "Watch", systemImage: "play.fill", compact: true) {
+                                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                                 toggleInlineVideo()
                                             }
                                         }
@@ -515,7 +530,7 @@ struct RecipeDetailExperienceView: View {
                                             .padding(.top, ingredientItems.isEmpty ? 8 : 26)
                                         }
 
-                                        if detail != nil && (isLoadingSimilarRecipes || !viewModel.similarRecipes.isEmpty) {
+                                        if detail != nil && (isLoadingSimilarRecipes || viewModel.hasLoadedSimilarRecipes || !viewModel.similarRecipes.isEmpty) {
                                             RecipeDetailEnjoySection(
                                                 recipes: viewModel.similarRecipes,
                                                 isLoading: isLoadingSimilarRecipes,
@@ -670,6 +685,7 @@ struct RecipeDetailExperienceView: View {
             RecipeAskSheet(
                 recipeTitle: titleText,
                 recipeSubtitle: subtitleLine ?? summaryLine,
+                recipeKind: detail?.recipeType ?? detail?.category ?? presentedRecipe.recipeCard.recipeType ?? presentedRecipe.recipeCard.category,
                 recipeID: recipeID,
                 baseImageURL: presentedRecipe.recipeCard.imageURL ?? imageCandidates.first,
                 userID: store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
@@ -825,6 +841,7 @@ struct RecipeDetailExperienceView: View {
     @MainActor
     private func addCurrentRecipeToPrep() async {
         guard let detail else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let recipe = recipeFromDetail(detail)
         baseServingsCount = max(1, servingsCount)
         toastCenter.show(
@@ -843,6 +860,7 @@ struct RecipeDetailExperienceView: View {
     @MainActor
     private func replaceRecipeInPrep(sourceRecipeID: String) async {
         guard let detail else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let recipe = recipeFromDetail(detail)
         baseServingsCount = max(1, servingsCount)
         toastCenter.show(
@@ -868,6 +886,7 @@ struct RecipeDetailExperienceView: View {
 
     @MainActor
     private func removeCurrentRecipeFromPrep() async {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let recipeToRestore = detail.map(recipeFromDetail)
         let restoreServings = max(1, baseServingsCount)
         toastCenter.show(
@@ -1106,14 +1125,24 @@ struct RecipeDetailExperienceView: View {
 
 struct RecipeModalTitle: View {
     let text: String
+    var isAdapted = false
 
     var body: some View {
-        Text(text)
-            .sleeDisplayFont(44)
-            .foregroundStyle(OunjePalette.primaryText)
-            .multilineTextAlignment(.leading)
-            .lineSpacing(2)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(text)
+                .sleeDisplayFont(44)
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.leading)
+                .lineSpacing(2)
+
+            if isAdapted {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(OunjePalette.accent)
+                    .accessibilityLabel("Edited recipe")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1206,7 +1235,16 @@ struct RecipeDetailTopIconButton: View {
                 }
             }
             .frame(width: 52, height: 52)
-            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.92))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.88), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.16), radius: 14, x: 0, y: 8)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(isLoading)
@@ -2289,6 +2327,113 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             Array(intents[start..<min(start + 3, intents.count)])
         }
     }
+
+    static func recommendations(for recipeKind: String?, title: String) -> [RecipeAlterationIntent] {
+        let descriptor = [recipeKind, title]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+
+        let primary: [RecipeAlterationIntent]
+        if descriptor.contains("dessert")
+            || descriptor.contains("cookie")
+            || descriptor.contains("cake")
+            || descriptor.contains("brownie")
+            || descriptor.contains("pie")
+            || descriptor.contains("pastry")
+            || descriptor.contains("banana bread")
+            || descriptor.contains("sweet") {
+            primary = [
+                .lessSugar,
+                .healthier,
+                .crispy,
+                .sweeter,
+                .quick,
+                .dairyFree,
+                .kidFriendly,
+                .lighter,
+                .budgetFriendly,
+                .lowCarb,
+                .mealPrep,
+                .moreProtein,
+                .vegetarian,
+                .comfort,
+                .extraVeggies,
+                .spicy,
+            ]
+        } else if descriptor.contains("breakfast")
+                    || descriptor.contains("brunch")
+                    || descriptor.contains("oat")
+                    || descriptor.contains("pancake")
+                    || descriptor.contains("toast") {
+            primary = [
+                .quick,
+                .moreProtein,
+                .healthier,
+                .lighter,
+                .lessSugar,
+                .crispy,
+                .mealPrep,
+                .extraVeggies,
+                .dairyFree,
+                .sweeter,
+                .budgetFriendly,
+                .kidFriendly,
+                .lowCarb,
+                .vegetarian,
+                .comfort,
+                .spicy,
+            ]
+        } else if descriptor.contains("lunch")
+                    || descriptor.contains("sandwich")
+                    || descriptor.contains("wrap")
+                    || descriptor.contains("salad")
+                    || descriptor.contains("bowl") {
+            primary = [
+                .moreProtein,
+                .spicy,
+                .extraVeggies,
+                .quick,
+                .mealPrep,
+                .budgetFriendly,
+                .lighter,
+                .vegetarian,
+                .lowCarb,
+                .crispy,
+                .kidFriendly,
+                .healthier,
+                .dairyFree,
+                .comfort,
+                .lessSugar,
+                .sweeter,
+            ]
+        } else {
+            primary = [
+                .moreProtein,
+                .spicy,
+                .extraVeggies,
+                .quick,
+                .mealPrep,
+                .budgetFriendly,
+                .lighter,
+                .crispy,
+                .vegetarian,
+                .lowCarb,
+                .dairyFree,
+                .kidFriendly,
+                .healthier,
+                .comfort,
+                .lessSugar,
+                .sweeter,
+            ]
+        }
+
+        var seen: Set<RecipeAlterationIntent> = []
+        return (primary + RecipeAlterationIntent.allCases).filter { intent in
+            if seen.contains(intent) { return false }
+            seen.insert(intent)
+            return true
+        }
+    }
 }
 
 struct RecipeAdaptationResponse: Decodable {
@@ -2597,6 +2742,7 @@ final class RecipeAdaptationViewModel: ObservableObject {
 struct RecipeAskSheet: View {
     let recipeTitle: String
     let recipeSubtitle: String?
+    let recipeKind: String?
     let recipeID: String
     let baseImageURL: URL?
     let userID: String?
@@ -2620,6 +2766,7 @@ struct RecipeAskSheet: View {
 
     private func submit(_ intent: RecipeAlterationIntent) {
         guard canGenerate else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         selectedIntent = intent
         Task {
             await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: intent.promptSeed, intent: intent, profile: profile)
@@ -2655,10 +2802,12 @@ struct RecipeAskSheet: View {
                 && (store.latestPlan?.recipes.contains { $0.recipe.id == sourceRecipeID } == true)
 
             if shouldReplaceOriginal {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 await store.removeRecipeFromLatestPlan(recipeID: sourceRecipeID)
             }
 
             await store.updateLatestPlan(with: adaptedRecipe, servings: servings)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             toastCenter.show(
                 title: shouldReplaceOriginal ? "Prep recipe replaced" : "Added to prep",
                 subtitle: detail.title,
@@ -2776,7 +2925,8 @@ struct RecipeAskSheet: View {
                     selectedIntent: selectedIntent,
                     isGenerating: viewModel.isGenerating,
                     canGenerate: canGenerate,
-                    rotationSeed: recipeID,
+                    recipeKind: recipeKind,
+                    recipeTitle: recipeTitle,
                     onSelect: submit
                 )
             }
@@ -2909,17 +3059,12 @@ struct RecipeInspirationSwiper: View {
     let selectedIntent: RecipeAlterationIntent?
     let isGenerating: Bool
     let canGenerate: Bool
-    let rotationSeed: String
+    let recipeKind: String?
+    let recipeTitle: String
     let onSelect: (RecipeAlterationIntent) -> Void
 
     private var intents: [RecipeAlterationIntent] {
-        let all = RecipeAlterationIntent.allCases
-        guard !all.isEmpty else { return [] }
-        let offset = rotationSeed.unicodeScalars.reduce(0) { partial, scalar in
-            (partial + Int(scalar.value)) % all.count
-        }
-        guard offset > 0 else { return all }
-        return Array(all[offset...]) + Array(all[..<offset])
+        RecipeAlterationIntent.recommendations(for: recipeKind, title: recipeTitle)
     }
 
     var body: some View {
@@ -3883,6 +4028,11 @@ struct RecipeDetailEnjoySection: View {
                         ForEach(0..<3, id: \.self) { _ in
                             RecipeEnjoyMiniCardPlaceholder()
                         }
+                    } else if recipes.isEmpty {
+                        Text("More ideas are still warming up.")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .frame(width: 240, height: 116, alignment: .leading)
                     } else {
                         ForEach(Array(recipes.enumerated()), id: \.element.id) { index, recipe in
                             RecipeEnjoyMiniCard(recipe: recipe) {

@@ -83,6 +83,7 @@ struct PrepTabView: View {
                             Spacer(minLength: 12)
 
                             Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 selectedRegenerationFocus = .balanced
                                 isRegenerationSheetPresented = true
                             } label: {
@@ -135,6 +136,7 @@ struct PrepTabView: View {
                     isRegenerationSheetPresented = false
                 },
                 onConfirm: { options in
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
                     isRegenerationSheetPresented = false
                     toastCenter.show(
                         title: "Generating prep",
@@ -805,6 +807,7 @@ struct MealDeckCard: View {
             accessibilityLabel: isRecurring ? "Remove from recurring prep" : "Make recurring for prep",
             showsBackground: false,
             action: {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 Task {
                     let succeeded = await store.toggleRecurringPrepRecipe(recipe)
                     await MainActor.run {
@@ -1311,6 +1314,7 @@ struct CookbookCyclePage: View {
                             .buttonStyle(.plain)
                         } else {
                             Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 selectedRegenerationFocus = .balanced
                                 regenerationPromptText = ""
                                 isRegenerationSheetPresented = true
@@ -1358,6 +1362,7 @@ struct CookbookCyclePage: View {
                     isRegenerationSheetPresented = false
                 },
                 onConfirm: { options in
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
                     isRegenerationSheetPresented = false
                     toastCenter.show(
                         title: "Generating prep",
@@ -1481,6 +1486,7 @@ struct CookbookCyclePage: View {
                     transitionNamespace: recipeTransitionNamespace,
                     onRemove: {
                         guard isEditingPrep, isCurrentPrepCycle else { return }
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         let removedPlannedRecipe = store.latestPlan?.recipes.first { $0.recipe.id == recipe.id }
                         toastCenter.show(
                             title: "Removed from next prep",
@@ -1510,6 +1516,7 @@ struct CookbookCyclePage: View {
                     onToggleRecurring: {
                         guard isCurrentPrepCycle else { return }
                         guard let plannedRecipe = store.latestPlan?.recipes.first(where: { $0.recipe.id == recipe.id })?.recipe else { return }
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         Task {
                             let succeeded = await store.toggleRecurringPrepRecipe(plannedRecipe)
                             await MainActor.run {

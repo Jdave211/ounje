@@ -1568,9 +1568,14 @@ final class MealPlanningAppStore: ObservableObject {
         let now = ISO8601DateFormatter().string(from: .now)
 
         if let existingIndex = recurringPrepRecipes.firstIndex(where: { $0.recipeID == recipe.id }) {
+            let previousRecipes = recurringPrepRecipes
             var existing = recurringPrepRecipes[existingIndex]
             existing.isEnabled.toggle()
             existing.updatedAt = now
+            recurringPrepRecipes[existingIndex] = existing
+            recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
+            saveRecurringPrepRecipesCache()
+
             if existing.isEnabled {
                 let hydrated = await hydratedPlannedRecipeForCart(
                     recipe: existing.recipe,
@@ -1584,36 +1589,50 @@ final class MealPlanningAppStore: ObservableObject {
                     existing,
                     accessToken: session.accessToken
                 )
-                recurringPrepRecipes[existingIndex] = existing
+                if let updatedIndex = recurringPrepRecipes.firstIndex(where: { $0.recipeID == recipe.id }) {
+                    recurringPrepRecipes[updatedIndex] = existing
+                }
                 recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
                 saveRecurringPrepRecipesCache()
             } catch {
+                recurringPrepRecipes = previousRecipes
+                saveRecurringPrepRecipesCache()
                 print("[MealPlanningAppStore] Failed to save recurring prep toggle for \(recipe.id): \(error)")
                 return false
             }
         } else {
+            let previousRecipes = recurringPrepRecipes
+            var recurring = RecurringPrepRecipe(
+                userID: session.userID,
+                recipeID: recipe.id,
+                recipe: recipe,
+                isEnabled: true,
+                createdAt: now,
+                updatedAt: now
+            )
+            recurringPrepRecipes.insert(recurring, at: 0)
+            recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
+            saveRecurringPrepRecipesCache()
+
             let hydrated = await hydratedPlannedRecipeForCart(
                 recipe: recipe,
                 servings: max(1, recipe.servings),
                 carriedFromPreviousPlan: false
             )
-            let recurring = RecurringPrepRecipe(
-                userID: session.userID,
-                recipeID: recipe.id,
-                recipe: hydrated.recipe,
-                isEnabled: true,
-                createdAt: now,
-                updatedAt: now
-            )
+            recurring.recipe = hydrated.recipe
             do {
                 try await SupabaseRecurringPrepRecipesService.shared.upsertRecurringPrepRecipe(
                     recurring,
                     accessToken: session.accessToken
                 )
-                recurringPrepRecipes.insert(recurring, at: 0)
+                if let updatedIndex = recurringPrepRecipes.firstIndex(where: { $0.recipeID == recipe.id }) {
+                    recurringPrepRecipes[updatedIndex] = recurring
+                }
                 recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
                 saveRecurringPrepRecipesCache()
             } catch {
+                recurringPrepRecipes = previousRecipes
+                saveRecurringPrepRecipesCache()
                 print("[MealPlanningAppStore] Failed to save recurring prep recipe for \(recipe.id): \(error)")
                 return false
             }

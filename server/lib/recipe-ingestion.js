@@ -3578,14 +3578,17 @@ async function persistNormalizedRecipe(
     targetState = "saved",
     sourceJobID = null,
     dedupeKey = null,
+    dedupeExisting = true,
     reviewState = "pending",
     confidenceScore = null,
     qualityFlags = [],
   } = {}
 ) {
-  const existing = userID
+  const existing = dedupeExisting && userID
     ? await findExistingUserImportedRecipe(userID, normalized, dedupeKey)
-    : await findExistingCatalogRecipe(normalized);
+    : dedupeExisting
+      ? await findExistingCatalogRecipe(normalized)
+      : null;
   let recipeID = existing?.id ?? null;
   let savedState = existing ? "deduped" : "inserted";
 

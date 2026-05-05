@@ -1,4 +1,4 @@
-import { parseFirstInteger, parseIngredientObjects } from "./recipe-detail-utils.js";
+import { parseIngredientObjects } from "./recipe-detail-utils.js";
 
 const WORD_SPLIT = /[^a-z0-9]+/g;
 
@@ -66,16 +66,6 @@ function normalizedStepTextsFromDetail(detail) {
     .filter(Boolean);
 }
 
-function recipeHaystack({ ingredients = [], steps = [], title = "", summary = "", tags = [] } = {}) {
-  return normalizeText([
-    title,
-    summary,
-    ...(ingredients ?? []).map((ingredient) => `${ingredient.quantityText ?? ""} ${ingredient.displayName ?? ""}`),
-    ...(steps ?? []),
-    ...(tags ?? []),
-  ].join(" "));
-}
-
 function containsAny(haystack, terms) {
   const text = normalizeText(haystack);
   return (terms ?? []).some((term) => {
@@ -85,64 +75,42 @@ function containsAny(haystack, terms) {
   });
 }
 
-function countMatches(haystack, terms) {
-  const text = normalizeText(haystack);
-  return (terms ?? []).reduce((count, term) => count + (containsAny(text, [term]) ? 1 : 0), 0);
+function ingredientIsMentionedInSteps(ingredientName, stepHaystack) {
+  const normalized = normalizedName(ingredientName);
+  if (!normalized) return false;
+  if (containsAny(stepHaystack, [normalized])) return true;
+
+  const withoutParenthetical = normalized.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (withoutParenthetical && withoutParenthetical !== normalized && containsAny(stepHaystack, [withoutParenthetical])) {
+    return true;
+  }
+
+  const tokens = withoutParenthetical
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-z0-9-]+/g, ""))
+    .filter((token) => token.length >= 4 && !["fresh", "diced", "sliced", "chopped", "optional", "taste", "wash"].includes(token));
+  if (!tokens.length) return false;
+  const text = normalizeText(stepHaystack);
+  const matched = tokens.filter((token) => text.includes(token)).length;
+  return matched >= Math.min(2, tokens.length);
 }
 
-const MEAT_AND_SEAFOOD_TERMS = [
-  "chicken", "beef", "steak", "pork", "bacon", "ham", "sausage", "turkey", "lamb", "duck",
-  "veal", "goat", "fish", "salmon", "tuna", "cod", "tilapia", "shrimp", "prawn", "crab",
-  "lobster", "anchovy", "gelatin", "bone broth", "chicken stock", "beef stock", "fish sauce",
-];
-
-const PLANT_FORWARD_TERMS = [
-  "tofu", "tempeh", "lentil", "lentils", "chickpea", "chickpeas", "bean", "beans", "black bean", "white bean", "mushroom", "mushrooms",
-  "eggplant", "cauliflower", "jackfruit", "seitan", "plant based", "walnut", "cashew",
-  "paneer", "halloumi", "egg", "quinoa",
-];
-
-const DAIRY_TERMS = [
-  "milk", "whole milk", "cow milk", "dairy milk", "evaporated milk", "condensed milk", "butter", "cream", "cheese", "cheddar", "mozzarella", "parmesan", "yogurt",
-  "yoghurt", "sour cream", "buttermilk", "ghee", "whey", "lactose", "half and half",
-];
-
-const DAIRY_FREE_SWAP_TERMS = [
-  "olive oil", "avocado oil", "coconut milk", "coconut cream", "oat milk", "almond milk",
-  "cashew cream", "vegan butter", "nutritional yeast", "tahini",
-];
-
-const SUGAR_TERMS = [
-  "sugar", "brown sugar", "white sugar", "honey", "maple syrup", "corn syrup", "agave",
-  "molasses", "sweetened condensed milk", "jam", "jelly", "caramel", "chocolate chips",
-];
-
-const HEAT_TERMS = [
-  "chili", "chilli", "jalapeno", "serrano", "habanero", "scotch bonnet", "cayenne",
-  "paprika", "hot sauce", "sriracha", "gochujang", "harissa", "pepper flakes",
-  "red pepper flakes", "chipotle", "peri peri",
-];
-
-const PROTEIN_TERMS = [
-  "chicken", "turkey", "beef", "salmon", "tuna", "shrimp", "egg", "eggs", "tofu",
-  "tempeh", "seitan", "lentil", "chickpea", "bean", "beans", "greek yogurt", "cottage cheese",
-  "protein", "quinoa",
-];
-
-const VEGETABLE_TERMS = [
-  "broccoli", "spinach", "kale", "pepper", "bell pepper", "carrot", "zucchini", "mushroom",
-  "tomato", "cabbage", "cauliflower", "eggplant", "asparagus", "green bean", "peas",
-  "onion", "scallion", "arugula", "lettuce", "cucumber", "squash",
-];
-
-const CRISP_TERMS = [
-  "crispy", "crisp", "crunchy", "crunch", "toast", "toasted", "sear", "seared", "broil",
-  "air fry", "panko", "breadcrumbs", "nuts", "sesame", "fried shallot",
-];
-
-const STARCH_TERMS = [
-  "rice", "pasta", "noodle", "bread", "potato", "tortilla", "flour", "bun", "wrap",
-  "couscous", "orzo", "cracker",
+const GENERIC_PLACEHOLDER_INGREDIENT_TERMS = [
+  "protein",
+  "extra protein",
+  "protein source",
+  "lean protein",
+  "plant protein",
+  "vegetarian protein",
+  "healthy ingredient",
+  "crunch",
+  "crunchy topping",
+  "spice",
+  "spicy seasoning",
+  "vegetables",
+  "veggies",
+  "sweetener",
+  "dairy free substitute",
 ];
 
 const INTENT_CONTRACTS = {
@@ -155,11 +123,9 @@ const INTENT_CONTRACTS = {
       "Rewrite affected cooking steps so removed animal ingredients are not referenced.",
       "Update dietary tags and summary to reflect the vegetarian version.",
     ],
-    forbiddenTerms: MEAT_AND_SEAFOOD_TERMS,
-    requiredReplacementTerms: PLANT_FORWARD_TERMS,
     validationHints: [
-      "No meat/seafood terms may remain in ingredient names or step text.",
-      "A vegetarian protein or plant-forward replacement should appear.",
+      "The semantic validator must confirm animal ingredients were removed from both ingredients and steps.",
+      "The semantic validator must confirm the replacement still makes the dish feel complete.",
     ],
   },
   dairy_free: {
@@ -170,8 +136,6 @@ const INTENT_CONTRACTS = {
       "Update quantities and steps so the sauce, texture, or fat source still works.",
       "Update dietary tags and summary to reflect the dairy-free version.",
     ],
-    forbiddenTerms: DAIRY_TERMS,
-    replacementTerms: DAIRY_FREE_SWAP_TERMS,
   },
   less_sugar: {
     key: "less_sugar",
@@ -181,17 +145,17 @@ const INTENT_CONTRACTS = {
       "Adjust steps that depend on sweetness, caramelization, glaze thickness, or dessert texture.",
       "Keep enough balance that the dish remains satisfying.",
     ],
-    focusedTerms: SUGAR_TERMS,
   },
   more_protein: {
     key: "more_protein",
     label: "More protein",
     requiredActions: [
-      "Increase or add a plausible protein source that fits the dish.",
+      "Increase or add a real, named protein source that fits the dish.",
+      "Never add a placeholder ingredient named protein, extra protein, or protein source.",
+      "Keep the base dish format intact and upgrade the filling, topping, sauce, or core ingredient with a real protein where appropriate.",
       "Adjust quantities and steps for the higher-protein version.",
       "Update title, summary, and protein-aware tags if helpful.",
     ],
-    focusedTerms: PROTEIN_TERMS,
   },
   spicy: {
     key: "spicy",
@@ -201,7 +165,6 @@ const INTENT_CONTRACTS = {
       "Balance spice with acid, fat, sweetness, or freshness where needed.",
       "Update steps so the heat source is cooked, bloomed, finished, or served correctly.",
     ],
-    focusedTerms: HEAT_TERMS,
   },
   quick: {
     key: "quick",
@@ -211,7 +174,6 @@ const INTENT_CONTRACTS = {
       "Cut fussy prep, long marinades, long bakes, or unnecessary steps.",
       "Keep the recipe coherent and weeknight-practical.",
     ],
-    requiresFasterTiming: true,
   },
   extra_veggies: {
     key: "extra_veggies",
@@ -220,7 +182,6 @@ const INTENT_CONTRACTS = {
       "Add vegetables that make sense for the dish.",
       "Adjust seasoning, moisture, and cooking steps so the added vegetables do not water down the recipe.",
     ],
-    focusedTerms: VEGETABLE_TERMS,
   },
   low_carb: {
     key: "low_carb",
@@ -229,7 +190,6 @@ const INTENT_CONTRACTS = {
       "Reduce or replace starch-heavy ingredients where it makes culinary sense.",
       "Update steps and serving format to match the lower-carb version.",
     ],
-    focusedTerms: STARCH_TERMS,
   },
   crispy: {
     key: "crispy",
@@ -238,7 +198,6 @@ const INTENT_CONTRACTS = {
       "Add crunch or crisp texture through technique or ingredient choice.",
       "Update steps with the exact moment and method for getting the texture.",
     ],
-    focusedTerms: CRISP_TERMS,
   },
   healthier: {
     key: "healthier",
@@ -265,7 +224,6 @@ const INTENT_CONTRACTS = {
       "Increase sweetness or fruit/dessert energy in a balanced way.",
       "Update quantities and steps so the sweetness is integrated, not just renamed.",
     ],
-    focusedTerms: SUGAR_TERMS,
   },
   budget_friendly: {
     key: "budget_friendly",
@@ -347,7 +305,6 @@ function inferIntentKeyFromPrompt(prompt) {
 }
 
 export function validateAdaptedRecipe({ baseDetail, adaptedRecipe, contract, strict = true } = {}) {
-  const resolvedContract = contract ?? getRecipeAdaptationContract("", "", "");
   const baseIngredients = normalizedIngredientRowsFromDetail(baseDetail);
   const adaptedIngredients = normalizedIngredientRowsFromRecipe(adaptedRecipe);
   const baseSteps = normalizedStepTextsFromDetail(baseDetail);
@@ -363,20 +320,7 @@ export function validateAdaptedRecipe({ baseDetail, adaptedRecipe, contract, str
   const changedQuantities = changedQuantityLines(baseIngredients, adaptedIngredients);
   const changedSteps = changedStepLines(baseSteps, adaptedSteps);
   const failures = [];
-  const baseIngredientHaystack = recipeHaystack({ ingredients: baseIngredients });
-  const adaptedIngredientHaystack = recipeHaystack({ ingredients: adaptedIngredients });
-  const adaptedFullHaystack = recipeHaystack({
-    title: adaptedRecipe?.title,
-    summary: adaptedRecipe?.summary,
-    ingredients: adaptedIngredients,
-    steps: adaptedSteps,
-    tags: [
-      ...(adaptedRecipe?.dietary_fit ?? []),
-      ...(adaptedRecipe?.dietary_tags ?? []),
-      ...(adaptedRecipe?.flavor_tags ?? []),
-    ],
-  });
-
+  const adaptedStepHaystack = adaptedSteps.join(" ");
   if (adaptedIngredients.length < 3) {
     failures.push("The adapted recipe must include at least 3 practical ingredients.");
   }
@@ -390,63 +334,20 @@ export function validateAdaptedRecipe({ baseDetail, adaptedRecipe, contract, str
     failures.push("The adaptation changed no cooking steps.");
   }
 
-  const baseForbiddenTerms = forbiddenTermsStillPresent(baseIngredientHaystack, resolvedContract.forbiddenTerms ?? [], resolvedContract.key);
-
-  if (resolvedContract.forbiddenTerms?.length && baseForbiddenTerms.length) {
-    const stillPresent = forbiddenTermsStillPresent(adaptedFullHaystack, resolvedContract.forbiddenTerms, resolvedContract.key);
-    if (stillPresent.length) {
-      failures.push(`Remove these forbidden ingredients from ingredients and steps: ${stillPresent.slice(0, 8).join(", ")}.`);
-    }
+  const placeholderIngredients = adaptedIngredients
+    .map((ingredient) => ingredient.displayName)
+    .filter((name) => GENERIC_PLACEHOLDER_INGREDIENT_TERMS.some((term) => normalizedName(name) === normalizedName(term)));
+  if (placeholderIngredients.length) {
+    failures.push(`Replace placeholder ingredient names with real groceries: ${placeholderIngredients.slice(0, 6).join(", ")}.`);
   }
 
-  if (resolvedContract.requiredReplacementTerms?.length && baseForbiddenTerms.length) {
-    if (!containsAny(adaptedIngredientHaystack, resolvedContract.requiredReplacementTerms)) {
-      failures.push(`Add a plausible replacement such as ${resolvedContract.requiredReplacementTerms.slice(0, 8).join(", ")}.`);
-    }
-  }
-
-  if (resolvedContract.replacementTerms?.length && baseForbiddenTerms.length) {
-    if (!removedIngredients.length && !containsAny(adaptedIngredientHaystack, resolvedContract.replacementTerms)) {
-      failures.push(`Use a clear substitution such as ${resolvedContract.replacementTerms.slice(0, 8).join(", ")}.`);
-    }
-  }
-
-  if (resolvedContract.key === "less_sugar") {
-    const baseSugarCount = countMatches(baseIngredientHaystack, SUGAR_TERMS);
-    const adaptedSugarCount = countMatches(adaptedIngredientHaystack, SUGAR_TERMS);
-    const changedSugarQuantity = changedQuantities.some((line) => containsAny(line, SUGAR_TERMS));
-    if (baseSugarCount > 0 && adaptedSugarCount >= baseSugarCount && !changedSugarQuantity) {
-      failures.push("Reduce or replace at least one sweetener quantity; the sugar profile still looks unchanged.");
-    }
-  }
-
-  if (resolvedContract.key === "more_protein") {
-    const baseProteinCount = countMatches(baseIngredientHaystack, PROTEIN_TERMS);
-    const adaptedProteinCount = countMatches(adaptedIngredientHaystack, PROTEIN_TERMS);
-    const changedProteinQuantity = changedQuantities.some((line) => containsAny(line, PROTEIN_TERMS));
-    if (adaptedProteinCount <= baseProteinCount && !changedProteinQuantity && !addedIngredients.some((name) => containsAny(name, PROTEIN_TERMS))) {
-      failures.push("Add or increase a plausible protein source.");
-    }
-  }
-
-  if (resolvedContract.key === "spicy" && !containsAny(adaptedFullHaystack, HEAT_TERMS)) {
-    failures.push("Add a clear heat source and reference it in the method.");
-  }
-
-  if (resolvedContract.key === "extra_veggies") {
-    const baseVegCount = countMatches(baseIngredientHaystack, VEGETABLE_TERMS);
-    const adaptedVegCount = countMatches(adaptedIngredientHaystack, VEGETABLE_TERMS);
-    if (adaptedVegCount <= baseVegCount) {
-      failures.push("Add at least one vegetable that fits the dish.");
-    }
-  }
-
-  if (resolvedContract.key === "crispy" && !containsAny(adaptedFullHaystack, CRISP_TERMS)) {
-    failures.push("Add a concrete crispy/crunchy technique or ingredient.");
-  }
-
-  if (resolvedContract.key === "quick" && !looksFaster(baseDetail, adaptedRecipe, baseSteps, adaptedSteps)) {
-    failures.push("Shorten the timing, step count, or method enough to make the recipe clearly quicker.");
+  const addedIngredientsMissingFromSteps = addedIngredients.filter((name) => {
+    const normalized = normalizedName(name);
+    if (!normalized || containsAny(name, ["salt", "pepper", "water"])) return false;
+    return !ingredientIsMentionedInSteps(name, adaptedStepHaystack);
+  });
+  if (addedIngredientsMissingFromSteps.length) {
+    failures.push(`Use every added ingredient in the method: ${addedIngredientsMissingFromSteps.slice(0, 6).join(", ")}.`);
   }
 
   if (strict && failures.length) {
@@ -473,7 +374,7 @@ function changedQuantityLines(baseIngredients, adaptedIngredients) {
     if (!adaptedIngredient) continue;
     const baseQuantity = normalizeText(baseIngredient.quantityText);
     const adaptedQuantity = normalizeText(adaptedIngredient.quantityText);
-    if (baseQuantity && adaptedQuantity && baseQuantity !== adaptedQuantity) {
+    if (adaptedQuantity && baseQuantity !== adaptedQuantity) {
       changes.push(`${baseIngredient.displayName}: ${baseIngredient.quantityText || "unspecified"} -> ${adaptedIngredient.quantityText || "unspecified"}`);
     }
   }
@@ -491,34 +392,6 @@ function changedStepLines(baseSteps, adaptedSteps) {
     }
   }
   return changes.slice(0, 12);
-}
-
-function looksFaster(baseDetail, adaptedRecipe, baseSteps, adaptedSteps) {
-  const baseMinutes = Number(baseDetail?.cook_time_minutes ?? parseFirstInteger(baseDetail?.cook_time_text));
-  const adaptedMinutes = Number(parseFirstInteger(adaptedRecipe?.cook_time_text));
-  if (Number.isFinite(baseMinutes) && Number.isFinite(adaptedMinutes) && adaptedMinutes > 0 && adaptedMinutes < baseMinutes) {
-    return true;
-  }
-  if (baseSteps.length >= 5 && adaptedSteps.length < baseSteps.length) return true;
-  const adaptedText = adaptedSteps.join(" ");
-  return /quick|faster|weeknight|shortcut|same pan|one pan|no marinade|skip/.test(adaptedText);
-}
-
-function forbiddenTermsStillPresent(haystack, terms, contractKey = "") {
-  let text = normalizeText(haystack);
-  if (contractKey === "dairy_free") {
-    const dairyFreeExceptions = [
-      "almond milk", "oat milk", "soy milk", "coconut milk", "cashew milk", "rice milk", "hemp milk",
-      "coconut cream", "cashew cream", "oat cream", "vegan cream",
-      "vegan butter", "plant based butter", "plant butter",
-      "vegan cheese", "dairy free cheese", "nutritional yeast",
-    ];
-    for (const exception of dairyFreeExceptions) {
-      text = text.replace(new RegExp(`(^|\\s)${normalizeText(exception).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`, "g"), " ");
-    }
-    text = text.replace(/\s+/g, " ").trim();
-  }
-  return (terms ?? []).filter((term) => containsAny(text, [term]));
 }
 
 function buildEditSummary({ addedIngredients, removedIngredients, changedQuantities, changedSteps, validationNotes }) {

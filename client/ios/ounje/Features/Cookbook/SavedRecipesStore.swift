@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UIKit
 
 @MainActor
 final class SavedRecipesStore: ObservableObject {
@@ -59,6 +60,7 @@ final class SavedRecipesStore: ObservableObject {
 
     func toggle(_ recipe: DiscoverRecipeCardData) {
         let shouldSave = !isSaved(recipe)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
 
         if shouldSave {
             deletedSavedRecipeIDs.remove(recipe.id)

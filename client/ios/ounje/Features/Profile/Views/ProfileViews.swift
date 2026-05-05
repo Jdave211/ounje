@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import UserNotifications
+import UIKit
 import WebKit
 import SafariServices
 import PhotosUI
@@ -1661,7 +1662,7 @@ struct FeedbackSheet: View {
                 } label: {
                     Image(systemName: isSubmittingFeedback ? "hourglass" : "paperplane.fill")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.black.opacity(canSubmit ? 0.82 : 0.38))
+                        .foregroundStyle(canSubmit ? Color.white : OunjePalette.secondaryText.opacity(0.72))
                         .frame(width: 36, height: 36)
                         .background(
                             Circle()
@@ -1754,6 +1755,7 @@ struct FeedbackSheet: View {
             return
         }
 
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
         let draftBody = trimmedFeedbackDraft
         let outgoingPhotos = photoAttachments
         let attachmentMetadata = outgoingPhotos.map { attachment in
@@ -1913,6 +1915,7 @@ struct RecurringPrepRecipesSheet: View {
                             ForEach(recurringRecipes) { recurring in
                                 Button {
                                     guard !isUpdatingRecipeIDs.contains(recurring.recipeID) else { return }
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                     isUpdatingRecipeIDs.insert(recurring.recipeID)
                                     Task {
                                         let succeeded = await store.toggleRecurringPrepRecipe(recurring.recipe)

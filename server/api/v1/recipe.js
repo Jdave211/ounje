@@ -61,6 +61,7 @@ const DISCOVER_BROAD_POOL_CACHE_TTL_MS = 2 * 60 * 1000;
 const INTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREP_REGENERATION_INTENT_CACHE_TTL_MS = 5 * 60 * 1000;
+const RECIPE_ADAPT_VALIDATOR_MODEL = process.env.RECIPE_ADAPT_VALIDATOR_MODEL ?? "gpt-5-nano";
 
 const searchResponseCache = new Map();
 const discoverFeedCache = new Map();
@@ -365,6 +366,69 @@ const RECIPE_ADAPT_SCHEMA = {
   ],
 };
 
+const RECIPE_ADAPT_VALIDATION_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    valid: { type: "boolean" },
+    failures: {
+      type: "array",
+      maxItems: 8,
+      items: { type: "string" },
+    },
+    validation_notes: {
+      type: "array",
+      maxItems: 8,
+      items: { type: "string" },
+    },
+    edit_summary: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        changed_ingredients: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        changed_quantities: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        changed_steps: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        added_ingredients: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        removed_ingredients: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+        validation_notes: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string" },
+        },
+      },
+      required: [
+        "changed_ingredients",
+        "changed_quantities",
+        "changed_steps",
+        "added_ingredients",
+        "removed_ingredients",
+        "validation_notes",
+      ],
+    },
+  },
+  required: ["valid", "failures", "validation_notes", "edit_summary"],
+};
+
 const RECIPE_ADAPT_SYSTEM_PROMPT = `You are Ounje's recipe adaptation model.
 
 You take a base recipe, a user profile, and an adaptation goal, then return a revised recipe that still feels like a real recipe someone would cook.
@@ -382,10 +446,12 @@ Rules:
 - If repair_context is provided, directly fix every listed validation failure before returning the final recipe.
 - If asked to make it quicker, simplify ingredients and shorten steps without making it incoherent.
 - If asked to make it spicier, add heat in a cuisine-appropriate way.
-- If asked to make it higher-protein, increase protein plausibly.
+- If asked to make it higher-protein, infer the right culinary move from the base recipe and use real food, not an abstract nutrition label.
 - If asked to make it vegetarian, remove meat, seafood, gelatin, meat stock, fish sauce, and animal broth from ingredients and steps, then add a satisfying vegetarian protein or plant-forward base.
 - If asked to make it dairy-free, remove dairy ingredients and update the texture/fat source with practical substitutions.
 - If asked for less sugar, reduce sweetener quantities or replace sugary components, then update steps that rely on sweetness, glazing, caramelization, or dessert texture.
+- Every added ingredient must be a concrete grocery item and must appear in at least one cooking step with a clear action.
+- Make changes that fit the base dish format rather than adding generic nutrition labels as ingredients.
 - Use the provided flavor-pairing hints as soft guidance, not mandatory additions.
 - Return a concise change_summary and an edit_summary listing what changed across ingredients, quantities, and steps.
 - Return only valid JSON matching the schema.
@@ -393,6 +459,22 @@ Rules:
 - Ingredients must be practical grocery-list objects with display_name and quantity_text. Every ingredient needs a useful quantity_text; use "to taste" only for seasonings or finishing ingredients where exact amounts would be misleading.
 - Steps should be short, concrete, sequential, and updated to reference changed ingredients and quantities where relevant.
 - Do not mention unavailable tools or unsupported cooking methods unless they are already implied by the base recipe.`;
+
+const RECIPE_ADAPT_VALIDATOR_SYSTEM_PROMPT = `You are Ounje's semantic recipe-edit validator.
+
+You judge whether an adapted recipe truly satisfies the user's requested direction in context.
+
+Rules:
+- Return JSON only.
+- Do not use a hardcoded grocery whitelist. Infer from culinary context.
+- Check whether the adaptation changes the actual ingredients, quantities, and method, not just title or summary.
+- Reject placeholder ingredients such as "protein", "extra protein", "protein source", "vegetables", "spice", "sweetener", or similarly generic labels.
+- Added ingredients must be real groceries and must be used in the method.
+- For higher-protein requests, decide whether the adapted recipe has a real contextual protein improvement. This can be an increased base protein, a specific added protein, or a protein-rich swap, but it cannot be an abstract nutrition label.
+- For dietary requests, verify forbidden ingredients are removed from both ingredients and steps.
+- For less sugar, lighter, quick, spicy, crispy, dairy-free, vegetarian, meal-prep, and other intents, validate the actual cooking implications.
+- If invalid, return specific failures the repair pass can act on.
+- Do not include commentary outside the JSON object.`;
 
 const RECIPE_SHAPE_SYSTEM_PROMPT = `You are Ounje's recipe shaping model.
 
@@ -2541,7 +2623,11 @@ function buildAdaptedRecipeCandidate({
   rerollNonce = "",
 }) {
   const ingredients = adaptedIngredientRows(adaptedRecipe.ingredients);
-  const steps = parseStructuredInstructionSteps(adaptedRecipe.steps ?? [], ingredients).map((step, index) => ({
+  const rawSteps = adaptedRecipe.steps ?? [];
+  const stepInput = Array.isArray(rawSteps) && rawSteps.every((step) => typeof step === "string")
+    ? rawSteps.join("\n")
+    : rawSteps;
+  const steps = parseStructuredInstructionSteps(stepInput, ingredients).map((step, index) => ({
     number: step.number ?? index + 1,
     text: step.text,
     tip_text: step.tip_text ?? null,
@@ -2744,6 +2830,84 @@ async function runRecipeAdaptationCompletion({
   return JSON.parse(content);
 }
 
+async function runRecipeAdaptationSemanticValidation({
+  baseDetail,
+  adaptedRecipe,
+  adaptationPrompt,
+  profile,
+  adaptationContract,
+  deterministicValidation,
+  userID = null,
+  recipeID = null,
+}) {
+  const requestPayload = {
+    model: RECIPE_ADAPT_VALIDATOR_MODEL,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "recipe_adaptation_semantic_validation",
+        strict: true,
+        schema: RECIPE_ADAPT_VALIDATION_SCHEMA,
+      },
+    },
+    messages: [
+      { role: "system", content: RECIPE_ADAPT_VALIDATOR_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            adaptation_prompt: adaptationPrompt,
+            adaptation_contract: adaptationContract,
+            profile,
+            base_recipe: baseDetail,
+            adapted_recipe: adaptedRecipe,
+            structural_validation: deterministicValidation,
+            validator_instructions: [
+              "The model, not deterministic code, decides whether the semantic edit satisfies the user request.",
+              "If valid is false, failures must be concrete repair instructions.",
+              "Reject title-only, summary-only, or placeholder edits.",
+            ],
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+
+  if (!/^gpt-5/i.test(RECIPE_ADAPT_VALIDATOR_MODEL)) {
+    requestPayload.temperature = 0.05;
+  }
+
+  const completion = await withAIUsageContext({
+    route: "POST /v1/recipe/adapt",
+    operation: "recipe-adapt-semantic-validate",
+    user_id: userID,
+    recipe_id: recipeID,
+    intent_key: adaptationContract?.key ?? null,
+    service: "recipe-api",
+  }, () => openai.chat.completions.create(requestPayload));
+
+  const content = completion?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("The model returned no recipe adaptation validation.");
+  }
+
+  const parsed = JSON.parse(content);
+  const failures = Array.isArray(parsed.failures)
+    ? parsed.failures.map((failure) => String(failure ?? "").trim()).filter(Boolean)
+    : [];
+  const validationNotes = Array.isArray(parsed.validation_notes)
+    ? parsed.validation_notes.map((note) => String(note ?? "").trim()).filter(Boolean)
+    : [];
+  return {
+    valid: Boolean(parsed.valid) && failures.length === 0,
+    failures,
+    validationNotes,
+    editSummary: mergeEditSummaries(parsed.edit_summary ?? {}, { validation_notes: validationNotes }),
+  };
+}
+
 recipe_router.get("/recipe/adapt/history", async (req, res) => {
   const userID = String(req.query.user_id ?? "").trim();
   const recipeID = String(req.query.recipe_id ?? "").trim();
@@ -2857,7 +3021,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
         recipeID: baseDetail.id,
         repairContext: {
           validation_failures: validation.failures,
-          instruction: "Return a corrected full recipe. Do not preserve invalid ingredients, unchanged steps, or title-only edits.",
+          instruction: "Return a corrected full recipe. Do not preserve invalid ingredients, unchanged steps, or title-only edits. If a failure mentions placeholder ingredients, replace them with real named groceries that fit the dish and use them in the steps.",
         },
       });
       const repairedValidation = validateAdaptedRecipe({
@@ -2876,7 +3040,83 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
       validationStatus = "repaired";
     }
 
-    const finalEditSummary = mergeEditSummaries(adaptedRecipe.edit_summary ?? {}, validation.editSummary ?? {});
+    let semanticValidation = {
+      valid: true,
+      failures: [],
+      validationNotes: [],
+      editSummary: {},
+    };
+
+    if (strictValidation) {
+      semanticValidation = await runRecipeAdaptationSemanticValidation({
+        baseDetail,
+        adaptedRecipe,
+        adaptationPrompt,
+        profile,
+        adaptationContract,
+        deterministicValidation: validation,
+        userID: normalizedUserID,
+        recipeID: baseDetail.id,
+      });
+
+      if (!semanticValidation.valid) {
+        adaptedRecipe = await runRecipeAdaptationCompletion({
+          baseDetail,
+          adaptationPrompt,
+          profile,
+          pairingTerms,
+          styleExamples,
+          adaptationContract,
+          userID: normalizedUserID,
+          recipeID: baseDetail.id,
+          repairContext: {
+            validation_failures: [
+              ...validation.failures,
+              ...semanticValidation.failures,
+            ],
+            semantic_validation_notes: semanticValidation.validationNotes,
+            instruction: "Return a corrected full recipe. The semantic validator is the source of truth for whether the edit satisfies the user request. Fix the actual ingredients, quantities, and steps, not just title or summary.",
+          },
+        });
+
+        const repairedValidation = validateAdaptedRecipe({
+          baseDetail,
+          adaptedRecipe,
+          contract: adaptationContract,
+          strict: strictValidation,
+        });
+        if (!repairedValidation.valid) {
+          return res.status(422).json({
+            error: "Ounje could not produce a reliable recipe rewrite for that request.",
+            validation_failures: repairedValidation.failures,
+          });
+        }
+
+        const repairedSemanticValidation = await runRecipeAdaptationSemanticValidation({
+          baseDetail,
+          adaptedRecipe,
+          adaptationPrompt,
+          profile,
+          adaptationContract,
+          deterministicValidation: repairedValidation,
+          userID: normalizedUserID,
+          recipeID: baseDetail.id,
+        });
+        if (!repairedSemanticValidation.valid) {
+          return res.status(422).json({
+            error: "Ounje could not produce a reliable recipe rewrite for that request.",
+            validation_failures: repairedSemanticValidation.failures,
+          });
+        }
+
+        validation = repairedValidation;
+        semanticValidation = repairedSemanticValidation;
+        validationStatus = "repaired";
+      }
+    }
+
+    const combinedValidationSummary = mergeEditSummaries(validation.editSummary ?? {}, semanticValidation.editSummary ?? {});
+    const finalEditSummary = mergeEditSummaries(adaptedRecipe.edit_summary ?? {}, combinedValidationSummary);
     adaptedRecipe = {
       ...adaptedRecipe,
       edit_summary: finalEditSummary,
@@ -2887,8 +3127,12 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
       adaptationPrompt,
       adaptationContract,
       validationStatus,
-      computedEditSummary: validation.editSummary,
-      validationFailures: validation.failures,
+      computedEditSummary: combinedValidationSummary,
+      validationFailures: [
+        ...validation.failures,
+        ...semanticValidation.failures,
+        ...semanticValidation.validationNotes,
+      ],
       intentKey,
       intentLabel,
       rerollNonce,
@@ -2897,6 +3141,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
       userID: normalizedUserID,
       targetState: "adapted_preview",
       dedupeKey: adaptationDedupeKey({ userID, recipeID: baseDetail.id, prompt: adaptationPrompt, rerollNonce }),
+      dedupeExisting: false,
       reviewState: "adapted_preview",
       confidenceScore: 0.92,
       qualityFlags: ["recipe_adaptation_preview", `adapt_intent_${adaptationContract.key}`],
@@ -5493,7 +5738,7 @@ async function fetchRecipeStepIngredientRows(stepIDs) {
   return fetchSupabaseTableRows(
     config.stepIngredientTable,
     "id,recipe_step_id,ingredient_id,display_name,quantity_text,sort_order",
-    [`recipe_step_id=in.(${encodeURIComponent(normalizedIDs.join(","))})`],
+    [`recipe_step_id=in.(${normalizedIDs.map((id) => encodeURIComponent(id)).join(",")})`],
     ["recipe_step_id.asc", "sort_order.asc"]
   );
 }
