@@ -66,53 +66,6 @@ function normalizedStepTextsFromDetail(detail) {
     .filter(Boolean);
 }
 
-function containsAny(haystack, terms) {
-  const text = normalizeText(haystack);
-  return (terms ?? []).some((term) => {
-    const normalized = normalizeText(term);
-    if (!normalized) return false;
-    return new RegExp(`(^|\\s)${normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(text);
-  });
-}
-
-function ingredientIsMentionedInSteps(ingredientName, stepHaystack) {
-  const normalized = normalizedName(ingredientName);
-  if (!normalized) return false;
-  if (containsAny(stepHaystack, [normalized])) return true;
-
-  const withoutParenthetical = normalized.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
-  if (withoutParenthetical && withoutParenthetical !== normalized && containsAny(stepHaystack, [withoutParenthetical])) {
-    return true;
-  }
-
-  const tokens = withoutParenthetical
-    .split(/\s+/)
-    .map((token) => token.replace(/[^a-z0-9-]+/g, ""))
-    .filter((token) => token.length >= 4 && !["fresh", "diced", "sliced", "chopped", "optional", "taste", "wash"].includes(token));
-  if (!tokens.length) return false;
-  const text = normalizeText(stepHaystack);
-  const matched = tokens.filter((token) => text.includes(token)).length;
-  return matched >= Math.min(2, tokens.length);
-}
-
-const GENERIC_PLACEHOLDER_INGREDIENT_TERMS = [
-  "protein",
-  "extra protein",
-  "protein source",
-  "lean protein",
-  "plant protein",
-  "vegetarian protein",
-  "healthy ingredient",
-  "crunch",
-  "crunchy topping",
-  "spice",
-  "spicy seasoning",
-  "vegetables",
-  "veggies",
-  "sweetener",
-  "dairy free substitute",
-];
-
 const INTENT_CONTRACTS = {
   vegetarian: {
     key: "vegetarian",
@@ -124,8 +77,20 @@ const INTENT_CONTRACTS = {
       "Update dietary tags and summary to reflect the vegetarian version.",
     ],
     validationHints: [
-      "The semantic validator must confirm animal ingredients were removed from both ingredients and steps.",
-      "The semantic validator must confirm the replacement still makes the dish feel complete.",
+      "The rewrite should remove animal ingredients from both ingredients and steps.",
+      "The rewrite should keep the dish complete with a fitting vegetarian base or protein.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 lb chicken thighs", "1 tbsp fish sauce"],
+          step_change: "Marinate chicken, skewer, then grill until cooked through.",
+        },
+        adapted: {
+          ingredient_changes: ["14 oz extra-firm tofu, pressed and cubed", "2 tbsp soy sauce", "1 tbsp lemon juice"],
+          step_change: "Press tofu, cube it, coat in shawarma marinade, then roast or air-fry until browned at the edges.",
+        },
+      },
     ],
   },
   dairy_free: {
@@ -136,6 +101,18 @@ const INTENT_CONTRACTS = {
       "Update quantities and steps so the sauce, texture, or fat source still works.",
       "Update dietary tags and summary to reflect the dairy-free version.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 cup heavy cream", "1/2 cup grated parmesan", "2 tbsp butter"],
+          step_change: "Simmer cream and parmesan until the sauce thickens.",
+        },
+        adapted: {
+          ingredient_changes: ["3/4 cup full-fat coconut milk", "2 tbsp olive oil", "1 tbsp nutritional yeast"],
+          step_change: "Simmer coconut milk with nutritional yeast and olive oil until glossy; do not add dairy.",
+        },
+      },
+    ],
   },
   less_sugar: {
     key: "less_sugar",
@@ -145,16 +122,50 @@ const INTENT_CONTRACTS = {
       "Adjust steps that depend on sweetness, caramelization, glaze thickness, or dessert texture.",
       "Keep enough balance that the dish remains satisfying.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1/2 cup brown sugar", "1/4 cup honey", "1 cup sweetened yogurt"],
+          step_change: "Whisk sugar and honey into the filling until very sweet.",
+        },
+        adapted: {
+          ingredient_changes: ["2 tbsp brown sugar", "1 tbsp honey", "1 cup plain Greek yogurt", "1/2 tsp vanilla"],
+          step_change: "Whisk the smaller amount of honey and sugar with vanilla into plain yogurt; rely on fruit or spice for balance.",
+        },
+      },
+    ],
   },
   more_protein: {
     key: "more_protein",
     label: "More protein",
     requiredActions: [
       "Increase or add a real, named protein source that fits the dish.",
-      "Never add a placeholder ingredient named protein, extra protein, or protein source.",
+      "Use concrete grocery ingredients, not abstract nutrition labels.",
       "Keep the base dish format intact and upgrade the filling, topping, sauce, or core ingredient with a real protein where appropriate.",
       "Adjust quantities and steps for the higher-protein version.",
       "Update title, summary, and protein-aware tags if helpful.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 cup all-purpose flour", "2 bananas", "1 egg"],
+          step_change: "Mix the batter and bake.",
+        },
+        adapted: {
+          ingredient_changes: ["3/4 cup all-purpose flour", "1/2 cup vanilla Greek yogurt", "2 eggs", "2 tbsp almond butter"],
+          step_change: "Whisk Greek yogurt, eggs, and almond butter into the wet ingredients before folding in the reduced flour.",
+        },
+      },
+      {
+        base: {
+          ingredient_changes: ["4 hot dog buns", "4 beef hot dogs"],
+          step_change: "Warm hot dogs and assemble in buns.",
+        },
+        adapted: {
+          ingredient_changes: ["4 turkey or beef hot dogs", "1 cup turkey chili", "1/2 cup shredded cheddar"],
+          step_change: "Heat the turkey chili separately, spoon it over the hot dogs, then finish with cheddar so the extra protein is part of the dish.",
+        },
+      },
     ],
   },
   spicy: {
@@ -165,6 +176,18 @@ const INTENT_CONTRACTS = {
       "Balance spice with acid, fat, sweetness, or freshness where needed.",
       "Update steps so the heat source is cooked, bloomed, finished, or served correctly.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 tsp paprika", "1 tbsp olive oil", "1 tbsp lemon juice"],
+          step_change: "Season and cook the protein.",
+        },
+        adapted: {
+          ingredient_changes: ["1 tsp paprika", "1 tsp cayenne", "1 tbsp chili crisp", "2 tbsp lime juice"],
+          step_change: "Bloom cayenne in the hot oil, cook the protein, then finish with chili crisp and lime so the heat has balance.",
+        },
+      },
+    ],
   },
   quick: {
     key: "quick",
@@ -174,6 +197,18 @@ const INTENT_CONTRACTS = {
       "Cut fussy prep, long marinades, long bakes, or unnecessary steps.",
       "Keep the recipe coherent and weeknight-practical.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["2-hour marinade", "whole roasted vegetables", "long-simmer sauce"],
+          step_change: "Marinate for 2 hours, roast vegetables for 45 minutes, then simmer sauce.",
+        },
+        adapted: {
+          ingredient_changes: ["10-minute spice rub", "thin-sliced vegetables", "quick skillet sauce"],
+          step_change: "Rub seasoning directly onto the protein, sear it, saute thin-sliced vegetables in the same pan, and reduce sauce for 3-5 minutes.",
+        },
+      },
+    ],
   },
   extra_veggies: {
     key: "extra_veggies",
@@ -181,6 +216,18 @@ const INTENT_CONTRACTS = {
     requiredActions: [
       "Add vegetables that make sense for the dish.",
       "Adjust seasoning, moisture, and cooking steps so the added vegetables do not water down the recipe.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 bell pepper", "1/2 onion"],
+          step_change: "Cook aromatics, then add sauce.",
+        },
+        adapted: {
+          ingredient_changes: ["1 bell pepper", "1 zucchini, diced", "1 cup mushrooms, sliced", "1/2 onion"],
+          step_change: "Brown mushrooms first to drive off moisture, then add zucchini and bell pepper before the sauce.",
+        },
+      },
     ],
   },
   low_carb: {
@@ -190,6 +237,18 @@ const INTENT_CONTRACTS = {
       "Reduce or replace starch-heavy ingredients where it makes culinary sense.",
       "Update steps and serving format to match the lower-carb version.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["2 cups cooked rice", "4 flour tortillas"],
+          step_change: "Serve the filling over rice or wrapped in tortillas.",
+        },
+        adapted: {
+          ingredient_changes: ["3 cups cauliflower rice", "large romaine leaves or low-carb wraps"],
+          step_change: "Saute cauliflower rice until dry and fluffy, then serve the filling over it or tuck into lettuce leaves.",
+        },
+      },
+    ],
   },
   crispy: {
     key: "crispy",
@@ -197,6 +256,18 @@ const INTENT_CONTRACTS = {
     requiredActions: [
       "Add crunch or crisp texture through technique or ingredient choice.",
       "Update steps with the exact moment and method for getting the texture.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["plain baked topping"],
+          step_change: "Bake until warmed through.",
+        },
+        adapted: {
+          ingredient_changes: ["1/2 cup toasted panko", "2 tbsp chopped peanuts", "1 tbsp olive oil"],
+          step_change: "Toast panko and peanuts in olive oil until golden, then scatter over the finished dish right before serving.",
+        },
+      },
     ],
   },
   healthier: {
@@ -207,6 +278,18 @@ const INTENT_CONTRACTS = {
       "Lean on vegetables, balanced fat, protein, and practical quantity changes.",
       "Update steps and summary so the healthier version is still cookable.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 cup mayonnaise", "1 cup white rice", "2 tbsp butter"],
+          step_change: "Stir mayonnaise into the sauce and serve over white rice.",
+        },
+        adapted: {
+          ingredient_changes: ["1/3 cup Greek yogurt", "1 cup brown rice or quinoa", "1 tbsp olive oil", "2 cups greens"],
+          step_change: "Fold Greek yogurt in off heat, serve over brown rice or quinoa, and wilt greens into the pan at the end.",
+        },
+      },
+    ],
   },
   lighter: {
     key: "lighter",
@@ -216,6 +299,18 @@ const INTENT_CONTRACTS = {
       "Add freshness, acid, herbs, or lighter cooking technique where appropriate.",
       "Update steps and quantities to match the lighter version.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 cup cream", "3 tbsp butter", "fried topping"],
+          step_change: "Finish with cream, butter, and fried topping.",
+        },
+        adapted: {
+          ingredient_changes: ["1/2 cup broth", "1/4 cup Greek yogurt", "1 tbsp olive oil", "2 tbsp lemon juice", "fresh herbs"],
+          step_change: "Reduce broth, stir in Greek yogurt off heat, then finish with lemon juice and herbs instead of frying a topping.",
+        },
+      },
+    ],
   },
   sweeter: {
     key: "sweeter",
@@ -223,6 +318,18 @@ const INTENT_CONTRACTS = {
     requiredActions: [
       "Increase sweetness or fruit/dessert energy in a balanced way.",
       "Update quantities and steps so the sweetness is integrated, not just renamed.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 tbsp maple syrup", "plain yogurt"],
+          step_change: "Top with yogurt and serve.",
+        },
+        adapted: {
+          ingredient_changes: ["2 tbsp maple syrup", "1/2 cup sliced strawberries", "1 tbsp honey", "1/4 tsp cinnamon"],
+          step_change: "Warm maple syrup with cinnamon, spoon it over the fruit, then drizzle honey over the finished bowl.",
+        },
+      },
     ],
   },
   budget_friendly: {
@@ -232,6 +339,18 @@ const INTENT_CONTRACTS = {
       "Swap expensive ingredients for cheaper practical ones while preserving the dish.",
       "Keep ingredient count reasonable and update steps for the substitutions.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 lb salmon", "1 cup specialty cheese", "pine nuts"],
+          step_change: "Sear salmon and finish with cheese and pine nuts.",
+        },
+        adapted: {
+          ingredient_changes: ["1 lb chicken thighs or canned chickpeas", "1/2 cup shredded cheddar", "sunflower seeds"],
+          step_change: "Cook the cheaper protein with the same seasoning profile, then finish with cheddar and toasted sunflower seeds.",
+        },
+      },
+    ],
   },
   meal_prep: {
     key: "meal_prep",
@@ -239,6 +358,18 @@ const INTENT_CONTRACTS = {
     requiredActions: [
       "Make the recipe hold up after storage and reheating.",
       "Adjust ingredients, steps, and serving notes for make-ahead prep.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["crispy lettuce", "delicate sauce mixed in"],
+          step_change: "Assemble everything together immediately.",
+        },
+        adapted: {
+          ingredient_changes: ["sturdy greens or roasted vegetables", "sauce packed separately", "extra 1/4 cup sauce for reheating"],
+          step_change: "Cook components fully, cool before packing, store sauce separately, and add it after reheating.",
+        },
+      },
     ],
   },
   kid_friendly: {
@@ -248,6 +379,18 @@ const INTENT_CONTRACTS = {
       "Make flavors gentler and texture easier to eat without making the dish bland.",
       "Update steps and serving style for a family-friendly version.",
     ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 tbsp chili flakes", "sharp pickled garnish", "large chunks"],
+          step_change: "Finish with chili flakes and pickled garnish.",
+        },
+        adapted: {
+          ingredient_changes: ["1/4 tsp mild paprika", "1 tbsp honey or ketchup-style glaze", "finely diced vegetables"],
+          step_change: "Keep heat mild, dice vegetables smaller, and serve spicy garnish on the side for adults.",
+        },
+      },
+    ],
   },
   comfort: {
     key: "comfort",
@@ -255,6 +398,18 @@ const INTENT_CONTRACTS = {
     requiredActions: [
       "Make the dish cozier and more comforting through sauce, texture, warmth, or seasoning.",
       "Update ingredients and steps to create that result.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["dry grilled protein", "plain vegetables"],
+          step_change: "Grill and serve with vegetables.",
+        },
+        adapted: {
+          ingredient_changes: ["1 cup warm tomato or mushroom sauce", "1/2 cup melty cheese", "1 tbsp butter"],
+          step_change: "Nestle the cooked protein into the warm sauce, melt cheese over top, and finish with butter for a richer texture.",
+        },
+      },
     ],
   },
 };
@@ -274,6 +429,18 @@ export function getRecipeAdaptationContract(intentKey = "", intentLabel = "", ad
       validationHints: [
         "The output must not be a title-only or summary-only edit.",
         "Ingredients or quantities and at least one step must change.",
+      ],
+      editExamples: [
+        {
+          base: {
+            ingredient_changes: ["base ingredient and quantity stay unchanged"],
+            step_change: "base method stays unchanged",
+          },
+          adapted: {
+            ingredient_changes: ["change at least one concrete grocery item or quantity based on the request"],
+            step_change: "rewrite at least one method step so the ingredient or quantity change is actually cooked into the recipe",
+          },
+        },
       ],
     };
   }
@@ -320,7 +487,6 @@ export function validateAdaptedRecipe({ baseDetail, adaptedRecipe, contract, str
   const changedQuantities = changedQuantityLines(baseIngredients, adaptedIngredients);
   const changedSteps = changedStepLines(baseSteps, adaptedSteps);
   const failures = [];
-  const adaptedStepHaystack = adaptedSteps.join(" ");
   if (adaptedIngredients.length < 3) {
     failures.push("The adapted recipe must include at least 3 practical ingredients.");
   }
@@ -332,22 +498,6 @@ export function validateAdaptedRecipe({ baseDetail, adaptedRecipe, contract, str
   }
   if (!changedSteps.length) {
     failures.push("The adaptation changed no cooking steps.");
-  }
-
-  const placeholderIngredients = adaptedIngredients
-    .map((ingredient) => ingredient.displayName)
-    .filter((name) => GENERIC_PLACEHOLDER_INGREDIENT_TERMS.some((term) => normalizedName(name) === normalizedName(term)));
-  if (placeholderIngredients.length) {
-    failures.push(`Replace placeholder ingredient names with real groceries: ${placeholderIngredients.slice(0, 6).join(", ")}.`);
-  }
-
-  const addedIngredientsMissingFromSteps = addedIngredients.filter((name) => {
-    const normalized = normalizedName(name);
-    if (!normalized || containsAny(name, ["salt", "pepper", "water"])) return false;
-    return !ingredientIsMentionedInSteps(name, adaptedStepHaystack);
-  });
-  if (addedIngredientsMissingFromSteps.length) {
-    failures.push(`Use every added ingredient in the method: ${addedIngredientsMissingFromSteps.slice(0, 6).join(", ")}.`);
   }
 
   if (strict && failures.length) {

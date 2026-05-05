@@ -1511,28 +1511,6 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    private func syncLatestPlanRecurringRecipeIDs(persistRemote: Bool = false) {
-        guard var latestPlan else { return }
-
-        let enabledRecipeIDs = recurringPrepRecipes
-            .filter(\.isEnabled)
-            .map(\.recipeID)
-        let normalizedEnabledRecipeIDs = enabledRecipeIDs.isEmpty ? nil : enabledRecipeIDs
-
-        guard latestPlan.recurringRecipeIDs != normalizedEnabledRecipeIDs else { return }
-        latestPlan.recurringRecipeIDs = normalizedEnabledRecipeIDs
-        self.latestPlan = latestPlan
-        planHistory.removeAll { $0.id == latestPlan.id }
-        planHistory.insert(latestPlan, at: 0)
-        if planHistory.count > 12 {
-            planHistory = Array(planHistory.prefix(12))
-        }
-        saveHistory()
-
-        guard persistRemote else { return }
-        persistMealPrepCycleIfPossible(latestPlan)
-    }
-
     private func cachePrepRecipeOverride(_ override: PrepRecipeOverride) {
         guard !override.recipe.isLegacySeedRecipe else { return }
 
@@ -1584,7 +1562,6 @@ final class MealPlanningAppStore: ObservableObject {
             recurringPrepRecipes[existingIndex] = existing
             recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
             saveRecurringPrepRecipesCache()
-            syncLatestPlanRecurringRecipeIDs(persistRemote: false)
 
             do {
                 let session = await refreshAuthSessionIfNeeded() ?? fallbackSession
@@ -1595,7 +1572,6 @@ final class MealPlanningAppStore: ObservableObject {
             } catch {
                 recurringPrepRecipes = previousRecipes
                 saveRecurringPrepRecipesCache()
-                syncLatestPlanRecurringRecipeIDs(persistRemote: false)
                 print("[MealPlanningAppStore] Failed to save recurring prep toggle for \(recipe.id): \(error)")
                 return false
             }
@@ -1611,7 +1587,6 @@ final class MealPlanningAppStore: ObservableObject {
             recurringPrepRecipes.insert(recurring, at: 0)
             recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
             saveRecurringPrepRecipesCache()
-            syncLatestPlanRecurringRecipeIDs(persistRemote: false)
 
             do {
                 let session = await refreshAuthSessionIfNeeded() ?? fallbackSession
@@ -1622,7 +1597,6 @@ final class MealPlanningAppStore: ObservableObject {
             } catch {
                 recurringPrepRecipes = previousRecipes
                 saveRecurringPrepRecipesCache()
-                syncLatestPlanRecurringRecipeIDs(persistRemote: false)
                 print("[MealPlanningAppStore] Failed to save recurring prep recipe for \(recipe.id): \(error)")
                 return false
             }

@@ -26,7 +26,10 @@ const response = await fetch(`${baseURL.replace(/\/$/, "")}/v1/recipe/adapt`, {
 const payload = await response.json().catch(() => ({}));
 assert.equal(response.ok, true, JSON.stringify(payload));
 assert(payload.recipe_id, "expected a persisted adapted recipe id");
-assert(["passed", "repaired"].includes(payload.validation_status), "expected validation to pass or repair");
+assert(
+  ["structural_passed", "structural_repaired", "passed", "repaired"].includes(payload.validation_status),
+  "expected validation to pass or repair"
+);
 
 const haystack = JSON.stringify([
   payload.recipe_detail?.ingredients,

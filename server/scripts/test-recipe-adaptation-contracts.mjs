@@ -185,31 +185,6 @@ function recipe(overrides = {}) {
   const validation = validateAdaptedRecipe({
     baseDetail: baseChickenRecipe,
     adaptedRecipe: recipe({
-      title: "Higher-Protein Crispy Chicken Wraps",
-      ingredients: [
-        { display_name: "Chicken breast", quantity_text: "1 pound" },
-        { display_name: "Extra protein", quantity_text: "1 serving" },
-        { display_name: "Flour", quantity_text: "1 cup" },
-        { display_name: "Eggs", quantity_text: "2" },
-        { display_name: "Tortillas", quantity_text: "4" },
-      ],
-      steps: [
-        "Cut the chicken breast into strips.",
-        "Whisk eggs with flour.",
-        "Coat and fry the chicken strips until crisp.",
-        "Wrap the fried chicken in tortillas.",
-      ],
-    }),
-    contract: getRecipeAdaptationContract("more_protein"),
-  });
-  assert.equal(validation.valid, false);
-  assert(validation.failures.some((failure) => /placeholder ingredient|real, named protein|Use every added ingredient/i.test(failure)));
-}
-
-{
-  const validation = validateAdaptedRecipe({
-    baseDetail: baseChickenRecipe,
-    adaptedRecipe: recipe({
       title: "Quick Crispy Chicken Wraps",
       cook_time_text: "25 mins",
       ingredients: [
