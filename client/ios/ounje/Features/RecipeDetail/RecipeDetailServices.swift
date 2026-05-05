@@ -842,14 +842,18 @@ final class RecipeDetailViewModel: ObservableObject {
     @Published private(set) var hasLoadedSimilarRecipes = false
     @Published private(set) var errorMessage: String?
     private var similarLoadTask: Task<Void, Never>?
+    private let initialDetailID: String?
 
     init(initialDetail: RecipeDetailData? = nil) {
         self.detail = initialDetail
+        self.initialDetailID = initialDetail?.id
     }
 
     func load(for recipeID: String, similarFallbackRecipeID: String? = nil) async {
-        if detail?.id == recipeID {
-            scheduleSimilarRecipesLoad(for: recipeID, fallbackRecipeID: similarFallbackRecipeID)
+        if let detail,
+           detail.id == recipeID || detail.id == initialDetailID {
+            let fallbackID = similarFallbackRecipeID ?? (detail.id == recipeID ? nil : recipeID)
+            scheduleSimilarRecipesLoad(for: detail.id, fallbackRecipeID: fallbackID)
             return
         }
 
@@ -865,8 +869,10 @@ final class RecipeDetailViewModel: ObservableObject {
         }
 
         do {
-            detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
-            scheduleSimilarRecipesLoad(for: recipeID, fallbackRecipeID: similarFallbackRecipeID)
+            let fetchedDetail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
+            detail = fetchedDetail
+            let fallbackID = similarFallbackRecipeID ?? (fetchedDetail.id == recipeID ? nil : recipeID)
+            scheduleSimilarRecipesLoad(for: fetchedDetail.id, fallbackRecipeID: fallbackID)
         } catch {
             similarRecipes = []
             hasLoadedSimilarRecipes = false

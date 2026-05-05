@@ -5295,10 +5295,28 @@ private enum RecipeImportProgressStage: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .fetching: return "Fetching"
-        case .readingVideo: return "Reading video"
-        case .buildingRecipe: return "Building recipe"
+        case .fetching: return "Queued"
+        case .readingVideo: return "Reading"
+        case .buildingRecipe: return "Writing"
         case .saved: return "Saved"
+        }
+    }
+
+    var displayTitle: String {
+        switch self {
+        case .fetching: return "Queued for import"
+        case .readingVideo: return "Reading the source"
+        case .buildingRecipe: return "Writing the recipe"
+        case .saved: return "Saved to Cookbook"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .fetching: return "tray.and.arrow.down.fill"
+        case .readingVideo: return "text.viewfinder"
+        case .buildingRecipe: return "list.bullet.clipboard.fill"
+        case .saved: return "checkmark.seal.fill"
         }
     }
 
@@ -5329,13 +5347,13 @@ private struct SharedRecipeImportProgressCard: View {
     private var subtitle: String {
         switch currentStage {
         case .fetching:
-            return "Ounje is pulling the source into the recipe worker."
+            return "Ounje has the link and the worker will pick it up."
         case .readingVideo:
-            return "The video and caption are being interpreted."
+            return "Caption, video, and food cues are being read."
         case .buildingRecipe:
-            return "Ingredients, steps, and save-ready details are being shaped."
+            return "Ingredients, steps, and quantities are being shaped."
         case .saved:
-            return "The recipe is ready in your cookbook."
+            return "The recipe is ready to open."
         }
     }
 
@@ -5374,67 +5392,163 @@ private struct SharedRecipeImportProgressCard: View {
         }
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
                 isPulsing = true
             }
         }
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: currentStage == .saved ? "checkmark.circle.fill" : "square.and.arrow.down")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(OunjePalette.accent)
-                    .frame(width: 22, height: 22)
-                    .scaleEffect(isPulsing && !reduceMotion && currentStage != .saved ? 1.06 : 1)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(OunjePalette.accent.opacity(currentStage == .saved ? 0.24 : 0.15))
+                        .frame(width: 34, height: 34)
+                    Circle()
+                        .stroke(OunjePalette.accent.opacity(isPulsing && !reduceMotion && currentStage != .saved ? 0.58 : 0.24), lineWidth: 1)
+                        .frame(width: 34, height: 34)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Importing recipe")
-                        .sleeDisplayFont(21)
-                        .foregroundStyle(OunjePalette.primaryText)
+                    Image(systemName: currentStage.symbolName)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(currentStage == .saved ? OunjePalette.accent : OunjePalette.softCream)
+                        .scaleEffect(isPulsing && !reduceMotion && currentStage != .saved ? 1.08 : 1)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("Importing recipe")
+                            .sleeDisplayFont(20)
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .lineLimit(1)
+
+                        Text(currentStage.displayTitle)
+                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .foregroundStyle(currentStage == .saved ? OunjePalette.background : OunjePalette.softCream.opacity(0.82))
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .frame(height: 21)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(currentStage == .saved ? OunjePalette.accent : OunjePalette.surface.opacity(0.9))
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                                    )
+                            )
+                    }
+
                     Text(subtitle)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(OunjePalette.secondaryText)
                         .lineLimit(2)
                 }
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 0)
+            }
 
-                Text(currentStage.title)
-                    .font(.system(size: 10, weight: .black, design: .rounded))
-                    .foregroundStyle(OunjePalette.softCream.opacity(0.78))
+            progressBar
+
+            HStack(spacing: 7) {
+                Image(systemName: "link")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.85))
+                Text(sourceLabel)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.86))
                     .lineLimit(1)
+                Spacer(minLength: 0)
             }
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous)
-                        .fill(OunjePalette.stroke.opacity(0.8))
-
-                    Capsule(style: .continuous)
-                        .fill(OunjePalette.accent)
-                        .frame(width: max(18, proxy.size.width * progressFraction))
-                        .shadow(color: OunjePalette.accent.opacity(isPulsing && !reduceMotion ? 0.38 : 0.12), radius: 8, x: 0, y: 0)
-                }
-            }
-            .frame(height: 4)
-
-            Text(sourceLabel)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(OunjePalette.secondaryText.opacity(0.8))
-                .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(OunjePalette.background.opacity(0.42))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.85), lineWidth: 1)
+                    )
+            )
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(OunjePalette.panel.opacity(0.58))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            OunjePalette.panel.opacity(0.88),
+                            OunjePalette.surface.opacity(0.62)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(OunjePalette.accent.opacity(0.22), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(OunjePalette.accent.opacity(currentStage == .saved ? 0.28 : 0.18), lineWidth: 1)
                 )
         )
+    }
+
+    private var progressBar: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 999, style: .continuous)
+                        .fill(OunjePalette.background.opacity(0.54))
+
+                    RoundedRectangle(cornerRadius: 999, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    OunjePalette.accent.opacity(0.92),
+                                    OunjePalette.softCream.opacity(0.9)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(20, proxy.size.width * progressFraction))
+                        .shadow(color: OunjePalette.accent.opacity(isPulsing && !reduceMotion ? 0.24 : 0.08), radius: 8, x: 0, y: 0)
+                }
+            }
+            .frame(height: 5)
+
+            HStack(spacing: 0) {
+                ForEach(RecipeImportProgressStage.allCases, id: \.self) { stage in
+                    stageMarker(for: stage)
+                    if stage != RecipeImportProgressStage.allCases.last {
+                        Rectangle()
+                            .fill(stage.rawValue < currentStage.rawValue ? OunjePalette.accent.opacity(0.62) : OunjePalette.stroke)
+                            .frame(height: 1)
+                            .padding(.horizontal, 6)
+                    }
+                }
+            }
+        }
+    }
+
+    private func stageMarker(for stage: RecipeImportProgressStage) -> some View {
+        let isComplete = stage.rawValue < currentStage.rawValue || currentStage == .saved
+        let isCurrent = stage == currentStage && currentStage != .saved
+
+        return VStack(spacing: 5) {
+            Circle()
+                .fill(isComplete ? OunjePalette.accent : isCurrent ? OunjePalette.softCream : OunjePalette.surface)
+                .frame(width: isCurrent ? 8 : 6, height: isCurrent ? 8 : 6)
+                .overlay(
+                    Circle()
+                        .stroke(isCurrent ? OunjePalette.primaryText.opacity(0.34) : Color.clear, lineWidth: 1)
+                )
+                .scaleEffect(isCurrent && isPulsing && !reduceMotion ? 1.18 : 1)
+
+            Text(stage.title)
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(stage.rawValue <= currentStage.rawValue ? OunjePalette.primaryText.opacity(0.76) : OunjePalette.secondaryText.opacity(0.58))
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
