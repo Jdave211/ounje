@@ -11,10 +11,10 @@ import dotenv from "dotenv";
 import { fileFromPath } from "openai";
 import { nanoid } from "nanoid";
 import { createWorker, OEM } from "tesseract.js";
-import ytdl from "youtube-dl-exec";
 import { expandFlavorTerms, extractIngredientSignals, scoreFlavorAlignment } from "./flavorgraph.js";
 import { findRecipeStyleExamples } from "./recipe-corpus.js";
 import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
+import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
@@ -54,6 +54,10 @@ const RECIPE_SEARCH_MAX_LINKS = Math.max(2, Math.min(Number.parseInt(process.env
 const RECIPE_INGESTION_WORKER_CONCURRENCY = Math.max(
   1,
   Number.parseInt(process.env.RECIPE_INGESTION_WORKER_CONCURRENCY ?? "2", 10) || 2
+);
+const RECIPE_INGESTION_HEARTBEAT_MS = Math.max(
+  15_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_HEARTBEAT_MS ?? "60000", 10) || 60_000
 );
 const IMAGE_TEMPLATE_DIR = path.resolve(__dirname, "../../image_gen_templates");
 const execFile = promisify(execFileCallback);
@@ -248,8 +252,8 @@ Rules:
 - Do not include commentary outside the JSON object.`;
 
 function assertSupabaseConfig() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    throw new Error("Recipe ingestion requires SUPABASE_URL and SUPABASE_ANON_KEY.");
+  if (!SUPABASE_URL || !(SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY)) {
+    throw new Error("Recipe ingestion requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY.");
   }
 }
 
@@ -755,6 +759,41 @@ async function patchRecipeIngestionJobRow(jobID, payload) {
       disallowedColumns.add(missingColumn);
     }
   }
+}
+
+export async function heartbeatRecipeIngestionJob({ jobID, workerID } = {}) {
+  const normalizedJobID = normalizeText(jobID);
+  const normalizedWorkerID = normalizeText(workerID);
+  if (!normalizedJobID || !normalizedWorkerID) return false;
+
+  await patchRows(
+    "recipe_ingestion_jobs",
+    [
+      `id=eq.${encodeURIComponent(normalizedJobID)}`,
+      `worker_id=eq.${encodeURIComponent(normalizedWorkerID)}`,
+      "status=in.(processing,fetching,parsing,normalized)",
+    ],
+    { leased_at: nowIso() },
+    { prefer: "return=minimal" }
+  );
+  return true;
+}
+
+function startRecipeIngestionHeartbeat(jobID, workerID) {
+  const normalizedJobID = normalizeText(jobID);
+  const normalizedWorkerID = normalizeText(workerID);
+  if (!normalizedJobID || !normalizedWorkerID) return () => {};
+
+  const interval = setInterval(() => {
+    heartbeatRecipeIngestionJob({
+      jobID: normalizedJobID,
+      workerID: normalizedWorkerID,
+    }).catch((error) => {
+      console.warn(`[recipe-ingestion] heartbeat failed job=${normalizedJobID}:`, error.message);
+    });
+  }, RECIPE_INGESTION_HEARTBEAT_MS);
+  interval.unref?.();
+  return () => clearInterval(interval);
 }
 
 function normalizeIngredientMatchSignature(value) {
@@ -1351,11 +1390,12 @@ function buildSourceProvenanceRecord(source, { reviewState = null, confidenceSco
 async function supabaseRequest(pathname, { method = "GET", body = null, headers = {} } = {}) {
   assertSupabaseConfig();
   const url = pathname.startsWith("http") ? pathname : `${SUPABASE_URL}${pathname}`;
+  const supabaseRestKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   const request = {
     method,
     headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      apikey: supabaseRestKey,
+      Authorization: `Bearer ${supabaseRestKey}`,
       Accept: "application/json",
       ...headers,
     },
@@ -5642,7 +5682,9 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     throw new Error("Recipe ingestion job could not be found.");
   }
 
-  return withAIUsageContext({
+  const stopHeartbeat = startRecipeIngestionHeartbeat(existingJob.id, workerID);
+  try {
+    return await withAIUsageContext({
     service: "recipe-ingestion",
     route: "worker:recipe-ingestion",
     operation: "recipe_ingestion_job",
@@ -5944,6 +5986,9 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     throw error;
   }
   });
+  } finally {
+    stopHeartbeat();
+  }
 }
 
 export async function runRecipeIngestionWorkerBatch({ workerID = `daemon_${nanoid(8)}`, batchSize = 3 } = {}) {

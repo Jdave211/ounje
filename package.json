@@ -18,6 +18,7 @@
     "recipes:classify-discover": "node server/scripts/classify_discover_brackets.mjs",
     "recipes:backfill-measurements": "node server/scripts/backfill_recipe_measurements.mjs",
     "recipes:ingestion-worker": "node server/scripts/recipe_ingestion_worker.mjs",
+    "recipes:ingestion-worker:vm": "node server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 1 --idle-sleep-ms 4000",
     "recipes:ingestion-once": "node server/scripts/recipe_ingestion_worker.mjs --once",
     "recipes:ingestion-smoke-ai-logging": "node server/scripts/smoke-recipe-ingestion-ai-logging.mjs",
     "recipes:adaptation-contracts": "node server/scripts/test-recipe-adaptation-contracts.mjs",
@@ -41,8 +42,7 @@
     "nanoid": "^5.0.7",
     "openai": "^4.24.1",
     "playwright": "^1.59.1",
-    "tesseract.js": "^7.0.0",
-    "youtube-dl-exec": "^3.1.4"
+    "tesseract.js": "^7.0.0"
   },
   "nodemonConfig": {
     "watch": [
@@ -70,5 +70,8 @@
   "bugs": {
     "url": "https://github.com/Jdave211/ounje/issues"
   },
-  "homepage": "https://github.com/Jdave211/ounje#readme"
+  "homepage": "https://github.com/Jdave211/ounje#readme",
+  "optionalDependencies": {
+    "youtube-dl-exec": "^3.1.4"
+  }
 }

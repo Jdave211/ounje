@@ -671,7 +671,7 @@ struct RecipeDetailExperienceView: View {
                 recipeTitle: titleText,
                 recipeSubtitle: subtitleLine ?? summaryLine,
                 recipeID: recipeID,
-                baseImageURL: imageCandidates.first,
+                baseImageURL: presentedRecipe.recipeCard.imageURL ?? imageCandidates.first,
                 userID: store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
                 profile: store.profile,
                 onOpenCart: onOpenCart,
@@ -3102,14 +3102,11 @@ struct RecipeAdaptedPreviewCard: View {
         self.onOpen = onOpen
     }
 
-    private var imageURL: URL? {
-        if let baseImageURL {
-            return baseImageURL
+    private var imageCandidates: [URL] {
+        var seen = Set<String>()
+        return ([baseImageURL].compactMap { $0 } + result.recipeCard.imageCandidates).filter { url in
+            seen.insert(url.absoluteString).inserted
         }
-        return [result.recipeCard.imageURLString, result.recipeCard.heroImageURLString]
-            .compactMap { $0 }
-            .compactMap(URL.init(string:))
-            .first
     }
 
     var body: some View {
@@ -3130,18 +3127,10 @@ struct RecipeAdaptedPreviewCard: View {
 
                 Spacer(minLength: 0)
 
-                AsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        OunjePalette.elevated
-                    }
-                }
-                .frame(width: 62, height: 62)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                RecipeAdaptedPreviewArtwork(
+                    imageCandidates: imageCandidates,
+                    fallbackTitle: result.adaptedRecipe.title
+                )
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 19, weight: .semibold))
@@ -3168,6 +3157,56 @@ struct RecipeAdaptedPreviewCard: View {
             return "\(ingredientCount) ingredients"
         }
         return "\(cookTime), \(ingredientCount) ingredients"
+    }
+}
+
+private struct RecipeAdaptedPreviewArtwork: View {
+    let imageCandidates: [URL]
+    let fallbackTitle: String
+    @StateObject private var loader = DiscoverRecipeImageLoader()
+
+    private var loaderKey: String {
+        imageCandidates.map(\.absoluteString).joined(separator: "|")
+    }
+
+    var body: some View {
+        ZStack {
+            if let uiImage = loader.image {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if loader.isLoading {
+                ProgressView()
+                    .tint(OunjePalette.accent)
+                    .scaleEffect(0.78)
+            } else {
+                OunjePalette.elevated
+                    .overlay {
+                        Text(initials)
+                            .biroHeaderFont(15)
+                            .foregroundStyle(OunjePalette.primaryText.opacity(0.78))
+                    }
+            }
+        }
+        .frame(width: 58, height: 58)
+        .clipShape(Circle())
+        .overlay(
+            Circle()
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 7)
+        .task(id: loaderKey) {
+            await loader.load(from: imageCandidates)
+        }
+    }
+
+    private var initials: String {
+        let words = fallbackTitle
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .prefix(2)
+            .compactMap(\.first)
+        let value = String(words).uppercased()
+        return value.isEmpty ? "O" : value
     }
 }
 

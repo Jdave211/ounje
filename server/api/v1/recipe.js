@@ -1,9 +1,9 @@
 import express from "express";
 import crypto from "node:crypto";
 import dotenv from "dotenv";
-import ytdl from "youtube-dl-exec";
 import { expandFlavorTerms, scoreFlavorAlignment, suggestAdaptationPairings, extractIngredientSignals } from "../../lib/flavorgraph.js";
 import { findRecipeStyleExamples } from "../../lib/recipe-corpus.js";
+import { runYoutubeDl as ytdl } from "../../lib/youtube-dl-wrapper.js";
 import {
   getActiveRecipeRewriteModel,
   getDiscoverIntentModel,
@@ -46,6 +46,12 @@ const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 const IFRAMELY_API_KEY = process.env.IFRAMELY_API_KEY ?? "";
 const IFRAMELY_OEMBED_ENDPOINT = process.env.IFRAMELY_OEMBED_ENDPOINT ?? "https://iframe.ly/api/oembed";
+const NODE_ENV_NAME = String(process.env.NODE_ENV ?? "").trim().toLowerCase();
+const RUNTIME_ENV_NAME = String(process.env.OUNJE_RUNTIME_ENV ?? "").trim().toLowerCase();
+const IS_PRODUCTION_RUNTIME = NODE_ENV_NAME === "production" || RUNTIME_ENV_NAME === "production";
+const ALLOW_RECIPE_IMPORT_PROCESS_ENDPOINT = ["1", "true", "yes", "on"].includes(
+  String(process.env.OUNJE_ALLOW_RECIPE_IMPORT_PROCESS_ENDPOINT ?? "").trim().toLowerCase()
+);
 
 const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-api" }) : null;
 
@@ -863,6 +869,10 @@ recipe_router.get("/recipe/imports/:id", async (req, res) => {
 });
 
 recipe_router.post("/recipe/imports/:id/process", async (req, res) => {
+  if (IS_PRODUCTION_RUNTIME && !ALLOW_RECIPE_IMPORT_PROCESS_ENDPOINT) {
+    return res.status(403).json({ error: "Recipe import processing is worker-owned in production." });
+  }
+
   try {
     const result = await processRecipeIngestionJob(String(req.params.id ?? "").trim());
     return res.json(result);
