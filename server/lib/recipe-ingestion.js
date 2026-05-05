@@ -40,10 +40,13 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const RECIPE_INGESTION_MODEL = process.env.RECIPE_INGESTION_MODEL ?? "gpt-4o-mini";
 const RECIPE_SEARCH_SYNTHESIS_MODEL = process.env.RECIPE_SEARCH_SYNTHESIS_MODEL ?? "gpt-5-nano";
 const RECIPE_IMPORT_COMPLETION_MODEL = process.env.RECIPE_IMPORT_COMPLETION_MODEL ?? "gpt-5-nano";
+const RECIPE_WEB_REFERENCE_MODEL = process.env.RECIPE_WEB_REFERENCE_MODEL ?? "gpt-5-mini";
+const RECIPE_FINAL_VALIDATOR_MODEL = process.env.RECIPE_FINAL_VALIDATOR_MODEL ?? RECIPE_IMPORT_COMPLETION_MODEL;
 const RECIPE_GATE_MODEL = process.env.RECIPE_GATE_MODEL ?? "gpt-5-nano";
 const RECIPE_IMAGE_RESTYLE_MODEL = process.env.RECIPE_IMAGE_RESTYLE_MODEL ?? "gpt-image-1";
 const RECIPE_IMAGE_CHECK_MODEL = process.env.RECIPE_IMAGE_CHECK_MODEL ?? RECIPE_GATE_MODEL;
 const ENABLE_IMPORTED_RECIPE_IMAGE_GEN = ["1", "true", "yes"].includes(String(process.env.ENABLE_IMPORTED_RECIPE_IMAGE_GEN ?? "").trim().toLowerCase());
+const ENABLE_AI_WEB_REFERENCE_SEARCH = !["0", "false", "no", "off"].includes(String(process.env.RECIPE_ENABLE_AI_WEB_REFERENCE_SEARCH ?? "1").trim().toLowerCase());
 const PLAYWRIGHT_FALLBACK_PATH = "/Users/davejaga/.openclaw/skills/playwright-scraper-skill/node_modules/playwright/index.js";
 const DEFAULT_USER_AGENT =
   process.env.USER_AGENT ||
@@ -51,6 +54,14 @@ const DEFAULT_USER_AGENT =
 const SHORT_VIDEO_TRANSCRIBE_MODEL = process.env.SHORT_VIDEO_TRANSCRIBE_MODEL ?? "gpt-4o-mini-transcribe";
 const MAX_SOCIAL_FRAME_COUNT = Math.max(2, Number.parseInt(process.env.RECIPE_INGESTION_MAX_SOCIAL_FRAMES ?? "4", 10) || 4);
 const RECIPE_SEARCH_MAX_LINKS = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_SEARCH_MAX_LINKS ?? "6", 10) || 6, 12));
+const RECIPE_EXTRACTION_MAX_IMAGE_INPUTS = Math.max(
+  1,
+  Math.min(Number.parseInt(process.env.RECIPE_EXTRACTION_MAX_IMAGE_INPUTS ?? "3", 10) || 3, 4)
+);
+const OCR_PROMPT_MIN_CONFIDENCE = Math.max(
+  0,
+  Math.min(Number.parseFloat(process.env.RECIPE_INGESTION_OCR_PROMPT_MIN_CONFIDENCE ?? "45") || 45, 100)
+);
 const RECIPE_INGESTION_WORKER_CONCURRENCY = Math.max(
   1,
   Number.parseInt(process.env.RECIPE_INGESTION_WORKER_CONCURRENCY ?? "2", 10) || 2
@@ -232,6 +243,21 @@ Rules:
 - Add quality_flags entries for inferred work, especially quantities_inferred when you fill missing quantity_text values by inference.
 - Do not include commentary outside the JSON object.`;
 
+const RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT = `You are the final recipe consistency validator for Ounje imports.
+
+Rules:
+- Return JSON only.
+- Fix only concrete consistency issues in the provided recipe. Do not rewrite for style alone.
+- Preserve source-supported dish identity, title, cuisine, and author/source metadata.
+- Ensure ingredients, quantities, and steps agree with each other.
+- If a step mentions an ingredient that is not listed, either add a conservative ingredient only when clearly necessary, or rewrite the step to use an already listed equivalent.
+- If a step mentions a listed ingredient, keep that ingredient linked in the step's ingredients array with the same practical quantity.
+- Prefer not to add non-shopping pantry liquids like water unless the recipe would be confusing without it.
+- Replace vague or technically wrong cooking verbs with practical cooking actions.
+- Keep steps concise, sequential, and cookable.
+- Keep ingredient quantities practical for the stated servings.
+- Do not include commentary outside the JSON object.`;
+
 const RECIPE_IMAGE_RESTYLE_CHECK_PROMPT = `You are checking whether a generated food image is acceptable for Ounje.
 
 Rules:
@@ -268,6 +294,32 @@ function normalizeKey(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function htmlDecode(value) {
+  return String(value ?? "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : " ";
+    })
+    .replace(/&#(\d+);/g, (_, raw) => {
+      const codePoint = Number.parseInt(raw, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : " ";
+    })
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, " ");
+}
+
+function errorSummary(error) {
+  if (!error) return null;
+  return {
+    name: normalizeText(error.name ?? "") || "Error",
+    message: normalizeText(error.message ?? error) || "Unknown error",
+    code: normalizeText(error.code ?? "") || null,
+  };
 }
 
 function uniqueStrings(values) {
@@ -830,24 +882,59 @@ function ingredientNameMatches(left, right) {
   return Boolean(leftCore && rightCore && leftCore === rightCore);
 }
 
-function collectRecipeEvidenceImageInputs(source, { maxCount = 4 } = {}) {
+function pickEvenlySpacedItems(items = [], maxCount = 3) {
+  const values = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (values.length <= maxCount) return values;
+  if (maxCount <= 1) return values.slice(0, 1);
+
+  const result = [];
+  for (let index = 0; index < maxCount; index += 1) {
+    const sourceIndex = Math.round((index * (values.length - 1)) / (maxCount - 1));
+    result.push(values[sourceIndex]);
+  }
+  return result;
+}
+
+function shouldIncludeFrameOCRInPrompt(frame) {
+  const text = normalizeText(frame?.text ?? "");
+  if (!text) return false;
+  const confidence = Number(frame?.confidence);
+  if (!Number.isFinite(confidence)) return true;
+  if (confidence >= OCR_PROMPT_MIN_CONFIDENCE) return true;
+  return /\b(ingredients?|cups?|tbsp|tsp|teaspoons?|tablespoons?|grams?|ounces?|oil|salt|pepper|rice|onion|tomato|chicken|beef|fish|cook|bake|fry|boil|simmer)\b/i.test(text);
+}
+
+function summarizeFrameOCRTexts(frameOcrTexts = [], { maxFrames = 4, textLimit = 700 } = {}) {
+  return pickEvenlySpacedItems(
+    (Array.isArray(frameOcrTexts) ? frameOcrTexts : []).filter(shouldIncludeFrameOCRInPrompt),
+    maxFrames
+  )
+    .map((frame) => {
+      const label = Number.isFinite(Number(frame?.frame_index)) ? `frame ${Number(frame.frame_index)}` : "frame";
+      const confidence = Number.isFinite(Number(frame?.confidence)) ? ` conf ${Number(frame.confidence).toFixed(0)}` : "";
+      return `${label}${confidence}: ${limitText(frame?.text ?? "", textLimit)}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function collectRecipeEvidenceImageInputs(source, { maxCount = RECIPE_EXTRACTION_MAX_IMAGE_INPUTS } = {}) {
   const attachments = [
     ...(Array.isArray(source.frame_data_urls) ? source.frame_data_urls.map((url) => ({ kind: "frame", data_url: url })) : []),
     ...(Array.isArray(source.attachments) ? source.attachments : []),
   ];
 
-  return attachments
+  return pickEvenlySpacedItems(attachments, maxCount)
     .flatMap((attachment) => {
       if (attachment.kind === "frame" && attachment.data_url) {
-        return [{ type: "image_url", image_url: { url: attachment.data_url } }];
+        return [{ type: "image_url", image_url: { url: attachment.data_url, detail: "low" } }];
       }
       if (attachment.kind === "image" && (attachment.data_url || attachment.source_url)) {
-        return [{ type: "image_url", image_url: { url: attachment.data_url ?? attachment.source_url } }];
+        return [{ type: "image_url", image_url: { url: attachment.data_url ?? attachment.source_url, detail: "low" } }];
       }
       if (attachment.kind === "video") {
-        return (attachment.preview_frame_urls ?? [])
-          .slice(0, 3)
-          .map((url) => ({ type: "image_url", image_url: { url } }));
+        return pickEvenlySpacedItems(attachment.preview_frame_urls ?? [], Math.min(maxCount, 3))
+          .map((url) => ({ type: "image_url", image_url: { url, detail: "low" } }));
       }
       return [];
     })
@@ -981,9 +1068,7 @@ function assessRecipeSignals(source) {
   const structuredInstructionCount = Array.isArray(source?.structured_recipe?.recipeInstructions) ? source.structured_recipe.recipeInstructions.length : 0;
   const ingredientCandidateCount = Array.isArray(source?.ingredient_candidates) ? source.ingredient_candidates.length : 0;
   const instructionCandidateCount = Array.isArray(source?.instruction_candidates) ? source.instruction_candidates.length : 0;
-  const frameOcrText = Array.isArray(source?.frame_ocr_texts)
-    ? source.frame_ocr_texts.map((frame) => normalizeText(frame?.text)).filter(Boolean).join("\n")
-    : "";
+  const frameOcrText = summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], { maxFrames: 4, textLimit: 700 });
   const transcriptText = normalizeText(source?.transcript_text ?? "");
   const descriptionText = normalizeText(source?.description ?? source?.meta_description ?? "");
   const titleText = normalizeText(source?.title ?? "");
@@ -1147,7 +1232,7 @@ async function assessRecipeLikelihood(source) {
           limitText(source.transcript_text ?? "", 3000),
           "",
           "Frame OCR excerpt:",
-          limitText((source.frame_ocr_texts ?? []).map((frame) => normalizeText(frame?.text)).filter(Boolean).join("\n"), 3000),
+          limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 4, textLimit: 700 }), 3000),
           "",
           "Return JSON like:",
           JSON.stringify({
@@ -1206,6 +1291,139 @@ function scoreScrapedRecipeSource(source, query = "") {
   return score;
 }
 
+function normalizeRecipeSearchResultURL(href) {
+  const raw = htmlDecode(href);
+  const absoluteCandidate = /^\//.test(raw) ? `https://duckduckgo.com${raw}` : raw;
+  const cleaned = cleanURL(absoluteCandidate);
+  if (!cleaned) return null;
+  try {
+    const parsed = new URL(cleaned);
+    const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    const encodedTarget = parsed.searchParams.get("uddg") || parsed.searchParams.get("u") || parsed.searchParams.get("url");
+    if (host.includes("duckduckgo.com") && encodedTarget) {
+      return cleanURL(decodeURIComponent(encodedTarget));
+    }
+    return cleaned;
+  } catch {
+    return cleaned;
+  }
+}
+
+function isUsableRecipeSearchLink(url) {
+  const cleaned = cleanURL(url);
+  if (!cleaned || !/^https?:\/\//i.test(cleaned)) return false;
+  const host = hostForURL(cleaned);
+  if (!host) return false;
+  if (host.includes("duckduckgo.com")) return false;
+  if (host.includes("tiktok.com") || host.includes("instagram.com") || host.includes("youtube.com") || host === "youtu.be") return false;
+  if (/\.(jpg|jpeg|png|gif|webp|pdf)(?:[?#].*)?$/i.test(cleaned)) return false;
+  return true;
+}
+
+async function searchRecipeLinksWithFetch(query, { limit = RECIPE_SEARCH_MAX_LINKS } = {}) {
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) return [];
+
+  const searchQuery = `${normalizedQuery} recipe`;
+  const searchURL = `https://duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
+  const response = await fetch(searchURL, {
+    headers: {
+      "user-agent": DEFAULT_USER_AGENT,
+      accept: "text/html,application/xhtml+xml",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`DuckDuckGo search returned HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const links = [];
+  const seen = new Set();
+  const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match = null;
+  while ((match = anchorPattern.exec(html)) && links.length < limit) {
+    const url = normalizeRecipeSearchResultURL(match[1]);
+    if (!isUsableRecipeSearchLink(url)) continue;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    links.push({
+      title: normalizeText(htmlDecode(String(match[2] ?? "").replace(/<[^>]+>/g, " "))) || null,
+      url,
+    });
+  }
+  return links;
+}
+
+async function searchRecipeLinksWithAI(query, { limit = RECIPE_SEARCH_MAX_LINKS, source = null } = {}) {
+  if (!openai || !ENABLE_AI_WEB_REFERENCE_SEARCH || typeof openai.responses?.create !== "function") {
+    return [];
+  }
+
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) return [];
+
+  const response = await withRecipeAIStage("recipe_import.web_reference_search", () => openai.responses.create({
+    model: RECIPE_WEB_REFERENCE_MODEL,
+    tools: [{ type: "web_search_preview", search_context_size: "low" }],
+    tool_choice: "auto",
+    max_output_tokens: 3000,
+    instructions: [
+      "Find real recipe reference pages for Ounje's recipe import completion pass.",
+      "Return JSON only.",
+      "Prefer actual recipe pages with ingredients and instructions.",
+      "Avoid social media, video-only pages, restaurant pages, listicles, PDFs, and generic search pages.",
+      "Return canonical URLs when possible.",
+    ].join("\n"),
+    input: [
+      `dish_query: ${normalizedQuery}`,
+      "",
+      "Original source hints:",
+      JSON.stringify({
+        title: source?.title ?? null,
+        description: source?.description ?? source?.meta_description ?? null,
+        platform: source?.platform ?? source?.source_type ?? null,
+        author: source?.author_name ?? source?.author_handle ?? null,
+      }),
+      "",
+      `Return up to ${limit} links as JSON:`,
+      JSON.stringify({
+        links: [
+          {
+            title: "Recipe title",
+            url: "https://example.com/recipe",
+            reason: "short relevance reason",
+          },
+        ],
+      }),
+    ].join("\n"),
+  }));
+
+  const rawText = normalizeText(response.output_text ?? response.output?.flatMap((item) => (
+    Array.isArray(item.content)
+      ? item.content.map((content) => content.text ?? content.output_text ?? "").filter(Boolean)
+      : []
+  )).join("\n") ?? "");
+  const jsonText = rawText.match(/\{[\s\S]*\}/)?.[0] ?? rawText;
+  const parsed = JSON.parse(jsonText);
+  const links = Array.isArray(parsed?.links) ? parsed.links : [];
+  const seen = new Set();
+  const results = [];
+  for (const entry of links) {
+    const url = normalizeRecipeSearchResultURL(entry?.url ?? entry?.source_url ?? entry?.href ?? "");
+    if (!isUsableRecipeSearchLink(url)) continue;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    results.push({
+      title: normalizeText(entry?.title ?? "") || null,
+      url,
+      reason: normalizeText(entry?.reason ?? "") || null,
+      source: "ai_web_reference_search",
+    });
+    if (results.length >= limit) break;
+  }
+  return results;
+}
+
 async function searchRecipeLinksWithPlaywright(query, { limit = RECIPE_SEARCH_MAX_LINKS } = {}) {
   const normalizedQuery = normalizeText(query);
   if (!normalizedQuery) return [];
@@ -1233,13 +1451,8 @@ async function searchRecipeLinksWithPlaywright(query, { limit = RECIPE_SEARCH_MA
     const links = [];
     const seen = new Set();
     for (const candidate of rawLinks) {
-      const href = cleanURL(candidate.href);
-      if (!href) continue;
-      const host = hostForURL(href);
-      if (!/^https?:\/\//i.test(href)) continue;
-      if (host.includes("duckduckgo.com")) continue;
-      if (host.includes("tiktok.com") || host.includes("instagram.com") || host.includes("youtube.com") || host === "youtu.be") continue;
-      if (/\.(jpg|jpeg|png|gif|webp|pdf)$/i.test(href)) continue;
+      const href = normalizeRecipeSearchResultURL(candidate.href);
+      if (!isUsableRecipeSearchLink(href)) continue;
       if (seen.has(href)) continue;
       seen.add(href);
       links.push({
@@ -1257,9 +1470,60 @@ async function searchRecipeLinksWithPlaywright(query, { limit = RECIPE_SEARCH_MA
   }
 }
 
-async function extractRecipeSearchSource(query, attachments = []) {
-  const links = await searchRecipeLinksWithPlaywright(query, { limit: RECIPE_SEARCH_MAX_LINKS });
+function mergeRecipeSearchLinks(...buckets) {
+  const links = [];
+  const seen = new Set();
+  for (const bucket of buckets) {
+    for (const entry of bucket ?? []) {
+      const url = normalizeRecipeSearchResultURL(entry?.url ?? entry?.source_url ?? entry?.href ?? "");
+      if (!isUsableRecipeSearchLink(url)) continue;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      links.push({
+        title: normalizeText(entry?.title ?? "") || null,
+        url,
+        reason: normalizeText(entry?.reason ?? "") || null,
+        source: normalizeText(entry?.source ?? "") || null,
+      });
+    }
+  }
+  return links;
+}
+
+async function extractRecipeSearchSource(query, attachments = [], { source = null } = {}) {
+  const searchMethods = [];
+  let searchError = null;
+  let aiSearchError = null;
+  let browserLinks = [];
+  let aiLinks = [];
+  try {
+    aiLinks = await searchRecipeLinksWithAI(query, { limit: RECIPE_SEARCH_MAX_LINKS, source });
+    if (aiLinks.length) searchMethods.push("ai_web_reference_search");
+  } catch (error) {
+    aiSearchError = errorSummary(error);
+  }
+  try {
+    browserLinks = await searchRecipeLinksWithPlaywright(query, { limit: RECIPE_SEARCH_MAX_LINKS });
+    if (browserLinks.length) searchMethods.push("playwright");
+  } catch (error) {
+    searchError = errorSummary(error);
+    browserLinks = await searchRecipeLinksWithFetch(query, { limit: RECIPE_SEARCH_MAX_LINKS });
+    if (browserLinks.length) searchMethods.push("fetch_fallback");
+  }
+  if (!browserLinks.length && !searchMethods.includes("fetch_fallback")) {
+    try {
+      const fallbackLinks = await searchRecipeLinksWithFetch(query, { limit: RECIPE_SEARCH_MAX_LINKS });
+      if (fallbackLinks.length) {
+        searchMethods.push("fetch_fallback_empty_browser");
+        browserLinks = fallbackLinks;
+      }
+    } catch (error) {
+      searchError = errorSummary(error);
+    }
+  }
+  const links = mergeRecipeSearchLinks(aiLinks, browserLinks).slice(0, RECIPE_SEARCH_MAX_LINKS);
   const scraped = [];
+  const scrapeErrors = [];
 
   for (const link of links) {
     try {
@@ -1270,7 +1534,12 @@ async function extractRecipeSearchSource(query, attachments = []) {
         search_result_url: link.url,
         search_score: scoreScrapedRecipeSource(source, query),
       });
-    } catch {
+    } catch (error) {
+      scrapeErrors.push({
+        url: link.url,
+        title: link.title ?? null,
+        error: errorSummary(error),
+      });
       continue;
     }
   }
@@ -1320,6 +1589,13 @@ async function extractRecipeSearchSource(query, attachments = []) {
         query,
         links,
         source_count: rankedSources.length,
+        search_method: searchMethods.join("+") || "none",
+        ai_link_count: aiLinks.length,
+        browser_link_count: browserLinks.length,
+        ai_search_error: aiSearchError,
+        search_error: searchError,
+        scrape_error_count: scrapeErrors.length,
+        scrape_errors: scrapeErrors.slice(0, 6),
         recipe_sources: rankedSources.map((source) => ({
           title: source.title ?? null,
           site_name: source.site_name ?? null,
@@ -1342,7 +1618,14 @@ async function extractRecipeSearchSource(query, attachments = []) {
         raw_json: compactJSON({
           query,
           links,
+          search_method: searchMethods.join("+") || "none",
+          ai_link_count: aiLinks.length,
+          browser_link_count: browserLinks.length,
+          ai_search_error: aiSearchError,
+          search_error: searchError,
           source_count: rankedSources.length,
+          scrape_error_count: scrapeErrors.length,
+          scrape_errors: scrapeErrors.slice(0, 6),
         }),
       },
       ...rankedSources.map((source) => ({
@@ -1506,6 +1789,11 @@ function normalizeImportPayload(payload = {}) {
       attachments,
     }),
   };
+}
+
+function requiresUserScopedRecipeImport(request) {
+  const sourceType = normalizeText(request?.source_type ?? "").toLowerCase();
+  return ["tiktok", "instagram", "youtube", "media_video", "media_image"].includes(sourceType);
 }
 
 function normalizeAttachment(attachment) {
@@ -3529,7 +3817,148 @@ async function createBrowserContext({ headless = true } = {}) {
   return { browser, context };
 }
 
-async function extractWebSource(sourceURL) {
+function absoluteURLFrom(baseURL, value) {
+  const raw = htmlDecode(value);
+  if (!raw) return null;
+  try {
+    return cleanURL(new URL(raw, baseURL).toString());
+  } catch {
+    return cleanURL(raw);
+  }
+}
+
+function stripHTML(value) {
+  return normalizeText(
+    htmlDecode(String(value ?? "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " "))
+  );
+}
+
+function htmlAttribute(tag, attributeName) {
+  const pattern = new RegExp(`${attributeName}\\s*=\\s*([\"'])(.*?)\\1`, "i");
+  return htmlDecode(tag.match(pattern)?.[2] ?? "");
+}
+
+function htmlMetaContent(html, names = []) {
+  for (const name of names) {
+    const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const patterns = [
+      new RegExp(`<meta\\b(?=[^>]*(?:property|name)=[\"']${escaped}[\"'])[^>]*>`, "i"),
+      new RegExp(`<meta\\b(?=[^>]*content=[\"'][^\"']*[\"'])(?=[^>]*(?:property|name)=[\"']${escaped}[\"'])[^>]*>`, "i"),
+    ];
+    for (const pattern of patterns) {
+      const tag = html.match(pattern)?.[0];
+      const content = tag ? htmlAttribute(tag, "content") : "";
+      if (content) return normalizeText(content);
+    }
+  }
+  return "";
+}
+
+function parseJsonLdFromHTML(html) {
+  const records = [];
+  const pattern = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match = null;
+  while ((match = pattern.exec(html))) {
+    const raw = htmlDecode(match[1] ?? "").trim();
+    if (!raw) continue;
+    try {
+      records.push(JSON.parse(raw));
+    } catch {
+      continue;
+    }
+  }
+  return records;
+}
+
+function extractImageURLsFromHTML(html, baseURL) {
+  const urls = [
+    htmlMetaContent(html, ["og:image", "twitter:image"]),
+  ];
+  const pattern = /<img\b[^>]*(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
+  let match = null;
+  while ((match = pattern.exec(html)) && urls.length < 30) {
+    urls.push(absoluteURLFrom(baseURL, match[1]));
+  }
+  return uniqueStrings(urls.map(cleanURL).filter(Boolean)).slice(0, 24);
+}
+
+async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } = {}) {
+  const response = await fetch(sourceURL, {
+    redirect: "follow",
+    headers: {
+      "user-agent": DEFAULT_USER_AGENT,
+      accept: "text/html,application/xhtml+xml",
+    },
+  });
+  const html = await response.text();
+  if (!response.ok) {
+    throw new Error(`Fetch fallback returned HTTP ${response.status} for ${sourceURL}`);
+  }
+
+  const jsonLd = parseJsonLdFromHTML(html);
+  const structuredRecipe = pickBestSchemaRecipe(jsonLd);
+  const instructions = parseSchemaRecipeInstructions(structuredRecipe?.recipeInstructions);
+  const title = stripHTML(html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1])
+    || htmlMetaContent(html, ["og:title", "twitter:title"])
+    || stripHTML(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
+  const pageImageURLs = extractImageURLsFromHTML(html, response.url || sourceURL);
+  const metaImageURL = htmlMetaContent(html, ["og:image", "twitter:image"]);
+  const bodyText = stripHTML(html).slice(0, 120000);
+
+  return {
+    source_type: "web",
+    platform: "web",
+    source_url: cleanURL(response.url || sourceURL),
+    canonical_url: cleanURL(html.match(/<link\b(?=[^>]*rel=["']canonical["'])[^>]*href=["']([^"']+)["'][^>]*>/i)?.[1]) ?? cleanURL(response.url || sourceURL),
+    title: title || null,
+    meta_title: htmlMetaContent(html, ["og:title", "twitter:title"]) || null,
+    meta_description: htmlMetaContent(html, ["description", "og:description", "twitter:description"]) || null,
+    hero_image_url: cleanURL(absoluteURLFrom(response.url || sourceURL, metaImageURL)),
+    attached_video_url: cleanURL(htmlMetaContent(html, ["og:video", "og:video:url"])),
+    site_name: htmlMetaContent(html, ["og:site_name"]) || hostForURL(response.url || sourceURL),
+    author_name: htmlMetaContent(html, ["author"]) || null,
+    ingredient_candidates: Array.isArray(structuredRecipe?.recipeIngredient) ? structuredRecipe.recipeIngredient : [],
+    instruction_candidates: instructions,
+    page_image_urls: pageImageURLs,
+    body_text: bodyText,
+    structured_recipe: structuredRecipe
+      ? {
+          ...structuredRecipe,
+          recipeIngredient: Array.isArray(structuredRecipe.recipeIngredient) ? structuredRecipe.recipeIngredient : [],
+          recipeInstructions: instructions,
+        }
+      : null,
+    artifacts: [
+      {
+        artifact_type: "web_metadata",
+        content_type: "application/json",
+        source_url: cleanURL(response.url || sourceURL),
+        raw_json: compactJSON({
+          extraction_method: "fetch_fallback",
+          playwright_error: errorSummary(playwrightError),
+          meta_title: htmlMetaContent(html, ["og:title", "twitter:title"]),
+          meta_description: htmlMetaContent(html, ["description", "og:description", "twitter:description"]),
+          meta_image_url: metaImageURL,
+          site_name: htmlMetaContent(html, ["og:site_name"]),
+          author_name: htmlMetaContent(html, ["author"]),
+          page_image_urls: pageImageURLs,
+          structured_recipe: structuredRecipe,
+        }),
+      },
+      {
+        artifact_type: "web_text",
+        content_type: "text/plain",
+        source_url: cleanURL(response.url || sourceURL),
+        text_content: bodyText,
+      },
+    ],
+  };
+}
+
+async function extractWebSourceWithPlaywright(sourceURL) {
   const { browser, context } = await createBrowserContext({ headless: true });
   const page = await context.newPage();
   page.setDefaultTimeout(45_000);
@@ -3701,6 +4130,14 @@ async function extractWebSource(sourceURL) {
   }
 }
 
+async function extractWebSource(sourceURL) {
+  try {
+    return await extractWebSourceWithPlaywright(sourceURL);
+  } catch (error) {
+    return extractWebSourceWithFetch(sourceURL, { playwrightError: error });
+  }
+}
+
 function pickSubtitleTrack(info) {
   const candidates = [];
   for (const sourceName of ["subtitles", "automatic_captions"]) {
@@ -3830,6 +4267,7 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
         "-ss", seconds.toFixed(2),
         "-i", videoPath,
         "-frames:v", "1",
+        "-vf", "scale='min(720,iw)':-2",
         "-q:v", "2",
         outputPath,
       ]);
@@ -4337,7 +4775,10 @@ async function extractRecipeWithModel(source) {
         JSON.stringify(source.instruction_candidates ?? []),
         "",
         "Raw text:",
-        limitText(source.raw_text ?? source.body_text ?? ""),
+        limitText(source.raw_text ?? source.body_text ?? "", 20_000),
+        "",
+        "Frame OCR excerpt (only high-confidence or recipe-like text):",
+        limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 4, textLimit: 700 }), 3_000),
         "",
         "Return a JSON object with this shape:",
         JSON.stringify({
@@ -4749,6 +5190,47 @@ function recipeReferenceSummaryForArtifact(recipeSources) {
   })).filter((entry) => entry.title || entry.source_url);
 }
 
+async function storeWebCompletionLookupArtifact(jobID, {
+  completionQuery,
+  source,
+  lookupSource = null,
+  recipeSources = [],
+  error = null,
+  status = "ok",
+} = {}) {
+  if (!jobID) return;
+  await storeArtifact(jobID, {
+    artifact_type: "web_completion_lookup",
+    content_type: "application/json",
+    source_url: source?.canonical_url ?? source?.source_url ?? null,
+    raw_json: compactJSON({
+      status,
+      completion_query: completionQuery,
+      search_query: lookupSource?.source_provenance_json?.evidence_bundle?.query ?? completionQuery,
+      reference_count: recipeSources.length,
+      references: recipeReferenceSummaryForArtifact(recipeSources),
+      search: lookupSource?.source_provenance_json?.evidence_bundle
+        ? {
+            source_count: lookupSource.source_provenance_json.evidence_bundle.source_count ?? null,
+            search_method: lookupSource.source_provenance_json.evidence_bundle.search_method ?? null,
+            ai_link_count: lookupSource.source_provenance_json.evidence_bundle.ai_link_count ?? null,
+            browser_link_count: lookupSource.source_provenance_json.evidence_bundle.browser_link_count ?? null,
+            ai_search_error: lookupSource.source_provenance_json.evidence_bundle.ai_search_error ?? null,
+            search_error: lookupSource.source_provenance_json.evidence_bundle.search_error ?? null,
+            scrape_error_count: lookupSource.source_provenance_json.evidence_bundle.scrape_error_count ?? null,
+            scrape_errors: lookupSource.source_provenance_json.evidence_bundle.scrape_errors ?? [],
+          }
+        : null,
+      error: errorSummary(error),
+    }),
+    metadata: {
+      status,
+      reference_count: recipeSources.length,
+      has_error: Boolean(error),
+    },
+  }).catch(() => {});
+}
+
 function mergeCompletedRecipe(baseRecipe, completedRecipe) {
   if (!completedRecipe || typeof completedRecipe !== "object") return baseRecipe;
 
@@ -4825,22 +5307,35 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
 
   let lookupSource = null;
   try {
-    lookupSource = await extractRecipeSearchSource(completionQuery);
-  } catch {
+    lookupSource = await extractRecipeSearchSource(completionQuery, [], { source });
+  } catch (error) {
+    await storeWebCompletionLookupArtifact(jobID, {
+      completionQuery,
+      source,
+      error,
+      status: "failed",
+    });
     return {
       recipe: normalizedRecipe,
       quality_flags: ["web_completion_lookup_failed"],
-      review_reason: null,
+      review_reason: "Web reference lookup failed before quantity completion.",
       applied: false,
     };
   }
 
   const recipeSources = Array.isArray(lookupSource?.recipe_sources) ? lookupSource.recipe_sources.slice(0, 6) : [];
+  await storeWebCompletionLookupArtifact(jobID, {
+    completionQuery,
+    source,
+    lookupSource,
+    recipeSources,
+    status: recipeSources.length ? "ok" : "empty",
+  });
   if (!recipeSources.length) {
     return {
       recipe: normalizedRecipe,
-      quality_flags: [],
-      review_reason: null,
+      quality_flags: ["web_completion_no_references"],
+      review_reason: "No usable web recipe references were found for quantity completion.",
       applied: false,
     };
   }
@@ -5147,6 +5642,244 @@ function buildGroundedConceptFallbackRecipe(source) {
       ...(Array.isArray(source.flavor_seed_terms) ? source.flavor_seed_terms : []),
     ]).slice(0, 6),
   };
+}
+
+function recipeIngredientNames(recipe) {
+  return (recipe?.ingredients ?? [])
+    .map((ingredient) => normalizeText(ingredient.display_name ?? ingredient.name ?? ingredient.ingredient ?? ""))
+    .filter(Boolean);
+}
+
+function recipeHasIngredientNamed(recipe, names = []) {
+  const haystack = recipeIngredientNames(recipe).map(normalizeKey);
+  return names.some((name) => {
+    const key = normalizeKey(name);
+    return key && haystack.some((ingredientKey) => ingredientKey === key || ingredientKey.includes(key) || key.includes(ingredientKey));
+  });
+}
+
+function ingredientNameMatchesText(ingredientName, text) {
+  const key = normalizeKey(ingredientName);
+  const haystack = normalizeKey(text);
+  if (!key || !haystack) return false;
+  if (haystack.includes(key)) return true;
+  const compactName = normalizeKey(String(ingredientName ?? "").split(/\s+/).slice(-2).join(" "));
+  return Boolean(compactName && compactName.length >= 5 && haystack.includes(compactName));
+}
+
+function buildFinalRecipeValidationIssues(recipe) {
+  const issues = [];
+  const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
+  const stepText = normalizeText(steps.map((step) => step.text ?? "").join("\n"));
+
+  if (/\bwater\b/i.test(stepText) && !recipeHasIngredientNamed(recipe, ["water"])) {
+    issues.push("Steps mention water, but water is not listed. Either remove the water reference by using a listed liquid, or add water only if the recipe needs it.");
+  }
+
+  if (/\bdehydrat\w*\b.{0,80}\b(pepper|tomato|sauce|mixture|stew)\b/i.test(stepText)) {
+    issues.push("A step uses 'dehydrate' for a pepper/tomato/sauce mixture. Use a practical cooking verb like cook down, reduce, simmer, or fry down unless true dehydration is intended.");
+  }
+
+  if (/\b(a little|some|a bit of)\b.{0,35}\b(water|stock|broth|oil)\b/i.test(stepText)) {
+    issues.push("A liquid amount is vague in the method. Make it practical for the serving size or refer to the listed quantity.");
+  }
+
+  const missingQuantityIngredients = (recipe?.ingredients ?? []).filter((ingredient) => {
+    const quantityText = normalizeText(ingredient.quantity_text ?? ingredient.quantityText ?? "");
+    const name = normalizeText(ingredient.display_name ?? ingredient.name ?? "");
+    if (!name) return false;
+    if (quantityText && !/^to taste$/i.test(quantityText)) return false;
+    if (/^(salt|pepper|water)$/i.test(name)) return false;
+    return !quantityText;
+  });
+  if (missingQuantityIngredients.length >= 3) {
+    issues.push(`Several non-pantry ingredients are missing quantities: ${missingQuantityIngredients.slice(0, 5).map((ingredient) => ingredient.display_name ?? ingredient.name).join(", ")}.`);
+  }
+
+  const ingredientNames = recipeIngredientNames(recipe);
+  if (ingredientNames.length >= 4 && steps.length >= 2) {
+    for (const ingredientName of ingredientNames) {
+      const key = normalizeKey(ingredientName);
+      if (!key || /^(salt|pepper|water)$/i.test(ingredientName)) continue;
+      if (!normalizeKey(stepText).includes(key)) {
+        const compactName = ingredientName.split(/\s+/).slice(-2).join(" ");
+        if (compactName && !normalizeKey(stepText).includes(normalizeKey(compactName))) {
+          issues.push(`Ingredient "${ingredientName}" is listed but not clearly used in the steps.`);
+          if (issues.length >= 6) break;
+        }
+      }
+    }
+  }
+
+  const linkedIngredientIssues = [];
+  for (const step of steps) {
+    const currentStepText = normalizeText(step?.text ?? "");
+    const linkedNames = Array.isArray(step?.ingredients)
+      ? step.ingredients.map((ingredient) => normalizeText(ingredient.display_name ?? ingredient.name ?? ingredient.ingredient ?? "")).filter(Boolean)
+      : [];
+    if (!currentStepText || !Array.isArray(step?.ingredients)) continue;
+
+    for (const ingredientName of ingredientNames) {
+      if (!ingredientName || /^(salt|pepper|water)$/i.test(ingredientName)) continue;
+      if (!ingredientNameMatchesText(ingredientName, currentStepText)) continue;
+      const alreadyLinked = linkedNames.some((linkedName) => ingredientNameMatchesText(ingredientName, linkedName) || ingredientNameMatchesText(linkedName, ingredientName));
+      if (alreadyLinked) continue;
+      const stepNumber = step.number ?? step.step_number ?? "?";
+      linkedIngredientIssues.push(`Step ${stepNumber} mentions "${ingredientName}" but does not include it in that step's linked ingredients.`);
+      break;
+    }
+    if (linkedIngredientIssues.length >= 4) break;
+  }
+  issues.push(...linkedIngredientIssues);
+
+  return uniqueStrings(issues).slice(0, 8);
+}
+
+async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } = {}) {
+  const validationIssues = buildFinalRecipeValidationIssues(recipe);
+  if (!validationIssues.length) {
+    return {
+      recipe,
+      quality_flags: [],
+      review_reason: null,
+      validation_notes: [],
+      applied: false,
+    };
+  }
+
+  if (!openai) {
+    return {
+      recipe,
+      quality_flags: ["final_validator_issues"],
+      review_reason: validationIssues.join(" "),
+      validation_notes: validationIssues,
+      applied: false,
+    };
+  }
+
+  try {
+    const response = await withRecipeAIStage("recipe_import.final_validator", () => openai.chat.completions.create({
+      model: RECIPE_FINAL_VALIDATOR_MODEL,
+      ...chatCompletionTemperatureParams(RECIPE_FINAL_VALIDATOR_MODEL, 0.02),
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            "Repair only these detected consistency issues:",
+            JSON.stringify(validationIssues),
+            "",
+            "Recipe:",
+            JSON.stringify(recipe),
+            "",
+            "Source hints:",
+            JSON.stringify({
+              source_type: source.source_type ?? null,
+              platform: source.platform ?? null,
+              title: source.title ?? null,
+              description: source.description ?? source.meta_description ?? null,
+              transcript_text: source.transcript_text ?? null,
+            }),
+            "",
+            "Return JSON like:",
+            JSON.stringify({
+              recipe: {
+                title: "string|null",
+                description: "string|null",
+                category: "string|null",
+                recipe_type: "string|null",
+                cook_time_text: "string|null",
+                servings_text: "string|null",
+                ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
+                steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }],
+              },
+              validation_notes: ["string"],
+              quality_flags: ["string"],
+              review_reason: "string|null",
+            }),
+          ].join("\n"),
+        },
+      ],
+    }));
+
+    const rawContent = response.choices?.[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(rawContent);
+    const repaired = coerceStructuredRecipeCandidate(parsed.recipe ?? parsed, source);
+    const repairedMetrics = recipeCoreMetrics(repaired);
+    const originalMetrics = recipeCoreMetrics(recipe);
+    const repairedIssues = buildFinalRecipeValidationIssues(repaired);
+    const shouldUseRepair =
+      repairedMetrics.ingredientCount >= Math.max(1, originalMetrics.ingredientCount - 1)
+      && repairedMetrics.stepCount >= Math.max(1, originalMetrics.stepCount - 1)
+      && repairedIssues.length <= validationIssues.length;
+
+    const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(recipe);
+    const validationNotes = uniqueStrings([
+      ...validationIssues,
+      ...(Array.isArray(parsed.validation_notes) ? parsed.validation_notes : []),
+      ...(repairedIssues.length ? repairedIssues.map((issue) => `Remaining: ${issue}`) : []),
+    ]);
+    const qualityFlags = uniqueStrings([
+      ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
+      ...(applied ? ["final_validator_applied"] : ["final_validator_review_needed"]),
+    ]);
+
+    if (jobID) {
+      await storeArtifact(jobID, {
+        artifact_type: "final_recipe_validator",
+        content_type: "application/json",
+        source_url: source.canonical_url ?? source.source_url ?? null,
+        raw_json: compactJSON({
+          detected_issues: validationIssues,
+          repaired_issues: repairedIssues,
+          validation_notes: validationNotes,
+          quality_flags: qualityFlags,
+          applied,
+        }),
+        metadata: {
+          model: RECIPE_FINAL_VALIDATOR_MODEL,
+          issue_count: validationIssues.length,
+          remaining_issue_count: repairedIssues.length,
+          applied,
+        },
+      }).catch(() => {});
+    }
+
+    return {
+      recipe: applied ? repaired : recipe,
+      quality_flags: qualityFlags,
+      review_reason: normalizeText(parsed.review_reason ?? "") || (repairedIssues.length ? repairedIssues.join(" ") : null),
+      validation_notes: validationNotes,
+      applied,
+    };
+  } catch (error) {
+    if (jobID) {
+      await storeArtifact(jobID, {
+        artifact_type: "final_recipe_validator",
+        content_type: "application/json",
+        source_url: source.canonical_url ?? source.source_url ?? null,
+        raw_json: compactJSON({
+          detected_issues: validationIssues,
+          error: errorSummary(error),
+          applied: false,
+        }),
+        metadata: {
+          model: RECIPE_FINAL_VALIDATOR_MODEL,
+          issue_count: validationIssues.length,
+          applied: false,
+          failed: true,
+        },
+      }).catch(() => {});
+    }
+    return {
+      recipe,
+      quality_flags: ["final_validator_failed"],
+      review_reason: validationIssues.join(" "),
+      validation_notes: validationIssues,
+      applied: false,
+    };
+  }
 }
 
 async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
@@ -5495,6 +6228,13 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     const secondaryFill = await enrichRecipeSecondaryFields(normalized, source);
     normalized = secondaryFill.recipe;
     secondaryFillApplied = secondaryFill.applied;
+    const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
+    normalized = finalValidation.recipe;
+    modelResult.quality_flags = uniqueStrings([
+      ...(modelResult.quality_flags ?? []),
+      ...(finalValidation.quality_flags ?? []),
+    ]);
+    modelResult.review_reason = finalValidation.review_reason ?? modelResult.review_reason ?? null;
   }
 
   const inferredDiscoverBrackets = sanitizeDiscoverBrackets(normalized, normalized.discover_brackets ?? []);
@@ -5634,6 +6374,9 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
   for (const request of requests) {
     if (!request.source_url && !request.source_text && !(request.attachments ?? []).length) {
       throw new Error("Provide a source URL, pasted recipe text, or media attachment.");
+    }
+    if (!request.user_id && requiresUserScopedRecipeImport(request)) {
+      throw new Error("User ID is required for social recipe imports.");
     }
 
     // Keep enqueue fast and observable. Canonical expansion happens during worker processing.
@@ -6030,9 +6773,12 @@ export {
   RECIPE_IMPORT_COMPLETION_MODEL,
   RECIPE_INGESTION_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
+  buildFinalRecipeValidationIssues,
+  extractRecipeSearchSource,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
   recipeNeedsSecondaryFill,
+  requiresUserScopedRecipeImport,
   shouldProcessImportInline,
   isCanonicalCacheableSource,
   isOpenAITerminalModelError,
