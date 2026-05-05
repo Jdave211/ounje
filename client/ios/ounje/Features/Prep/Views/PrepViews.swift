@@ -807,18 +807,22 @@ struct MealDeckCard: View {
             accessibilityLabel: isRecurring ? "Remove from recurring prep" : "Make recurring for prep",
             showsBackground: false,
             action: {
+                guard !store.isRecurringPrepRecipeToggleInFlight(recipeID: recipe.id) else { return }
+                let wasRecurring = store.isRecurringPrepRecipe(recipeID: recipe.id)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                toastCenter.show(
+                    title: wasRecurring ? "Removed from recurring" : "Added to recurring",
+                    subtitle: recipeTitle,
+                    systemImage: wasRecurring ? "repeat.circle" : "repeat.circle.fill"
+                )
                 Task {
                     let succeeded = await store.toggleRecurringPrepRecipe(recipe)
+                    guard !succeeded else { return }
                     await MainActor.run {
                         toastCenter.show(
-                            title: succeeded
-                                ? (isRecurring ? "Removed from recurring" : "Added to recurring")
-                                : "Couldn’t update recurring",
-                            subtitle: succeeded ? recipeTitle : "Check your connection and try again.",
-                            systemImage: succeeded
-                                ? (isRecurring ? "repeat.circle" : "repeat.circle.fill")
-                                : "exclamationmark.triangle.fill"
+                            title: "Couldn’t update recurring",
+                            subtitle: "Check your connection and try again.",
+                            systemImage: "exclamationmark.triangle.fill"
                         )
                     }
                 }
@@ -1516,14 +1520,22 @@ struct CookbookCyclePage: View {
                     onToggleRecurring: {
                         guard isCurrentPrepCycle else { return }
                         guard let plannedRecipe = store.latestPlan?.recipes.first(where: { $0.recipe.id == recipe.id })?.recipe else { return }
+                        guard !store.isRecurringPrepRecipeToggleInFlight(recipeID: plannedRecipe.id) else { return }
+                        let wasRecurring = store.isRecurringPrepRecipe(recipeID: plannedRecipe.id)
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        toastCenter.show(
+                            title: wasRecurring ? "Removed from recurring" : "Added to recurring",
+                            subtitle: plannedRecipe.title,
+                            systemImage: wasRecurring ? "repeat.circle" : "repeat.circle.fill"
+                        )
                         Task {
                             let succeeded = await store.toggleRecurringPrepRecipe(plannedRecipe)
+                            guard !succeeded else { return }
                             await MainActor.run {
                                 toastCenter.show(
-                                    title: succeeded ? "Recurring anchor updated" : "Couldn’t update recurring",
-                                    subtitle: succeeded ? plannedRecipe.title : "Check your connection and try again.",
-                                    systemImage: succeeded ? "repeat.circle.fill" : "exclamationmark.triangle.fill"
+                                    title: "Couldn’t update recurring",
+                                    subtitle: "Check your connection and try again.",
+                                    systemImage: "exclamationmark.triangle.fill"
                                 )
                             }
                         }

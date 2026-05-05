@@ -126,8 +126,15 @@ struct RootView: View {
                 groceryOrderID: event.uuid("grocery_order_id")
             )
 
-        case "main_shop_snapshot.updated", "meal_prep_cycle.updated", "prep.updated":
+        case "main_shop_snapshot.updated", "meal_prep_cycle.updated":
             await store.refreshRealtimeMealPrepState(trigger: event.name)
+
+        case "prep.updated":
+            if event.string("table") == "prep_recurring_recipes" {
+                await store.refreshRealtimeRecurringPrepRecipes(trigger: event.name)
+            } else {
+                await store.refreshRealtimeMealPrepState(trigger: event.name)
+            }
 
         case "notification.updated":
             let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession

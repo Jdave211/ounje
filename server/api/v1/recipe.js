@@ -2820,7 +2820,11 @@ async function runRecipeAdaptationCompletion({
     recipe_id: recipeID,
     intent_key: adaptationContract?.key ?? null,
     service: "recipe-api",
-  }, () => openai.chat.completions.create(requestPayload));
+  }, () => withTimeout(
+    openai.chat.completions.create(requestPayload),
+    repairContext ? 45000 : 65000,
+    repairContext ? "recipe adaptation repair timed out" : "recipe adaptation timed out"
+  ));
 
   const content = completion?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
@@ -2886,7 +2890,11 @@ async function runRecipeAdaptationSemanticValidation({
     recipe_id: recipeID,
     intent_key: adaptationContract?.key ?? null,
     service: "recipe-api",
-  }, () => openai.chat.completions.create(requestPayload));
+  }, () => withTimeout(
+    openai.chat.completions.create(requestPayload),
+    16000,
+    "recipe adaptation semantic validation timed out"
+  ));
 
   const content = completion?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) {
@@ -2906,6 +2914,25 @@ async function runRecipeAdaptationSemanticValidation({
     validationNotes,
     editSummary: mergeEditSummaries(parsed.edit_summary ?? {}, { validation_notes: validationNotes }),
   };
+}
+
+async function runRecipeAdaptationSemanticValidationSafe(args) {
+  try {
+    return await runRecipeAdaptationSemanticValidation(args);
+  } catch (error) {
+    if (String(error?.message ?? "").toLowerCase().includes("timed out")) {
+      console.warn("[recipe/adapt] semantic validation timed out; continuing with deterministic validation:", error.message);
+      return {
+        valid: true,
+        failures: [],
+        validationNotes: ["Semantic validation timed out; deterministic validation passed."],
+        editSummary: {
+          validation_notes: ["Semantic validation timed out; deterministic validation passed."],
+        },
+      };
+    }
+    throw error;
+  }
 }
 
 recipe_router.get("/recipe/adapt/history", async (req, res) => {
@@ -3048,7 +3075,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
     };
 
     if (strictValidation) {
-      semanticValidation = await runRecipeAdaptationSemanticValidation({
+      semanticValidation = await runRecipeAdaptationSemanticValidationSafe({
         baseDetail,
         adaptedRecipe,
         adaptationPrompt,
@@ -3092,7 +3119,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
           });
         }
 
-        const repairedSemanticValidation = await runRecipeAdaptationSemanticValidation({
+        const repairedSemanticValidation = await runRecipeAdaptationSemanticValidationSafe({
           baseDetail,
           adaptedRecipe,
           adaptationPrompt,

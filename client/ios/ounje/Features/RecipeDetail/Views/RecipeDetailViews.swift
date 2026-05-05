@@ -2639,7 +2639,7 @@ actor RecipeAdaptationService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 90
+        request.timeoutInterval = 180
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
             RecipeAdaptationRequestPayload(
@@ -2731,6 +2731,10 @@ final class RecipeAdaptationViewModel: ObservableObject {
             let adapted = try await RecipeAdaptationService.shared.adapt(recipeID: recipeID, userID: userID, prompt: prompt, intent: intent, profile: profile)
             result = adapted
             return adapted
+        } catch let error as URLError where error.code == .timedOut {
+            result = nil
+            errorMessage = "Recipe rewrite took too long. Try again."
+            return nil
         } catch {
             result = nil
             errorMessage = error.localizedDescription

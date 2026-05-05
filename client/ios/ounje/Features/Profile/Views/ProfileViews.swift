@@ -1915,16 +1915,23 @@ struct RecurringPrepRecipesSheet: View {
                             ForEach(recurringRecipes) { recurring in
                                 Button {
                                     guard !isUpdatingRecipeIDs.contains(recurring.recipeID) else { return }
+                                    guard !store.isRecurringPrepRecipeToggleInFlight(recipeID: recurring.recipeID) else { return }
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    toastCenter.show(
+                                        title: "Removed from recurring",
+                                        subtitle: recurring.recipe.title,
+                                        systemImage: "repeat.circle"
+                                    )
                                     isUpdatingRecipeIDs.insert(recurring.recipeID)
                                     Task {
                                         let succeeded = await store.toggleRecurringPrepRecipe(recurring.recipe)
                                         await MainActor.run {
                                             isUpdatingRecipeIDs.remove(recurring.recipeID)
+                                            guard !succeeded else { return }
                                             toastCenter.show(
-                                                title: succeeded ? "Recurring anchor updated" : "Couldn’t update recurring",
-                                                subtitle: succeeded ? recurring.recipe.title : "Check your connection and try again.",
-                                                systemImage: succeeded ? "repeat.circle.fill" : "exclamationmark.triangle.fill"
+                                                title: "Couldn’t update recurring",
+                                                subtitle: "Check your connection and try again.",
+                                                systemImage: "exclamationmark.triangle.fill"
                                             )
                                         }
                                     }

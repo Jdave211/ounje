@@ -61,6 +61,7 @@ final class MealPlanningAppStore: ObservableObject {
     private var prepRecipeOverrides: [PrepRecipeOverride] = []
     private var mainShopSnapshotRefreshTask: Task<Void, Never>?
     private var latestPlanArtifactRefreshTask: Task<Void, Never>?
+    private var recurringPrepToggleRecipeIDs = Set<String>()
 
     private let authSessionKey = "agentic-auth-session-v1"
     private let onboardedKey = "agentic-onboarded-v1"
@@ -1562,48 +1563,45 @@ final class MealPlanningAppStore: ObservableObject {
         recurringPrepRecipes.first(where: { $0.recipeID == recipeID })?.isEnabled == true
     }
 
+    func isRecurringPrepRecipeToggleInFlight(recipeID: String) -> Bool {
+        recurringPrepToggleRecipeIDs.contains(recipeID)
+    }
+
     func toggleRecurringPrepRecipe(_ recipe: Recipe) async -> Bool {
-        let session = await refreshAuthSessionIfNeeded() ?? resolvedTrackingSession
-        guard let session else { return false }
+        guard !recurringPrepToggleRecipeIDs.contains(recipe.id) else { return true }
+        guard let fallbackSession = resolvedTrackingSession ?? authSession else { return false }
+
+        recurringPrepToggleRecipeIDs.insert(recipe.id)
+        defer { recurringPrepToggleRecipeIDs.remove(recipe.id) }
+
         let now = ISO8601DateFormatter().string(from: .now)
+        let previousRecipes = recurringPrepRecipes
 
         if let existingIndex = recurringPrepRecipes.firstIndex(where: { $0.recipeID == recipe.id }) {
-            let previousRecipes = recurringPrepRecipes
             var existing = recurringPrepRecipes[existingIndex]
             existing.isEnabled.toggle()
             existing.updatedAt = now
             recurringPrepRecipes[existingIndex] = existing
             recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
             saveRecurringPrepRecipesCache()
+            syncLatestPlanRecurringRecipeIDs(persistRemote: false)
 
-            if existing.isEnabled {
-                let hydrated = await hydratedPlannedRecipeForCart(
-                    recipe: existing.recipe,
-                    servings: max(1, existing.recipe.servings),
-                    carriedFromPreviousPlan: false
-                )
-                existing.recipe = hydrated.recipe
-            }
             do {
+                let session = await refreshAuthSessionIfNeeded() ?? fallbackSession
                 try await SupabaseRecurringPrepRecipesService.shared.upsertRecurringPrepRecipe(
                     existing,
                     accessToken: session.accessToken
                 )
-                if let updatedIndex = recurringPrepRecipes.firstIndex(where: { $0.recipeID == recipe.id }) {
-                    recurringPrepRecipes[updatedIndex] = existing
-                }
-                recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
-                saveRecurringPrepRecipesCache()
             } catch {
                 recurringPrepRecipes = previousRecipes
                 saveRecurringPrepRecipesCache()
+                syncLatestPlanRecurringRecipeIDs(persistRemote: false)
                 print("[MealPlanningAppStore] Failed to save recurring prep toggle for \(recipe.id): \(error)")
                 return false
             }
         } else {
-            let previousRecipes = recurringPrepRecipes
-            var recurring = RecurringPrepRecipe(
-                userID: session.userID,
+            let recurring = RecurringPrepRecipe(
+                userID: fallbackSession.userID,
                 recipeID: recipe.id,
                 recipe: recipe,
                 isEnabled: true,
@@ -1613,33 +1611,23 @@ final class MealPlanningAppStore: ObservableObject {
             recurringPrepRecipes.insert(recurring, at: 0)
             recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
             saveRecurringPrepRecipesCache()
+            syncLatestPlanRecurringRecipeIDs(persistRemote: false)
 
-            let hydrated = await hydratedPlannedRecipeForCart(
-                recipe: recipe,
-                servings: max(1, recipe.servings),
-                carriedFromPreviousPlan: false
-            )
-            recurring.recipe = hydrated.recipe
             do {
+                let session = await refreshAuthSessionIfNeeded() ?? fallbackSession
                 try await SupabaseRecurringPrepRecipesService.shared.upsertRecurringPrepRecipe(
                     recurring,
                     accessToken: session.accessToken
                 )
-                if let updatedIndex = recurringPrepRecipes.firstIndex(where: { $0.recipeID == recipe.id }) {
-                    recurringPrepRecipes[updatedIndex] = recurring
-                }
-                recurringPrepRecipes = recurringPrepRecipes.sorted { $0.sortDate > $1.sortDate }
-                saveRecurringPrepRecipesCache()
             } catch {
                 recurringPrepRecipes = previousRecipes
                 saveRecurringPrepRecipesCache()
+                syncLatestPlanRecurringRecipeIDs(persistRemote: false)
                 print("[MealPlanningAppStore] Failed to save recurring prep recipe for \(recipe.id): \(error)")
                 return false
             }
         }
 
-        syncLatestPlanRecurringRecipeIDs(persistRemote: true)
-        await syncPrepMutationToAutomation(trigger: "recurring_updated", forceCartSync: true)
         return true
     }
 
@@ -2248,6 +2236,11 @@ final class MealPlanningAppStore: ObservableObject {
         if trigger == "main_shop_snapshot.updated" || trigger == "meal_prep_cycle.updated" || trigger == "prep.updated" {
             _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
         }
+    }
+
+    func refreshRealtimeRecurringPrepRecipes(trigger: String = "realtime") async {
+        guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return }
+        await loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
     }
 
     private func clearStaleQueuedInstacartRerunIfNeeded(trigger: String) async {

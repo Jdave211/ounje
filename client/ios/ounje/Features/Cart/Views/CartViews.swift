@@ -207,16 +207,11 @@ struct CartTabView: View {
                         CartDisplayModeBar(
                             selection: $displayMode,
                             trailingAction: {
-                                isRunLogsPresented = true
-                                Task {
-                                    await instacartRunLogsStore.refresh(
-                                        userID: store.resolvedTrackingSession?.userID,
-                                        accessToken: store.resolvedTrackingSession?.accessToken
-                                    )
-                                }
+                                handleCartModeTrailingAction()
                             },
+                            trailingDisabled: isCartBuyNowModeBarDisabled,
                             trailingContent: {
-                                runLogsButtonContent
+                                cartModeTrailingContent
                             }
                         )
                         .padding(.top, -12)
@@ -299,6 +294,86 @@ struct CartTabView: View {
                     size: 15
                 )
             }
+        }
+    }
+
+    @ViewBuilder
+    private var cartModeTrailingContent: some View {
+        if shouldShowBuyNowInModeBar {
+            compactBuyNowButtonContent
+        } else {
+            runLogsButtonContent
+        }
+    }
+
+    @ViewBuilder
+    private var compactBuyNowButtonContent: some View {
+        HStack(spacing: 8) {
+            if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(OunjePalette.primaryText)
+            }
+
+            Text(compactBuyNowButtonTitle)
+                .font(.system(size: 13, weight: .bold))
+        }
+        .foregroundStyle(OunjePalette.primaryText)
+        .padding(.horizontal, 14)
+        .frame(height: 42)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(cartBuyNowDisabledReason == nil ? OunjePalette.accent : OunjePalette.surface.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(
+                            cartBuyNowDisabledReason == nil ? OunjePalette.accent.opacity(0.75) : OunjePalette.stroke,
+                            lineWidth: 1
+                        )
+                )
+        )
+        .opacity(isCartBuyNowModeBarDisabled ? 0.58 : 1)
+    }
+
+    private var compactBuyNowButtonTitle: String {
+        if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
+            return "Building"
+        }
+        if cartBuyNowStatusTone == .failed {
+            return "Retry"
+        }
+        return "Buy now"
+    }
+
+    private var shouldShowBuyNowInModeBar: Bool {
+        displayMode == .reconciled
+            && shouldShowLiveCartContent
+            && currentInstacartCartURL == nil
+    }
+
+    private var isCartBuyNowModeBarDisabled: Bool {
+        shouldShowBuyNowInModeBar
+            && (cartBuyNowDisabledReason != nil || store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning)
+    }
+
+    private func handleCartModeTrailingAction() {
+        if shouldShowBuyNowInModeBar {
+            guard !isCartBuyNowModeBarDisabled else {
+                if let reason = cartBuyNowDisabledReason {
+                    toastCenter.show(title: reason, destination: nil)
+                }
+                return
+            }
+            startCartBuyNowRun()
+            return
+        }
+
+        isRunLogsPresented = true
+        Task {
+            await instacartRunLogsStore.refresh(
+                userID: store.resolvedTrackingSession?.userID,
+                accessToken: store.resolvedTrackingSession?.accessToken
+            )
         }
     }
 
@@ -627,20 +702,6 @@ struct CartTabView: View {
                     CartUnmatchedItemsNotice(summary: boxedCartCoverageSummary)
                 }
 
-                CartBuyNowPanel(
-                    disabledReason: cartBuyNowDisabledReason,
-                    statusMessage: cartBuyNowStatusMessage,
-                    statusTone: cartBuyNowStatusTone,
-                    actionURL: currentInstacartCartURL,
-                    onBuyNow: startCartBuyNowRun,
-                    onRetry: startCartBuyNowRun,
-                    onOpenInstacart: {
-                        if let url = currentInstacartCartURL {
-                            openURL(url)
-                        }
-                    }
-                )
-
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text("Shop list")
                         .font(.system(size: 18, weight: .bold))
@@ -771,7 +832,7 @@ struct CartTabView: View {
         }
     }
 
-    private var cartBuyNowStatusTone: CartBuyNowPanel.StatusTone {
+    private var cartBuyNowStatusTone: CartBuyNowStatusTone {
         if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
             return .running
         }
@@ -2813,133 +2874,12 @@ struct CartMainShopUpdatingBanner: View {
     }
 }
 
-struct CartBuyNowPanel: View {
-    enum StatusTone {
-        case idle
-        case running
-        case complete
-        case partial
-        case failed
-    }
-
-    let disabledReason: String?
-    let statusMessage: String?
-    let statusTone: StatusTone
-    let actionURL: URL?
-    let onBuyNow: () -> Void
-    let onRetry: () -> Void
-    let onOpenInstacart: () -> Void
-
-    private var isRunning: Bool {
-        statusTone == .running
-    }
-
-    private var canRetry: Bool {
-        statusTone == .failed && disabledReason == nil
-    }
-
-    private var iconName: String {
-        switch statusTone {
-        case .running:
-            return "cart.badge.plus"
-        case .complete:
-            return "checkmark.circle.fill"
-        case .partial:
-            return "exclamationmark.circle.fill"
-        case .failed:
-            return "exclamationmark.triangle.fill"
-        case .idle:
-            return "cart"
-        }
-    }
-
-    private var iconColor: Color {
-        switch statusTone {
-        case .complete:
-            return OunjePalette.accent
-        case .partial:
-            return Color(hex: "F4C95D")
-        case .failed:
-            return Color(hex: "D96B5F")
-        default:
-            return OunjePalette.softCream
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(iconColor.opacity(0.14))
-                    if isRunning {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(iconColor)
-                    } else {
-                        Image(systemName: iconName)
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(iconColor)
-                    }
-                }
-                .frame(width: 42, height: 42)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Buy now")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(OunjePalette.primaryText)
-
-                    Text("Adds this shop list to Instacart. You finish checkout there.")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let statusMessage {
-                        Text(statusMessage)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(iconColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
-                    } else if let disabledReason {
-                        Text(disabledReason)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
-                    }
-                }
-            }
-
-            HStack(spacing: 10) {
-                Button(action: canRetry ? onRetry : onBuyNow) {
-                    Text(canRetry ? "Retry" : "Buy now")
-                        .font(.system(size: 14, weight: .bold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryPillButtonStyle())
-                .disabled(disabledReason != nil || isRunning)
-                .opacity(disabledReason != nil || isRunning ? 0.52 : 1)
-
-                if actionURL != nil {
-                    Button(action: onOpenInstacart) {
-                        Text("Open Instacart")
-                            .font(.system(size: 14, weight: .bold))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(SecondaryPillButtonStyle())
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.96))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                )
-        )
-    }
+enum CartBuyNowStatusTone {
+    case idle
+    case running
+    case complete
+    case partial
+    case failed
 }
 
 struct CartMainShopMappingSheet: View {
@@ -3743,6 +3683,7 @@ struct CartDisplayModeBar<TrailingContent: View>: View {
     @Binding var selection: CartDisplayMode
     @Namespace private var selectionNamespace
     let trailingAction: (() -> Void)?
+    var trailingDisabled = false
     @ViewBuilder let trailingContent: () -> TrailingContent
 
     var body: some View {
