@@ -158,9 +158,13 @@ Rules:
   - skill_level
   - est_calories_text
   - calories_kcal
+  - protein_g
+  - carbs_g
+  - fat_g
   - missing ingredient quantity_text values
 - Do not change title, description, source, recipe type, cuisine, main protein, cook method, or steps.
 - If evidence is weak, return null for that field.
+- If the dish identity, serving count, and ingredient quantities are clear enough, provide conservative best-guess per-serving calories_kcal, protein_g, carbs_g, and fat_g for app display.
 - Never guess cooking method, cuisine, or protein.
 - Never add ingredient rows that do not already exist.
 - Only fill ingredient quantities if the quantity is explicit or trivially implied by the source evidence.
@@ -181,10 +185,14 @@ Rules:
   - skill_level
   - est_calories_text
   - calories_kcal
+  - protein_g
+  - carbs_g
+  - fat_g
   - missing ingredient quantity_text values for obvious, common, countable ingredients
 - Do not change title, description, source, recipe type, cuisine, main protein, cook method, ingredient names, or steps.
 - If a value is not clearly supported by the supplied evidence, return null.
 - Calories may be estimated if the recipe clearly points to a common dish and the estimate is conservative.
+- Per-serving protein_g, carbs_g, and fat_g may be estimated when ingredient quantities and serving count are clear enough. Use null only when the recipe is too ambiguous.
 - Ingredient quantities may be inferred only when the source makes the amount obvious or trivially implied.
 - When filling ingredient quantities, preserve the current ingredient display_name exactly and only change quantity_text.
 - Do not include commentary outside the JSON object.`;
@@ -4759,6 +4767,7 @@ async function extractRecipeWithModel(source) {
       type: "text",
       text: [
         "Extract a recipe from this source material.",
+        "If the source does not provide nutrition but the dish, servings, and ingredient quantities are clear enough, return conservative best-guess per-serving calories_kcal, protein_g, carbs_g, and fat_g. These are rough display estimates for the app.",
         "",
         `source_type: ${source.source_type}`,
         `platform: ${source.platform ?? ""}`,
@@ -5089,6 +5098,9 @@ function mergeLowRiskRecipeFill(baseRecipe, fillRecipe) {
     skill_level: baseRecipe.skill_level ?? normalizedSkillLevel,
     est_calories_text: baseRecipe.est_calories_text ?? normalizedCaloriesText,
     calories_kcal: baseRecipe.calories_kcal ?? (Number.isFinite(fillRecipe.calories_kcal) ? Number(fillRecipe.calories_kcal) : null),
+    protein_g: baseRecipe.protein_g ?? (Number.isFinite(fillRecipe.protein_g) ? Number(fillRecipe.protein_g) : null),
+    carbs_g: baseRecipe.carbs_g ?? (Number.isFinite(fillRecipe.carbs_g) ? Number(fillRecipe.carbs_g) : null),
+    fat_g: baseRecipe.fat_g ?? (Number.isFinite(fillRecipe.fat_g) ? Number(fillRecipe.fat_g) : null),
     ingredients: mergedIngredients,
   };
 }
@@ -5146,7 +5158,10 @@ function recipeNeedsCompletionPass(recipe) {
     || !Number.isFinite(recipe?.cook_time_minutes)
     || !Number.isFinite(recipe?.prep_time_minutes)
     || !normalizeText(recipe?.est_calories_text)
-    || !Number.isFinite(recipe?.calories_kcal);
+    || !Number.isFinite(recipe?.calories_kcal)
+    || !Number.isFinite(recipe?.protein_g)
+    || !Number.isFinite(recipe?.carbs_g)
+    || !Number.isFinite(recipe?.fat_g);
 }
 
 function buildRecipeCompletionQuery(recipe, source) {
@@ -5271,6 +5286,9 @@ function mergeCompletedRecipe(baseRecipe, completedRecipe) {
     cook_time_text: lowRiskMerged.cook_time_text ?? (normalizeText(completedRecipe.cook_time_text) || null),
     est_calories_text: lowRiskMerged.est_calories_text ?? completedCaloriesText,
     calories_kcal: lowRiskMerged.calories_kcal ?? (Number.isFinite(completedRecipe.calories_kcal) ? Number(completedRecipe.calories_kcal) : null),
+    protein_g: lowRiskMerged.protein_g ?? (Number.isFinite(completedRecipe.protein_g) ? Number(completedRecipe.protein_g) : null),
+    carbs_g: lowRiskMerged.carbs_g ?? (Number.isFinite(completedRecipe.carbs_g) ? Number(completedRecipe.carbs_g) : null),
+    fat_g: lowRiskMerged.fat_g ?? (Number.isFinite(completedRecipe.fat_g) ? Number(completedRecipe.fat_g) : null),
     main_protein: baseRecipe.main_protein ?? completedMainProtein,
     cook_method: baseRecipe.cook_method ?? completedCookMethod,
     cuisine_tags: uniqueStrings([...(baseRecipe.cuisine_tags ?? []), ...(completedRecipe.cuisine_tags ?? [])]).slice(0, 8),
@@ -5402,6 +5420,9 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
               servings_text: "string|null",
               est_calories_text: "string|null",
               calories_kcal: "number|null",
+              protein_g: "number|null",
+              carbs_g: "number|null",
+              fat_g: "number|null",
               prep_time_minutes: "number|null",
               cook_time_minutes: "number|null",
               main_protein: "string|null",
@@ -5939,6 +5960,9 @@ async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
               skill_level: "string|null",
               est_calories_text: "string|null",
               calories_kcal: "number|null",
+              protein_g: "number|null",
+              carbs_g: "number|null",
+              fat_g: "number|null",
               ingredients: [{ display_name: "string", quantity_text: "string|null" }],
             },
           }),
@@ -5958,11 +5982,15 @@ function recipeNeedsSecondaryFill(recipe) {
   const hasAnyIngredientQuantity = missingIngredientQuantities < ingredients.length;
   const missingServings = !normalizeText(recipe?.servings_text) && !Number.isFinite(recipe?.servings_count);
   const missingCookTime = !normalizeText(recipe?.cook_time_text) && !Number.isFinite(recipe?.cook_time_minutes);
+  const missingMacros = !Number.isFinite(recipe?.calories_kcal)
+    || !Number.isFinite(recipe?.protein_g)
+    || !Number.isFinite(recipe?.carbs_g)
+    || !Number.isFinite(recipe?.fat_g);
   const criticallySparseQuantities = ingredients.length >= 3
     && missingIngredientQuantities >= Math.ceil(ingredients.length * 0.75)
     && !hasAnyIngredientQuantity;
 
-  return missingServings || missingCookTime || criticallySparseQuantities;
+  return missingServings || missingCookTime || missingMacros || criticallySparseQuantities;
 }
 
 async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
@@ -6008,6 +6036,9 @@ async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
             skill_level: "string|null",
             est_calories_text: "string|null",
             calories_kcal: "number|null",
+            protein_g: "number|null",
+            carbs_g: "number|null",
+            fat_g: "number|null",
             ingredients: [{ display_name: "string", quantity_text: "string|null" }],
           },
         }),

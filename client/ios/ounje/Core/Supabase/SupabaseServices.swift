@@ -916,6 +916,48 @@ struct SupabaseMainShopItemUpsertPayload: Codable {
         case sourceEdgeIDs = "source_edge_ids"
         case reconciliationMeta = "reconciliation_meta"
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(userID, forKey: .userID)
+        try container.encode(planID, forKey: .planID)
+        try container.encode(canonicalKey, forKey: .canonicalKey)
+        try container.encode(name, forKey: .name)
+        try container.encode(quantityText, forKey: .quantityText)
+        if let supportingText {
+            try container.encode(supportingText, forKey: .supportingText)
+        } else {
+            try container.encodeNil(forKey: .supportingText)
+        }
+        if let imageURL {
+            try container.encode(imageURL, forKey: .imageURL)
+        } else {
+            try container.encodeNil(forKey: .imageURL)
+        }
+        if let estimatedPriceText {
+            try container.encode(estimatedPriceText, forKey: .estimatedPriceText)
+        } else {
+            try container.encodeNil(forKey: .estimatedPriceText)
+        }
+        try container.encode(estimatedPriceValue, forKey: .estimatedPriceValue)
+        if let sectionKind {
+            try container.encode(sectionKind, forKey: .sectionKind)
+        } else {
+            try container.encodeNil(forKey: .sectionKind)
+        }
+        if let removalKey {
+            try container.encode(removalKey, forKey: .removalKey)
+        } else {
+            try container.encodeNil(forKey: .removalKey)
+        }
+        try container.encode(sourceIngredients, forKey: .sourceIngredients)
+        try container.encode(sourceEdgeIDs, forKey: .sourceEdgeIDs)
+        if let reconciliationMeta {
+            try container.encode(reconciliationMeta, forKey: .reconciliationMeta)
+        } else {
+            try container.encodeNil(forKey: .reconciliationMeta)
+        }
+    }
 }
 
 struct SupabaseMainShopItemRow: Decodable {
@@ -1038,7 +1080,12 @@ final class SupabaseMealPrepCycleService {
         throw lastError ?? SupabaseMealPrepCyclesError.requestFailed("Failed to read prep cycles.")
     }
 
-    func upsertMealPrepCycle(userID: String, plan: MealPlan, accessToken: String?) async throws {
+    func upsertMealPrepCycle(
+        userID: String,
+        plan: MealPlan,
+        accessToken: String?,
+        syncCart: Bool = false
+    ) async throws {
         guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/meal_prep_cycles?on_conflict=user_id,plan_id") else {
             throw SupabaseMealPrepCyclesError.invalidRequest
         }
@@ -1073,7 +1120,9 @@ final class SupabaseMealPrepCycleService {
                 continue
             }
 
-            try await syncMainShopAndBaseCart(userID: userID, plan: plan, accessToken: accessToken)
+            if syncCart {
+                try await syncMainShopAndBaseCart(userID: userID, plan: plan, accessToken: accessToken)
+            }
             return
         }
 

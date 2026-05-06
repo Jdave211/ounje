@@ -404,7 +404,10 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
         envelopes.first(where: { $0.id == envelopeID })
     }
 
-    func reconcileCompletedImports(_ completedItems: [RecipeImportCompletedItem]) async {
+    func reconcileCompletedImports(
+        _ completedItems: [RecipeImportCompletedItem],
+        onCompletedPreppedImport: ((RecipeImportResponse) async -> Void)? = nil
+    ) async {
         let currentEnvelopes = (try? SharedRecipeImportInbox.readAll()) ?? []
         guard !currentEnvelopes.isEmpty else {
             envelopes = []
@@ -416,6 +419,7 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
             : currentEnvelopes
                 .filter { envelope in
                     guard !envelope.isPinnedTypedImport else { return false }
+                    guard envelope.targetState != "prepped" else { return false }
                     return completedItems.contains(where: { $0.matches(envelope: envelope) })
                 }
                 .map(\.id)
@@ -452,6 +456,9 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
                 let isTerminalServerState = ["saved", "needs_review", "draft"].contains(backendProcessingState)
 
                 if isTerminalServerState || response.recipe != nil {
+                    if envelope.targetState == "prepped", response.recipeDetail != nil {
+                        await onCompletedPreppedImport?(response)
+                    }
                     try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
                     continue
                 }
@@ -1204,7 +1211,12 @@ private struct MealPlannerShellView: View {
         }
         .task(id: "recipe-import-history::\(store.authSession?.userID ?? "signed-out")") {
             await recipeImportHistory.refresh(userID: store.authSession?.userID)
-            await sharedImportInbox.reconcileCompletedImports(recipeImportHistory.completedItems)
+            await sharedImportInbox.reconcileCompletedImports(
+                recipeImportHistory.completedItems,
+                onCompletedPreppedImport: { response in
+                    await handleCompletedPreppedImport(response)
+                }
+            )
         }
         .onReceive(NotificationCenter.default.publisher(for: .recipeImportHistoryNeedsRefresh)) { _ in
             Task {
@@ -1382,9 +1394,28 @@ private struct MealPlannerShellView: View {
     private func refreshSharedImportState() async {
         await sharedImportInbox.refresh()
         await recipeImportHistory.refresh(userID: store.authSession?.userID)
-        await sharedImportInbox.reconcileCompletedImports(recipeImportHistory.completedItems)
+        await sharedImportInbox.reconcileCompletedImports(
+            recipeImportHistory.completedItems,
+            onCompletedPreppedImport: { response in
+                await handleCompletedPreppedImport(response)
+            }
+        )
         await syncCompletedImportsIntoSavedStore()
         await prewarmCompletedImportDetails()
+    }
+
+    @MainActor
+    private func handleCompletedPreppedImport(_ response: RecipeImportResponse) async {
+        guard let detail = response.recipeDetail else { return }
+        await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
+        selectedTab = .prep
+        toastCenter.show(
+            title: "Added to next prep",
+            subtitle: detail.title,
+            systemImage: "sparkles",
+            thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
+            destination: .appTab(.prep)
+        )
     }
 
     @MainActor

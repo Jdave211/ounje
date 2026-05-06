@@ -44,11 +44,12 @@ struct RecipeTransitionContext {
 
 struct RecipeImageTransitionModifier: ViewModifier {
     let transitionContext: RecipeTransitionContext?
+    var isSource: Bool = true
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if let transitionContext {
-            content.matchedGeometryEffect(id: transitionContext.imageID, in: transitionContext.namespace)
+            content.matchedGeometryEffect(id: transitionContext.imageID, in: transitionContext.namespace, isSource: isSource)
         } else {
             content
         }
@@ -57,11 +58,12 @@ struct RecipeImageTransitionModifier: ViewModifier {
 
 struct RecipeTitleTransitionModifier: ViewModifier {
     let transitionContext: RecipeTransitionContext?
+    var isSource: Bool = true
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if let transitionContext {
-            content.matchedGeometryEffect(id: transitionContext.titleID, in: transitionContext.namespace)
+            content.matchedGeometryEffect(id: transitionContext.titleID, in: transitionContext.namespace, isSource: isSource)
         } else {
             content
         }

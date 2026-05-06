@@ -528,9 +528,9 @@ struct RecipeDetailData: Identifiable, Decodable, Hashable {
             RecipeDetailMetric(title: "Cook Time", value: compactCookTime),
             RecipeDetailMetric(title: "Servings", value: "\(displayServings)"),
             caloriesDisplayText.map { RecipeDetailMetric(title: "Calories", value: $0) },
-            (proteinText ?? proteinG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Protein", value: $0) },
-            (carbsText ?? carbsG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Carbs", value: $0) },
-            (fatsText ?? fatG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Fats", value: $0) },
+            (Self.macroDisplayText(from: proteinText) ?? proteinG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Protein", value: $0) },
+            (Self.macroDisplayText(from: carbsText) ?? carbsG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Carbs", value: $0) },
+            (Self.macroDisplayText(from: fatsText) ?? fatG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Fats", value: $0) },
             (recipeType ?? category ?? subcategory).map { RecipeDetailMetric(title: "Type", value: $0.capitalized) },
             (cuisineTags.first ?? category ?? subcategory).map { RecipeDetailMetric(title: "Cuisine", value: $0) },
             (cookMethod ?? mainProtein).map { RecipeDetailMetric(title: "Method", value: $0) },
@@ -575,6 +575,14 @@ struct RecipeDetailData: Identifiable, Decodable, Hashable {
             return nil
         }
         return "\(parsed) kcal"
+    }
+
+    private static func macroDisplayText(from rawValue: String?) -> String? {
+        let trimmed = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed
+            .replacingOccurrences(of: #"\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func normalizedImageURL(from rawValue: String?) -> URL? {
@@ -931,12 +939,25 @@ final class RecipeDetailViewModel: ObservableObject {
             do {
                 let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(detail: detail)
                 guard self.detail?.id == recipeID else { return }
-                similarRecipes = recipes
+                if !recipes.isEmpty {
+                    similarRecipes = recipes
+                    return
+                }
             } catch {
                 guard self.detail?.id == recipeID else { return }
                 print("[RecipeDetail] detail-context similar recipe load failed for \(recipeID): \(error.localizedDescription)")
-                similarRecipes = []
             }
+        }
+
+        do {
+            let fallbackRecipes = try await SupabaseDiscoverRecipeService.shared.fetchRecipes(limit: 12)
+            guard self.detail?.id == recipeID else { return }
+            let excludedIDs = Set([recipeID, fallbackRecipeID].compactMap { $0 })
+            similarRecipes = Array(fallbackRecipes.filter { !excludedIDs.contains($0.id) }.prefix(5))
+        } catch {
+            guard self.detail?.id == recipeID else { return }
+            print("[RecipeDetail] latest-recipes similar fallback failed for \(recipeID): \(error.localizedDescription)")
+            similarRecipes = []
         }
     }
 }

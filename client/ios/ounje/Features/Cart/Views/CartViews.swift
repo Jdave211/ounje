@@ -57,13 +57,6 @@ enum CartSupportWarmupService {
         try? await Task.sleep(nanoseconds: 900_000_000)
         guard !Task.isCancelled else { return }
 
-        let didRefreshSnapshot = await store.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
-
-        if didRefreshSnapshot {
-            try? await Task.sleep(nanoseconds: 450_000_000)
-        }
-        guard !Task.isCancelled else { return }
-
         guard let plan = await MainActor.run(body: { store.latestPlan }),
               !plan.recipes.isEmpty else {
             return
@@ -2349,6 +2342,11 @@ struct CartTabView: View {
         defer { isLoadingIngredients = false }
 
         do {
+            _ = await store.refreshLatestPlanMainShopSnapshotIfNeeded(
+                forceRebuild: forceRebuild || latestPlan.mainShopSnapshot?.signature != signature
+            )
+            guard !Task.isCancelled else { return }
+
             let rows = try await cachedOrLoadedPrepRecipeIngredientRows(from: latestPlan)
             guard !Task.isCancelled else { return }
             guard let activePlan = store.latestPlan,

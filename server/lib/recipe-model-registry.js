@@ -14,6 +14,7 @@ const DEFAULT_REGISTRY = {
     discoverIntentModel: "gpt-4.1-mini",
     recipeRewriteBaseModel: "gpt-4.1-mini-2025-04-14",
     recipeRewriteActiveModel: null,
+    recipeAdaptationModel: "gpt-4o-mini",
   },
   fineTune: {
     jobId: "",
@@ -79,6 +80,13 @@ export function updateRecipeModelRegistry(mutator) {
 export function getActiveRecipeRewriteModel() {
   const registry = readRecipeModelRegistry();
   return registry.models.recipeRewriteActiveModel || registry.models.recipeRewriteBaseModel;
+}
+
+export function getRecipeAdaptationModel() {
+  const envModel = String(process.env.RECIPE_ADAPTATION_MODEL ?? "").trim();
+  if (envModel) return envModel;
+  const registry = readRecipeModelRegistry();
+  return registry.models.recipeAdaptationModel || "gpt-4o-mini";
 }
 
 export function getDiscoverIntentModel() {

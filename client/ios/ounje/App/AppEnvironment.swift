@@ -59,7 +59,6 @@ final class MealPlanningAppStore: ObservableObject {
     private let planner = MealPlanningAgent()
     private var activeGenerationToken = UUID()
     private var prepRecipeOverrides: [PrepRecipeOverride] = []
-    private var mainShopSnapshotRefreshTask: Task<Void, Never>?
     private var latestPlanArtifactRefreshTask: Task<Void, Never>?
     private var recurringPrepToggleRecipeIDs = Set<String>()
 
@@ -609,7 +608,6 @@ final class MealPlanningAppStore: ObservableObject {
             let generatedPlan = latestPlan?.id == plan.id ? latestPlan ?? plan : plan
             scheduleGeneratedPlanArtifactRefresh(planID: generatedPlan.id)
         } else {
-            _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
             if let latestPlan, latestPlan.id == plan.id {
                 _ = await persistLatestPlanRemotelyIfPossible(latestPlan)
             } else {
@@ -697,7 +695,7 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         _ = await rebuildLatestPlanGroceriesIfNeeded(force: true)
-        guard await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: latestPlan?.mainShopSnapshot?.items.isEmpty != false) else {
+        guard await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true) else {
             manualAutoshopErrorMessage = "Main Shop is still syncing. Try again in a moment."
             return
         }
@@ -843,34 +841,32 @@ final class MealPlanningAppStore: ObservableObject {
         guard let profile, profile.isPlanningReady else { return }
 
         let sanitizedServings = max(1, servings)
-        let hydratedPlannedRecipe = await hydratedPlannedRecipeForCart(
+        let immediatePlannedRecipe = PlannedRecipe(
             recipe: recipe,
             servings: sanitizedServings,
             carriedFromPreviousPlan: false
         )
-        let hydratedRecipe = hydratedPlannedRecipe.recipe
-        let override = PrepRecipeOverride(recipe: hydratedRecipe, servings: sanitizedServings, isIncludedInPrep: true)
+        let override = PrepRecipeOverride(recipe: recipe, servings: sanitizedServings, isIncludedInPrep: true)
         cachePrepRecipeOverride(override)
-        await persistPrepRecipeOverrideIfPossible(override)
 
         let updatedRecipes: [PlannedRecipe]
         let mutationSummary: String
         if let latestPlan {
             var recipes = latestPlan.recipes
-            let hadRecipe = recipes.contains { $0.recipe.id == hydratedRecipe.id }
-            if let index = recipes.firstIndex(where: { $0.recipe.id == hydratedRecipe.id }) {
-                recipes[index].recipe = hydratedRecipe
+            let hadRecipe = recipes.contains { $0.recipe.id == recipe.id }
+            if let index = recipes.firstIndex(where: { $0.recipe.id == recipe.id }) {
+                recipes[index].recipe = recipe
                 recipes[index].servings = sanitizedServings
             } else {
-                recipes.append(hydratedPlannedRecipe)
+                recipes.append(immediatePlannedRecipe)
             }
             updatedRecipes = recipes
             mutationSummary = hadRecipe
-                ? "Updated \(hydratedRecipe.title) in prep."
-                : "Added \(hydratedRecipe.title) to prep."
+                ? "Updated \(recipe.title) in prep."
+                : "Added \(recipe.title) to prep."
         } else {
-            updatedRecipes = [hydratedPlannedRecipe]
-            mutationSummary = "Added \(hydratedRecipe.title) to prep."
+            updatedRecipes = [immediatePlannedRecipe]
+            mutationSummary = "Added \(recipe.title) to prep."
         }
 
         await applyImmediateLatestPlanRecipeMutation(
@@ -879,6 +875,7 @@ final class MealPlanningAppStore: ObservableObject {
             basePlan: latestPlan,
             mutationSummary: mutationSummary
         )
+        await persistPrepRecipeOverrideIfPossible(override)
         await syncPrepMutationToAutomation(trigger: "prep_recipe_updated", forceCartSync: true)
     }
 
@@ -1075,7 +1072,6 @@ final class MealPlanningAppStore: ObservableObject {
             }
 
             _ = await self.persistLatestPlanRemotelyIfPossible(hydratedPlan)
-            _ = await self.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
 
             if !Task.isCancelled, let refreshedPlan = self.latestPlan, refreshedPlan.id == planID {
                 _ = await self.persistLatestPlanRemotelyIfPossible(refreshedPlan)
@@ -1194,7 +1190,6 @@ final class MealPlanningAppStore: ObservableObject {
             isIncludedInPrep: false
         )
         cachePrepRecipeOverride(override)
-        await persistPrepRecipeOverrideIfPossible(override)
 
         let remainingRecipes = latestPlan.recipes.filter { $0.recipe.id != recipeID }
         await applyImmediateLatestPlanRecipeMutation(
@@ -1203,6 +1198,7 @@ final class MealPlanningAppStore: ObservableObject {
             basePlan: latestPlan,
             mutationSummary: "Removed \(removedRecipe.recipe.title) from prep."
         )
+        await persistPrepRecipeOverrideIfPossible(override)
         await syncPrepMutationToAutomation(trigger: "prep_recipe_removed", forceCartSync: true)
     }
 
@@ -1258,8 +1254,6 @@ final class MealPlanningAppStore: ObservableObject {
         pendingCartSyncIntent = nil
         prepRecipeOverrides = []
         remoteMealPrepCycleLoadState = .notRequested
-        mainShopSnapshotRefreshTask?.cancel()
-        mainShopSnapshotRefreshTask = nil
         hiddenMainShopItemKeys = []
         hiddenMainShopPlanID = nil
         UserDefaults.standard.removeObject(forKey: authSessionKey)
@@ -1373,7 +1367,6 @@ final class MealPlanningAppStore: ObservableObject {
             planHistory = Array(planHistory.prefix(12))
         }
         saveHistory()
-        scheduleLatestPlanMainShopSnapshotRefresh(forceRebuild: false)
 
         guard persistRemote else { return }
         persistMealPrepCycleIfPossible(plan)
@@ -1390,47 +1383,67 @@ final class MealPlanningAppStore: ObservableObject {
         mutationSummary: String
     ) async {
         let recurringRecipeIDs = resolvedRecurringRecipeIDs(for: basePlan)
-        let hydratedRecipes = await hydratedPlannedRecipesForCart(recipes)
-
+        let immediatePlan: MealPlan
         if let basePlan {
-            var refreshedPlan = planner.rebuildPlanCartOnly(
+            immediatePlan = planner.rebuildPlanCartOnly(
+                profile: profile,
+                basePlan: basePlan,
+                recipes: recipes,
+                history: planHistory,
+                recurringRecipeIDs: recurringRecipeIDs
+            )
+        } else {
+            immediatePlan = planner.buildPlanCartOnly(
+                profile: profile,
+                recipes: recipes,
+                history: planHistory,
+                recurringRecipeIDs: recurringRecipeIDs
+            )
+        }
+
+        var visiblePlan = immediatePlan
+        visiblePlan.pipeline.append(
+            PipelineDecision(
+                stage: .composeGroceries,
+                summary: mutationSummary
+            )
+        )
+        updateCurrentPlanCache(with: visiblePlan)
+
+        let hydratedRecipes = await hydratedPlannedRecipesForCart(recipes)
+        guard hydratedRecipes != recipes else {
+            _ = await persistLatestPlanRemotelyIfPossible(visiblePlan)
+            return
+        }
+
+        let hydratedPlan: MealPlan
+        if let basePlan {
+            hydratedPlan = planner.rebuildPlanCartOnly(
                 profile: profile,
                 basePlan: basePlan,
                 recipes: hydratedRecipes,
                 history: planHistory,
                 recurringRecipeIDs: recurringRecipeIDs
             )
-            refreshedPlan.pipeline.append(
-                PipelineDecision(
-                    stage: .composeGroceries,
-                    summary: mutationSummary
-                )
+        } else {
+            hydratedPlan = planner.buildPlanCartOnly(
+                profile: profile,
+                recipes: hydratedRecipes,
+                history: planHistory,
+                recurringRecipeIDs: recurringRecipeIDs
             )
-
-            updateCurrentPlanCache(with: refreshedPlan)
-            scheduleLatestPlanMainShopSnapshotRefresh(forceRebuild: true)
-            _ = await persistLatestPlanRemotelyIfPossible(refreshedPlan)
-            return
         }
 
-        let immediatePlan = planner.buildPlanCartOnly(
-            profile: profile,
-            recipes: hydratedRecipes,
-            history: planHistory,
-            recurringRecipeIDs: recurringRecipeIDs
-        )
-
-        var refreshedImmediatePlan = immediatePlan
-        refreshedImmediatePlan.pipeline.append(
+        var refreshedPlan = hydratedPlan
+        refreshedPlan.pipeline.append(
             PipelineDecision(
                 stage: .composeGroceries,
                 summary: mutationSummary
             )
         )
 
-        updateCurrentPlanCache(with: refreshedImmediatePlan)
-        scheduleLatestPlanMainShopSnapshotRefresh(forceRebuild: true)
-        _ = await persistLatestPlanRemotelyIfPossible(refreshedImmediatePlan)
+        updateCurrentPlanCache(with: refreshedPlan)
+        _ = await persistLatestPlanRemotelyIfPossible(refreshedPlan)
     }
 
     private func latestPlanNeedsGroceryRebuild(_ plan: MealPlan) -> Bool {
@@ -1506,7 +1519,6 @@ final class MealPlanningAppStore: ObservableObject {
 
             self.updateCurrentPlanCache(with: refreshedPlan)
             _ = await self.persistLatestPlanRemotelyIfPossible(refreshedPlan)
-            _ = await self.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
             self.latestPlanArtifactRefreshTask = nil
         }
     }
@@ -1693,35 +1705,12 @@ final class MealPlanningAppStore: ObservableObject {
             )
             guard let currentPlan = self.latestPlan, currentPlan.id == latestPlan.id else { return false }
             updateLatestPlanMainShopSnapshot(snapshot, for: currentPlan.id)
+            if let refreshedPlan = self.latestPlan, refreshedPlan.id == currentPlan.id {
+                _ = await persistLatestPlanRemotelyIfPossible(refreshedPlan, syncCart: true)
+            }
             return true
         } catch {
             return false
-        }
-    }
-
-    private func normalizeLatestPlanMainShopDataIfNeeded() async {
-        guard let latestPlan else { return }
-        guard !latestPlan.recipes.isEmpty else { return }
-
-        let needsSnapshotRefresh =
-            latestPlan.mainShopSnapshot == nil
-            || latestPlan.mainShopSnapshot?.signature != MainShopSnapshotBuilder.signature(for: latestPlan.groceryItems)
-
-        guard needsSnapshotRefresh else { return }
-
-        _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
-    }
-
-    private func scheduleLatestPlanMainShopSnapshotRefresh(forceRebuild: Bool) {
-        guard let planID = latestPlan?.id else { return }
-        mainShopSnapshotRefreshTask?.cancel()
-        mainShopSnapshotRefreshTask = Task(priority: .utility) { [weak self] in
-            guard let self else { return }
-            _ = await self.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: forceRebuild)
-            await MainActor.run {
-                guard self.latestPlan?.id == planID else { return }
-                self.mainShopSnapshotRefreshTask = nil
-            }
         }
     }
 
@@ -1802,7 +1791,6 @@ final class MealPlanningAppStore: ObservableObject {
                 planHistory = usableFetched
             }
             saveHistory()
-            await normalizeLatestPlanMainShopDataIfNeeded()
             let loadedState: RemoteMealPrepCycleLoadState = .loaded(usableFetched.count)
             remoteMealPrepCycleLoadState = loadedState
             return loadedState
@@ -2207,7 +2195,7 @@ final class MealPlanningAppStore: ObservableObject {
         await reconcileLatestPlanWithPrepOverrides()
         await repairRemoteCartStateIfNeeded(session: session)
 
-        if trigger == "main_shop_snapshot.updated" || trigger == "meal_prep_cycle.updated" || trigger == "prep.updated" {
+        if trigger == "main_shop_snapshot.updated" {
             _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
         }
     }
@@ -2352,7 +2340,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     @discardableResult
-    private func persistLatestPlanRemotelyIfPossible(_ plan: MealPlan) async -> Bool {
+    private func persistLatestPlanRemotelyIfPossible(_ plan: MealPlan, syncCart: Bool = false) async -> Bool {
         guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return false }
         guard isUsablePersistedPlan(plan) else {
             print("[MealPlanningAppStore] Skipping remote meal prep cycle persistence for unsupported plan \(plan.id) with \(plan.recipes.count) recipes")
@@ -2363,7 +2351,8 @@ final class MealPlanningAppStore: ObservableObject {
             try await SupabaseMealPrepCycleService.shared.upsertMealPrepCycle(
                 userID: session.userID,
                 plan: plan,
-                accessToken: session.accessToken
+                accessToken: session.accessToken,
+                syncCart: syncCart
             )
             return true
         } catch {
@@ -2403,7 +2392,6 @@ final class MealPlanningAppStore: ObservableObject {
         if forceCartSync {
             let needsGroceryRebuild = latestPlan.map { latestPlanNeedsGroceryRebuild($0) } ?? false
             _ = await rebuildLatestPlanGroceriesIfNeeded(force: needsGroceryRebuild)
-            _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
         }
         automationState = updatedAutomationState {
             $0.lastEvaluatedAt = ISO8601DateFormatter().string(from: .now)
@@ -2469,7 +2457,7 @@ final class MealPlanningAppStore: ObservableObject {
         if isPassiveStartupTrigger {
             // Passive app-entry triggers should never mutate prep recipes/groceries.
             // Keep this to view-model hygiene only.
-            _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
+            return
         } else if shouldGeneratePlan(for: profile, nextDelivery: nextDelivery) {
             await generatePlan()
             return
@@ -2477,7 +2465,6 @@ final class MealPlanningAppStore: ObservableObject {
 
         if !isPassiveStartupTrigger {
             _ = await rebuildLatestPlanGroceriesIfNeeded(force: false)
-            _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
         }
     }
 

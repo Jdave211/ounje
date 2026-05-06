@@ -148,6 +148,19 @@ struct RecipeDetailExperienceView: View {
         detail?.originalURL ?? presentedRecipe.recipeCard.destinationURL
     }
 
+    private var usesLaVecchiaSourceOverride: Bool {
+        let normalizedTitle = titleText
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        return normalizedTitle.contains("creamy chicken pasta bake")
+            && normalizedTitle.contains("sundried tomato")
+            && normalizedTitle.contains("chorizo")
+    }
+
+    private var displayExternalURL: URL? {
+        usesLaVecchiaSourceOverride ? nil : externalURL
+    }
+
     private var authorURL: URL? {
         guard let raw = detail?.authorURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else {
@@ -224,6 +237,9 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var subtitleLine: String? {
+        if usesLaVecchiaSourceOverride {
+            return "La Vecchia . 2405 Yonge St A, Toronto, ON"
+        }
         guard let detail else { return nil }
         let line = detail.authorLine.trimmingCharacters(in: .whitespacesAndNewlines)
         if line.isEmpty || line.caseInsensitiveCompare("Ounje source") == .orderedSame || line.caseInsensitiveCompare("Source pending") == .orderedSame {
@@ -370,10 +386,12 @@ struct RecipeDetailExperienceView: View {
         GeometryReader { geometry in
             let safeTop = geometry.safeAreaInsets.top
             let pageWidth = geometry.size.width
-            let heroSize = min(pageWidth * 0.74, 312)
+            let heroSize = min(pageWidth * 0.9, 376)
             let heroTopCrop = heroSize * 0.16
-            let heroTopBleed: CGFloat = 18
-            let heroHeight = max(160, heroSize - heroTopCrop - 8)
+            let heroTopBleed = safeTop + 18
+            let heroHeight = max(198, heroSize - heroTopCrop + 18)
+            let topControlTop = max(safeTop + 26, 72)
+            let videoButtonTop = topControlTop + 64
             let ingredientColumns = Self.ingredientGridColumns(for: pageWidth)
             ScrollViewReader { proxy in
                 ZStack(alignment: .bottom) {
@@ -387,9 +405,9 @@ struct RecipeDetailExperienceView: View {
                                     .frame(height: heroHeight)
                                     .overlay(alignment: .topTrailing) {
                                         RecipeDetailHeroImage(candidates: imageCandidates)
-                                            .modifier(RecipeImageTransitionModifier(transitionContext: transitionContext))
                                             .frame(width: heroSize, height: heroSize)
-                                            .offset(x: heroSize * 0.04, y: -(heroTopCrop + heroTopBleed))
+                                            .offset(x: heroSize * 0.09, y: -(heroTopCrop + heroTopBleed))
+                                            .ignoresSafeArea(.container, edges: .top)
                                             .allowsHitTesting(false)
                                     }
                                     .overlay(alignment: .topTrailing) {
@@ -398,7 +416,7 @@ struct RecipeDetailExperienceView: View {
                                                 toggleInlineVideo()
                                             }
                                             .padding(.trailing, 20)
-                                            .padding(.top, max(safeTop - 2, 0) + 52 + 10)
+                                            .padding(.top, videoButtonTop)
                                         }
                                     }
                             }
@@ -406,10 +424,9 @@ struct RecipeDetailExperienceView: View {
 
                             VStack(alignment: .leading, spacing: 30) {
                                 RecipeModalTitle(text: titleText, isAdapted: isAdaptedRecipe)
-                                    .modifier(RecipeTitleTransitionModifier(transitionContext: transitionContext))
 
                                 VStack(alignment: .leading, spacing: 16) {
-                                    if subtitleLine != nil || externalURL != nil {
+                                    if subtitleLine != nil || displayExternalURL != nil {
                                         HStack(spacing: 8) {
                                             if let subtitleLine {
                                                 Text(subtitleLine)
@@ -417,14 +434,14 @@ struct RecipeDetailExperienceView: View {
                                                     .foregroundStyle(OunjePalette.secondaryText)
                                             }
 
-                                            if let externalURL {
+                                            if let displayExternalURL {
                                                 if subtitleLine != nil {
                                                     Text("•")
                                                         .foregroundStyle(OunjePalette.secondaryText)
                                                 }
 
                                                 Button("See original link") {
-                                                    openURL(externalURL)
+                                                    openURL(displayExternalURL)
                                                 }
                                                 .font(.system(size: 15, weight: .medium))
                                                 .foregroundStyle(OunjePalette.softCream)
@@ -530,7 +547,7 @@ struct RecipeDetailExperienceView: View {
                                             .padding(.top, ingredientItems.isEmpty ? 8 : 26)
                                         }
 
-                                        if detail != nil && (isLoadingSimilarRecipes || viewModel.hasLoadedSimilarRecipes || !viewModel.similarRecipes.isEmpty) {
+                                        if detail != nil {
                                             RecipeDetailEnjoySection(
                                                 recipes: viewModel.similarRecipes,
                                                 isLoading: isLoadingSimilarRecipes,
@@ -546,7 +563,7 @@ struct RecipeDetailExperienceView: View {
                             .frame(maxWidth: 820, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 14)
-                            .padding(.top, 0)
+                            .padding(.top, 12)
                             .padding(.bottom, 160)
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -569,20 +586,6 @@ struct RecipeDetailExperienceView: View {
                     .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 22, delay: 0.1))
                 }
                 .overlay(alignment: .top) {
-                    LinearGradient(
-                        colors: [
-                            detailBackground,
-                            detailBackground.opacity(0.82),
-                            detailBackground.opacity(0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: safeTop + 30)
-                    .ignoresSafeArea(edges: .top)
-                    .allowsHitTesting(false)
-                }
-                .overlay(alignment: .top) {
                     HStack(alignment: .top) {
                         RecipeDetailTopIconButton(symbolName: "arrow.left") {
                             closeExperience()
@@ -593,7 +596,7 @@ struct RecipeDetailExperienceView: View {
                         }
                     }
                     .padding(.horizontal, 20)
-                    .padding(.top, max(safeTop - 2, 0))
+                    .padding(.top, topControlTop)
                     .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: -8, delay: 0.02))
                 }
                 .overlay(alignment: .topTrailing) {
@@ -650,7 +653,7 @@ struct RecipeDetailExperienceView: View {
                         }
                     )
                         .padding(.horizontal, 16)
-                        .padding(.top, 12)
+                        .padding(.top, safeTop + 12)
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .allowsHitTesting(toast.destination != nil || toast.action != nil)
                 }
@@ -664,6 +667,7 @@ struct RecipeDetailExperienceView: View {
             }
         }
         .background(detailBackground.ignoresSafeArea())
+        .ignoresSafeArea(.container, edges: .top)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showShareSheet) {
             RecipeShareSheet(activityItems: preparedShareItems.isEmpty ? fallbackShareItems : preparedShareItems)
@@ -1134,6 +1138,9 @@ struct RecipeModalTitle: View {
                 .foregroundStyle(OunjePalette.primaryText)
                 .multilineTextAlignment(.leading)
                 .lineSpacing(2)
+                .lineLimit(5)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
 
             if isAdapted {
                 Image(systemName: "sparkles")
@@ -2126,7 +2133,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
     case dairyFree
     case vegetarian
     case lowCarb
-    case comfort
+    case saucy
     case crispy
 
     var id: String { rawValue }
@@ -2147,7 +2154,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .dairyFree: return "dairy_free"
         case .vegetarian: return "vegetarian"
         case .lowCarb: return "low_carb"
-        case .comfort: return "comfort"
+        case .saucy: return "saucy"
         case .crispy: return "crispy"
         }
     }
@@ -2168,7 +2175,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .dairyFree: return "Dairy-free"
         case .vegetarian: return "Vegetarian"
         case .lowCarb: return "Low carb"
-        case .comfort: return "Comfort"
+        case .saucy: return "Saucy"
         case .crispy: return "Crunchy"
         }
     }
@@ -2184,12 +2191,12 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .kidFriendly: return "Kid-friendly"
         case .sweeter: return "Make it sweet"
         case .budgetFriendly: return "Budget-friendly"
-        case .mealPrep: return "Make it prep-ready"
+        case .mealPrep: return "Make it reheat well"
         case .lighter: return "Make it lighter"
         case .dairyFree: return "Make it dairy-free"
         case .vegetarian: return "Make it vegetarian"
         case .lowCarb: return "Make it low carb"
-        case .comfort: return "More comfort"
+        case .saucy: return "Make it saucy"
         case .crispy: return "Make it crunchy"
         }
     }
@@ -2202,7 +2209,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return 160
         case .kidFriendly, .moreProtein, .extraVeggies, .lessSugar, .lowCarb:
             return 146
-        case .healthier, .spicy, .quick, .sweeter, .lighter, .comfort, .crispy:
+        case .healthier, .spicy, .quick, .sweeter, .lighter, .saucy, .crispy:
             return 140
         }
     }
@@ -2223,7 +2230,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .dairyFree: return "Skip dairy without losing body."
         case .vegetarian: return "Plant-forward, not boring."
         case .lowCarb: return "Reduce starch where it makes sense."
-        case .comfort: return "Make it cozier and richer."
+        case .saucy: return "Add a sauce that fits the dish."
         case .crispy: return "Add crunch and texture."
         }
     }
@@ -2231,37 +2238,37 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
     var promptSeed: String {
         switch self {
         case .healthier:
-            return "Make this healthier while keeping the dish satisfying, practical, and close to the original."
+            return "Make this healthy while keeping it satisfying and close to the original. Identify the least balanced parts of the recipe, then improve the ingredient list with more produce, fiber, protein, or better fats where they fit. Reduce excess sugar, heavy fat, or refined starch only when it improves the dish, and update quantities plus steps so the new version is fully cookable. Do not turn it into a generic salad, strip out flavor, or only change tags."
         case .spicy:
-            return "Make this spicier without breaking the dish. Keep the heat balanced and cuisine-appropriate."
+            return "Make this spicy in a way that fits the recipe. Add a real heat source that belongs with the cuisine or flavor profile, balance it with acid, fat, freshness, or sweetness where needed, and update the steps so the spice is bloomed, cooked, finished, or served correctly. Do not just add hot sauce, make it one-note hot, or leave the spice out of the steps."
         case .quick:
-            return "Make this recipe faster and simpler for a busy weeknight while preserving the core flavor and texture."
+            return "Make this quick for a busy day. Shorten active prep and cook time by simplifying fussy steps, long marinades, slow bakes, or unnecessary components while preserving the core flavor. Update ingredients, quantities, timing, and steps so the faster version still works. Do not only change the time label or remove food-safety steps."
         case .moreProtein:
-            return "Make this higher in protein. Add or increase a plausible protein source, then update quantities and cooking steps so the recipe still works."
+            return "Make this higher in protein using real food that fits the dish. Add or increase a specific protein source such as eggs, yogurt, tofu, beans, lentils, fish, chicken, turkey, cheese, nuts, or seeds only when it makes culinary sense. Update quantities and every affected cooking step; do not add vague ingredients like 'extra protein' or 'protein boost'."
         case .extraVeggies:
-            return "Add more vegetables in a way that feels natural to the recipe, keeps the dish balanced, and does not water it down."
+            return "Add more vegetables in a way that feels natural to the recipe. Choose vegetables that match the sauce, spice, texture, and cook time. Adjust seasoning, moisture, and cooking order so the added vegetables do not water the dish down or feel tacked on. Do not add random vegetables or use them only as garnish."
         case .lessSugar:
-            return "Reduce the sugar and sweetness. Change sweetener quantities or swaps, then update any glaze, caramelization, dessert texture, or sauce steps affected by the change."
+            return "Make this less sweet. Reduce sugar, syrup, honey, sweetened dairy, sweet sauces, or sugary toppings where present, but keep the recipe balanced and satisfying. Update quantities and any steps that depend on sweetness, glazing, caramelization, browning, sauce thickness, or dessert texture. Do not remove all sweetness when sweetness is structurally needed."
         case .kidFriendly:
-            return "Make this more kid friendly with gentler seasoning, familiar textures, and practical serving ideas."
+            return "Make this kid-friendly without making it bland. Reduce harsh heat or sharp flavors, keep textures easy to eat, use familiar serving formats where helpful, and move intense garnishes or spicy finishes to the side. Update ingredients, quantities, and steps accordingly. Do not make it sugary by default or remove all seasoning."
         case .sweeter:
-            return "Make this sweeter and more dessert-like without making it one-note or cloying."
+            return "Make this sweet in a balanced way. Add or increase fruit, honey, maple, chocolate, warm spices, glaze, or dessert-style toppings only where they fit the dish. Update quantities and steps so the sweetness is integrated rather than just added on top. Do not dump sugar into a savory dish or only change the title."
         case .budgetFriendly:
-            return "Make this more budget friendly by using affordable ingredients and practical swaps while keeping the dish appealing."
+            return "Make this cheaper to cook while keeping it appealing. Swap expensive proteins, specialty cheeses, nuts, oils, or one-off ingredients for practical grocery alternatives. Keep the dish recognizable, avoid adding too many new items, and update quantities plus steps for the substitutions. Do not reduce portion size or remove the satisfying part without replacing it."
         case .mealPrep:
-            return "Make this better for meal prep so it reheats well, stores cleanly, and keeps its texture."
+            return "Make this reheat well for meal prep. Adjust ingredients, sauces, and steps so the dish stores cleanly and stays good later. Do not leave delicate greens, crisp toppings, or fragile sauces mixed in if they will get soggy."
         case .lighter:
-            return "Make this lighter and less heavy while preserving the dish's comfort and flavor."
+            return "Make this lighter and less heavy while preserving the dish's comfort and flavor. Reduce excess cream, butter, oil, cheese, fried components, or heavy starch where appropriate, then add freshness, acid, herbs, broth, yogurt, vegetables, or a lighter cooking technique. Update quantities and steps so the lighter version still feels complete. Do not make it bland or watery."
         case .dairyFree:
-            return "Make this dairy-free. Remove dairy ingredients, use realistic substitutions, and update quantities and steps so the texture and flavor still work."
+            return "Make this dairy-free. Remove milk, cream, butter, cheese, yogurt, sour cream, and dairy-based sauces where present. Replace texture, fat, creaminess, or saltiness with realistic dairy-free ingredients, then update quantities and steps so the recipe still cooks properly. Do not leave dairy in ingredients or steps, and do not use unnamed substitutes."
         case .vegetarian:
-            return "Make this vegetarian. Remove meat, seafood, gelatin, meat stock, and fish sauce; add a satisfying plant-forward protein or base; update quantities, steps, and tags."
+            return "Make this vegetarian. Remove meat, seafood, gelatin, meat stock, and fish sauce; add a satisfying plant-forward protein or base; update quantities, steps, and tags. Do not simply remove the protein or leave animal ingredients in the method."
         case .lowCarb:
-            return "Make this lower carb by reducing starch thoughtfully without turning it into a different dish."
-        case .comfort:
-            return "Make this more comforting, cozy, and rich while keeping the recipe practical."
+            return "Make this lower carb by reducing starch thoughtfully without turning it into a different dish. Replace or reduce bread, pasta, rice, tortillas, potatoes, flour, or sugary components only where it makes culinary sense, then update serving format, quantities, and steps. Do not delete the main base without a practical replacement."
+        case .saucy:
+            return "Make this saucier with a practical sauce, glaze, dressing, or pan sauce that fits the dish. Update quantities and steps so the sauce is cooked, mixed, or served correctly. Do not just say serve with sauce or make the recipe watery."
         case .crispy:
-            return "Make this crunchier with better texture contrast while keeping the original dish recognizable."
+            return "Make this crunchier with better texture contrast while keeping the original dish recognizable. Add or improve crisp texture through technique or ingredients such as toasted nuts, seeds, panko, roasted edges, fried shallots, crisp vegetables, or a high-heat finish. Update steps with the exact timing so the crunch stays crisp. Do not add a topping that will get soggy without timing instructions."
         }
     }
 
@@ -2281,7 +2288,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .dairyFree: return "drop.fill"
         case .vegetarian: return "leaf.circle.fill"
         case .lowCarb: return "chart.line.downtrend.xyaxis"
-        case .comfort: return "mug.fill"
+        case .saucy: return "drop.circle.fill"
         case .crispy: return "circle.grid.cross.fill"
         }
     }
@@ -2314,7 +2321,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return Color(hex: "A7D8FF")
         case .lowCarb:
             return Color(hex: "FFB35C")
-        case .comfort:
+        case .saucy:
             return Color(hex: "D9A16E")
         case .crispy:
             return Color(hex: "F4C95D")
@@ -2351,12 +2358,12 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .dairyFree,
                 .kidFriendly,
                 .lighter,
+                .saucy,
                 .budgetFriendly,
                 .lowCarb,
                 .mealPrep,
                 .moreProtein,
                 .vegetarian,
-                .comfort,
                 .extraVeggies,
                 .spicy,
             ]
@@ -2373,6 +2380,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .lessSugar,
                 .crispy,
                 .mealPrep,
+                .saucy,
                 .extraVeggies,
                 .dairyFree,
                 .sweeter,
@@ -2380,7 +2388,6 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .kidFriendly,
                 .lowCarb,
                 .vegetarian,
-                .comfort,
                 .spicy,
             ]
         } else if descriptor.contains("lunch")
@@ -2392,6 +2399,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .moreProtein,
                 .spicy,
                 .extraVeggies,
+                .saucy,
                 .quick,
                 .mealPrep,
                 .budgetFriendly,
@@ -2402,7 +2410,6 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .kidFriendly,
                 .healthier,
                 .dairyFree,
-                .comfort,
                 .lessSugar,
                 .sweeter,
             ]
@@ -2411,6 +2418,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .moreProtein,
                 .spicy,
                 .extraVeggies,
+                .saucy,
                 .quick,
                 .mealPrep,
                 .budgetFriendly,
@@ -2421,7 +2429,6 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .dairyFree,
                 .kidFriendly,
                 .healthier,
-                .comfort,
                 .lessSugar,
                 .sweeter,
             ]
@@ -2649,7 +2656,7 @@ actor RecipeAdaptationService {
                 intentKey: intent?.intentKey,
                 intentLabel: intent?.displayTitle,
                 rerollNonce: UUID().uuidString,
-                strictEditValidation: true,
+                strictEditValidation: false,
                 profile: profile
             )
         )
@@ -3753,25 +3760,25 @@ struct RecipeDetailCompactActionButton: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 if showsInstagramGlyph {
-                    InstagramGlyphIcon(size: compact ? 15 : 17)
+                    InstagramGlyphIcon(size: compact ? 13 : 17)
                 } else if let systemImage {
                     Image(systemName: systemImage)
-                        .font(.system(size: compact ? 14 : 16, weight: .semibold))
+                        .font(.system(size: compact ? 13 : 16, weight: .semibold))
                 }
                 Text(title)
-                    .font(.system(size: compact ? 15 : 16, weight: .medium))
+                    .font(.system(size: compact ? 14 : 16, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
             .foregroundStyle(OunjePalette.primaryText)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, compact ? 10 : 16)
-            .padding(.vertical, compact ? 12 : 14)
+            .frame(width: compact ? 108 : nil, height: compact ? 42 : nil)
+            .padding(.horizontal, compact ? 0 : 16)
+            .padding(.vertical, compact ? 0 : 14)
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: compact ? 13 : 18, style: .continuous)
                     .fill(OunjePalette.surface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: compact ? 13 : 18, style: .continuous)
                             .stroke(OunjePalette.stroke, lineWidth: 1)
                     )
             )

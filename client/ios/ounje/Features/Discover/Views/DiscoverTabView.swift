@@ -12,6 +12,7 @@ struct DiscoverTabView: View {
     @ObservedObject var environmentModel: DiscoverEnvironmentViewModel
     @State private var hasAppearedOnce = false
     @State private var searchRefreshTask: Task<Void, Never>?
+    @State private var submittedSearchText = ""
     @State private var isSearchInputPending = false
     @State private var isManualRefreshing = false
     @State private var isShowingPullRefreshCue = false
@@ -63,6 +64,10 @@ struct DiscoverTabView: View {
     }
 
     private var normalizedSearchText: String {
+        submittedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedDraftSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -87,8 +92,9 @@ struct DiscoverTabView: View {
 
                     CompactDiscoverSearchField(
                         text: $searchText,
-                        isLoading: isSearchRefreshing,
-                        isRefreshing: !isSearching && viewModel.isTransitioningFeed && !visibleRecipes.isEmpty
+                        isLoading: false,
+                        isRefreshing: !isSearching && viewModel.isTransitioningFeed && !visibleRecipes.isEmpty,
+                        onSubmitSearch: submitDiscoverSearch
                     )
 
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -154,39 +160,25 @@ struct DiscoverTabView: View {
             let initialContext = environmentModel.feedContext
             viewModel.updateFeedbackRevision(discoverFeedbackRevision)
             async let environmentRefresh: Void = environmentModel.refresh(profile: store.profile)
-            await viewModel.loadIfNeeded(profile: store.profile, query: searchText, feedContext: initialContext)
+            await viewModel.loadIfNeeded(profile: store.profile, query: normalizedSearchText, feedContext: initialContext)
             await environmentRefresh
             let refreshedContext = environmentModel.feedContext
             guard refreshedContext.cacheKey != initialContext.cacheKey else { return }
             guard viewModel.recipes.isEmpty || viewModel.errorMessage != nil else { return }
-            await viewModel.forceReload(profile: store.profile, query: searchText, feedContext: refreshedContext)
+            await viewModel.forceReload(profile: store.profile, query: normalizedSearchText, feedContext: refreshedContext)
         }
         .onChange(of: searchText) { newValue in
             searchRefreshTask?.cancel()
 
             let normalized = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty else {
-                isSearchInputPending = false
-                Task {
-                    await viewModel.loadIfNeeded(profile: store.profile, query: "", feedContext: environmentModel.feedContext)
-                }
+                clearSubmittedDiscoverSearch()
                 return
             }
 
-            isSearchInputPending = true
-            if viewModel.selectedFilter != "All" {
-                viewModel.selectFilter("All", isSearching: true)
-            }
-            viewModel.resetFeedPagination()
-            viewModel.prepareForQueryRefresh()
-            searchRefreshTask = Task {
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                guard !Task.isCancelled else { return }
-                await viewModel.refresh(profile: store.profile, query: normalized, feedContext: environmentModel.feedContext, offset: 0, forceNetwork: false)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    isSearchInputPending = false
-                }
+            isSearchInputPending = false
+            if normalized != normalizedSearchText {
+                viewModel.clearTransientError()
             }
         }
         .onAppear {
@@ -204,7 +196,7 @@ struct DiscoverTabView: View {
             }
             Task {
                 if viewModel.recipes.isEmpty || viewModel.errorMessage != nil {
-                    await viewModel.loadIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
+                    await viewModel.loadIfNeeded(profile: store.profile, query: normalizedSearchText, feedContext: environmentModel.feedContext)
                 }
             }
         }
@@ -217,9 +209,13 @@ struct DiscoverTabView: View {
     @ViewBuilder
     private var discoverRecipeFeedContent: some View {
         if isSearchRefreshing {
-            LazyVGrid(columns: recipeColumns, spacing: 14) {
-                ForEach(0..<6, id: \.self) { _ in
-                    DiscoverRecipeCardLoadingPlaceholder()
+            VStack(alignment: .center, spacing: 14) {
+                DiscoverInlineLoadingState(message: "Searching", tint: .white, textColor: Color.white.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                LazyVGrid(columns: recipeColumns, spacing: 14) {
+                    ForEach(0..<6, id: \.self) { _ in
+                        DiscoverRecipeCardLoadingPlaceholder()
+                    }
                 }
             }
             .transition(.opacity)
@@ -276,7 +272,7 @@ struct DiscoverTabView: View {
                     .onAppear {
                         guard shouldPrefetch(after: recipe) else { return }
                         Task {
-                            await viewModel.loadMoreIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
+                            await viewModel.loadMoreIfNeeded(profile: store.profile, query: normalizedSearchText, feedContext: environmentModel.feedContext)
                         }
                     }
                 }
@@ -295,7 +291,7 @@ struct DiscoverTabView: View {
                 .onAppear {
                     guard viewModel.hasMoreRecipes, !viewModel.isLoading, !viewModel.isFetchingMore else { return }
                     Task {
-                        await viewModel.loadMoreIfNeeded(profile: store.profile, query: searchText, feedContext: environmentModel.feedContext)
+                        await viewModel.loadMoreIfNeeded(profile: store.profile, query: normalizedSearchText, feedContext: environmentModel.feedContext)
                     }
                 }
         }
@@ -322,7 +318,7 @@ struct DiscoverTabView: View {
     private var shouldShowDiscoverPullIndicator: Bool {
         isShowingPullRefreshCue
             || isManualRefreshing
-            || (viewModel.isTransitioningFeed && !visibleRecipes.isEmpty)
+            || (!isSearching && viewModel.isTransitioningFeed && !visibleRecipes.isEmpty)
             || discoverPullDistance > 6
     }
 
@@ -370,11 +366,47 @@ struct DiscoverTabView: View {
         viewModel.updateFeedbackRevision(discoverFeedbackRevision)
         await viewModel.forceReload(
             profile: store.profile,
-            query: searchText,
+            query: normalizedSearchText,
             feedContext: environmentModel.feedContext,
             rotateBaseFeed: normalizedSearchText.isEmpty,
             forceNetwork: true
         )
+    }
+
+    private func submitDiscoverSearch() {
+        searchRefreshTask?.cancel()
+        let normalized = normalizedDraftSearchText
+        guard !normalized.isEmpty else {
+            clearSubmittedDiscoverSearch()
+            return
+        }
+
+        guard normalized != normalizedSearchText || viewModel.recipes.isEmpty || viewModel.errorMessage != nil else { return }
+        submittedSearchText = normalized
+        isSearchInputPending = true
+        if viewModel.selectedFilter != "All" {
+            viewModel.selectFilter("All", isSearching: true)
+        }
+        viewModel.resetFeedPagination()
+        viewModel.prepareForQueryRefresh()
+
+        searchRefreshTask = Task {
+            await viewModel.refresh(profile: store.profile, query: normalized, feedContext: environmentModel.feedContext, offset: 0, forceNetwork: false)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                isSearchInputPending = false
+            }
+        }
+    }
+
+    private func clearSubmittedDiscoverSearch() {
+        searchRefreshTask?.cancel()
+        isSearchInputPending = false
+        guard !submittedSearchText.isEmpty else { return }
+        submittedSearchText = ""
+        Task {
+            await viewModel.loadIfNeeded(profile: store.profile, query: "", feedContext: environmentModel.feedContext)
+        }
     }
 
     private func shouldPrefetch(after recipe: DiscoverRecipeCardData) -> Bool {
@@ -386,14 +418,16 @@ struct DiscoverTabView: View {
 
 private struct DiscoverInlineLoadingState: View {
     var message: String = "Refreshing"
+    var tint: Color = OunjePalette.accent
+    var textColor: Color = OunjePalette.secondaryText
 
     var body: some View {
         HStack(spacing: 10) {
-            DiscoverRiveLoader(size: 18)
+            DiscoverRiveLoader(size: 18, tint: tint)
 
             Text(message)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(OunjePalette.secondaryText)
+                .foregroundStyle(textColor)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -490,10 +524,11 @@ private struct PullStretchRefreshIndicator: View {
 
 private struct DiscoverRiveLoader: View {
     var size: CGFloat = 18
+    var tint: Color = OunjePalette.accent
 
     var body: some View {
         ProgressView()
-            .tint(OunjePalette.accent)
+            .tint(tint)
             .scaleEffect(0.8)
             .frame(width: size, height: size)
             .allowsHitTesting(false)
@@ -504,15 +539,27 @@ private struct CompactDiscoverSearchField: View {
     @Binding var text: String
     let isLoading: Bool
     let isRefreshing: Bool
+    let onSubmitSearch: () -> Void
 
     @FocusState private var isFocused: Bool
-    private let placeholder = "Search recipes"
+    @State private var placeholderIndex = Int.random(in: 0..<DiscoverSearchPlaceholderPrompts.values.count)
+
+    private var placeholder: String {
+        DiscoverSearchPlaceholderPrompts.values[
+            min(max(placeholderIndex, 0), DiscoverSearchPlaceholderPrompts.values.count - 1)
+        ]
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(OunjePalette.secondaryText)
+            Button(action: onSubmitSearch) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
             TextField(placeholder, text: $text)
                 .textInputAutocapitalization(.never)
@@ -521,6 +568,7 @@ private struct CompactDiscoverSearchField: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(OunjePalette.primaryText)
                 .focused($isFocused)
+                .onSubmit(onSubmitSearch)
 
             if isLoading || isRefreshing {
                 DiscoverRiveLoader(size: 18)
@@ -547,5 +595,78 @@ private struct CompactDiscoverSearchField: View {
                         .stroke(OunjePalette.stroke, lineWidth: 1)
                 )
         )
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 4_800_000_000)
+                guard !Task.isCancelled else { return }
+                guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isFocused else { continue }
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        placeholderIndex = (placeholderIndex + 1) % DiscoverSearchPlaceholderPrompts.values.count
+                    }
+                }
+            }
+        }
     }
+}
+
+private enum DiscoverSearchPlaceholderPrompts {
+    static let values: [String] = [
+        "Search recipes",
+        "Search chicken bowls",
+        "Search salmon dinner",
+        "Search veggie pasta",
+        "Search shrimp tacos",
+        "Search turkey chili",
+        "Search tofu stir fry",
+        "Search cozy soups",
+        "Search breakfast wraps",
+        "Search lunch salads",
+        "Search rice bowls",
+        "Search sheet pan meals",
+        "Search pasta bakes",
+        "Search air fryer ideas",
+        "Search one-pot dinners",
+        "Search family meals",
+        "Search high protein",
+        "Search meal prep lunches",
+        "Search quick breakfasts",
+        "Search snacks",
+        "Search desserts",
+        "Search smoothies",
+        "Search hot tea for winter",
+        "Search rainy day soup",
+        "Search sunny picnic food",
+        "Search cozy Sunday dinner",
+        "Search late night noodles",
+        "Search food for Nigerian potluck",
+        "Search jollof sides",
+        "Search Caribbean cookout",
+        "Search Korean comfort food",
+        "Search Mexican weeknight",
+        "Search Mediterranean lunch",
+        "Search Japanese breakfast",
+        "Search Indian dinner",
+        "Search Southern brunch",
+        "Search French dessert",
+        "Search game day food",
+        "Search date night pasta",
+        "Search movie night snacks",
+        "Search gym day dinner",
+        "Search sick day soup",
+        "Search under 15 minutes",
+        "Search under 30 minutes",
+        "Search cheap dinner",
+        "Search surprise me",
+        "Search no dishes please",
+        "Search fridge cleanout",
+        "Search low effort",
+        "Search spicy and sweet",
+        "Search something crispy",
+        "Search saucy noodles",
+        "Search no oven",
+        "Search no dairy",
+        "Search vegetarian dinner",
+        "Search freezer friendly"
+    ]
 }

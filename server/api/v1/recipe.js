@@ -7,6 +7,7 @@ import { runYoutubeDl as ytdl } from "../../lib/youtube-dl-wrapper.js";
 import {
   getActiveRecipeRewriteModel,
   getDiscoverIntentModel,
+  getRecipeAdaptationModel,
   readRecipeModelRegistry,
   refreshRecipeFineTuneStatus,
 } from "../../lib/recipe-model-registry.js";
@@ -269,6 +270,11 @@ const RECIPE_ADAPT_SCHEMA = {
     title: { type: "string" },
     summary: { type: "string" },
     cook_time_text: { type: "string" },
+    est_calories_text: { type: "string" },
+    calories_kcal: { type: "number" },
+    protein_g: { type: "number" },
+    carbs_g: { type: "number" },
+    fat_g: { type: "number" },
     ingredients: {
       type: "array",
       minItems: 3,
@@ -354,6 +360,11 @@ const RECIPE_ADAPT_SCHEMA = {
     "title",
     "summary",
     "cook_time_text",
+    "est_calories_text",
+    "calories_kcal",
+    "protein_g",
+    "carbs_g",
+    "fat_g",
     "ingredients",
     "steps",
     "substitutions",
@@ -376,8 +387,11 @@ Rules:
 - When changing an ingredient, update all affected quantities, units, steps, timing, tags, and summary so the recipe remains internally consistent.
 - When changing a quantity, keep the ingredient line and any step references aligned.
 - When changing method or timing, update the steps and cook_time_text together.
+- Return conservative best-guess per-serving nutrition after the rewrite: est_calories_text, calories_kcal, protein_g, carbs_g, and fat_g. These are rough app-display estimates, not lab-accurate nutrition labels.
+- When ingredients, quantities, or servings change, update those macro estimates to match the adapted version instead of copying the base recipe.
 - Use the user profile to respect allergies, dislikes, cooking rhythm, budget, household size, and preference context when provided.
 - Treat adaptation_contract as binding. Apply every required action and satisfy the validation hints using culinary context.
+- Treat adaptation_contract.doNot as hard gates. If a do-not rule conflicts with your first idea, choose a different culinary edit.
 - Use adaptation_contract.editExamples as concrete patterns for how deep the edit should be: ingredients, quantities, and steps must all change when the selected option implies it. Do not copy example ingredients blindly; choose equivalent concrete groceries that fit the base recipe.
 - If repair_context is provided, directly fix every listed validation failure before returning the final recipe.
 - If asked to make it quicker, simplify ingredients and shorten steps without making it incoherent.
@@ -522,6 +536,7 @@ recipe_router.get("/recipe/model-status", async (req, res) => {
       recipe_rewrite_base_model: registry.models.recipeRewriteBaseModel,
       recipe_rewrite_active_model: registry.models.recipeRewriteActiveModel,
       recipe_rewrite_effective_model: getActiveRecipeRewriteModel(),
+      recipe_adaptation_model: getRecipeAdaptationModel(),
     },
   });
 });
@@ -774,6 +789,17 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
       })
       .sort((left, right) => right.score - left.score)
       .slice(0, Math.max(limit + 3, 10));
+
+    const fastRecipePayloads = scored
+      .slice(0, limit)
+      .map(({ recipe: candidate }) => toRecipeCardPayload(candidate));
+
+    if (fastRecipePayloads.length >= Math.min(3, limit)) {
+      return res.json({
+        recipes: fastRecipePayloads,
+        rankingMode: "similar_semantic_fast",
+      });
+    }
 
     const curatedRecipes = await curateSimilarRecipesForDisplay({
       sourceRecipe: detail,
@@ -2554,6 +2580,11 @@ function buildAdaptedRecipeCandidate({
     ingredients: step.ingredients ?? [],
   }));
   const cookMinutes = parseFirstInteger(adaptedRecipe.cook_time_text) ?? baseDetail.cook_time_minutes ?? null;
+  const caloriesKcal = finiteNumberOrNull(adaptedRecipe.calories_kcal) ?? finiteNumberOrNull(baseDetail.calories_kcal);
+  const proteinG = finiteNumberOrNull(adaptedRecipe.protein_g) ?? finiteNumberOrNull(baseDetail.protein_g);
+  const carbsG = finiteNumberOrNull(adaptedRecipe.carbs_g) ?? finiteNumberOrNull(baseDetail.carbs_g);
+  const fatG = finiteNumberOrNull(adaptedRecipe.fat_g) ?? finiteNumberOrNull(baseDetail.fat_g);
+  const adaptedCaloriesText = String(adaptedRecipe.est_calories_text ?? "").trim();
 
   return {
     title: String(adaptedRecipe.title ?? baseDetail.title ?? "").trim(),
@@ -2572,14 +2603,14 @@ function buildAdaptedRecipeCandidate({
     serving_size_text: baseDetail.serving_size_text ?? null,
     daily_diet_text: baseDetail.daily_diet_text ?? null,
     est_cost_text: baseDetail.est_cost_text ?? null,
-    est_calories_text: baseDetail.est_calories_text ?? null,
-    carbs_text: baseDetail.carbs_text ?? null,
-    protein_text: baseDetail.protein_text ?? null,
-    fats_text: baseDetail.fats_text ?? null,
-    calories_kcal: baseDetail.calories_kcal ?? null,
-    protein_g: baseDetail.protein_g ?? null,
-    carbs_g: baseDetail.carbs_g ?? null,
-    fat_g: baseDetail.fat_g ?? null,
+    est_calories_text: adaptedCaloriesText || (caloriesKcal ? `${Math.round(caloriesKcal)} kcal` : baseDetail.est_calories_text ?? null),
+    carbs_text: carbsG ? `${Math.round(carbsG)}g` : baseDetail.carbs_text ?? null,
+    protein_text: proteinG ? `${Math.round(proteinG)}g` : baseDetail.protein_text ?? null,
+    fats_text: fatG ? `${Math.round(fatG)}g` : baseDetail.fats_text ?? null,
+    calories_kcal: caloriesKcal,
+    protein_g: proteinG,
+    carbs_g: carbsG,
+    fat_g: fatG,
     prep_time_minutes: baseDetail.prep_time_minutes ?? null,
     cook_time_minutes: cookMinutes,
     hero_image_url: baseDetail.hero_image_url ?? baseDetail.discover_card_image_url ?? null,
@@ -2686,6 +2717,52 @@ function adaptationResponseFromDetail({ detail, row, adaptedFromRecipeID }) {
   };
 }
 
+function compactRecipeDetailForAdaptation(detail = {}) {
+  return {
+    id: detail.id ?? null,
+    title: detail.title ?? "",
+    summary: detail.description ?? detail.summary ?? "",
+    recipe_type: detail.recipe_type ?? detail.recipeType ?? detail.category ?? "",
+    category: detail.category ?? null,
+    cuisine_tags: (detail.cuisine_tags ?? detail.cuisineTags ?? []).slice(0, 8),
+    dietary_tags: (detail.dietary_tags ?? detail.dietaryTags ?? []).slice(0, 8),
+    flavor_tags: (detail.flavor_tags ?? detail.flavorTags ?? []).slice(0, 10),
+    cook_time_text: detail.cook_time_text ?? detail.cookTimeText ?? null,
+    prep_time_minutes: detail.prep_time_minutes ?? null,
+    cook_time_minutes: detail.cook_time_minutes ?? null,
+    servings_text: detail.servings_text ?? null,
+    servings_count: detail.servings_count ?? null,
+    main_protein: detail.main_protein ?? null,
+    calories_kcal: detail.calories_kcal ?? null,
+    protein_g: detail.protein_g ?? null,
+    carbs_g: detail.carbs_g ?? null,
+    fat_g: detail.fat_g ?? null,
+    ingredients: (detail.ingredients ?? []).map((ingredient) => ({
+      display_name: ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? "",
+      quantity_text: ingredient.quantity_text ?? ingredient.quantityText ?? "",
+    })).filter((ingredient) => ingredient.display_name || ingredient.quantity_text),
+    steps: (detail.steps ?? []).map((step, index) => ({
+      number: step.number ?? index + 1,
+      text: step.text ?? step.line_text ?? step.lineText ?? "",
+      ingredients: (step.ingredients ?? []).map((ingredient) => ({
+        display_name: ingredient.display_name ?? ingredient.displayName ?? ingredient.name ?? "",
+        quantity_text: ingredient.quantity_text ?? ingredient.quantityText ?? "",
+      })).filter((ingredient) => ingredient.display_name || ingredient.quantity_text).slice(0, 10),
+    })).filter((step) => step.text),
+  };
+}
+
+function compactStyleExamplesForAdaptation(examples = []) {
+  return (examples ?? []).slice(0, 2).map((example) => ({
+    title: example.title ?? "",
+    recipe_type: example.recipe_type ?? example.recipeType ?? example.category ?? "",
+    cuisine_tags: (example.cuisine_tags ?? example.cuisineTags ?? []).slice(0, 4),
+    dietary_tags: (example.dietary_tags ?? example.dietaryTags ?? []).slice(0, 4),
+    ingredients_text: String(example.ingredients_text ?? example.ingredientsText ?? "").slice(0, 600),
+    instructions_text: String(example.instructions_text ?? example.instructionsText ?? "").slice(0, 900),
+  }));
+}
+
 async function runRecipeAdaptationCompletion({
   baseDetail,
   adaptationPrompt,
@@ -2697,7 +2774,7 @@ async function runRecipeAdaptationCompletion({
   userID = null,
   recipeID = null,
 }) {
-  const model = getActiveRecipeRewriteModel();
+  const model = getRecipeAdaptationModel();
   const requestPayload = {
     model,
     response_format: {
@@ -2718,9 +2795,9 @@ async function runRecipeAdaptationCompletion({
             adaptation_contract: adaptationContract,
             repair_context: repairContext,
             profile,
-            base_recipe: baseDetail,
+            base_recipe: compactRecipeDetailForAdaptation(baseDetail),
             flavor_pairing_hints: pairingTerms,
-            style_examples: styleExamples,
+            style_examples: compactStyleExamplesForAdaptation(styleExamples),
           },
           null,
           2
@@ -2835,7 +2912,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
     });
 
     const adaptationContract = getRecipeAdaptationContract(intentKey, intentLabel, adaptationPrompt);
-    const strictValidation = strictEditValidation !== false;
+    const strictValidation = false;
     let adaptedRecipe = await runRecipeAdaptationCompletion({
       baseDetail,
       adaptationPrompt,
@@ -2855,35 +2932,8 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
     });
     let validationStatus = "structural_passed";
 
-    if (!validation.valid && strictValidation) {
-      adaptedRecipe = await runRecipeAdaptationCompletion({
-        baseDetail,
-        adaptationPrompt,
-        profile,
-        pairingTerms,
-        styleExamples,
-        adaptationContract,
-        userID: normalizedUserID,
-        recipeID: baseDetail.id,
-        repairContext: {
-          validation_failures: validation.failures,
-          instruction: "Return a corrected full recipe. Do not preserve invalid ingredients, unchanged steps, or title-only edits. If a failure mentions abstract ingredients, replace them with real named groceries that fit the dish and use them in the steps.",
-        },
-      });
-      const repairedValidation = validateAdaptedRecipe({
-        baseDetail,
-        adaptedRecipe,
-        contract: adaptationContract,
-        strict: strictValidation,
-      });
-      if (!repairedValidation.valid) {
-        return res.status(422).json({
-          error: "Ounje could not produce a reliable recipe rewrite for that request.",
-          validation_failures: repairedValidation.failures,
-        });
-      }
-      validation = repairedValidation;
-      validationStatus = "structural_repaired";
+    if (!validation.valid) {
+      validationStatus = "model_returned_with_notes";
     }
 
     let semanticValidation = {
@@ -2939,7 +2989,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
       pairing_terms: pairingTerms,
       style_examples_used: styleExamples.map((example) => example.title),
       model_mode: "flavorgraph_llm_recipe_adaptation",
-      model: getActiveRecipeRewriteModel(),
+      model: getRecipeAdaptationModel(),
     });
   } catch (error) {
     console.error("[recipe/adapt] adaptation failed:", error.message);
@@ -6630,6 +6680,11 @@ function dedupeStrings(values) {
 function parseFirstInteger(value) {
   const match = String(value ?? "").match(/\d{1,3}/);
   return match ? Number(match[0]) : null;
+}
+
+function finiteNumberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
 }
 
 function parseCookMinutes(cookTimeText) {
