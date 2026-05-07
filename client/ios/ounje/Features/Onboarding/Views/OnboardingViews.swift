@@ -674,7 +674,7 @@ struct FirstLoginOnboardingView: View {
             OnboardingLessonCard(
                 eyebrow: "Start here",
                 title: "What should Ounje call you?",
-                detail: "This names the prep plan, cart updates, and nudges Ounje sends you.",
+                detail: "Save recipes from TikTok, Instagram, or a food photo, then turn them into prep.",
                 accent: currentStepAccent
             ) {
                 TextField("First name", text: $preferredName)
@@ -683,9 +683,9 @@ struct FirstLoginOnboardingView: View {
                     .modifier(OnboardingLightInputModifier())
 
                 HStack(spacing: 8) {
-                    OnboardingPromiseChip(title: "Taste", symbol: "sparkles", accent: currentStepAccent)
+                    OnboardingPromiseChip(title: "TikTok/IG", symbol: "link", accent: currentStepAccent)
+                    OnboardingPromiseChip(title: "Photo", symbol: "camera", accent: currentStepAccent)
                     OnboardingPromiseChip(title: "Prep", symbol: "calendar", accent: currentStepAccent)
-                    OnboardingPromiseChip(title: "Cart", symbol: "cart", accent: currentStepAccent)
                 }
             }
         }

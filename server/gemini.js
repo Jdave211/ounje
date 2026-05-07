@@ -7,11 +7,12 @@ import cors from 'cors';
 dotenv.config();
 
 const app = express();
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+const JSON_BODY_LIMIT = String(process.env.OUNJE_JSON_BODY_LIMIT ?? '18mb').trim() || '18mb';
+app.use(bodyParser.json({ limit: JSON_BODY_LIMIT }));
+app.use(bodyParser.urlencoded({ limit: JSON_BODY_LIMIT, extended: true }));
 
 // Load API key from environment variable
-const apiKey = 'AIzaSyCFiJJRATlPXYhH7dzmmtDUhXcXzLz2J94';
+const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 if (!apiKey) {
   throw new Error('API_KEY environment variable not set.');
 }
@@ -49,4 +50,3 @@ const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
-

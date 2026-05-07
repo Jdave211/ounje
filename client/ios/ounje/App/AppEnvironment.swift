@@ -1539,14 +1539,20 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func resolvedSavedRecipeIDs() async -> Set<String> {
-        guard let userID = authSession?.userID else { return [] }
-        let ids = await SupabaseSavedRecipesService.shared.resolvedSavedRecipeIDs(userID: userID)
+        guard let session = authSession else { return [] }
+        let ids = await SupabaseSavedRecipesService.shared.resolvedSavedRecipeIDs(
+            userID: session.userID,
+            accessToken: session.accessToken
+        )
         return Set(ids)
     }
 
     private func resolvedSavedRecipeTitles() async -> [String] {
         guard let session = authSession else { return [] }
-        return (try? await SupabaseSavedRecipesService.shared.fetchSavedRecipeTitles(userID: session.userID)) ?? []
+        return (try? await SupabaseSavedRecipesService.shared.fetchSavedRecipeTitles(
+            userID: session.userID,
+            accessToken: session.accessToken
+        )) ?? []
     }
 
     func isRecurringPrepRecipe(recipeID: String) -> Bool {

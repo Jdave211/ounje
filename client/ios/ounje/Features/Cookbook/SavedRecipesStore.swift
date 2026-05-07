@@ -11,6 +11,7 @@ final class SavedRecipesStore: ObservableObject {
     private let deletedKeyPrefix = "ounje-saved-recipes-deleted-v1"
     private let toastCenter: AppToastCenter
     private var activeUserID: String?
+    private var activeAccessToken: String?
     private var deletedSavedRecipeIDs: Set<String> = []
 
     init(toastCenter: AppToastCenter) {
@@ -29,11 +30,15 @@ final class SavedRecipesStore: ObservableObject {
             activeUserID = resolvedUserID
             load(for: resolvedUserID)
         }
+        activeAccessToken = authSession?.accessToken
 
         guard let authSession else { return }
 
         do {
-            let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(userID: authSession.userID)
+            let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(
+                userID: authSession.userID,
+                accessToken: authSession.accessToken
+            )
             let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
 
             if mergedRecipes != savedRecipes {
@@ -50,11 +55,35 @@ final class SavedRecipesStore: ObservableObject {
             if !unsyncedLocalRecipes.isEmpty {
                 try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
                     userID: authSession.userID,
-                    recipes: unsyncedLocalRecipes
+                    recipes: unsyncedLocalRecipes,
+                    accessToken: authSession.accessToken
                 )
             }
         } catch {
             // Keep local saves available even when network sync fails.
+        }
+    }
+
+    func refreshFromRemote(authSession: AuthSession?) async {
+        guard let authSession else { return }
+
+        if activeUserID != authSession.userID {
+            activeUserID = authSession.userID
+            load(for: authSession.userID)
+        }
+        activeAccessToken = authSession.accessToken
+
+        do {
+            let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(
+                userID: authSession.userID,
+                accessToken: authSession.accessToken
+            )
+            let localRecipes = savedRecipes
+            deletedSavedRecipeIDs.removeAll()
+            savedRecipes = deduplicated(remoteRecipes + localRecipes)
+            persist()
+        } catch {
+            await bootstrap(authSession: authSession)
         }
     }
 
@@ -83,22 +112,35 @@ final class SavedRecipesStore: ObservableObject {
         persist()
 
         guard let userID = activeUserID else { return }
+        let accessToken = activeAccessToken
 
         Task(priority: .utility) {
             do {
                 if shouldSave {
                     try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
                         userID: userID,
-                        recipes: [recipe]
+                        recipes: [recipe],
+                        accessToken: accessToken
                     )
                 } else {
                     try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
                         userID: userID,
-                        recipeID: recipe.id
+                        recipeID: recipe.id,
+                        accessToken: accessToken
                     )
+                    await MainActor.run {
+                        self.deletedSavedRecipeIDs.remove(recipe.id)
+                        self.persist()
+                    }
                 }
             } catch {
-                // Local persistence remains the source of truth when sync fails.
+                await MainActor.run {
+                    self.toastCenter.show(
+                        title: shouldSave ? "Save will retry" : "Unsave will retry",
+                        subtitle: recipe.title,
+                        systemImage: "arrow.clockwise"
+                    )
+                }
             }
         }
     }
@@ -114,6 +156,26 @@ final class SavedRecipesStore: ObservableObject {
         if showToast {
             toastCenter.showSavedRecipe(resolved)
         }
+
+        guard let userID = activeUserID else { return }
+        let accessToken = activeAccessToken
+        Task(priority: .utility) {
+            do {
+                try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
+                    userID: userID,
+                    recipes: [resolved],
+                    accessToken: accessToken
+                )
+            } catch {
+                await MainActor.run {
+                    self.toastCenter.show(
+                        title: "Save will retry",
+                        subtitle: resolved.title,
+                        systemImage: "arrow.clockwise"
+                    )
+                }
+            }
+        }
     }
 
     private func restoreSavedRecipe(_ recipe: DiscoverRecipeCardData) {
@@ -124,11 +186,23 @@ final class SavedRecipesStore: ObservableObject {
         toastCenter.dismiss()
 
         guard let userID = activeUserID else { return }
+        let accessToken = activeAccessToken
         Task(priority: .utility) {
-            try? await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                userID: userID,
-                recipes: [recipe]
-            )
+            do {
+                try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
+                    userID: userID,
+                    recipes: [recipe],
+                    accessToken: accessToken
+                )
+            } catch {
+                await MainActor.run {
+                    self.toastCenter.show(
+                        title: "Save will retry",
+                        subtitle: recipe.title,
+                        systemImage: "arrow.clockwise"
+                    )
+                }
+            }
         }
     }
 
@@ -230,12 +304,14 @@ final class SavedRecipesStore: ObservableObject {
     private func reconcilePendingDeletes(userID: String) async {
         let pending = deletedSavedRecipeIDs
         guard !pending.isEmpty else { return }
+        let accessToken = activeAccessToken
 
         for recipeID in pending {
             do {
                 try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
                     userID: userID,
-                    recipeID: recipeID
+                    recipeID: recipeID,
+                    accessToken: accessToken
                 )
                 deletedSavedRecipeIDs.remove(recipeID)
             } catch {

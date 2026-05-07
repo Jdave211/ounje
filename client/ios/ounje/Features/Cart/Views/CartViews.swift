@@ -373,7 +373,6 @@ struct CartTabView: View {
     private var isCartWorkAnimating: Bool {
         isInstacartShoppingActivelyRunning
             || store.hasLiveInstacartActivity
-            || store.isRefreshingMainShopSnapshot
             || isLoadingIngredients
     }
 
@@ -774,9 +773,7 @@ struct CartTabView: View {
     }
 
     private var shouldShowCartUpdatingBanner: Bool {
-        displayMode == .reconciled
-            && isCartWorkAnimating
-            && !visibleReconciledCartItems.isEmpty
+        false
     }
 
     private var cartBuyNowDisabledReason: String? {
@@ -2342,10 +2339,10 @@ struct CartTabView: View {
         defer { isLoadingIngredients = false }
 
         do {
-            _ = await store.refreshLatestPlanMainShopSnapshotIfNeeded(
-                forceRebuild: forceRebuild || latestPlan.mainShopSnapshot?.signature != signature
-            )
-            guard !Task.isCancelled else { return }
+            if forceRebuild {
+                _ = await store.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
+                guard !Task.isCancelled else { return }
+            }
 
             let rows = try await cachedOrLoadedPrepRecipeIngredientRows(from: latestPlan)
             guard !Task.isCancelled else { return }
@@ -3475,10 +3472,8 @@ struct CookbookPreppedEmptyState: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Image(systemName: symbolName)
-                .font(.system(size: 74, weight: .light))
-                .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
-                .padding(.top, 18)
+            ShareToOunjeEmptyArtwork(maxWidth: 210, maxHeight: 260)
+                .padding(.top, 8)
 
             VStack(spacing: 8) {
                 BiroScriptDisplayText(title, size: 28, color: OunjePalette.primaryText)
@@ -3503,27 +3498,20 @@ struct CookbookSavedEmptyState: View {
     let onAddRecipe: () -> Void
 
     var body: some View {
-        VStack(spacing: 22) {
-            Image("CookbookEmptyIllustrationLight")
-                .renderingMode(.original)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(maxWidth: 220)
-                .opacity(0.84)
-                .padding(.top, 8)
+        VStack(spacing: 18) {
+            ShareToOunjeEmptyArtwork(maxWidth: 220, maxHeight: 280)
 
             VStack(spacing: 8) {
                 BiroScriptDisplayText(
-                    hasSavedRecipes ? "No saved matches" : "Paste TikTok or Instagram link",
+                    hasSavedRecipes ? "No saved matches" : "Send a recipe from TikTok or Instagram",
                     size: 28,
                     color: OunjePalette.primaryText
                 )
 
                 Text(
                     hasSavedRecipes
-                        ? "Try another search or import a recipe from social."
-                        : "Drop a TikTok or Instagram recipe link and Ounje will turn it into a saved recipe."
+                        ? "Try another search, browse Discover, or import from a photo."
+                        : "Tap Share on TikTok or Instagram, choose Ounje, or browse Discover. You can also take a picture of a dish."
                 )
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(OunjePalette.secondaryText)
@@ -3532,26 +3520,64 @@ struct CookbookSavedEmptyState: View {
             }
             .frame(maxWidth: 280)
 
-            HStack(spacing: 12) {
-                Button(action: onBrowseDiscover) {
-                    Text("Browse Discover")
-                        .biroHeaderFont(15)
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button(action: onBrowseDiscover) {
+                        HStack(spacing: 7) {
+                            Image(systemName: "safari")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Discover")
+                                .biroHeaderFont(15)
+                        }
                         .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(SecondaryPillButtonStyle())
+
+                    Button(action: onAddRecipe) {
+                        HStack(spacing: 7) {
+                            Image(systemName: "camera.viewfinder")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Photo import")
+                                .biroHeaderFont(15)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(SecondaryPillButtonStyle())
                 }
-                .buttonStyle(SecondaryPillButtonStyle())
 
                 Button(action: onAddRecipe) {
-                    Text("Import link")
-                        .biroHeaderFont(15)
+                    HStack(spacing: 7) {
+                        Image(systemName: "link")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Paste TikTok or Instagram link")
+                            .biroHeaderFont(15)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(PrimaryPillButtonStyle())
             }
-            .frame(maxWidth: 320)
+            .frame(maxWidth: 340)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
-        .padding(.vertical, 28)
+        .padding(.top, 0)
+        .padding(.bottom, 24)
+    }
+}
+
+private struct ShareToOunjeEmptyArtwork: View {
+    let maxWidth: CGFloat
+    let maxHeight: CGFloat
+
+    var body: some View {
+        Image("ShareToOunjeEmptyIllustration")
+            .renderingMode(.original)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(maxWidth: maxWidth, maxHeight: maxHeight)
     }
 }
 

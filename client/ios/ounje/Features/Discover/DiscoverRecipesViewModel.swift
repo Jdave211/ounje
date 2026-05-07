@@ -184,9 +184,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
             hasResolvedInitialLoad = true
             hasMoreRecipes = false
             if hadExistingRecipes {
-                errorMessage = normalizedQuery.isEmpty
-                    ? "Live Discover refresh failed, so we kept the last feed on screen."
-                    : "Search refresh failed, so we kept the last results on screen."
+                errorMessage = nil
             } else {
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "We couldn’t load the live recipe feed."
             }

@@ -455,19 +455,19 @@ final class SupabaseSavedRecipesService {
 
     private init() {}
 
-    func resolvedSavedRecipeIDs(userID: String?) async -> [String] {
+    func resolvedSavedRecipeIDs(userID: String?, accessToken: String? = nil) async -> [String] {
         let localIDs = locallyCachedSavedRecipeIDs(userID: userID)
         guard let userID else { return localIDs }
 
         do {
-            let remoteIDs = try await fetchSavedRecipeIDs(userID: userID)
+            let remoteIDs = try await fetchSavedRecipeIDs(userID: userID, accessToken: accessToken)
             return Array(Set(localIDs + remoteIDs))
         } catch {
             return localIDs
         }
     }
 
-    func fetchSavedRecipeIDs(userID: String) async throws -> [String] {
+    func fetchSavedRecipeIDs(userID: String, accessToken: String? = nil) async throws -> [String] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
                 string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id&user_id=eq.\(encodedUserID)&order=saved_at.desc"
@@ -477,8 +477,7 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
@@ -490,7 +489,7 @@ final class SupabaseSavedRecipesService {
         return try JSONDecoder().decode([SupabaseSavedRecipeIDRow].self, from: data).map(\.recipeID)
     }
 
-    func fetchSavedRecipeTitles(userID: String) async throws -> [String] {
+    func fetchSavedRecipeTitles(userID: String, accessToken: String? = nil) async throws -> [String] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
                 string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=title&user_id=eq.\(encodedUserID)&order=saved_at.desc"
@@ -500,8 +499,7 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
@@ -515,7 +513,7 @@ final class SupabaseSavedRecipesService {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    func fetchSavedRecipes(userID: String) async throws -> [DiscoverRecipeCardData] {
+    func fetchSavedRecipes(userID: String, accessToken: String? = nil) async throws -> [DiscoverRecipeCardData] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
                 string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source&user_id=eq.\(encodedUserID)&order=saved_at.desc"
@@ -525,8 +523,7 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
@@ -536,11 +533,11 @@ final class SupabaseSavedRecipesService {
         }
 
         let rows = try JSONDecoder().decode([SupabaseSavedRecipeRow].self, from: data)
-        let hydratedRows = (try? await hydrateSavedRecipeRows(rows)) ?? rows
+        let hydratedRows = (try? await hydrateSavedRecipeRows(rows, accessToken: accessToken)) ?? rows
         return hydratedRows.map(\.recipe)
     }
 
-    func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData]) async throws {
+    func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData], accessToken: String? = nil) async throws {
         guard !recipes.isEmpty,
               let url = URL(string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?on_conflict=user_id,recipe_id") else {
             throw SupabaseSavedRecipesError.invalidRequest
@@ -558,8 +555,7 @@ final class SupabaseSavedRecipesService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request, accessToken: accessToken)
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode(payload)
 
@@ -571,7 +567,7 @@ final class SupabaseSavedRecipesService {
         }
     }
 
-    func deleteSavedRecipe(userID: String, recipeID: String) async throws {
+    func deleteSavedRecipe(userID: String, recipeID: String, accessToken: String? = nil) async throws {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let encodedRecipeID = recipeID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
@@ -582,8 +578,7 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
@@ -591,6 +586,12 @@ final class SupabaseSavedRecipesService {
             let fallback = "Failed to remove saved recipe (\(httpResponse.statusCode))."
             throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
         }
+    }
+
+    private func applyAuthHeaders(to request: inout URLRequest, accessToken: String?) {
+        let bearer = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \((bearer?.isEmpty == false ? bearer : nil) ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -601,14 +602,14 @@ final class SupabaseSavedRecipesService {
         return (data, httpResponse)
     }
 
-    private func hydrateSavedRecipeRows(_ rows: [SupabaseSavedRecipeRow]) async throws -> [SupabaseSavedRecipeRow] {
+    private func hydrateSavedRecipeRows(_ rows: [SupabaseSavedRecipeRow], accessToken: String?) async throws -> [SupabaseSavedRecipeRow] {
         let idsNeedingHydration = rows
             .filter(\.needsCanonicalImageHydration)
             .map(\.recipeID)
 
         guard !idsNeedingHydration.isEmpty else { return rows }
 
-        let canonicalImages = try await fetchCanonicalRecipeCardImages(recipeIDs: idsNeedingHydration)
+        let canonicalImages = try await fetchCanonicalRecipeCardImages(recipeIDs: idsNeedingHydration, accessToken: accessToken)
         guard !canonicalImages.isEmpty else { return rows }
 
         return rows.map { row in
@@ -619,14 +620,14 @@ final class SupabaseSavedRecipesService {
         }
     }
 
-    private func fetchCanonicalRecipeCardImages(recipeIDs: [String]) async throws -> [String: SupabaseRecipeCardImageRow] {
+    private func fetchCanonicalRecipeCardImages(recipeIDs: [String], accessToken: String?) async throws -> [String: SupabaseRecipeCardImageRow] {
         let uniqueIDs = Array(Set(recipeIDs))
         let importedIDs = uniqueIDs.filter { $0.hasPrefix("uir_") }
         let baseRecipeIDs = uniqueIDs.filter { !$0.hasPrefix("uir_") }
 
         var resolved: [String: SupabaseRecipeCardImageRow] = [:]
         for (tableName, ids) in [("user_import_recipes", importedIDs), ("recipes", baseRecipeIDs)] where !ids.isEmpty {
-            let rows = try await fetchCanonicalRecipeCardImages(tableName: tableName, recipeIDs: ids)
+            let rows = try await fetchCanonicalRecipeCardImages(tableName: tableName, recipeIDs: ids, accessToken: accessToken)
             for row in rows {
                 resolved[row.id] = row
             }
@@ -635,7 +636,7 @@ final class SupabaseSavedRecipesService {
         return resolved
     }
 
-    private func fetchCanonicalRecipeCardImages(tableName: String, recipeIDs: [String]) async throws -> [SupabaseRecipeCardImageRow] {
+    private func fetchCanonicalRecipeCardImages(tableName: String, recipeIDs: [String], accessToken: String?) async throws -> [SupabaseRecipeCardImageRow] {
         guard !recipeIDs.isEmpty else { return [] }
 
         var aggregated: [SupabaseRecipeCardImageRow] = []
@@ -657,8 +658,7 @@ final class SupabaseSavedRecipesService {
 
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+            applyAuthHeaders(to: &request, accessToken: accessToken)
 
             let (data, httpResponse) = try await perform(request)
             guard (200...299).contains(httpResponse.statusCode) else {

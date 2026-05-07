@@ -24,7 +24,6 @@
 	<string>????</string>
 	<key>UIAppFonts</key>
 	<array>
-		<string>Biro_Script_reduced.ttf</string>
 		<string>Slee_handwritting-Regular.otf</string>
 	</array>
 	<key>CFBundleURLTypes</key>

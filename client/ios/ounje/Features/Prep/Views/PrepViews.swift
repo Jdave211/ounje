@@ -2088,8 +2088,7 @@ struct PrepTrackerCard: View {
                 )
                 .overlay(alignment: .topLeading) {
                     Text(nextDeliveryTitle)
-                        .font(.custom("BiroScriptreduced", size: 38))
-                        .tracking(0.2)
+                        .helveticaNowDisplayFont(38)
                         .foregroundStyle(OunjePalette.primaryText.opacity(0.22))
                         .offset(x: 0.9, y: 0.55)
                 }

@@ -17,7 +17,8 @@ import { renderRecipeSharePage, resolveRecipeShareLink } from "./lib/recipe-shar
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
 
 const app = express();
-app.use(bodyParser.json({ limit: "50mb" }));
+const JSON_BODY_LIMIT = String(process.env.OUNJE_JSON_BODY_LIMIT ?? "18mb").trim() || "18mb";
+app.use(bodyParser.json({ limit: JSON_BODY_LIMIT }));
 app.use(cors());
 app.use((req, _res, next) => {
   withAIUsageContext({
@@ -27,6 +28,36 @@ app.use((req, _res, next) => {
     user_id: req.body?.user_id ?? req.body?.userID ?? req.query?.user_id ?? req.query?.userID ?? req.headers["x-user-id"],
     request_id: req.headers["x-request-id"] ?? req.headers["x-render-request-id"],
   }, next);
+});
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  const startedMemory = process.memoryUsage();
+
+  res.on("finish", () => {
+    const durationMs = Date.now() - startedAt;
+    const endedMemory = process.memoryUsage();
+    const routeKey = `${req.method} ${req.path}`;
+    const isRecipeHeavyRoute = req.path.startsWith("/v1/recipe/discover")
+      || req.path.startsWith("/v1/recipe/imports")
+      || req.path.startsWith("/v1/recipe/adapt")
+      || req.path.startsWith("/v1/recipe/prep-candidates");
+    const heapDeltaMB = (endedMemory.heapUsed - startedMemory.heapUsed) / (1024 * 1024);
+
+    if (isRecipeHeavyRoute || durationMs >= 1000 || heapDeltaMB >= 8) {
+      const cacheStats = globalThis.__OUNJE_RECIPE_CACHE_STATS__?.();
+      console.log("[api-route-metrics]", {
+        route: routeKey,
+        status: res.statusCode,
+        duration_ms: durationMs,
+        heap_used_mb: Number((endedMemory.heapUsed / (1024 * 1024)).toFixed(1)),
+        rss_mb: Number((endedMemory.rss / (1024 * 1024)).toFixed(1)),
+        heap_delta_mb: Number(heapDeltaMB.toFixed(1)),
+        cache_stats: cacheStats ?? undefined,
+      });
+    }
+  });
+
+  next();
 });
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
@@ -291,7 +322,15 @@ function startRecipeIngestionPolling() {
   interval.unref?.();
 }
 
-startRecipeFineTunePolling();
+const ENABLE_RECIPE_FINE_TUNE_POLLING = ["1", "true", "yes", "on"].includes(
+  String(process.env.OUNJE_ENABLE_RECIPE_FINE_TUNE_POLLING ?? "").trim().toLowerCase()
+);
+
+if (ENABLE_RECIPE_FINE_TUNE_POLLING) {
+  startRecipeFineTunePolling();
+} else {
+  console.log("[recipe-model-registry] fine-tune polling disabled");
+}
 if (ENABLE_RECIPE_INGESTION_POLLING) {
   console.log("[recipe-ingestion] polling enabled");
   startRecipeIngestionPolling();

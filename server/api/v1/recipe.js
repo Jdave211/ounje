@@ -62,13 +62,44 @@ const DISCOVER_BROAD_POOL_CACHE_TTL_MS = 2 * 60 * 1000;
 const INTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREP_REGENERATION_INTENT_CACHE_TTL_MS = 5 * 60 * 1000;
-const searchResponseCache = new Map();
-const discoverFeedCache = new Map();
-const discoverBroadPoolCache = new Map();
-const discoverIntentCache = new Map();
-const prepRegenerationIntentCache = new Map();
-const embeddingCache = new Map();
-const recipeVideoResolveCache = new Map();
+
+class CappedMap extends Map {
+  constructor(maxEntries = 100) {
+    super();
+    this.maxEntries = Math.max(1, Number(maxEntries) || 100);
+  }
+
+  set(key, value) {
+    if (this.has(key)) {
+      this.delete(key);
+    }
+    super.set(key, value);
+    while (this.size > this.maxEntries) {
+      const oldestKey = this.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.delete(oldestKey);
+    }
+    return this;
+  }
+}
+
+const searchResponseCache = new CappedMap(160);
+const discoverFeedCache = new CappedMap(120);
+const discoverBroadPoolCache = new CappedMap(80);
+const discoverIntentCache = new CappedMap(120);
+const prepRegenerationIntentCache = new CappedMap(80);
+const embeddingCache = new CappedMap(320);
+const recipeVideoResolveCache = new CappedMap(120);
+
+globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
+  searchResponse: searchResponseCache.size,
+  discoverFeed: discoverFeedCache.size,
+  discoverBroadPool: discoverBroadPoolCache.size,
+  discoverIntent: discoverIntentCache.size,
+  prepRegenerationIntent: prepRegenerationIntentCache.size,
+  embedding: embeddingCache.size,
+  recipeVideoResolve: recipeVideoResolveCache.size,
+});
 
 const DISCOVER_INTENT_SCHEMA = {
   type: "object",
@@ -972,7 +1003,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       }
 
       const { recipes, rankingMode } = isBaseDiscover
-        ? await buildBaseDiscoverRecipes({
+        ? await buildFastBaseDiscoverRecipes({
             profile,
             filter,
             feedContext,
@@ -994,24 +1025,38 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       return res.json(payload);
     }
 
-    if (!openai || !SUPABASE_URL || !SUPABASE_ANON_KEY) {
-      return res.status(503).json({
-        error: "Semantic discover dependencies are unavailable.",
-        rankingMode: "semantic_unavailable",
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      const fallbackPayload = await buildLexicalSearchFallbackPayload({
+        query: trimmedQuery,
+        profile,
+        filter,
+        feedContext,
+        requestedLimit,
+        requestedOffset,
+        requestedWindowLimit,
       });
+      return res.json(fallbackPayload);
     }
 
-    const llmIntent = await inferDiscoverIntentWithLLM({ profile, filter, query: trimmedQuery });
+    const llmIntent = openai
+      ? await withTimeout(
+          inferDiscoverIntentWithLLM({ profile, filter, query: trimmedQuery }),
+          1200,
+          "discover intent timed out"
+        ).catch((error) => {
+          console.warn("[recipe/discover] intent skipped:", error.message);
+          return null;
+        })
+      : null;
     const {
       filterType,
       semanticQuery,
       lexicalQuery,
-      richSearchText,
       maxCookMinutes,
       parsedQuery,
     } = buildDiscoverQueryContext({ profile, filter, query: trimmedQuery, llmIntent });
 
-    const candidateLimit = Math.max(requestedWindowLimit * 3, 60);
+    const candidateLimit = Math.max(requestedWindowLimit * 3, 48);
 
     if (trimmedQuery.length <= 80) {
       console.log(
@@ -1019,10 +1064,16 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       );
     }
 
-    const [hybridEmbedding, richEmbedding] = await Promise.all([
-      embedTextCached(semanticQuery, "text-embedding-3-small"),
-      embedTextCached(richSearchText, "text-embedding-3-large"),
-    ]);
+    const hybridEmbedding = openai
+      ? await withTimeout(
+          embedTextCached(semanticQuery, "text-embedding-3-small"),
+          3000,
+          "discover embedding timed out"
+        ).catch((error) => {
+          console.warn("[recipe/discover] embedding skipped:", error.message);
+          return null;
+        })
+      : null;
 
     const lexicalAnchorPromise = fetchLexicalAnchorRecipes({
       query: trimmedQuery,
@@ -1033,49 +1084,38 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       return [];
     });
 
-    const basicMatchesPromise = withTimeout(callRecipeRpc("match_recipes_basic", {
-      query_embedding: toPgVector(hybridEmbedding),
-      match_count: Math.max(requestedWindowLimit * 8, 80),
-      filter_type: filterType,
-      max_cook_minutes: maxCookMinutes,
-    }), 2500, "basic rpc timed out").catch((error) => {
-      console.warn("[recipe/discover] basic rpc failed:", error.message);
-      return [];
-    });
+    const basicMatchesPromise = Array.isArray(hybridEmbedding)
+      ? withTimeout(callRecipeRpc("match_recipes_basic", {
+          query_embedding: toPgVector(hybridEmbedding),
+          match_count: Math.max(requestedWindowLimit * 5, 48),
+          filter_type: filterType,
+          max_cook_minutes: maxCookMinutes,
+        }), 2200, "basic rpc timed out").catch((error) => {
+          console.warn("[recipe/discover] basic rpc failed:", error.message);
+          return [];
+        })
+      : Promise.resolve([]);
 
-    const hybridMatchesPromise = shouldUseHybridLexicalSearch(parsedQuery)
+    const hybridMatchesPromise = Array.isArray(hybridEmbedding) && shouldUseHybridLexicalSearch(parsedQuery)
       ? withTimeout(callRecipeRpc("match_recipes_hybrid", {
           query_embedding: toPgVector(hybridEmbedding),
           query_text: lexicalQuery,
-          match_count: Math.max(requestedWindowLimit * 4, 48),
+          match_count: Math.max(requestedWindowLimit * 3, 36),
           filter_type: filterType,
           max_cook_minutes: maxCookMinutes,
-        }), 3000, "hybrid rpc timed out").catch((error) => {
+        }), 2200, "hybrid rpc timed out").catch((error) => {
           console.warn("[recipe/discover] hybrid rpc failed:", error.message);
           return [];
         })
       : Promise.resolve([]);
 
-    const richMatchesPromise = !Array.isArray(richEmbedding) || richEmbedding.length === 0
-      ? Promise.resolve([])
-      : withTimeout(callRecipeRpc("match_recipes_rich", {
-          query_embedding: toPgVector(richEmbedding),
-          match_count: Math.max(requestedWindowLimit * 2, 20),
-          filter_type: filterType,
-          max_cook_minutes: maxCookMinutes,
-        }), 2200, "rich rpc timed out").catch((error) => {
-          console.warn("[recipe/discover] rich rpc failed:", error.message);
-          return [];
-        });
-
-    const [basicMatches, hybridMatches, richMatches, lexicalAnchorRecipes] = await Promise.all([
+    const [basicMatches, hybridMatches, lexicalAnchorRecipes] = await Promise.all([
       basicMatchesPromise,
       hybridMatchesPromise,
-      richMatchesPromise,
       lexicalAnchorPromise,
     ]);
 
-    const rankedIds = fuseRankedIds([basicMatches, hybridMatches, richMatches], candidateLimit);
+    const rankedIds = fuseRankedIds([basicMatches, hybridMatches], candidateLimit);
     let recipes = rankedIds.length > 0
       ? await fetchSearchRecipesByIds(rankedIds)
       : [];
@@ -1102,25 +1142,6 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       ...lexicalAnchorRecipes,
       ...recipes,
     ]).slice(0, requestedWindowLimit);
-    const preAdjudicationRecipes = recipes;
-
-    recipes = await adjudicateDiscoverSearchResultsWithLLM({
-      recipes,
-      profile,
-      filter,
-      query: trimmedQuery,
-      parsedQuery,
-      llmIntent,
-      limit: requestedLimit,
-      offset: requestedOffset,
-    });
-    recipes = completeSearchResultsFromCandidatePool({
-      selectedRecipes: recipes,
-      candidateRecipes: preAdjudicationRecipes,
-      query: trimmedQuery,
-      parsedQuery,
-      limit: requestedWindowLimit,
-    });
     recipes = applyPresetHardConstraints(recipes, filter);
 
     if (recipes.length === 0) {
@@ -1150,8 +1171,8 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       recipes,
       filters: deriveSearchFilters(recipes),
       rankingMode: lexicalAnchorRecipes.length
-        ? "hybrid_search_embeddings_lexical_anchors_llm_adjudicated"
-        : "hybrid_search_embeddings_llm_adjudicated",
+        ? "fast_hybrid_search_embeddings_lexical_anchors"
+        : "fast_hybrid_search_embeddings",
     }, requestedOffset, requestedLimit);
     searchResponseCache.set(
       buildDiscoverSearchCacheKey({
@@ -1691,6 +1712,56 @@ async function buildDiscoverSearchRecipes({
   return {
     recipes,
     rankingMode: "prep_focus_hybrid_semantic_llm_adjudicated",
+  };
+}
+
+async function buildFastBaseDiscoverRecipes({
+  profile = null,
+  filter = "All",
+  feedContext = null,
+  limit = 30,
+}) {
+  const normalizedFilter = String(filter ?? "All").trim().toLowerCase();
+  const target = Math.min(Math.max(limit, 30), normalizedFilter === "all" ? 120 : 90);
+  const baseSeed = `${feedContext?.sessionSeed ?? "base"}|${feedContext?.windowKey ?? "now"}|${normalizedFilter}|fast|${target}`;
+
+  const sharedPool = await fetchDiscoverBroadPool({
+    profile,
+    filter,
+    feedContext,
+    seed: baseSeed,
+    limit: Math.max(target * 2, 60),
+  });
+
+  const constrainedPool = applyPresetHardConstraints(
+    filterRecipesByAllergies(sharedPool, profile),
+    filter
+  );
+  const cueRecipes = rankCueDrivenRecipes(constrainedPool, {
+    filter,
+    feedContext,
+    seed: `${baseSeed}|cue`,
+  });
+  const profileRecipes = rankProfileDrivenRecipes(constrainedPool, {
+    filter,
+    profile,
+    seed: `${baseSeed}|profile`,
+  });
+  let recipes = composeBaseDiscoverFeed({
+    randomRecipes: rankPresetFocusedRecipes(constrainedPool, { filter, seed: `${baseSeed}|random` }),
+    cueRecipes,
+    profileRecipes,
+    limit: target,
+    seed: baseSeed,
+  });
+
+  if (normalizedFilter !== "all") {
+    recipes = frontloadPresetRecipes(recipes, filter, target);
+  }
+
+  return {
+    recipes: recipes.slice(0, target),
+    rankingMode: "base_fast_cached_pool",
   };
 }
 
@@ -4738,14 +4809,14 @@ async function fetchDiscoverBroadPool({
 
   const [randomPool, latestPool] = await Promise.all([
     fetchRandomDiscoverRecipes({
-      limit: Math.min(Math.max(limit, 120), 360),
+      limit: Math.min(Math.max(limit, 48), 360),
       seed: `${seed}|random`,
       filter,
     }).catch((error) => {
       console.warn("[recipe/discover] broad random pool failed:", error.message);
       return [];
     }),
-    fetchLatestRecipes(Math.min(Math.max(limit, 90), 240)).catch((error) => {
+    fetchLatestRecipes(Math.min(Math.max(Math.ceil(limit * 0.75), 36), 240)).catch((error) => {
       console.warn("[recipe/discover] broad latest pool failed:", error.message);
       return [];
     }),

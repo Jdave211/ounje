@@ -1086,6 +1086,7 @@ private struct MealPlannerShellView: View {
     @State private var previousSelectedTab: AppTab = .prep
     @State private var tabTransitionDirection: CGFloat = 1
     @State private var requestedCookbookImportText: String?
+    @State private var isPhotoImportComposerPresented = false
     @State private var clipboardRecipeImportURL: String?
     @State private var isClipboardImportPromptPresented = false
     @AppStorage("ounje.lastPromptedClipboardRecipeURL") private var lastPromptedClipboardRecipeURL = ""
@@ -1298,6 +1299,15 @@ private struct MealPlannerShellView: View {
         } message: {
             Text("Ounje found a TikTok or Instagram recipe link on your clipboard.")
         }
+        .sheet(isPresented: $isPhotoImportComposerPresented) {
+            DiscoverComposerSheet(context: .saved, initialText: nil)
+                .environmentObject(savedStore)
+                .environmentObject(sharedImportInbox)
+                .environmentObject(store)
+                .environmentObject(toastCenter)
+                .presentationDetents([.fraction(0.68), .large])
+                .presentationDragIndicator(.hidden)
+        }
     }
 
     private var shellTabTransition: AnyTransition {
@@ -1363,9 +1373,7 @@ private struct MealPlannerShellView: View {
                     recipeImportHistory: recipeImportHistory,
                     toastCenter: toastCenter,
                     onRefreshSharedImports: {
-                        Task {
-                            await refreshSharedImportState()
-                        }
+                        await refreshSharedImportState()
                     },
                     onRetryFailedSharedImports: {
                         Task {
@@ -2166,7 +2174,7 @@ private struct CookbookTabView: View {
     @ObservedObject var sharedImportInbox: SharedRecipeImportInboxStore
     @ObservedObject var recipeImportHistory: RecipeImportHistoryStore
     @ObservedObject var toastCenter: AppToastCenter
-    let onRefreshSharedImports: () -> Void
+    let onRefreshSharedImports: () async -> Void
     let onRetryFailedSharedImports: () -> Void
     let onDeleteFailedSharedImport: (String) -> Void
     let onSelectRecipe: (DiscoverRecipeCardData) -> Void
@@ -2270,7 +2278,7 @@ private struct CookbookTabView: View {
     }
 
     var body: some View {
-        ScrollView {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
                 cookbookHeader
 
@@ -2279,22 +2287,13 @@ private struct CookbookTabView: View {
                     tabs: sectionTabs
                 )
                 .zIndex(20)
-
-                activeImportTracker
-
-                ZStack(alignment: .topLeading) {
-                    currentSectionContent
-                        .id(selectedSection)
-                        .transition(cookbookSectionTransition)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .animation(OunjeMotion.screenSpring, value: selectedSection)
             }
             .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
             .padding(.top, 14)
-            .padding(.bottom, 24)
+            .padding(.bottom, 10)
+
+            cookbookFeedScroll
         }
-        .scrollIndicators(.hidden)
         .background(OunjePalette.background.ignoresSafeArea())
         .overlay(alignment: .bottom) {
             if selectedSection == .saved {
@@ -2324,7 +2323,7 @@ private struct CookbookTabView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .recipeImportHistoryNeedsRefresh)) { _ in
             Task {
-                onRefreshSharedImports()
+                await onRefreshSharedImports()
             }
         }
         .onAppear {
@@ -2355,7 +2354,9 @@ private struct CookbookTabView: View {
                     onSelectRecipe(recipe)
                 },
                 onRefreshAll: {
-                    onRefreshSharedImports()
+                    Task {
+                        await onRefreshSharedImports()
+                    }
                     isImportQueuePresented = false
                 },
                 onRetryFailed: {
@@ -2364,7 +2365,9 @@ private struct CookbookTabView: View {
                 },
                 onDeleteFailed: { envelopeID in
                     try? SharedRecipeImportInbox.delete(envelopeID: envelopeID)
-                    onRefreshSharedImports()
+                    Task {
+                        await onRefreshSharedImports()
+                    }
                 }
             )
             .presentationDetents([.medium, .large])
@@ -2401,6 +2404,41 @@ private struct CookbookTabView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var cookbookFeedScroll: some View {
+        if selectedSection == .saved {
+            ScrollView {
+                cookbookFeedContent
+            }
+            .scrollIndicators(.hidden)
+            .refreshable {
+                await refreshSavedCookbookFeed()
+            }
+        } else {
+            ScrollView {
+                cookbookFeedContent
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+
+    private var cookbookFeedContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            activeImportTracker
+
+            ZStack(alignment: .topLeading) {
+                currentSectionContent
+                    .id(selectedSection)
+                    .transition(cookbookSectionTransition)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .animation(OunjeMotion.screenSpring, value: selectedSection)
+    }
+    .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+    .padding(.top, 0)
+    .padding(.bottom, 24)
+}
 
     private var cookbookHeader: some View {
         HStack(alignment: .center) {
@@ -2591,6 +2629,11 @@ private struct CookbookTabView: View {
         }
     }
 
+    private func refreshSavedCookbookFeed() async {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        await savedStore.refreshFromRemote(authSession: store.authSession)
+    }
+
     @ViewBuilder
     private var preppedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -2641,7 +2684,9 @@ private struct CookbookTabView: View {
 
     private func openImportQueue(initialTab: SharedRecipeImportQueueTab? = nil) {
         importQueueInitialTab = initialTab
-        onRefreshSharedImports()
+        Task {
+            await onRefreshSharedImports()
+        }
         isImportQueuePresented = true
     }
 
@@ -5375,20 +5420,40 @@ private struct SharedRecipeImportProgressCard: View {
         RecipeImportProgressStage.current(for: item)
     }
 
+    private var isPhotoImport: Bool {
+        (item.sourceApp ?? "").lowercased().contains("photo")
+    }
+
     private var subtitle: String {
+        if isPhotoImport {
+            switch currentStage {
+            case .fetching:
+                return "Checking photo."
+            case .readingVideo:
+                return "Finding recipe references."
+            case .buildingRecipe:
+                return "Writing the recipe."
+            case .saved:
+                return "Saved to Cookbook."
+            }
+        }
         switch currentStage {
         case .fetching:
-            return "Ounje has the link and the worker will pick it up."
+            return "Queued for the recipe worker."
         case .readingVideo:
-            return "Caption, video, and food cues are being read."
+            return "Reading the source."
         case .buildingRecipe:
-            return "Ingredients, steps, and quantities are being shaped."
+            return "Building the recipe."
         case .saved:
-            return "The recipe is ready to open."
+            return "Ready to open."
         }
     }
 
     private var sourceLabel: String {
+        if isPhotoImport {
+            let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return sourceText.isEmpty ? "food photo" : sourceText.components(separatedBy: .newlines).first ?? "food photo"
+        }
         let sourceURL = item.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !sourceURL.isEmpty {
             if let host = URL(string: sourceURL)?.host?.replacingOccurrences(of: "www.", with: ""), !host.isEmpty {
@@ -5430,15 +5495,12 @@ private struct SharedRecipeImportProgressCard: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 11) {
                 ZStack {
-                    Circle()
-                        .fill(OunjePalette.accent.opacity(currentStage == .saved ? 0.24 : 0.15))
-                        .frame(width: 34, height: 34)
-                    Circle()
-                        .stroke(OunjePalette.accent.opacity(isPulsing && !reduceMotion && currentStage != .saved ? 0.58 : 0.24), lineWidth: 1)
-                        .frame(width: 34, height: 34)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(OunjePalette.accent.opacity(currentStage == .saved ? 0.22 : 0.12))
+                        .frame(width: 32, height: 32)
 
                     Image(systemName: currentStage.symbolName)
                         .font(.system(size: 14, weight: .bold))
@@ -5448,22 +5510,23 @@ private struct SharedRecipeImportProgressCard: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text("Importing recipe")
-                            .sleeDisplayFont(20)
+                        Text(isPhotoImport ? "Cloning dish" : "Pulling in recipe")
+                            .contentTransition(.opacity)
+                            .font(.system(size: 15, weight: .heavy, design: .rounded))
                             .foregroundStyle(OunjePalette.primaryText)
                             .lineLimit(1)
 
                         Text(currentStage.displayTitle)
-                            .font(.system(size: 10, weight: .black, design: .rounded))
+                            .font(.system(size: 10, weight: .heavy, design: .rounded))
                             .foregroundStyle(currentStage == .saved ? OunjePalette.background : OunjePalette.softCream.opacity(0.82))
                             .lineLimit(1)
                             .padding(.horizontal, 8)
-                            .frame(height: 21)
+                            .frame(height: 20)
                             .background(
-                                Capsule(style: .continuous)
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .fill(currentStage == .saved ? OunjePalette.accent : OunjePalette.surface.opacity(0.9))
                                     .overlay(
-                                        Capsule(style: .continuous)
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                                             .stroke(OunjePalette.stroke, lineWidth: 1)
                                     )
                             )
@@ -5480,9 +5543,9 @@ private struct SharedRecipeImportProgressCard: View {
 
             progressBar
 
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
                 Image(systemName: "link")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(OunjePalette.secondaryText.opacity(0.85))
                 Text(sourceLabel)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -5490,73 +5553,33 @@ private struct SharedRecipeImportProgressCard: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(OunjePalette.background.opacity(0.42))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .stroke(OunjePalette.stroke.opacity(0.85), lineWidth: 1)
-                    )
-            )
+            .padding(.horizontal, 2)
         }
-        .padding(14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            OunjePalette.panel.opacity(0.88),
-                            OunjePalette.surface.opacity(0.62)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.54))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(OunjePalette.accent.opacity(currentStage == .saved ? 0.28 : 0.18), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.86), lineWidth: 1)
                 )
         )
     }
 
     private var progressBar: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 999, style: .continuous)
-                        .fill(OunjePalette.background.opacity(0.54))
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                    .fill(OunjePalette.background.opacity(0.44))
 
-                    RoundedRectangle(cornerRadius: 999, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    OunjePalette.accent.opacity(0.92),
-                                    OunjePalette.softCream.opacity(0.9)
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: max(20, proxy.size.width * progressFraction))
-                        .shadow(color: OunjePalette.accent.opacity(isPulsing && !reduceMotion ? 0.24 : 0.08), radius: 8, x: 0, y: 0)
-                }
-            }
-            .frame(height: 5)
-
-            HStack(spacing: 0) {
-                ForEach(RecipeImportProgressStage.allCases, id: \.self) { stage in
-                    stageMarker(for: stage)
-                    if stage != RecipeImportProgressStage.allCases.last {
-                        Rectangle()
-                            .fill(stage.rawValue < currentStage.rawValue ? OunjePalette.accent.opacity(0.62) : OunjePalette.stroke)
-                            .frame(height: 1)
-                            .padding(.horizontal, 6)
-                    }
-                }
+                RoundedRectangle(cornerRadius: 999, style: .continuous)
+                    .fill(OunjePalette.accent.opacity(0.9))
+                    .frame(width: max(18, proxy.size.width * progressFraction))
+                    .shadow(color: OunjePalette.accent.opacity(isPulsing && !reduceMotion ? 0.2 : 0.05), radius: 7, x: 0, y: 0)
             }
         }
+        .frame(height: 4)
     }
 
     private func stageMarker(for stage: RecipeImportProgressStage) -> some View {
@@ -5963,9 +5986,9 @@ private struct DiscoverComposerSheet: View {
     private var helperCopy: String {
         switch context {
         case .prepped:
-            return "Paste a link, add media, or describe what you want."
+            return "Paste a TikTok or IG link, attach a food photo, or describe what you want."
         case .saved:
-            return "Paste a link, add media, or describe what you want."
+            return "Paste a TikTok or IG link, attach a food photo, or describe what you want."
         }
     }
 
@@ -6153,7 +6176,7 @@ private struct DiscoverComposerSheet: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "paperclip")
                                             .font(.system(size: 14, weight: .semibold))
-                                        Text(attachments.isEmpty ? "Attach file" : mediaButtonTitle)
+                                        Text(attachments.isEmpty ? "Photo/video" : mediaButtonTitle)
                                             .font(.system(size: 14, weight: .medium))
                                             .lineLimit(1)
                                     }
@@ -6236,7 +6259,15 @@ private struct DiscoverComposerSheet: View {
         isSubmitting = true
         errorMessage = nil
         attachmentMessage = nil
-        let isTypedPromptImport = detectedLinks.isEmpty && !trimmedDraftText.isEmpty
+        let hasImageAttachments = attachments.contains { $0.kind == .image }
+        let isPhotoRecipeImport = detectedLinks.isEmpty && hasImageAttachments
+        let isTypedPromptImport = detectedLinks.isEmpty && !trimmedDraftText.isEmpty && !isPhotoRecipeImport
+        let photoContext = isPhotoRecipeImport
+            ? RecipeImportPhotoContextPayload(
+                dishHint: trimmedDraftText.isEmpty ? nil : trimmedDraftText,
+                coarsePlaceContext: nil
+            )
+            : nil
 
         Task {
             do {
@@ -6248,7 +6279,7 @@ private struct DiscoverComposerSheet: View {
                     sourceText: trimmedDraftText,
                     sourceURLString: detectedLinks.first,
                     canonicalSourceURLString: nil,
-                    sourceApp: "Ounje",
+                    sourceApp: isPhotoRecipeImport ? "Ounje Photo" : "Ounje",
                     attachments: [],
                     processingState: "queued",
                     attemptCount: 1,
@@ -6265,7 +6296,8 @@ private struct DiscoverComposerSheet: View {
                     sourceURL: detectedLinks.first,
                     sourceText: trimmedDraftText,
                     targetState: context == .prepped ? "prepped" : "saved",
-                    attachments: attachments.map(\.payload)
+                    attachments: attachments.map(\.payload),
+                    photoContext: photoContext
                 )
 
                 await MainActor.run {
@@ -6381,8 +6413,8 @@ private struct DiscoverComposerSheet: View {
                     } else if shouldTrackAsQueued {
                         toastCenter.show(
                             title: "Import queued",
-                            subtitle: "Ounje is pulling the recipe in now.",
-                            systemImage: "tray.and.arrow.down.fill",
+                            subtitle: isPhotoRecipeImport ? "Ounje is checking the dish photo now." : "Ounje is pulling the recipe in now.",
+                            systemImage: isPhotoRecipeImport ? "camera.viewfinder" : "tray.and.arrow.down.fill",
                             destination: .recipeImportQueue(.queued)
                         )
                     } else if context == .prepped, let detail = response.recipeDetail {
@@ -6425,7 +6457,11 @@ private struct DiscoverComposerSheet: View {
         do {
             var drafts: [RecipeImportMediaDraft] = []
             for item in items.prefix(4) {
-                if let draft = try await RecipeImportMediaDraft.load(from: item) {
+                if let draft = try await RecipeImportMediaDraft.load(
+                    from: item,
+                    userID: store.authSession?.userID,
+                    accessToken: store.authSession?.accessToken
+                ) {
                     drafts.append(draft)
                 }
             }
@@ -6655,7 +6691,7 @@ private struct RecipeImportMediaDraft: Identifiable {
     let subtitle: String
     let payload: RecipeImportAttachmentPayload
 
-    static func load(from item: PhotosPickerItem) async throws -> RecipeImportMediaDraft? {
+    static func load(from item: PhotosPickerItem, userID: String?, accessToken: String?) async throws -> RecipeImportMediaDraft? {
         let imageType = item.supportedContentTypes.first(where: { $0.conforms(to: .image) })
         let videoType = item.supportedContentTypes.first(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) })
 
@@ -6663,7 +6699,7 @@ private struct RecipeImportMediaDraft: Identifiable {
             guard let data = try await item.loadTransferable(type: Data.self) else {
                 throw RecipeImportMediaError.unreadable
             }
-            return try makeImageAttachment(from: data, contentType: imageType)
+            return try await makeImageAttachment(from: data, contentType: imageType, userID: userID, accessToken: accessToken)
         }
 
         if let videoType {
@@ -6676,21 +6712,53 @@ private struct RecipeImportMediaDraft: Identifiable {
         throw RecipeImportMediaError.unsupported
     }
 
-    private static func makeImageAttachment(from data: Data, contentType: UTType) throws -> RecipeImportMediaDraft {
+    private static func makeImageAttachment(from data: Data, contentType: UTType, userID: String?, accessToken: String?) async throws -> RecipeImportMediaDraft {
         guard let image = UIImage(data: data) else {
             throw RecipeImportMediaError.unreadable
         }
 
         let prepared = image.ounjeResized(maxDimension: 1600)
         let jpegData = prepared.jpegData(compressionQuality: 0.82) ?? data
-        let payload = RecipeImportAttachmentPayload(
-            kind: "image",
-            sourceURL: nil,
-            dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
-            mimeType: "image/jpeg",
-            fileName: "recipe-photo.\(contentType.preferredFilenameExtension ?? "jpg")",
-            previewFrameURLs: []
-        )
+        let heroImage = image.ounjeCenterCroppedSquare().ounjeResized(maxDimension: 1200)
+        let heroData = heroImage.jpegData(compressionQuality: 0.86) ?? jpegData
+
+        let payload: RecipeImportAttachmentPayload
+        if let userID, let accessToken, !userID.isEmpty, !accessToken.isEmpty,
+           let uploaded = try? await RecipeImportPhotoStorageUploader.uploadPhotoPair(
+            sourceData: jpegData,
+            heroData: heroData,
+            userID: userID,
+            accessToken: accessToken
+           ) {
+            payload = RecipeImportAttachmentPayload(
+                kind: "image",
+                sourceURL: nil,
+                dataURL: nil,
+                mimeType: "image/jpeg",
+                fileName: "recipe-photo.\(contentType.preferredFilenameExtension ?? "jpg")",
+                previewFrameURLs: [],
+                storageBucket: uploaded.privateBucket,
+                storagePath: uploaded.privatePath,
+                publicHeroURL: uploaded.publicHeroURL,
+                width: Int(prepared.size.width),
+                height: Int(prepared.size.height)
+            )
+        } else {
+            let fallbackLimit = 1_250_000
+            guard jpegData.count <= fallbackLimit else {
+                throw RecipeImportMediaError.uploadRequired
+            }
+            payload = RecipeImportAttachmentPayload(
+                kind: "image",
+                sourceURL: nil,
+                dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
+                mimeType: "image/jpeg",
+                fileName: "recipe-photo.\(contentType.preferredFilenameExtension ?? "jpg")",
+                previewFrameURLs: [],
+                width: Int(prepared.size.width),
+                height: Int(prepared.size.height)
+            )
+        }
 
         let subtitle = ByteCountFormatter.string(fromByteCount: Int64(jpegData.count), countStyle: .file)
         return RecipeImportMediaDraft(
@@ -6759,6 +6827,67 @@ private struct RecipeImportMediaDraft: Identifiable {
                 return nil
             }
             return "data:image/jpeg;base64,\(data.base64EncodedString())"
+        }
+    }
+}
+
+private enum RecipeImportPhotoStorageUploader {
+    struct UploadedPair {
+        let privateBucket: String
+        let privatePath: String
+        let publicHeroURL: String
+    }
+
+    private static let privateBucket = "recipe-import-media"
+    private static let heroBucket = "recipe-images"
+
+    static func uploadPhotoPair(
+        sourceData: Data,
+        heroData: Data,
+        userID: String,
+        accessToken: String
+    ) async throws -> UploadedPair {
+        let importID = UUID().uuidString
+        let sourcePath = "users/\(userID)/photo-imports/\(importID)/source.jpg"
+        let heroPath = "users/\(userID)/photo-imports/\(importID)/hero.jpg"
+        let heroURL = "\(SupabaseConfig.url)/storage/v1/object/public/\(heroBucket)/\(heroPath)"
+
+        try await upload(data: heroData, bucket: heroBucket, path: heroPath, accessToken: accessToken)
+
+        do {
+            try await upload(data: sourceData, bucket: privateBucket, path: sourcePath, accessToken: accessToken)
+        } catch {
+            return UploadedPair(
+                privateBucket: heroBucket,
+                privatePath: heroPath,
+                publicHeroURL: heroURL
+            )
+        }
+
+        return UploadedPair(
+            privateBucket: privateBucket,
+            privatePath: sourcePath,
+            publicHeroURL: heroURL
+        )
+    }
+
+    private static func upload(data: Data, bucket: String, path: String, accessToken: String) async throws {
+        let encodedPath = path
+            .split(separator: "/")
+            .map { String($0).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
+            .joined(separator: "/")
+        guard let url = URL(string: "\(SupabaseConfig.url)/storage/v1/object/\(bucket)/\(encodedPath)") else {
+            throw RecipeImportMediaError.uploadRequired
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.setValue("true", forHTTPHeaderField: "x-upsert")
+        let (_, response) = try await URLSession.shared.upload(for: request, from: data)
+        guard let httpResponse = response as? HTTPURLResponse, (200 ... 299).contains(httpResponse.statusCode) else {
+            throw RecipeImportMediaError.uploadRequired
         }
     }
 }
@@ -7135,6 +7264,7 @@ private enum RecipeImportMediaError: LocalizedError {
     case unreadable
     case videoTooLarge
     case videoPreviewUnavailable
+    case uploadRequired
 
     var errorDescription: String? {
         switch self {
@@ -7146,6 +7276,8 @@ private enum RecipeImportMediaError: LocalizedError {
             return "Short videos only for now. Try one under 25 MB."
         case .videoPreviewUnavailable:
             return "We couldn’t pull clear frames from that video."
+        case .uploadRequired:
+            return "We couldn’t upload that photo. Try again with a smaller image or check your connection."
         }
     }
 }
@@ -7167,6 +7299,21 @@ extension UIImage {
         return renderer.image { _ in
             draw(in: CGRect(origin: .zero, size: targetSize))
         }
+    }
+
+    func ounjeCenterCroppedSquare() -> UIImage {
+        let side = min(size.width, size.height)
+        guard side > 0 else { return self }
+        let cropRect = CGRect(
+            x: (size.width - side) / 2,
+            y: (size.height - side) / 2,
+            width: side,
+            height: side
+        )
+        guard let cgImage = cgImage?.cropping(to: cropRect.applying(CGAffineTransform(scaleX: scale, y: scale))) else {
+            return self
+        }
+        return UIImage(cgImage: cgImage, scale: scale, orientation: imageOrientation)
     }
 }
 

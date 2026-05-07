@@ -19,7 +19,26 @@ const BUDGET_CACHE_TTL_MS = 60_000;
 const aiUsageStorage = new AsyncLocalStorage();
 let supabaseClient = null;
 let warnedAboutLogging = false;
-const budgetCache = new Map();
+
+class CappedMap extends Map {
+  constructor(maxEntries = 100) {
+    super();
+    this.maxEntries = Math.max(1, Number(maxEntries) || 100);
+  }
+
+  set(key, value) {
+    if (this.has(key)) this.delete(key);
+    super.set(key, value);
+    while (this.size > this.maxEntries) {
+      const oldestKey = this.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.delete(oldestKey);
+    }
+    return this;
+  }
+}
+
+const budgetCache = new CappedMap(240);
 
 const MODEL_PRICING_PER_MILLION = {
   "gpt-5-mini": { input: 0.25, output: 2.00 },
@@ -279,6 +298,63 @@ function buildLogRow({
     },
     error_message: error ? normalizeText(error.message ?? error, 500) : null,
   };
+}
+
+export async function recordExternalAICall({
+  provider,
+  apiType,
+  service = "server",
+  operation = null,
+  model = null,
+  status = "succeeded",
+  durationMS = null,
+  inputTokens = null,
+  outputTokens = null,
+  totalTokens = null,
+  estimatedCostUSD = null,
+  inputPayload = null,
+  outputPayload = null,
+  metadata = {},
+  error = null,
+} = {}) {
+  const context = currentContext();
+  const resolvedInputTokens = Number.isFinite(Number(inputTokens)) ? Number(inputTokens) : null;
+  const resolvedOutputTokens = Number.isFinite(Number(outputTokens)) ? Number(outputTokens) : null;
+  const resolvedTotalTokens = Number.isFinite(Number(totalTokens))
+    ? Number(totalTokens)
+    : (resolvedInputTokens !== null || resolvedOutputTokens !== null)
+      ? Number(resolvedInputTokens ?? 0) + Number(resolvedOutputTokens ?? 0)
+      : null;
+
+  await recordAICall({
+    environment: normalizeText(process.env.RENDER_SERVICE_NAME ?? NODE_ENV, 80),
+    service: normalizeText(context.service ?? service, 120),
+    route: normalizeText(context.route, 180),
+    method: normalizeText(context.method, 12),
+    operation: normalizeText(operation ?? context.operation, 160) ?? `${provider}.${apiType}`,
+    provider: normalizeText(provider, 80),
+    api_type: normalizeText(apiType, 80),
+    status,
+    user_id: normalizeText(context.user_id ?? context.userID, 120),
+    job_id: normalizeText(context.job_id ?? context.jobID, 160),
+    request_id: normalizeText(context.request_id ?? context.requestID, 160),
+    model: normalizeText(model, 120),
+    duration_ms: Number.isFinite(Number(durationMS)) ? Math.max(0, Math.round(Number(durationMS))) : null,
+    input_tokens: resolvedInputTokens,
+    output_tokens: resolvedOutputTokens,
+    total_tokens: resolvedTotalTokens,
+    estimated_cost_usd: Number.isFinite(Number(estimatedCostUSD))
+      ? Number(Number(estimatedCostUSD).toFixed(6))
+      : null,
+    input_bytes: byteLength(inputPayload) || null,
+    output_bytes: byteLength(outputPayload) || null,
+    prompt_hash: hashInput(inputPayload),
+    metadata: {
+      ...(context.metadata && typeof context.metadata === "object" ? context.metadata : {}),
+      ...(metadata && typeof metadata === "object" ? metadata : {}),
+    },
+    error_message: error ? normalizeText(error.message ?? error, 500) : null,
+  });
 }
 
 function patchCreateMethod(target, methodName, apiType, service) {

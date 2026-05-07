@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UIKit
 
 struct BiroScriptDisplayText: View {
     let text: String
@@ -13,21 +14,36 @@ struct BiroScriptDisplayText: View {
     }
 
     var body: some View {
-        ZStack {
-            Text(text)
-                .font(.custom("BiroScriptreduced", size: size))
-                .tracking(0.2)
-                .foregroundStyle(color.opacity(0.88))
-                .offset(x: 0.55)
+        HelveticaNowDisplayText(text, size: size, color: color)
+    }
+}
 
-            Text(text)
-                .font(.custom("BiroScriptreduced", size: size))
-                .tracking(0.2)
-                .foregroundStyle(color)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+struct HelveticaNowDisplayText: View {
+    let text: String
+    let size: CGFloat
+    let color: Color
+    let weight: Font.Weight
+
+    init(
+        _ text: String,
+        size: CGFloat,
+        color: Color = OunjePalette.primaryText,
+        weight: Font.Weight = .heavy
+    ) {
+        self.text = text
+        self.size = size
+        self.color = color
+        self.weight = weight
+    }
+
+    var body: some View {
+        Text(text)
+            .font(HelveticaNowDisplayFont.font(size: size, weight: weight))
+            .tracking(0)
+            .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text)
     }
 }
 
@@ -136,16 +152,13 @@ struct SleeRecipeCardTitleText: View {
 
 extension View {
     func biroHeaderFont(_ size: CGFloat) -> some View {
-        Group {
-            if size >= 28 {
-                self
-                    .font(.custom("BiroScriptreduced", size: size))
-                    .tracking(0.2)
-            } else {
-                self
-                    .font(.system(size: size, weight: .bold, design: .rounded))
-            }
-        }
+        self.helveticaNowDisplayFont(size, weight: size >= 28 ? .heavy : .bold)
+    }
+
+    func helveticaNowDisplayFont(_ size: CGFloat, weight: Font.Weight = .heavy) -> some View {
+        self
+            .font(HelveticaNowDisplayFont.font(size: size, weight: weight))
+            .tracking(0)
     }
 
     func sleeDisplayFont(_ size: CGFloat) -> some View {
@@ -154,6 +167,24 @@ extension View {
 
     func recipeCardTitleFont(_ size: CGFloat) -> some View {
         self.modifier(RecipeCardTitleModifier(size: size))
+    }
+}
+
+private enum HelveticaNowDisplayFont {
+    private static let licensedFontCandidates = [
+        "HelveticaNowDisplay-Bold",
+        "HelveticaNowDisplay-ExtraBold",
+        "HelveticaNowDisplay-Regular",
+        "Helvetica Now Display",
+        "HelveticaNowDisplay"
+    ]
+
+    static func font(size: CGFloat, weight: Font.Weight) -> Font {
+        if let customName = licensedFontCandidates.first(where: { UIFont(name: $0, size: size) != nil }) {
+            return .custom(customName, size: size)
+        }
+
+        return .system(size: size, weight: weight, design: .default)
     }
 }
 

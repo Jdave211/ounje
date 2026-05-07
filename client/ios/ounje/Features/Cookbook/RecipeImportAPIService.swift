@@ -194,6 +194,37 @@ struct RecipeImportAttachmentPayload: Encodable {
     let mimeType: String?
     let fileName: String?
     let previewFrameURLs: [String]
+    let storageBucket: String?
+    let storagePath: String?
+    let publicHeroURL: String?
+    let width: Int?
+    let height: Int?
+
+    init(
+        kind: String,
+        sourceURL: String? = nil,
+        dataURL: String? = nil,
+        mimeType: String? = nil,
+        fileName: String? = nil,
+        previewFrameURLs: [String] = [],
+        storageBucket: String? = nil,
+        storagePath: String? = nil,
+        publicHeroURL: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil
+    ) {
+        self.kind = kind
+        self.sourceURL = sourceURL
+        self.dataURL = dataURL
+        self.mimeType = mimeType
+        self.fileName = fileName
+        self.previewFrameURLs = previewFrameURLs
+        self.storageBucket = storageBucket
+        self.storagePath = storagePath
+        self.publicHeroURL = publicHeroURL
+        self.width = width
+        self.height = height
+    }
 
     enum CodingKeys: String, CodingKey {
         case kind
@@ -202,6 +233,29 @@ struct RecipeImportAttachmentPayload: Encodable {
         case mimeType = "mime_type"
         case fileName = "file_name"
         case previewFrameURLs = "preview_frame_urls"
+        case storageBucket = "storage_bucket"
+        case storagePath = "storage_path"
+        case publicHeroURL = "public_hero_url"
+        case width
+        case height
+    }
+}
+
+struct RecipeImportPhotoContextPayload: Encodable {
+    let dishHint: String?
+    let coarsePlaceContext: String?
+    let pipeline: String
+
+    init(dishHint: String? = nil, coarsePlaceContext: String? = nil, pipeline: String = "photo_to_recipe") {
+        self.dishHint = dishHint
+        self.coarsePlaceContext = coarsePlaceContext
+        self.pipeline = pipeline
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case dishHint = "dish_hint"
+        case coarsePlaceContext = "coarse_place_context"
+        case pipeline
     }
 }
 
@@ -212,6 +266,7 @@ struct RecipeImportRequestPayload: Encodable {
     let accessToken: String?
     let targetState: String
     let attachments: [RecipeImportAttachmentPayload]
+    let photoContext: RecipeImportPhotoContextPayload?
     let processInline: Bool = false
 
     enum CodingKeys: String, CodingKey {
@@ -221,6 +276,7 @@ struct RecipeImportRequestPayload: Encodable {
         case accessToken = "access_token"
         case targetState = "target_state"
         case attachments
+        case photoContext = "photo_context"
         case processInline = "process_inline"
     }
 }
@@ -236,7 +292,8 @@ final class RecipeImportAPIService {
         sourceURL: String? = nil,
         sourceText: String,
         targetState: String,
-        attachments: [RecipeImportAttachmentPayload] = []
+        attachments: [RecipeImportAttachmentPayload] = [],
+        photoContext: RecipeImportPhotoContextPayload? = nil
     ) async throws -> RecipeImportResponse {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
@@ -248,7 +305,8 @@ final class RecipeImportAPIService {
                     sourceURL: sourceURL,
                     sourceText: sourceText,
                     targetState: targetState,
-                    attachments: attachments
+                    attachments: attachments,
+                    photoContext: photoContext
                 )
             } catch {
                 lastError = error
@@ -291,7 +349,8 @@ final class RecipeImportAPIService {
         sourceURL: String?,
         sourceText: String,
         targetState: String,
-        attachments: [RecipeImportAttachmentPayload]
+        attachments: [RecipeImportAttachmentPayload],
+        photoContext: RecipeImportPhotoContextPayload?
     ) async throws -> RecipeImportResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
             throw RecipeImportServiceError.invalidRequest
@@ -308,7 +367,8 @@ final class RecipeImportAPIService {
                 sourceText: sourceText,
                 accessToken: accessToken,
                 targetState: targetState,
-                attachments: attachments
+                attachments: attachments,
+                photoContext: photoContext
             )
         )
 
