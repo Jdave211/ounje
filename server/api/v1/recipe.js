@@ -714,7 +714,14 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
 
     const recipe = await fetchRecipeById(recipeId);
     if (!recipe) {
-      return res.status(404).json({ error: "Recipe not found." });
+      const latest = await fetchLatestRecipes(Math.max(limit + 1, 12));
+      return res.json({
+        recipes: latest
+          .filter((candidate) => String(candidate.id) !== recipeId)
+          .slice(0, limit)
+          .map(toRecipeCardPayload),
+        rankingMode: "similar_fallback_latest_missing_source",
+      });
     }
 
     const [recipeIngredients, recipeSteps] = await Promise.all([

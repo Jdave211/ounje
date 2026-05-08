@@ -38,7 +38,7 @@ final class SupabaseAppleAuthService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 20
+        request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
@@ -48,7 +48,16 @@ final class SupabaseAppleAuthService {
             nonce: rawNonce
         ))
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let responsePair: (Data, URLResponse)
+        do {
+            responsePair = try await URLSession.shared.data(for: request)
+        } catch {
+            guard Self.shouldRetryAuthExchange(after: error) else {
+                throw error
+            }
+            responsePair = try await URLSession.shared.data(for: request)
+        }
+        let (data, response) = responsePair
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseAppleAuthError.invalidResponse
@@ -72,6 +81,16 @@ final class SupabaseAppleAuthService {
             accessToken: tokenResponse.accessToken,
             refreshToken: tokenResponse.refreshToken
         )
+    }
+
+    private static func shouldRetryAuthExchange(after error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else {
+            return false
+        }
+        return nsError.code == NSURLErrorTimedOut ||
+            nsError.code == NSURLErrorNetworkConnectionLost ||
+            nsError.code == NSURLErrorCannotConnectToHost
     }
 }
 
@@ -2486,12 +2505,70 @@ struct CanonicalIngredientImageIndex {
     }
 }
 
+private actor SupabaseIngredientImageLookupCache {
+    static let shared = SupabaseIngredientImageLookupCache()
+
+    private struct Entry {
+        let imageURLString: String?
+        let cachedAt: Date
+    }
+
+    private let ttl: TimeInterval = 6 * 60 * 60
+    private let maxEntryCount = 600
+    private var entriesByName: [String: Entry] = [:]
+
+    func cachedLookup(for normalizedNames: [String]) -> (imageURLStringsByName: [String: String], missingNames: [String]) {
+        let now = Date()
+        var imageURLStringsByName: [String: String] = [:]
+        var missingNames: [String] = []
+
+        for name in normalizedNames {
+            guard !name.isEmpty else { continue }
+            if let entry = entriesByName[name] {
+                if now.timeIntervalSince(entry.cachedAt) <= ttl {
+                    if let imageURLString = entry.imageURLString {
+                        imageURLStringsByName[name] = imageURLString
+                    }
+                    continue
+                }
+                entriesByName.removeValue(forKey: name)
+            }
+            missingNames.append(name)
+        }
+
+        return (imageURLStringsByName, missingNames)
+    }
+
+    func store(lookup: [String: String], requestedNames: [String]) {
+        let now = Date()
+        for name in requestedNames {
+            let imageURLString = lookup[name]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            entriesByName[name] = Entry(
+                imageURLString: imageURLString?.isEmpty == false ? imageURLString : nil,
+                cachedAt: now
+            )
+        }
+
+        guard entriesByName.count > maxEntryCount else { return }
+        let staleNames = entriesByName
+            .sorted { $0.value.cachedAt < $1.value.cachedAt }
+            .prefix(entriesByName.count - maxEntryCount)
+            .map(\.key)
+        staleNames.forEach { entriesByName.removeValue(forKey: $0) }
+    }
+}
+
 final class SupabaseIngredientsCatalogService {
     static let shared = SupabaseIngredientsCatalogService()
 
     private init() {}
 
-    func fetchIngredients(ingredientIDs: [String], normalizedNames: [String]) async throws -> [SupabaseIngredientRecord] {
+    func fetchIngredients(
+        ingredientIDs: [String],
+        normalizedNames: [String],
+        allowFuzzyFallback: Bool = false,
+        maxFuzzyFallbackNames: Int = 6
+    ) async throws -> [SupabaseIngredientRecord] {
         var merged: [String: SupabaseIngredientRecord] = [:]
 
         let ids = Array(Set(ingredientIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
@@ -2519,9 +2596,16 @@ final class SupabaseIngredientsCatalogService {
         }
 
         if !recordsNeedingFallbackArt.isEmpty {
+            let fallbackDisplayNames = allowFuzzyFallback
+                ? Array(
+                    recordsNeedingFallbackArt
+                        .compactMap { $0.displayName ?? $0.normalizedName }
+                        .prefix(max(0, maxFuzzyFallbackNames))
+                )
+                : []
             let fallbackArtRows = try await SupabaseRecipeIngredientArtService.shared.fetchArtRows(
                 ingredientIDs: recordsNeedingFallbackArt.map(\.id),
-                displayNames: recordsNeedingFallbackArt.compactMap { $0.displayName ?? $0.normalizedName }
+                displayNames: fallbackDisplayNames
             )
             let fallbackArtByIngredientID: [String: String] = fallbackArtRows.reduce(into: [:]) { partial, row in
                 guard let imageURLString = row.imageURL?.absoluteString, !imageURLString.isEmpty else { return }
@@ -2547,7 +2631,25 @@ final class SupabaseIngredientsCatalogService {
     }
 
     func fetchImageLookup(normalizedNames: [String]) async throws -> [String: String] {
-        let records = try await fetchIngredients(ingredientIDs: [], normalizedNames: normalizedNames)
+        let names = Array(
+            Set(
+                normalizedNames
+                    .map { Self.normalizedName($0) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
+        guard !names.isEmpty else { return [:] }
+
+        let cached = await SupabaseIngredientImageLookupCache.shared.cachedLookup(for: names)
+        guard !cached.missingNames.isEmpty else {
+            return cached.imageURLStringsByName
+        }
+
+        let records = try await fetchIngredients(
+            ingredientIDs: [],
+            normalizedNames: cached.missingNames,
+            allowFuzzyFallback: false
+        )
         var lookup: [String: String] = [:]
         for record in records {
             let key = Self.normalizedName(record.matchKey)
@@ -2560,7 +2662,17 @@ final class SupabaseIngredientsCatalogService {
             }
             lookup[key] = imageURLString
         }
-        return lookup
+
+        await SupabaseIngredientImageLookupCache.shared.store(
+            lookup: lookup,
+            requestedNames: cached.missingNames
+        )
+
+        var merged = cached.imageURLStringsByName
+        for (key, value) in lookup where merged[key] == nil {
+            merged[key] = value
+        }
+        return merged
     }
 
     private func fetch(byColumn column: String, values: [String]) async throws -> [SupabaseIngredientRecord] {
@@ -2709,7 +2821,9 @@ final class SupabaseRecipeIngredientArtService {
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
             )
-        ).sorted()
+        )
+        .sorted()
+        .prefix(6)
 
         var artRows: [SupabaseRecipeIngredientArtRow] = []
 
@@ -2747,7 +2861,7 @@ final class SupabaseRecipeIngredientArtService {
                 .replacingOccurrences(of: " ", with: "%")
                 .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
                   let url = URL(
-                    string: "\(SupabaseConfig.url)/rest/v1/recipe_ingredients?select=ingredient_id,display_name,image_url&display_name=ilike.*\(encodedPattern)*&image_url=not.is.null&limit=12"
+                    string: "\(SupabaseConfig.url)/rest/v1/recipe_ingredients?select=ingredient_id,display_name,image_url&display_name=ilike.*\(encodedPattern)*&image_url=not.is.null&limit=4"
                   ) else {
                 continue
             }

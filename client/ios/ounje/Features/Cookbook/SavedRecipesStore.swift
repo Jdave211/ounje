@@ -13,6 +13,10 @@ final class SavedRecipesStore: ObservableObject {
     private var activeUserID: String?
     private var activeAccessToken: String?
     private var deletedSavedRecipeIDs: Set<String> = []
+    private var hasPendingRemoteSaveRetry = false
+    private var lastRemoteSyncUserID: String?
+    private var lastRemoteSyncAt: Date?
+    private let remoteSyncTTL: TimeInterval = 45
 
     init(toastCenter: AppToastCenter) {
         self.toastCenter = toastCenter
@@ -33,6 +37,9 @@ final class SavedRecipesStore: ObservableObject {
         activeAccessToken = authSession?.accessToken
 
         guard let authSession else { return }
+        if shouldSkipRemoteSync(for: authSession.userID) {
+            return
+        }
 
         do {
             let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(
@@ -59,12 +66,14 @@ final class SavedRecipesStore: ObservableObject {
                     accessToken: authSession.accessToken
                 )
             }
+            markRemoteSyncComplete(for: authSession.userID)
         } catch {
             // Keep local saves available even when network sync fails.
+            hasPendingRemoteSaveRetry = true
         }
     }
 
-    func refreshFromRemote(authSession: AuthSession?) async {
+    func refreshFromRemote(authSession: AuthSession?, force: Bool = false) async {
         guard let authSession else { return }
 
         if activeUserID != authSession.userID {
@@ -72,6 +81,9 @@ final class SavedRecipesStore: ObservableObject {
             load(for: authSession.userID)
         }
         activeAccessToken = authSession.accessToken
+        if !force, shouldSkipRemoteSync(for: authSession.userID) {
+            return
+        }
 
         do {
             let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(
@@ -82,6 +94,7 @@ final class SavedRecipesStore: ObservableObject {
             deletedSavedRecipeIDs.removeAll()
             savedRecipes = deduplicated(remoteRecipes + localRecipes)
             persist()
+            markRemoteSyncComplete(for: authSession.userID)
         } catch {
             await bootstrap(authSession: authSession)
         }
@@ -122,6 +135,10 @@ final class SavedRecipesStore: ObservableObject {
                         recipes: [recipe],
                         accessToken: accessToken
                     )
+                    await MainActor.run {
+                        self.hasPendingRemoteSaveRetry = false
+                        self.markRemoteSyncComplete(for: userID)
+                    }
                 } else {
                     try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
                         userID: userID,
@@ -134,12 +151,17 @@ final class SavedRecipesStore: ObservableObject {
                     }
                 }
             } catch {
-                await MainActor.run {
-                    self.toastCenter.show(
-                        title: shouldSave ? "Save will retry" : "Unsave will retry",
-                        subtitle: recipe.title,
-                        systemImage: "arrow.clockwise"
-                    )
+                if shouldSave {
+                    await MainActor.run {
+                        self.toastCenter.show(
+                            title: "Save will retry",
+                            subtitle: recipe.title,
+                            systemImage: "arrow.clockwise"
+                        )
+                        self.hasPendingRemoteSaveRetry = true
+                    }
+                } else {
+                    print("[SavedRecipesStore] Remote unsave failed; keeping local tombstone for retry:", error.localizedDescription)
                 }
             }
         }
@@ -166,6 +188,10 @@ final class SavedRecipesStore: ObservableObject {
                     recipes: [resolved],
                     accessToken: accessToken
                 )
+                await MainActor.run {
+                    self.hasPendingRemoteSaveRetry = false
+                    self.markRemoteSyncComplete(for: userID)
+                }
             } catch {
                 await MainActor.run {
                     self.toastCenter.show(
@@ -173,6 +199,7 @@ final class SavedRecipesStore: ObservableObject {
                         subtitle: resolved.title,
                         systemImage: "arrow.clockwise"
                     )
+                    self.hasPendingRemoteSaveRetry = true
                 }
             }
         }
@@ -194,6 +221,10 @@ final class SavedRecipesStore: ObservableObject {
                     recipes: [recipe],
                     accessToken: accessToken
                 )
+                await MainActor.run {
+                    self.hasPendingRemoteSaveRetry = false
+                    self.markRemoteSyncComplete(for: userID)
+                }
             } catch {
                 await MainActor.run {
                     self.toastCenter.show(
@@ -201,6 +232,7 @@ final class SavedRecipesStore: ObservableObject {
                         subtitle: recipe.title,
                         systemImage: "arrow.clockwise"
                     )
+                    self.hasPendingRemoteSaveRetry = true
                 }
             }
         }
@@ -277,6 +309,22 @@ final class SavedRecipesStore: ObservableObject {
         }
 
         return orderedIDs.compactMap { merged[$0] }
+    }
+
+    private func shouldSkipRemoteSync(for userID: String) -> Bool {
+        guard !hasPendingRemoteSaveRetry,
+              deletedSavedRecipeIDs.isEmpty,
+              lastRemoteSyncUserID == userID,
+              let lastRemoteSyncAt else {
+            return false
+        }
+        return Date().timeIntervalSince(lastRemoteSyncAt) < remoteSyncTTL
+    }
+
+    private func markRemoteSyncComplete(for userID: String) {
+        hasPendingRemoteSaveRetry = false
+        lastRemoteSyncUserID = userID
+        lastRemoteSyncAt = .now
     }
 
     private func mergeRecipeCards(primary: DiscoverRecipeCardData, fallback: DiscoverRecipeCardData?) -> DiscoverRecipeCardData {

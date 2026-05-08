@@ -232,6 +232,14 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func refreshMembershipEntitlement(trigger: String) async {
+        guard OunjeLaunchFlags.paywallsEnabled else {
+            availableMembershipProducts = [:]
+            membershipEntitlement = nil
+            billingStatusMessage = nil
+            syncProfilePricingTierToEntitlement()
+            return
+        }
+
         do {
             availableMembershipProducts = try await StoreKitMembershipBillingService.shared.fetchProductsByPlan()
         } catch {
@@ -271,6 +279,11 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func purchaseMembershipPlan(_ plan: OunjeMembershipPlan) async -> Bool {
+        guard OunjeLaunchFlags.paywallsEnabled else {
+            billingStatusMessage = nil
+            return false
+        }
+
         guard plan.tier != .free, plan.tier != .foundingLifetime else {
             await refreshMembershipEntitlement(trigger: "billing-noop")
             return true
@@ -309,6 +322,11 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func restoreMembershipPurchases() async -> Bool {
+        guard OunjeLaunchFlags.paywallsEnabled else {
+            billingStatusMessage = nil
+            return true
+        }
+
         isBillingBusy = true
         defer { isBillingBusy = false }
 
@@ -1220,11 +1238,15 @@ final class MealPlanningAppStore: ObservableObject {
         updateCurrentPlanCache(with: updatedPlan)
     }
 
-    func updateLatestPlanMainShopSnapshot(_ snapshot: MainShopSnapshot, for planID: UUID) {
+    func updateLatestPlanMainShopSnapshot(
+        _ snapshot: MainShopSnapshot,
+        for planID: UUID,
+        persistRemote: Bool = false
+    ) {
         guard var latestPlan, latestPlan.id == planID else { return }
         guard latestPlan.mainShopSnapshot != snapshot else { return }
         latestPlan.mainShopSnapshot = snapshot
-        updateCurrentPlanCache(with: latestPlan)
+        updateCurrentPlanCache(with: latestPlan, persistRemote: persistRemote)
     }
 
     func resetAll() {
@@ -1711,9 +1733,6 @@ final class MealPlanningAppStore: ObservableObject {
             )
             guard let currentPlan = self.latestPlan, currentPlan.id == latestPlan.id else { return false }
             updateLatestPlanMainShopSnapshot(snapshot, for: currentPlan.id)
-            if let refreshedPlan = self.latestPlan, refreshedPlan.id == currentPlan.id {
-                _ = await persistLatestPlanRemotelyIfPossible(refreshedPlan, syncCart: true)
-            }
             return true
         } catch {
             return false
@@ -1945,72 +1964,22 @@ final class MealPlanningAppStore: ObservableObject {
 
         do {
             let trackingAccessToken = await freshTrackingSession()?.accessToken ?? resolvedTrackingSession?.accessToken
-            let payload = try await InstacartRunLogAPIService.shared.fetchRuns(
+            let normalizedCurrentPlanID = latestPlan?.id.uuidString.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            let selectedRun = try await InstacartRunLogAPIService.shared.fetchCurrentRunSummary(
                 userID: userID,
                 accessToken: trackingAccessToken,
-                status: "all",
-                limit: 10,
-                offset: 0
+                mealPlanID: normalizedCurrentPlanID.isEmpty ? nil : normalizedCurrentPlanID
             )
-            let normalizedCurrentPlanID = latestPlan?.id.uuidString.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
             let isRetryActive: (InstacartRunLogSummary) -> Bool = { run in
                 let retryState = run.normalizedRetryState
                 return retryState == "queued" || retryState == "running"
             }
-            let isSupersededRun: (InstacartRunLogSummary) -> Bool = { run in
-                let title = run.latestEventTitle?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-                let kind = run.latestEventKind?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-                return run.normalizedStatusKind == "superseded"
-                    || kind == "run_superseded"
-                    || title == "run superseded"
-            }
-            let isCleanCompletedRun: (InstacartRunLogSummary) -> Bool = { run in
-                run.normalizedStatusKind == "completed"
-                    && run.success
-                    && !run.partialSuccess
-                    && run.unresolvedCount == 0
-                    && run.shortfallCount == 0
-            }
-            let visibleRuns = payload.items.filter { !isSupersededRun($0) }
-            let currentPlanActiveRun = normalizedCurrentPlanID.isEmpty
-                ? nil
-                : visibleRuns.first(where: {
-                    ($0.mealPlanID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedCurrentPlanID
-                    && ($0.normalizedStatusKind == "running" || isRetryActive($0))
-                })
-            let currentPlanCompletedRun = normalizedCurrentPlanID.isEmpty
-                ? nil
-                : visibleRuns.first(where: {
-                    ($0.mealPlanID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedCurrentPlanID
-                    && isCleanCompletedRun($0)
-                })
-            let currentPlanRun = normalizedCurrentPlanID.isEmpty
-                ? nil
-                : visibleRuns.first(where: {
-                    ($0.mealPlanID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedCurrentPlanID
-                    && $0.normalizedStatusKind != "failed"
-                    && $0.normalizedStatusKind != "superseded"
-                })
-            let activeRun = visibleRuns.first(where: { run in
+            let activeRun = selectedRun.flatMap { run -> InstacartRunLogSummary? in
                 let status = run.normalizedStatusKind
-                return status == "running" || isRetryActive(run) || status == "partial"
-            })
-            latestBlockingInstacartRun = activeRun
-            if let currentPlanActiveRun {
-                latestInstacartRun = currentPlanActiveRun
-            } else if let currentPlanCompletedRun {
-                latestInstacartRun = currentPlanCompletedRun
-            } else if let currentPlanRun {
-                latestInstacartRun = currentPlanRun
-            } else if let pinnedRunID = automationState?.lastInstacartRunID,
-                      let matchedRun = visibleRuns.first(where: {
-                          $0.runId == pinnedRunID
-                              && ($0.mealPlanID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedCurrentPlanID
-                      }) {
-                latestInstacartRun = matchedRun
-            } else {
-                latestInstacartRun = nil
+                return (status == "running" || status == "queued" || isRetryActive(run) || status == "partial") ? run : nil
             }
+            latestBlockingInstacartRun = activeRun
+            latestInstacartRun = selectedRun
             if let latestPlan, let profile {
                 let currentSignature = automationCartSignature(for: latestPlan.groceryItems)
                 let deliveryAnchor = automationAnchorString(for: profile.scheduledDeliveryDate())
@@ -2029,7 +1998,7 @@ final class MealPlanningAppStore: ObservableObject {
                pendingCartSyncIntent?.planID == latestPlan.id,
                pendingCartSyncIntent?.cartSignature == automationCartSignature(for: latestPlan.groceryItems),
                pendingCartSyncIntent?.deliveryAnchor == automationAnchorString(for: profile.scheduledDeliveryDate()),
-               let selectedRun = latestInstacartRun,
+               let selectedRun,
                selectedRun.normalizedStatusKind != "running",
                selectedRun.normalizedStatusKind != "queued",
                !["queued", "running"].contains(selectedRun.normalizedRetryState) {

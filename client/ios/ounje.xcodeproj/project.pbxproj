@@ -10,6 +10,7 @@
 		07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3E461D99554A48A4959DE609 /* OunjeLaunch.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */; };
+		5B7A9E2C64E34F8BAA120001 /* welcome-vid-bg.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 5B7A9E2C64E34F8BAA120002 /* welcome-vid-bg.mp4 */; };
 		A10000000000000000000001 /* SharedRecipeImportCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SharedRecipeImportCore.swift */; };
 		A10000000000000000000002 /* SharedRecipeImportCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SharedRecipeImportCore.swift */; };
 		A10000000000000000000003 /* OunjeShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* OunjeShareViewController.swift */; };
@@ -98,6 +99,7 @@
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = ounje/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = ounje/Info.plist; sourceTree = "<group>"; };
 		2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = ounje/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		5B7A9E2C64E34F8BAA120002 /* welcome-vid-bg.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; name = "welcome-vid-bg.mp4"; path = "ounje/welcome-vid-bg.mp4"; sourceTree = "<group>"; };
 		A20000000000000000000001 /* SharedRecipeImportCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/ShareExtensionShared/SharedRecipeImportCore.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* OunjeShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OunjeShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */,
 				2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */,
+				5B7A9E2C64E34F8BAA120002 /* welcome-vid-bg.mp4 */,
 				EA0100010000000000000002 /* Biro_Script_reduced.ttf */,
 				EA0100010000000000000004 /* Slee_handwritting-Regular.otf */,
 				F10000000000000000000002 /* shopping_cart.lottie */,
@@ -610,6 +613,7 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* OunjeLaunch.storyboard in Resources */,
 				07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */,
+				5B7A9E2C64E34F8BAA120001 /* welcome-vid-bg.mp4 in Resources */,
 				EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */,
 				EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */,
 				F10000000000000000000001 /* shopping_cart.lottie in Resources */,

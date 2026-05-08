@@ -2,6 +2,27 @@ import SwiftUI
 import Foundation
 import UIKit
 
+enum RecipeTypographyStyle: String, Codable, Hashable {
+    case clean
+    case playful
+
+    static let defaultStyle: RecipeTypographyStyle = .clean
+
+    var displayName: String {
+        switch self {
+        case .clean:
+            return "Clean"
+        case .playful:
+            return "Personal"
+        }
+    }
+
+    static func resolved(from rawValue: String?) -> RecipeTypographyStyle {
+        guard let rawValue else { return defaultStyle }
+        return RecipeTypographyStyle(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? defaultStyle
+    }
+}
+
 struct BiroScriptDisplayText: View {
     let text: String
     let size: CGFloat
@@ -143,6 +164,41 @@ struct SleeRecipeCardTitleText: View {
                 Text(text)
                     .recipeCardTitleFont(size)
                     .foregroundStyle(color)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+    }
+}
+
+struct RecipeTypographyTitleText: View {
+    let text: String
+    let size: CGFloat
+    let color: Color
+    let style: RecipeTypographyStyle
+
+    init(
+        _ text: String,
+        size: CGFloat,
+        color: Color = OunjePalette.primaryText,
+        style: RecipeTypographyStyle
+    ) {
+        self.text = text
+        self.size = size
+        self.color = color
+        self.style = style
+    }
+
+    var body: some View {
+        Group {
+            switch style {
+            case .clean:
+                Text(text)
+                    .font(.system(size: size, weight: .bold, design: .serif))
+                    .tracking(0)
+                    .foregroundStyle(color)
+            case .playful:
+                SleeRecipeCardTitleText(text, size: size, color: color)
             }
         }
         .accessibilityElement(children: .ignore)

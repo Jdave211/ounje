@@ -587,7 +587,7 @@ async function persistInstacartRunLog(trace, { accessToken = null } = {}) {
   return record.run_id;
 }
 
-export async function listInstacartRunLogs({ userID = null, accessToken = null, status = "all", query = "", limit = 24, offset = 0 } = {}) {
+export async function listInstacartRunLogs({ userID = null, accessToken = null, status = "all", query = "", limit = 24, offset = 0, includeCount = false } = {}) {
   const normalizedUserID = String(userID ?? "").trim();
   const normalizedStatus = normalizeText(status);
   const normalizedQuery = String(query ?? "").trim();
@@ -603,6 +603,7 @@ export async function listInstacartRunLogs({ userID = null, accessToken = null, 
     query: normalizedQuery,
     limit: safeLimit,
     offset: safeOffset,
+    includeCount,
   });
   if (!storedRows) {
     throw new Error("Unable to read Instacart run logs from Supabase");
@@ -614,7 +615,7 @@ export async function listInstacartRunLogs({ userID = null, accessToken = null, 
   };
 }
 
-async function listStoredInstacartRunLogs({ userID = null, accessToken = null, status = "all", query = "", limit = 24, offset = 0 } = {}) {
+async function listStoredInstacartRunLogs({ userID = null, accessToken = null, status = "all", query = "", limit = 24, offset = 0, includeCount = false } = {}) {
   const normalizedUserID = String(userID ?? "").trim();
   const normalizedStatus = normalizeText(status);
   const normalizedQuery = String(query ?? "").trim();
@@ -629,9 +630,9 @@ async function listStoredInstacartRunLogs({ userID = null, accessToken = null, s
     ? "run_id,user_id,status_kind,success,partial_success,started_at,completed_at,selected_store,preferred_store,strict_store,session_source,item_count,resolved_count,unresolved_count,shortfall_count,attempt_count,duration_seconds,progress,top_issue,search_preview,matches,cart_url,summary_json,search_text"
     : "run_id,user_id,status_kind,success,partial_success,started_at,completed_at,selected_store,preferred_store,strict_store,session_source,item_count,resolved_count,unresolved_count,shortfall_count,attempt_count,duration_seconds,progress,top_issue,search_preview,matches,cart_url,summary_json";
 
-  let builder = client
-    .from(INSTACART_RUN_LOGS_TABLE)
-    .select(selectColumns, { count: "exact" })
+  const table = client
+    .from(INSTACART_RUN_LOGS_TABLE);
+  let builder = (includeCount ? table.select(selectColumns, { count: "exact" }) : table.select(selectColumns))
     .order("completed_at", { ascending: false, nullsFirst: true })
     .order("started_at", { ascending: false, nullsFirst: false });
 
@@ -661,9 +662,10 @@ async function listStoredInstacartRunLogs({ userID = null, accessToken = null, s
   }
 
   const items = data.map((row) => summarizeStoredRow(row, { query: normalizedQuery }));
+  const inferredTotal = safeOffset + items.length + (items.length === safeLimit ? 1 : 0);
   return {
     items,
-    total: Number.isFinite(Number(count)) ? Number(count) : safeOffset + items.length,
+    total: Number.isFinite(Number(count)) ? Number(count) : inferredTotal,
     offset: safeOffset,
     limit: safeLimit,
     hasMore: Number.isFinite(Number(count))
@@ -671,6 +673,49 @@ async function listStoredInstacartRunLogs({ userID = null, accessToken = null, s
       : data.length === safeLimit,
     userID: effectiveUserID || null,
   };
+}
+
+export async function getCurrentInstacartRunLogSummary({ userID = null, accessToken = null, mealPlanID = null } = {}) {
+  const normalizedUserID = String(userID ?? "").trim();
+  const authUserID = !normalizedUserID && accessToken ? await resolveAuthenticatedUserID(accessToken).catch(() => null) : null;
+  const effectiveUserID = normalizedUserID || authUserID;
+  const normalizedMealPlanID = String(mealPlanID ?? "").trim().toLowerCase();
+  if (!effectiveUserID) return null;
+  const client = createSupabaseClient(normalizedUserID ? null : accessToken, effectiveUserID, { admin: true });
+  if (!client) return null;
+
+  const { data, error } = await client
+    .from(INSTACART_RUN_LOGS_TABLE)
+    .select("run_id,user_id,status_kind,success,partial_success,started_at,completed_at,selected_store,preferred_store,strict_store,session_source,item_count,resolved_count,unresolved_count,shortfall_count,attempt_count,duration_seconds,progress,top_issue,search_preview,matches,cart_url,summary_json")
+    .order("completed_at", { ascending: false, nullsFirst: true })
+    .order("started_at", { ascending: false, nullsFirst: false })
+    .in("status_kind", ["running", "queued", "completed", "partial"])
+    .eq("user_id", effectiveUserID)
+    .limit(normalizedMealPlanID ? 10 : 6);
+
+  if (error) {
+    throw error;
+  }
+  if (!Array.isArray(data) || data.length === 0) {
+    return null;
+  }
+
+  const summaries = data
+    .map((row) => summarizeStoredRow(row))
+    .filter((summary) => {
+      const title = String(summary?.latestEventTitle ?? "").trim().toLowerCase();
+      const kind = String(summary?.latestEventKind ?? "").trim().toLowerCase();
+      return summary?.statusKind !== "superseded"
+        && kind !== "run_superseded"
+        && title !== "run superseded";
+    });
+
+  if (normalizedMealPlanID) {
+    const planMatch = summaries.find((summary) => String(summary?.mealPlanID ?? "").trim().toLowerCase() === normalizedMealPlanID);
+    if (planMatch) return planMatch;
+  }
+
+  return summaries[0] ?? null;
 }
 
 export async function getInstacartRunLog(runId, { userID = null, accessToken = null } = {}) {

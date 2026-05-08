@@ -256,6 +256,9 @@ struct CartTabView: View {
         .task(id: cartReloadKey) {
             await reloadCartIngredients(forceRebuild: false)
         }
+        .task(id: store.resolvedTrackingSession?.userID ?? "signed-out") {
+            await store.refreshLiveTrackingState()
+        }
     }
 
     @ViewBuilder
@@ -4056,21 +4059,17 @@ struct CartCachedArtworkView<Placeholder: View>: View {
 struct CartIngredientArtwork: View {
     let ingredient: SupabaseRecipeIngredientRow
     let compact: Bool
-    @StateObject private var loader = CartIngredientArtworkLoader()
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(OunjePalette.panel)
 
-            CartCachedArtworkView(imageURL: loader.resolvedURL ?? ingredient.imageURL) {
+            CartCachedArtworkView(imageURL: ingredient.imageURL) {
                 fallbackGlyph
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .task(id: ingredient.id) {
-            await loader.load(for: ingredient)
-        }
     }
 
     private var fallbackGlyph: some View {
@@ -4078,48 +4077,6 @@ struct CartIngredientArtwork: View {
             .sleeDisplayFont(compact ? 24 : 28)
             .foregroundStyle(OunjePalette.softCream)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-@MainActor
-final class CartIngredientArtworkLoader: ObservableObject {
-    @Published var resolvedURL: URL?
-    private var currentKey: String?
-
-    func load(for ingredient: SupabaseRecipeIngredientRow) async {
-        let key = [
-            ingredient.id,
-            ingredient.imageURLString ?? "",
-            ingredient.displayTitle
-        ].joined(separator: "::")
-
-        if currentKey == key {
-            return
-        }
-        currentKey = key
-
-        if let imageURL = ingredient.imageURL {
-            resolvedURL = imageURL
-            return
-        }
-
-        let normalizedName = SupabaseIngredientsCatalogService.normalizedName(ingredient.displayTitle)
-        guard !normalizedName.isEmpty else {
-            resolvedURL = nil
-            return
-        }
-
-        do {
-            let lookup = try await SupabaseIngredientsCatalogService.shared.fetchImageLookup(normalizedNames: [normalizedName])
-            if let imageURLString = lookup[normalizedName], let url = URL(string: imageURLString) {
-                resolvedURL = url
-                return
-            }
-        } catch {
-            // Keep the monogram fallback if lookup fails.
-        }
-
-        resolvedURL = nil
     }
 }
 

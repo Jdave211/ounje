@@ -503,7 +503,9 @@ struct RecipeDetailData: Identifiable, Decodable, Hashable {
     }
 
     var sourceDisplayLine: String? {
-        if let authorHandle, !authorHandle.isEmpty { return authorHandle }
+        if let authorHandle, !authorHandle.isEmpty {
+            return authorHandle.hasPrefix("@") ? authorHandle : "@\(authorHandle)"
+        }
         if let authorName, !authorName.isEmpty { return authorName }
         if let source, !source.isEmpty, source.lowercased() != "withjulienne" { return source.capitalized }
         return nil
@@ -1012,7 +1014,9 @@ actor RecipeDetailService {
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
                 let recipes = try await fetchSimilarRecipes(baseURL: baseURL, detail: detail)
-                similarCache[cacheKey] = recipes
+                if !recipes.isEmpty {
+                    similarCache[cacheKey] = recipes
+                }
                 return recipes
             } catch {
                 lastError = error
@@ -1086,7 +1090,9 @@ actor RecipeDetailService {
         }
 
         let decoded = try JSONDecoder().decode(RecipeDetailRelatedResponse.self, from: data)
-        similarCache[id] = decoded.recipes
+        if !decoded.recipes.isEmpty {
+            similarCache[id] = decoded.recipes
+        }
         return decoded.recipes
     }
 
@@ -1406,7 +1412,9 @@ actor RecipeDetailService {
 
         guard let canonicalRecords = try? await SupabaseIngredientsCatalogService.shared.fetchIngredients(
             ingredientIDs: ingredientIDs,
-            normalizedNames: names
+            normalizedNames: names,
+            allowFuzzyFallback: true,
+            maxFuzzyFallbackNames: 4
         ) else {
             return detail.replacing(
                 ingredients: quantityResolved.ingredients,

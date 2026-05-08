@@ -148,17 +148,8 @@ struct RecipeDetailExperienceView: View {
         detail?.originalURL ?? presentedRecipe.recipeCard.destinationURL
     }
 
-    private var usesLaVecchiaSourceOverride: Bool {
-        let normalizedTitle = titleText
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
-        return normalizedTitle.contains("creamy chicken pasta bake")
-            && normalizedTitle.contains("sundried tomato")
-            && normalizedTitle.contains("chorizo")
-    }
-
     private var displayExternalURL: URL? {
-        usesLaVecchiaSourceOverride ? nil : externalURL
+        externalURL
     }
 
     private var authorURL: URL? {
@@ -237,9 +228,6 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var subtitleLine: String? {
-        if usesLaVecchiaSourceOverride {
-            return "La Vecchia . 2405 Yonge St A, Toronto, ON"
-        }
         guard let detail else { return nil }
         let line = detail.authorLine.trimmingCharacters(in: .whitespacesAndNewlines)
         if line.isEmpty || line.caseInsensitiveCompare("Ounje source") == .orderedSame || line.caseInsensitiveCompare("Source pending") == .orderedSame {
@@ -465,6 +453,11 @@ struct RecipeDetailExperienceView: View {
                                         RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
                                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                             showAskSheet = true
+                                        }
+
+                                        RecipeDetailCompactActionButton(title: "Story", showsInstagramGlyph: true, compact: true) {
+                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                            showStorySheet = true
                                         }
 
                                         if hasVideoSource {
@@ -1130,12 +1123,16 @@ struct RecipeDetailExperienceView: View {
 struct RecipeModalTitle: View {
     let text: String
     var isAdapted = false
+    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(text)
-                .sleeDisplayFont(44)
-                .foregroundStyle(OunjePalette.primaryText)
+            RecipeTypographyTitleText(
+                text,
+                size: RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue) == .clean ? 40 : 44,
+                color: OunjePalette.primaryText,
+                style: RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+            )
                 .multilineTextAlignment(.leading)
                 .lineSpacing(2)
                 .lineLimit(5)
@@ -2471,6 +2468,10 @@ struct RecipeAdaptationResponse: Decodable {
         case model
         case validationStatus = "validation_status"
     }
+
+    var historyID: String {
+        recipeID ?? recipeDetail.id
+    }
 }
 
 struct RecipeAdaptationEditSummary: Decodable {
@@ -2578,27 +2579,25 @@ struct RecipeAdaptationHistoryResponse: Decodable {
 actor RecipeAdaptationService {
     static let shared = RecipeAdaptationService()
 
-    private var historyCache: [String: RecipeAdaptationResponse] = [:]
+    private var historyCache: [String: [RecipeAdaptationResponse]] = [:]
 
-    func latestHistory(recipeID: String, userID: String?) async throws -> RecipeAdaptationResponse? {
+    func history(recipeID: String, userID: String?, limit: Int = 8) async throws -> [RecipeAdaptationResponse] {
         let normalizedRecipeID = recipeID.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !normalizedRecipeID.isEmpty, !normalizedUserID.isEmpty else {
-            return nil
+            return []
         }
 
         let cacheKey = "\(normalizedUserID.lowercased())::\(normalizedRecipeID.lowercased())::history"
-        if let cached = historyCache[cacheKey] {
+        if let cached = historyCache[cacheKey], !cached.isEmpty {
             return cached
         }
 
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                let history = try await latestHistory(baseURL: baseURL, recipeID: normalizedRecipeID, userID: normalizedUserID)
-                if let history {
-                    historyCache[cacheKey] = history
-                }
+                let history = try await history(baseURL: baseURL, recipeID: normalizedRecipeID, userID: normalizedUserID, limit: limit)
+                historyCache[cacheKey] = history
                 return history
             } catch {
                 lastError = error
@@ -2606,6 +2605,10 @@ actor RecipeAdaptationService {
         }
 
         throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    func latestHistory(recipeID: String, userID: String?) async throws -> RecipeAdaptationResponse? {
+        try await history(recipeID: recipeID, userID: userID, limit: 1).first
     }
 
     func adapt(recipeID: String, userID: String?, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
@@ -2629,7 +2632,8 @@ actor RecipeAdaptationService {
                     profile: profile
                 )
                 let historyKey = "\(normalizedUserID.lowercased())::\(recipeID.lowercased())::history"
-                historyCache[historyKey] = adapted
+                let cached = historyCache[historyKey] ?? []
+                historyCache[historyKey] = Self.prepending(adapted, to: cached)
                 return adapted
             } catch {
                 lastError = error
@@ -2674,12 +2678,12 @@ actor RecipeAdaptationService {
         return try JSONDecoder().decode(RecipeAdaptationResponse.self, from: data)
     }
 
-    private func latestHistory(baseURL: String, recipeID: String, userID: String) async throws -> RecipeAdaptationResponse? {
+    private func history(baseURL: String, recipeID: String, userID: String, limit: Int) async throws -> [RecipeAdaptationResponse] {
         var components = URLComponents(string: "\(baseURL)/v1/recipe/adapt/history")
         components?.queryItems = [
             URLQueryItem(name: "recipe_id", value: recipeID),
             URLQueryItem(name: "user_id", value: userID),
-            URLQueryItem(name: "limit", value: "1"),
+            URLQueryItem(name: "limit", value: String(max(1, min(limit, 20)))),
         ]
         guard let url = components?.url else {
             throw SupabaseProfileStateError.invalidRequest
@@ -2700,29 +2704,39 @@ actor RecipeAdaptationService {
         }
 
         let decoded = try JSONDecoder().decode(RecipeAdaptationHistoryResponse.self, from: data)
-        return decoded.history.first
+        return decoded.history
+    }
+
+    private static func prepending(_ response: RecipeAdaptationResponse, to history: [RecipeAdaptationResponse]) -> [RecipeAdaptationResponse] {
+        ([response] + history.filter { $0.historyID != response.historyID })
+            .prefix(8)
+            .map { $0 }
     }
 }
 
 @MainActor
 final class RecipeAdaptationViewModel: ObservableObject {
     @Published private(set) var result: RecipeAdaptationResponse?
+    @Published private(set) var history: [RecipeAdaptationResponse] = []
     @Published private(set) var isGenerating = false
     @Published private(set) var isLoadingHistory = false
     @Published var errorMessage: String?
 
     func clearResult() {
         result = nil
+        history = []
         errorMessage = nil
     }
 
     func loadHistory(recipeID: String, userID: String?) async {
-        guard result == nil, !isGenerating, !isLoadingHistory else { return }
+        guard history.isEmpty, !isGenerating, !isLoadingHistory else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
 
         do {
-            result = try await RecipeAdaptationService.shared.latestHistory(recipeID: recipeID, userID: userID)
+            let loadedHistory = try await RecipeAdaptationService.shared.history(recipeID: recipeID, userID: userID, limit: 8)
+            history = loadedHistory
+            result = loadedHistory.first
         } catch {
             // History is best-effort; the Ask sheet should still be usable when it misses.
         }
@@ -2736,14 +2750,15 @@ final class RecipeAdaptationViewModel: ObservableObject {
 
         do {
             let adapted = try await RecipeAdaptationService.shared.adapt(recipeID: recipeID, userID: userID, prompt: prompt, intent: intent, profile: profile)
+            history = ([adapted] + history.filter { $0.historyID != adapted.historyID })
+                .prefix(8)
+                .map { $0 }
             result = adapted
             return adapted
         } catch let error as URLError where error.code == .timedOut {
-            result = nil
             errorMessage = "Recipe rewrite took too long. Try again."
             return nil
         } catch {
-            result = nil
             errorMessage = error.localizedDescription
             return nil
         }
@@ -2898,28 +2913,40 @@ struct RecipeAskSheet: View {
                 if viewModel.isGenerating {
                     RecipeAskGeneratingPanel()
                         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
-                } else if let result = viewModel.result {
-                    RecipeAskInlineResultPanel(
-                        result: result,
-                        baseImageURL: baseImageURL,
-                        isSaved: savedStore.isSaved(result.recipeCard),
-                        isAddingToPrep: isAddingAdaptedRecipeToPrep,
-                        onAskAgain: {
-                            viewModel.clearResult()
-                            selectedIntent = nil
-                        },
-                        onSave: {
-                            if !savedStore.isSaved(result.recipeCard) {
-                                savedStore.toggle(result.recipeCard)
-                            }
-                        },
-                        onOpenPreview: {
-                            openAdaptedRecipePreview(result)
-                        },
-                        onAddToPrep: {
-                            addAdaptedRecipeToPrep(result)
+                }
+
+                if !viewModel.history.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if viewModel.history.count > 1 {
+                            Text("Recent rewrites")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(OunjePalette.secondaryText)
                         }
-                    )
+
+                        ForEach(viewModel.history, id: \.historyID) { result in
+                            RecipeAskInlineResultPanel(
+                                result: result,
+                                baseImageURL: baseImageURL,
+                                isSaved: savedStore.isSaved(result.recipeCard),
+                                isAddingToPrep: isAddingAdaptedRecipeToPrep,
+                                onAskAgain: {
+                                    viewModel.clearResult()
+                                    selectedIntent = nil
+                                },
+                                onSave: {
+                                    if !savedStore.isSaved(result.recipeCard) {
+                                        savedStore.toggle(result.recipeCard)
+                                    }
+                                },
+                                onOpenPreview: {
+                                    openAdaptedRecipePreview(result)
+                                },
+                                onAddToPrep: {
+                                    addAdaptedRecipeToPrep(result)
+                                }
+                            )
+                        }
+                    }
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                 }
 
@@ -2990,11 +3017,6 @@ struct RecipeAskInlineResultPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Great! Give me a few seconds while I prepare a different recipe for you.")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(OunjePalette.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
             RecipeAdaptedPreviewCard(result: result, baseImageURL: baseImageURL, onOpen: onOpenPreview)
 
             HStack(spacing: 8) {
@@ -3771,7 +3793,7 @@ struct RecipeDetailCompactActionButton: View {
                     .minimumScaleFactor(0.8)
             }
             .foregroundStyle(OunjePalette.primaryText)
-            .frame(width: compact ? 108 : nil, height: compact ? 42 : nil)
+            .frame(width: compact ? 82 : nil, height: compact ? 42 : nil)
             .padding(.horizontal, compact ? 0 : 16)
             .padding(.vertical, compact ? 0 : 14)
             .background(
@@ -4017,7 +4039,6 @@ struct RecipeDetailEnjoySection: View {
     let recipes: [DiscoverRecipeCardData]
     let isLoading: Bool
     let onSelectRecipe: (DiscoverRecipeCardData) -> Void
-    @State private var revealedRecipeIDs: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -4045,18 +4066,10 @@ struct RecipeDetailEnjoySection: View {
                             .foregroundStyle(OunjePalette.secondaryText)
                             .frame(width: 240, height: 116, alignment: .leading)
                     } else {
-                        ForEach(Array(recipes.enumerated()), id: \.element.id) { index, recipe in
+                        ForEach(recipes, id: \.id) { recipe in
                             RecipeEnjoyMiniCard(recipe: recipe) {
                                 onSelectRecipe(recipe)
                             }
-                            .modifier(
-                                StaggeredRevealModifier(
-                                    isVisible: revealedRecipeIDs.contains(recipe.id),
-                                    delay: Double(index) * 0.055,
-                                    xOffset: 16,
-                                    yOffset: 8
-                                )
-                            )
                         }
                     }
                 }
@@ -4066,45 +4079,6 @@ struct RecipeDetailEnjoySection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 30)
         .padding(.bottom, 10)
-        .onAppear {
-            revealRecipes(immediately: true)
-        }
-        .onChange(of: recipeRevealKey) { _ in
-            revealRecipes(immediately: false)
-        }
-        .onChange(of: isLoading) { loading in
-            guard !loading else { return }
-            revealRecipes(immediately: revealedRecipeIDs.isEmpty)
-        }
-    }
-
-    private var recipeRevealKey: String {
-        recipes.map(\.id).joined(separator: "|")
-    }
-
-    private func revealRecipes(immediately: Bool) {
-        guard !isLoading else { return }
-        let ids = recipes.map(\.id)
-        guard !ids.isEmpty else {
-            revealedRecipeIDs = []
-            return
-        }
-
-        if immediately {
-            revealedRecipeIDs = Set(ids)
-            return
-        }
-
-        revealedRecipeIDs = revealedRecipeIDs.intersection(Set(ids))
-        let missingIDs = ids.filter { !revealedRecipeIDs.contains($0) }
-
-        for (index, id) in missingIDs.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.055) {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-                    _ = revealedRecipeIDs.insert(id)
-                }
-            }
-        }
     }
 }
 

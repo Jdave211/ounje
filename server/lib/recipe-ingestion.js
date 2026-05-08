@@ -362,6 +362,29 @@ function uniqueStrings(values) {
   return result;
 }
 
+function firstNormalizedText(...values) {
+  for (const value of values) {
+    const normalized = normalizeText(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function normalizeCreatorHandle(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+  const withoutURL = normalized
+    .replace(/^https?:\/\/(?:www\.)?(?:tiktok\.com|instagram\.com|youtube\.com|youtu\.be)\/@?/i, "")
+    .replace(/[/?#].*$/g, "")
+    .trim();
+  const cleaned = withoutURL
+    .replace(/^@+/, "")
+    .replace(/\s+/g, "")
+    .trim();
+  if (!cleaned) return null;
+  return cleaned.startsWith("@") ? cleaned : `@${cleaned}`;
+}
+
 function normalizeStringArray(value, limit = 12) {
   if (Array.isArray(value)) return uniqueStrings(value).slice(0, limit);
   const normalized = normalizeText(value);
@@ -1864,6 +1887,19 @@ function requiresUserScopedRecipeImport(request) {
   return ["tiktok", "instagram", "youtube", "media_video", "media_image"].includes(sourceType);
 }
 
+function allowsPublicCatalogRecipeImport(request) {
+  const payload = request?.request_payload && typeof request.request_payload === "object"
+    ? request.request_payload
+    : request ?? {};
+  return Boolean(
+    payload.public_catalog_import === true
+    || payload.publicCatalogImport === true
+    || payload.catalog_import === true
+    || payload.catalogImport === true
+    || process.env.OUNJE_ALLOW_PUBLIC_SOCIAL_RECIPE_IMPORT === "1"
+  );
+}
+
 function normalizeAttachment(attachment) {
   if (!attachment || typeof attachment !== "object") return null;
   const kind = normalizeText(attachment.kind ?? attachment.type ?? attachment.media_type ?? "").toLowerCase();
@@ -3305,11 +3341,23 @@ function coerceStructuredRecipeCandidate(candidate, source) {
       ?? null
   );
 
+  const authorName = firstNormalizedText(candidate.author_name, candidate.authorName, source.author_name, source.author, source.uploader);
+  const authorHandle = normalizeCreatorHandle(
+    firstNormalizedText(
+      candidate.author_handle,
+      candidate.authorHandle,
+      source.author_handle,
+      source.uploader_id,
+      source.username,
+      source.channel_id
+    )
+  );
+
   return {
     title: normalizeText(candidate.title ?? source.title ?? source.meta_title ?? "") || null,
     description,
-    author_name: normalizeText(candidate.author_name ?? candidate.authorName ?? source.author_name ?? source.author ?? "") || null,
-    author_handle: normalizeText(candidate.author_handle ?? candidate.authorHandle ?? source.author_handle ?? "") || null,
+    author_name: authorName,
+    author_handle: authorHandle,
     author_url: cleanURL(candidate.author_url ?? candidate.authorURL ?? source.author_url ?? null),
     source: normalizeText(candidate.source ?? source.site_name ?? source.source ?? "") || null,
     source_platform: normalizeText(candidate.source_platform ?? source.source_platform ?? source.platform ?? "") || null,
@@ -4499,6 +4547,7 @@ async function extractYouTubeSource(sourceURL) {
     description: normalizeText(info.description),
     author_name: normalizeText(info.channel ?? info.uploader),
     author_handle: normalizeText(info.uploader_id ? `@${info.uploader_id}` : ""),
+    author_url: cleanURL(info.channel_url ?? info.uploader_url ?? null),
     attached_video_url: cleanURL(info.webpage_url ?? sourceURL),
     meta_description: normalizeText(info.description),
     frame_data_urls: downloadedSignals.frame_data_urls ?? [],
@@ -4517,6 +4566,7 @@ async function extractYouTubeSource(sourceURL) {
     description: normalizeText(info.description),
     author_name: normalizeText(info.channel ?? info.uploader),
     author_handle: normalizeText(info.uploader_id ? `@${info.uploader_id}` : ""),
+    author_url: cleanURL(info.channel_url ?? info.uploader_url ?? null),
     hero_image_url: thumbnailURL,
     thumbnail_url: thumbnailURL,
     attached_video_url: cleanURL(info.webpage_url ?? sourceURL),
@@ -4629,6 +4679,7 @@ async function extractSocialSource(sourceURL, platform) {
     description,
     author_name: normalizeText(metadata?.uploader ?? pageSignals?.author_name ?? "") || null,
     author_handle: normalizeText(metadata?.uploader_id ? `@${metadata.uploader_id}` : "") || null,
+    author_url: cleanURL(metadata?.uploader_url ?? metadata?.channel_url ?? null),
     attached_video_url: cleanURL(metadata?.webpage_url ?? sourceURL),
     meta_description: description,
     page_signals_summary: compactJSON({
@@ -4653,6 +4704,7 @@ async function extractSocialSource(sourceURL, platform) {
     description: description || null,
     author_name: normalizeText(metadata?.uploader ?? pageSignals?.author_name ?? "") || null,
     author_handle: normalizeText(metadata?.uploader_id ? `@${metadata.uploader_id}` : "") || null,
+    author_url: cleanURL(metadata?.uploader_url ?? metadata?.channel_url ?? null),
     hero_image_url: thumbnailURL,
     thumbnail_url: thumbnailURL,
     attached_video_url: cleanURL(metadata?.webpage_url ?? sourceURL),
@@ -6928,6 +6980,8 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
           title: source.structured_recipe.name ?? source.title,
           description: source.structured_recipe.description ?? source.meta_description,
           author_name: source.author_name,
+          author_handle: source.author_handle,
+          author_url: source.author_url,
           source: source.site_name ?? source.platform,
           source_platform: source.platform,
           category: Array.isArray(source.structured_recipe.recipeCategory) ? source.structured_recipe.recipeCategory[0] : source.structured_recipe.recipeCategory,
@@ -7148,7 +7202,7 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     if (!request.source_url && !request.source_text && !(request.attachments ?? []).length) {
       throw new Error("Provide a source URL, pasted recipe text, or media attachment.");
     }
-    if (!request.user_id && requiresUserScopedRecipeImport(request)) {
+    if (!request.user_id && requiresUserScopedRecipeImport(request) && !allowsPublicCatalogRecipeImport(request)) {
       throw new Error("User ID is required for social recipe imports.");
     }
 
@@ -7238,6 +7292,23 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     ...requestPayload,
     access_token: accessToken ?? requestPayload.access_token ?? null,
   };
+  if (!requestPayload.user_id
+    && requiresUserScopedRecipeImport(requestPayload)
+    && !allowsPublicCatalogRecipeImport(existingJob.request_payload ?? requestPayload)) {
+    const failed = await appendJobEvent(existingJob.id, "rejected_user_scoped_import_without_user", {
+      worker_id: workerID,
+      source_type: requestPayload.source_type,
+    }, {
+      status: "failed",
+      worker_id: workerID,
+      leased_at: null,
+      completed_at: nowIso(),
+      error_message: "User ID is required for social recipe imports.",
+      review_state: "rejected",
+      review_reason: "Social/video/photo imports are user-scoped and cannot write to the public recipe catalog.",
+    });
+    return formatJobResponse(failed);
+  }
   const nextAttempt = existingJob.status === "processing"
     ? Number(existingJob.attempts ?? 1)
     : Number(existingJob.attempts ?? 0) + 1;

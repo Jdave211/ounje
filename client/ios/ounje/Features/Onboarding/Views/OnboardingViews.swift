@@ -4,10 +4,13 @@ import Foundation
 struct FirstLoginOnboardingView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @AppStorage("ounje.selectedPricingTier") private var selectedTierRawValue = "free"
+    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
-    @State private var currentStep: SetupStep = .name
+    @State private var currentStep: SetupStep = .identity
     @State private var preferredName = ""
-    @State private var selectedDietaryPatterns = Set(UserProfile.starter.dietaryPatterns)
+    @State private var selectedFoodPersona = ""
+    @State private var selectedFoodChallenges = Set<String>()
+    @State private var selectedDietaryPatterns = Set<String>()
     @State private var selectedCuisines = Set(UserProfile.starter.preferredCuisines)
     @State private var selectedCuisineCountries = Set(UserProfile.starter.cuisineCountries)
     @State private var countryCuisineSearch = ""
@@ -31,6 +34,8 @@ struct FirstLoginOnboardingView: View {
     @State private var previousBudgetWindow = UserProfile.starter.budgetWindow
     @State private var budgetFlexibilityScore = UserProfile.starter.budgetFlexibility.calibrationScore
     @State private var allergiesText = ""
+    @State private var isOtherAllergyPromptPresented = false
+    @State private var otherAllergyInput = ""
     @State private var extraFavoriteFoodsText = ""
     @State private var neverIncludeText = ""
     @State private var addressLine1 = ""
@@ -42,7 +47,7 @@ struct FirstLoginOnboardingView: View {
     @State private var isAddressSheetPresented = false
     @StateObject private var addressAutocomplete = AddressAutocompleteViewModel()
     @State private var purchasingBehavior = UserProfile.starter.purchasingBehavior
-    @State private var orderingAutonomy = UserProfile.starter.orderingAutonomy
+    @State private var orderingAutonomy: OrderingAutonomyLevel = .suggestOnly
     @State private var isSaving = false
     @State private var isPaywallPresented = false
     @State private var paywallInitialTier: OunjePricingTier? = nil
@@ -53,25 +58,25 @@ struct FirstLoginOnboardingView: View {
     @State private var hasUnlockedIdentityCTA = false
     @State private var presetSelectionPulseTask: Task<Void, Never>?
     @State private var briefPrefetchTask: Task<Void, Never>?
-    @State private var isNameIntroAnimated = false
-    @State private var previousStep: SetupStep = .name
     @State private var stepTransitionDirection = 1
     @State private var hasHydratedStoredDraft = false
-    @FocusState private var isNameFieldFocused: Bool
+    @State private var solutionAnimationVisible = false
+    @State private var solutionHelpVisibleCount = 0
+    @State private var completedSolutionAnimationSteps = Set<Int>()
+    @State private var solutionRevealTask: Task<Void, Never>?
+    @State private var recipeStylePreviewRecipe: DiscoverRecipeCardData?
+    @State private var isRecipeStylePreviewLoading = false
+    @State private var didChooseRecipeTypographyStyle = false
+    @State private var shouldUseBudgetGuardrail = false
     @FocusState private var isBudgetFieldFocused: Bool
 
+    private let recipeStylePreviewRecipeID = "8c02aaff-33cd-4927-8c81-aae45e015c0d"
+
     private let dietaryPatternOptions = [
-        "Omnivore",
-        "Halal",
-        "Kosher",
         "Vegetarian",
-        "Vegan",
-        "Pescatarian",
+        "Keto",
         "Gluten-free",
-        "Dairy-free",
-        "Low-carb",
-        "High-protein",
-        "Keto"
+        "Dairy-free"
     ]
 
     private let baseFavoriteFoodOptions = [
@@ -105,6 +110,23 @@ struct FirstLoginOnboardingView: View {
         "Family-friendly",
         "Minimal cleanup",
         "Repeatability"
+    ]
+
+    private let foodPersonaOptions = [
+        "Student",
+        "Early professional",
+        "Parent",
+        "Home cook"
+    ]
+
+    private let foodChallengeOptions = [
+        "Cook new things",
+        "Spend less on groceries",
+        "Save time & energy shopping",
+        "Eat less takeout",
+        "Stick to a diet",
+        "Find good eats",
+        "Learn to cook better"
     ]
 
     private let equipmentOptions = [
@@ -142,34 +164,14 @@ struct FirstLoginOnboardingView: View {
 
     private let commonAllergyOptions = [
         "Peanuts",
-        "Tree nuts",
-        "Shellfish",
         "Dairy",
-        "Eggs",
-        "Gluten",
-        "Sesame",
-        "Soy",
-        "Fish",
-        "Wheat",
-        "Mustard",
-        "Corn",
-        "Coconut",
-        "Strawberries",
-        "Kiwi",
-        "Avocado",
-        "Banana",
-        "Tomato",
-        "Garlic",
-        "Onion",
-        "Lentils",
-        "Chickpeas"
+        "Shellfish",
+        "Other"
     ]
 
     private var allergyChipColumns: [GridItem] {
         [
-            GridItem(.flexible(), spacing: 10),
-            GridItem(.flexible(), spacing: 10),
-            GridItem(.flexible(), spacing: 10)
+            GridItem(.flexible(), spacing: 12)
         ]
     }
 
@@ -234,6 +236,163 @@ struct FirstLoginOnboardingView: View {
 
     private var selectedPricingTier: OunjePricingTier {
         store.effectivePricingTier
+    }
+
+    private var selectedFoodChallengeList: [String] {
+        foodChallengeOptions.filter { selectedFoodChallenges.contains($0) }
+    }
+
+    private var selectedDietaryPatternList: [String] {
+        dietaryPatternOptions.filter { selectedDietaryPatterns.contains($0) }
+    }
+
+    private var solutionProfile: OnboardingSolutionProfile {
+        let persona = selectedFoodPersona.isEmpty ? "you" : selectedFoodPersona.lowercased()
+        let personaPhrase: String
+
+        switch persona {
+        case "student":
+            personaPhrase = "students like you"
+        case "early professional":
+            personaPhrase = "early professionals like you"
+        case "parent":
+            personaPhrase = "parents like you"
+        case "home cook":
+            personaPhrase = "home cooks like you"
+        case "fitness-focused", "gym bro":
+            personaPhrase = "fitness-focused people like you"
+        default:
+            personaPhrase = "cooks like you"
+        }
+
+        let primaryChallenge = selectedFoodChallengeList.first ?? "Save time & energy shopping"
+        let reviewerNames = ["Naomi O.", "Khalid I.", "Ava F.", "John E.", "Brian M."]
+        let reviewerIndex = abs((selectedFoodPersona + primaryChallenge).hashValue) % reviewerNames.count
+
+        switch primaryChallenge {
+        case "Spend less on groceries", "Eat less takeout":
+            return OnboardingSolutionProfile(
+                headline: "Ounje was made for\n\(personaPhrase)",
+                subtitle: "Turn cravings into cheaper preps, smarter swaps, and carts that waste less.",
+                metrics: [
+                    .init(value: "AI", label: "CHEAPER SWAPS"),
+                    .init(value: "1", label: "SMART CART"),
+                    .init(value: "0", label: "WASTED EXTRAS")
+                ],
+                reviewer: reviewerNames[reviewerIndex],
+                review: "Ounje helped me keep the food I actually wanted, then found cheaper ways to shop it."
+            )
+        case "Learn to cook better":
+            return OnboardingSolutionProfile(
+                headline: "Ounje was made for\n\(personaPhrase)",
+                subtitle: "Import recipes, ask for simpler steps, and learn by cooking food you already want.",
+                metrics: [
+                    .init(value: "AI", label: "STEP EDITS"),
+                    .init(value: "ANY", label: "RECIPE SOURCE"),
+                    .init(value: "1", label: "COOKABLE PLAN")
+                ],
+                reviewer: reviewerNames[reviewerIndex],
+                review: "I stopped guessing. Ounje made recipes feel doable without making them boring."
+            )
+        case "Cook new things", "Find good eats":
+            return OnboardingSolutionProfile(
+                headline: "Ounje was made for\n\(personaPhrase)",
+                subtitle: "Pull food from TikTok, Instagram, photos, and Discover so prep stops repeating itself.",
+                metrics: [
+                    .init(value: "TT", label: "TO RECIPE"),
+                    .init(value: "IG", label: "TO PREP"),
+                    .init(value: "AI", label: "NEW VARIATIONS")
+                ],
+                reviewer: reviewerNames[reviewerIndex],
+                review: "My saved videos finally became meals instead of sitting in a folder forever."
+            )
+        case "Save time & energy shopping":
+            return OnboardingSolutionProfile(
+                headline: "Ounje was made for\n\(personaPhrase)",
+                subtitle: "Ounje plans the prep, builds the shop list, and can fill Instacart when you choose.",
+                metrics: [
+                    .init(value: "1", label: "PREP PLAN"),
+                    .init(value: "1", label: "SHOP LIST"),
+                    .init(value: "YOU", label: "APPROVE BUYING")
+                ],
+                reviewer: reviewerNames[reviewerIndex],
+                review: "The cart was the part I always avoided. Ounje got it ready without buying anything for me."
+            )
+        case "Stick to a diet":
+            return OnboardingSolutionProfile(
+                headline: "Ounje was made for\n\(personaPhrase)",
+                subtitle: "Save any recipe, then ask Ounje to make it fit the way you eat.",
+                metrics: [
+                    .init(value: "AI", label: "RECIPE EDITS"),
+                    .init(value: "ANY", label: "DIET STYLE"),
+                    .init(value: "1", label: "CONNECTED PREP")
+                ],
+                reviewer: reviewerNames[reviewerIndex],
+                review: "I could keep the food I liked and still make it match how I wanted to eat."
+            )
+        default:
+            return OnboardingSolutionProfile(
+                headline: "Ounje was made for\n\(personaPhrase)",
+                subtitle: "Save what looks good, let Ounje plan the prep, and keep the cart connected to your week.",
+                metrics: [
+                    .init(value: "AI", label: "MEAL PLANS"),
+                    .init(value: "4+", label: "LINKED RECIPES"),
+                    .init(value: "1", label: "GROCERY LIST")
+                ],
+                reviewer: reviewerNames[reviewerIndex],
+                review: "It turned meal planning from a blank page into a plan I could actually follow."
+            )
+        }
+    }
+
+    private var solutionHelpItems: [(title: String, detail: String)] {
+        let selected = Set(selectedFoodChallengeList)
+
+        if selected.contains("Spend less on groceries") || selected.contains("Eat less takeout") {
+            return [
+                ("Make recipes cheaper", "Ask Ounje for swaps that keep the dish close without wasting your budget."),
+                ("Plan recipes that overlap", "Your prep can share ingredients, so one shop list stretches further."),
+                ("Build the cart when ready", "Ounje organizes the groceries; you still review before spending.")
+            ]
+        }
+
+        if selected.contains("Learn to cook better") {
+            return [
+                ("Turn cravings into steps", "Import a recipe and get it cleaned into a cookable plan."),
+                ("Rewrite what feels hard", "Ask Ounje to simplify, speed up, or adjust the method."),
+                ("Cook from your taste", "Learn through food you already want to eat.")
+            ]
+        }
+
+        if selected.contains("Cook new things") || selected.contains("Find good eats") {
+            return [
+                ("Pull food from anywhere", "Save TikTok, Instagram, YouTube, Discover, or a food photo."),
+                ("Make it fit your week", "Ounje turns inspiration into recipes, prep, and servings."),
+                ("Keep the rotation fresh", "Ask for spicy, lighter, high-protein, or totally new versions.")
+            ]
+        }
+
+        if selected.contains("Save time & energy shopping") {
+            return [
+                ("Start from one good idea", "Ounje turns saved recipes into a full prep plan."),
+                ("Collapse it into one list", "Ingredients merge into a smarter grocery list automatically."),
+                ("Shop only when you choose", "Autoshop can fill Instacart, but you always approve checkout.")
+            ]
+        }
+
+        if selected.contains("Stick to a diet") {
+            return [
+                ("Keep the recipe", "Ask Ounje to adapt meals without losing the original idea."),
+                ("Respect your rules", "Diet choices and allergies stay attached to your profile."),
+                ("Plan from there", "Edited recipes can go straight into prep and the grocery list.")
+            ]
+        }
+
+        return [
+            ("Save the food you want", "From social videos, Discover, or photos."),
+            ("Let Ounje shape the prep", "Recipes, servings, and grocery logic stay connected."),
+            ("Cook with less planning", "You focus on the kitchen; Ounje handles the busywork.")
+        ]
     }
 
     private var paywallPresentationBinding: Binding<Bool> {
@@ -311,7 +470,6 @@ struct FirstLoginOnboardingView: View {
     ]
 
     private let dietaryNeverIncludeSuggestions: [String: [String]] = [
-        "Vegan": ["Beef", "Chicken", "Seafood", "Eggs", "Cheese"],
         "Vegetarian": ["Beef", "Chicken", "Seafood"],
         "Pescatarian": ["Beef", "Chicken", "Pork"],
         "Halal": ["Pork"],
@@ -326,51 +484,29 @@ struct FirstLoginOnboardingView: View {
         ZStack {
             onboardingLessonBackground
 
-            if currentStep == .name {
-                nameOnlyOnboardingScreen
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-            } else {
-                VStack(spacing: 0) {
-                    onboardingLessonHeader
+            VStack(spacing: 0) {
+                onboardingLessonHeader
 
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 16) {
-                                if currentStep != .identity && currentStep != .cuisines && currentStep != .household && currentStep != .kitchen && currentStep != .budget && currentStep != .ordering && currentStep != .address {
-                                    OnboardingCoachPanel(
-                                        step: currentStep,
-                                        accent: currentStepAccent,
-                                        secondaryAccent: currentStepSecondaryAccent,
-                                        preferredName: preferredName
-                                    )
-                                    .padding(.top, 4)
-                                }
-
-                                currentStepContent
-                                    .transition(stepTransition)
-                            }
-                            .id(currentStep)
-                            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                            .padding(.top, 8)
-                            .padding(.bottom, 18)
-                        }
-                        .scrollIndicators(.hidden)
-                        .onChange(of: currentStep) { step in
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-                                proxy.scrollTo(step, anchor: .top)
-                            }
-                        }
-                    }
-
-                    onboardingLessonFooter
+                VStack(alignment: .leading, spacing: 16) {
+                    currentStepContent
+                        .transition(stepTransition)
                 }
+                .id(currentStep)
+                .padding(.horizontal, usesIntroChoiceLayout ? 22 : OunjeLayout.screenHorizontalPadding)
+                .padding(.top, usesIntroChoiceLayout ? 0 : 8)
+                .padding(.bottom, usesIntroChoiceLayout ? 0 : 18)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                onboardingLessonFooter
             }
         }
         .tint(currentStepAccent)
         .preferredColorScheme(.dark)
         .onChange(of: currentStep) { newStep in
-            previousStep = newStep.previous ?? .name
             schedulePresetSelectionPulse()
+            if newStep == .solution || newStep == .solutionWays {
+                revealSolutionPage()
+            }
             persistDraft(step: newStep)
         }
         .onChange(of: budgetWindow) { newValue in
@@ -402,19 +538,26 @@ struct FirstLoginOnboardingView: View {
                OunjePricingTier(rawValue: selectedTierRawValue) == nil {
                 selectedTierRawValue = UserProfile.starter.pricingTier.rawValue
             }
-            if orderingAutonomy == .suggestOnly {
-                orderingAutonomy = .autoOrderWithinBudget
-            }
-            withAnimation(.easeInOut(duration: 3.6).repeatForever(autoreverses: true)) {
-                isNameIntroAnimated = true
-            }
             loadOnboardingProviders()
             schedulePresetSelectionPulse()
         }
         .onDisappear {
             presetSelectionPulseTask?.cancel()
+            solutionRevealTask?.cancel()
             briefPrefetchTask?.cancel()
             persistDraftLocally()
+        }
+        .alert("Other allergy", isPresented: $isOtherAllergyPromptPresented) {
+            TextField("Type allergy", text: $otherAllergyInput)
+                .textInputAutocapitalization(.words)
+            Button("Add") {
+                addOtherAllergy()
+            }
+            Button("Cancel", role: .cancel) {
+                otherAllergyInput = ""
+            }
+        } message: {
+            Text("Add anything Ounje should always avoid.")
         }
         .sheet(isPresented: $isAddressSheetPresented) {
             AddressSetupSheet(
@@ -455,20 +598,18 @@ struct FirstLoginOnboardingView: View {
         }
     }
 
+    @ViewBuilder
     private var onboardingLessonHeader: some View {
-        HStack(spacing: 12) {
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(0.08))
+        if usesIntroChoiceLayout {
+            introOnboardingHeader
+        } else {
+            standardOnboardingHeader
+        }
+    }
 
-                    Capsule(style: .continuous)
-                        .fill(Color(hex: "63D471"))
-                        .frame(width: max(8, proxy.size.width * lessonProgress))
-                        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: lessonProgress)
-                }
-            }
-            .frame(height: 4)
+    private var standardOnboardingHeader: some View {
+        HStack(spacing: 12) {
+            onboardingProgressBar(progress: lessonProgress)
 
             Text("\(currentStep.index + 1)/\(SetupStep.allCases.count)")
                 .font(.custom("Slee_handwritting-Regular", size: 17))
@@ -484,14 +625,123 @@ struct FirstLoginOnboardingView: View {
         )
     }
 
-    private var onboardingLessonFooter: some View {
-        HStack(spacing: 10) {
-            if let previousStep = currentStep.previous {
+    private var introOnboardingHeader: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
                 Button {
-                    stepTransitionDirection = -1
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                        currentStep = previousStep
+                    goBack()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText.opacity(currentStep.previous == nil ? 0.2 : 0.9))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.plain)
+                .disabled(currentStep.previous == nil)
+
+                introProgressSegments
+            }
+
+            Button {
+                handleIntroHeaderAction()
+            } label: {
+                Text(introHeaderActionTitle)
+                    .font(.system(size: 17, weight: .black, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
+                    .frame(minWidth: 78, alignment: .trailing)
+                    .frame(height: 34)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 8)
+        .padding(.bottom, 7)
+        .background(OunjePalette.background.ignoresSafeArea(edges: .top))
+    }
+
+    private var introProgressSegments: some View {
+        onboardingProgressBar(progress: introProgressFraction)
+            .frame(maxWidth: .infinity)
+    }
+
+    private func onboardingProgressBar(progress: CGFloat) -> some View {
+        GeometryReader { proxy in
+            let segmentCount = SetupStep.allCases.count
+            let clampedProgress = min(max(progress, 0), 1)
+
+            ZStack(alignment: .leading) {
+                HStack(spacing: 5) {
+                    ForEach(0..<segmentCount, id: \.self) { _ in
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.13))
                     }
+                }
+
+                Capsule(style: .continuous)
+                    .fill(currentStepAccent)
+                    .frame(width: max(clampedProgress > 0 ? 8 : 0, proxy.size.width * clampedProgress))
+                    .animation(.spring(response: 0.34, dampingFraction: 0.86), value: clampedProgress)
+            }
+        }
+        .frame(height: 4)
+    }
+
+    private var introProgressFraction: CGFloat {
+        CGFloat(currentStep.index + 1) / CGFloat(max(1, SetupStep.allCases.count))
+    }
+
+    private var introHeaderActionTitle: String {
+        if currentStep == .address {
+            return isOnboardingInstacartConnected ? "Continue" : "Connect Later"
+        }
+
+        if (currentStep == .challenge && !selectedFoodChallenges.isEmpty) ||
+            (currentStep == .allergies && !parsedAllergies.isEmpty) ||
+            (currentStep == .diets && !selectedDietaryPatterns.isEmpty) ||
+            currentStep == .budget ||
+            currentStep == .recipeStyle {
+            return "Continue"
+        }
+
+        return "Skip"
+    }
+
+    @ViewBuilder
+    private var onboardingLessonFooter: some View {
+        if usesIntroChoiceLayout {
+            EmptyView()
+        } else {
+            standardOnboardingFooter
+        }
+    }
+
+    private var introContinueFooter: some View {
+        Button {
+            advance()
+        } label: {
+            Text("Continue")
+                .font(.system(size: 16, weight: .black, design: .rounded))
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(currentStepAccent)
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 22)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background(OunjePalette.background.ignoresSafeArea(edges: .bottom))
+    }
+
+    private var standardOnboardingFooter: some View {
+        HStack(spacing: 10) {
+            if currentStep.previous != nil {
+                Button {
+                    goBack()
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 16, weight: .bold))
@@ -545,6 +795,19 @@ struct FirstLoginOnboardingView: View {
         )
     }
 
+    private var usesIntroChoiceLayout: Bool {
+        currentStep == .identity ||
+        currentStep == .challenge ||
+        currentStep == .solution ||
+        currentStep == .solutionWays ||
+        currentStep == .recipeStyle ||
+        currentStep == .allergies ||
+        currentStep == .diets ||
+        currentStep == .budget ||
+        currentStep == .ordering ||
+        currentStep == .address
+    }
+
     private var lessonProgress: CGFloat {
         CGFloat(currentStep.index + 1) / CGFloat(max(1, SetupStep.allCases.count))
     }
@@ -566,94 +829,23 @@ struct FirstLoginOnboardingView: View {
         Color(hex: "0F6E42")
     }
 
-    private var nameOnlyOnboardingScreen: some View {
-        GeometryReader { proxy in
-            let nameWidth = min(proxy.size.width * 0.84, 372)
-            let habitatHeight = min(max(proxy.size.height * 0.40, 292), 360)
-            let nameTopOffset = habitatHeight + 52
-
-            ZStack(alignment: .top) {
-                OunjePalette.background
-                    .ignoresSafeArea()
-
-                TurtleOnboardingScene(
-                    prompt: "What should I call you?",
-                    mode: .name
-                )
-                    .frame(
-                        width: proxy.size.width,
-                        height: habitatHeight + proxy.safeAreaInsets.top
-                    )
-                    .ignoresSafeArea(.container, edges: .top)
-                    .allowsHitTesting(false)
-
-                VStack(spacing: 0) {
-                    Spacer()
-                        .frame(height: nameTopOffset)
-
-                    nameEntryBar
-                        .frame(width: nameWidth)
-
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .ignoresSafeArea(.container, edges: .top)
-        .ignoresSafeArea(.keyboard, edges: .bottom)
-    }
-
-    private var nameEntryBar: some View {
-        TextField(
-            "",
-            text: $preferredName
-        )
-        .textInputAutocapitalization(.words)
-        .autocorrectionDisabled()
-        .submitLabel(.next)
-        .font(.custom("Slee_handwritting-Regular", size: 38))
-        .fontWeight(.bold)
-        .foregroundStyle(OunjePalette.primaryText)
-        .tint(Color(hex: "C9CDC6"))
-        .focused($isNameFieldFocused)
-        .padding(.bottom, 7)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color(hex: "C9CDC6").opacity(isNameFieldFocused ? 0.95 : 0.62))
-                .frame(height: isNameFieldFocused ? 2 : 1)
-                .animation(.easeOut(duration: 0.18), value: isNameFieldFocused)
-        }
-        .overlay(alignment: .leading) {
-            if preferredName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                NameLineCursor(color: Color(hex: "C9CDC6"))
-                    .opacity(isNameFieldFocused ? 1 : 0)
-                    .padding(.bottom, 15)
-                    .allowsHitTesting(false)
-            }
-        }
-        .onSubmit {
-            guard canAdvanceCurrentStep else { return }
-            advance()
-        }
-        .task {
-            try? await Task.sleep(nanoseconds: 260_000_000)
-            isNameFieldFocused = true
-        }
-        .frame(height: 58)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            isNameFieldFocused = true
-        }
-    }
-
     @ViewBuilder
     private var currentStepContent: some View {
         switch currentStep {
-        case .name:
-            nameStepContent
         case .identity:
             identityStepContent
+        case .challenge:
+            challengeStepContent
+        case .solution:
+            solutionStepContent
+        case .solutionWays:
+            solutionWaysStepContent
+        case .recipeStyle:
+            recipeStyleStepContent
+        case .allergies:
+            allergyStepContent
+        case .diets:
+            dietStepContent
         case .cuisines:
             cuisineStepContent
         case .household:
@@ -669,44 +861,163 @@ struct FirstLoginOnboardingView: View {
         }
     }
 
-    private var nameStepContent: some View {
-        VStack(spacing: 14) {
-            OnboardingLessonCard(
-                eyebrow: "Start here",
-                title: "What should Ounje call you?",
-                detail: "Save recipes from TikTok, Instagram, or a food photo, then turn them into prep.",
-                accent: currentStepAccent
-            ) {
-                TextField("First name", text: $preferredName)
-                    .textInputAutocapitalization(.words)
-                    .autocorrectionDisabled()
-                    .modifier(OnboardingLightInputModifier())
-
-                HStack(spacing: 8) {
-                    OnboardingPromiseChip(title: "TikTok/IG", symbol: "link", accent: currentStepAccent)
-                    OnboardingPromiseChip(title: "Photo", symbol: "camera", accent: currentStepAccent)
-                    OnboardingPromiseChip(title: "Prep", symbol: "calendar", accent: currentStepAccent)
-                }
+    private var identityStepContent: some View {
+        onboardingStackedChoicePage(
+            title: "What best describes you?",
+            options: foodPersonaOptions,
+            selection: selectedFoodPersona
+        ) { option in
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                selectedFoodPersona = option
             }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            persistDraft()
+            advanceIntroChoice(after: 0.12)
         }
     }
 
-    private var identityStepContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingStepHeader(
-                title: "Allergies?",
-                subtitle: "Tell Ounje what never goes in.",
-                turtlePlacement: .leading
-            )
+    private var challengeStepContent: some View {
+        introQuestionLayout {
+            Text("What food goals do you have?")
+                .font(.system(size: 31, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 324)
 
-            OnboardingLineEntry(
-                placeholder: "Peanuts, shellfish, sesame...",
-                text: $allergiesText
-            )
+            Text("\(selectedFoodChallenges.count)/2")
+                .font(.system(size: 12, weight: .black, design: .rounded))
+                .foregroundStyle(selectedFoodChallenges.isEmpty ? OunjePalette.secondaryText : currentStepAccent)
+
+            VStack(spacing: 12) {
+                ForEach(foodChallengeOptions, id: \.self) { option in
+                    OnboardingIntroChoiceButton(
+                        title: option,
+                        isSelected: selectedFoodChallenges.contains(option),
+                        accent: currentStepAccent
+                    ) {
+                        toggleFoodChallenge(option)
+                    }
+                }
+            }
+            .frame(maxWidth: 352)
+        }
+    }
+
+    private var dietStepContent: some View {
+        introQuestionLayout {
+            Text("Any diets?")
+                .font(.system(size: 33, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 306)
+
+            VStack(spacing: 12) {
+                ForEach(dietaryPatternOptions, id: \.self) { option in
+                    OnboardingIntroChoiceButton(
+                        title: option,
+                        isSelected: selectedDietaryPatterns.contains(option),
+                        accent: currentStepAccent
+                    ) {
+                        toggleDietaryPattern(option)
+                    }
+                }
+            }
+            .frame(maxWidth: 352)
+        }
+    }
+
+    private var solutionStepContent: some View {
+        let profile = solutionProfile
+
+        return VStack {
+            Spacer(minLength: 0)
+
+            Text(profile.headline)
+                .font(.system(size: 34, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .lineLimit(nil)
+                .minimumScaleFactor(0.88)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 356)
+            .opacity(solutionAnimationVisible ? 1 : 0)
+            .offset(x: solutionAnimationVisible ? 0 : -70, y: solutionAnimationVisible ? 0 : 10)
+            .scaleEffect(solutionAnimationVisible ? 1 : 0.96)
+            .animation(.spring(response: 0.48, dampingFraction: 0.84), value: solutionAnimationVisible)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .onAppear(perform: revealSolutionPage)
+    }
+
+    private var solutionWaysStepContent: some View {
+        let items = solutionHelpItems
+
+        return VStack(spacing: 42) {
+            Spacer(minLength: 0)
+
+            VStack(spacing: 10) {
+                Text("Here's how we help you")
+                    .font(.system(size: 33, weight: .black, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .multilineTextAlignment(.center)
+
+                Text("Personalized from what you picked.")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+            .opacity(solutionAnimationVisible ? 1 : 0)
+            .offset(y: solutionAnimationVisible ? 0 : 18)
+
+            VStack(alignment: .leading, spacing: 30) {
+                ForEach(items.indices, id: \.self) { index in
+                    HStack(alignment: .top, spacing: 18) {
+                        Text(String(format: "%02d", index + 1))
+                            .font(.system(size: 34, weight: .black, design: .rounded))
+                            .foregroundStyle(currentStepAccent)
+                            .frame(width: 58, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text(items[index].title)
+                                .font(.system(size: 20, weight: .black, design: .rounded))
+                                .foregroundStyle(OunjePalette.primaryText)
+
+                            Text(items[index].detail)
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .opacity(solutionHelpVisibleCount > index ? 1 : 0)
+                    .offset(x: solutionHelpVisibleCount > index ? 0 : 32)
+                    .animation(.spring(response: 0.42, dampingFraction: 0.82), value: solutionHelpVisibleCount)
+                }
+            }
+            .frame(maxWidth: 356, alignment: .leading)
+
+            Spacer(minLength: 48)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .onAppear(perform: revealSolutionPage)
+    }
+
+    private var allergyStepContent: some View {
+        introQuestionLayout {
+            Text("Any allergies?")
+                .font(.system(size: 33, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 306)
 
             LazyVGrid(columns: allergyChipColumns, spacing: 10) {
-                ForEach(commonAllergyOptions, id: \.self) { option in
-                    OnboardingAllergyPill(
+                ForEach(allergyDisplayOptions, id: \.self) { option in
+                    OnboardingIntroChoiceButton(
                         title: option,
                         isSelected: allergyListContains(option),
                         accent: currentStepAccent
@@ -715,11 +1026,148 @@ struct FirstLoginOnboardingView: View {
                     }
                 }
             }
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: 352)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 18)
+    }
+
+    private var recipeStyleStepContent: some View {
+        introQuestionLayout {
+            VStack(spacing: 10) {
+                Text("Choose your style")
+                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(-1)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 326)
+
+                Text("We added one of our own handwriting styles to make recipes feel personal. If it gets harder to read, pick the clean version instead.")
+                    .font(.system(size: 14.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 344)
+            }
+
+            let previewRecipe = recipeStylePreviewRecipe ?? staticRecipeStylePreviewRecipe
+
+            HStack(spacing: 12) {
+                ForEach([RecipeTypographyStyle.playful, .clean], id: \.self) { style in
+                    OnboardingRecipeStylePreviewChoice(
+                        recipe: previewRecipe,
+                        style: style,
+                        isSelected: didChooseRecipeTypographyStyle && selectedRecipeTypographyStyle == style,
+                        accent: currentStepAccent
+                    ) {
+                        selectRecipeTypographyStyle(style)
+                    }
+                }
+            }
+            .frame(maxWidth: 352)
+        }
+        .task {
+            await loadRecipeStylePreviewIfNeeded()
+        }
+    }
+
+    private var staticRecipeStylePreviewRecipe: DiscoverRecipeCardData {
+        DiscoverRecipeCardData(
+            id: recipeStylePreviewRecipeID,
+            title: "Crunchy Miso Salmon Bites",
+            description: "Crunchy broiled miso salmon bites over rice.",
+            authorName: "@kalejunkie",
+            authorHandle: "@kalejunkie",
+            category: "Dinner Recipes",
+            recipeType: "Dinner",
+            cookTimeText: "15 mins",
+            cookTimeMinutes: 15,
+            publishedDate: nil,
+            imageURLString: nil,
+            heroImageURLString: nil,
+            recipeURLString: "https://withjulienne.com/days/2_3_2026/recipes/2828FDBC-B21A-4EC5-AB94-8CB4258B96AB",
+            source: "withjulienne"
+        )
+    }
+
+    private func selectRecipeTypographyStyle(_ style: RecipeTypographyStyle) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+            recipeTypographyStyleRawValue = style.rawValue
+            didChooseRecipeTypographyStyle = true
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        persistDraft()
+        advanceIntroChoice(after: 0.16)
+    }
+
+    @MainActor
+    private func loadRecipeStylePreviewIfNeeded() async {
+        guard recipeStylePreviewRecipe == nil, !isRecipeStylePreviewLoading else { return }
+        isRecipeStylePreviewLoading = true
+        defer { isRecipeStylePreviewLoading = false }
+
+        do {
+            let detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeStylePreviewRecipeID)
+            recipeStylePreviewRecipe = DiscoverRecipeCardData(
+                id: detail.id,
+                title: detail.title,
+                description: detail.description,
+                authorName: detail.authorName,
+                authorHandle: detail.authorHandle,
+                category: detail.category,
+                recipeType: detail.recipeType,
+                cookTimeText: detail.cookTimeText,
+                cookTimeMinutes: detail.cookTimeMinutes,
+                publishedDate: nil,
+                imageURLString: detail.discoverCardImageURLString,
+                heroImageURLString: detail.heroImageURLString,
+                recipeURLString: detail.recipeURLString ?? detail.originalRecipeURLString,
+                source: detail.source
+            )
+        } catch {
+            print("[Onboarding] Failed to fetch recipe style preview: \(error.localizedDescription)")
+        }
+    }
+
+    private func onboardingStackedChoicePage(
+        title: String,
+        options: [String],
+        selection: String,
+        onSelect: @escaping (String) -> Void
+    ) -> some View {
+        introQuestionLayout {
+            Text(title)
+                .font(.system(size: 33, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 306)
+
+            VStack(spacing: 12) {
+                ForEach(options, id: \.self) { option in
+                    OnboardingIntroChoiceButton(
+                        title: option,
+                        isSelected: selection == option,
+                        accent: currentStepAccent
+                    ) {
+                        onSelect(option)
+                    }
+                }
+            }
+            .frame(maxWidth: 352)
+        }
+    }
+
+    private func introQuestionLayout<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 24) {
+            content()
+            Spacer(minLength: 40)
+        }
+        .padding(.top, 52)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var cuisineStepContent: some View {
@@ -769,33 +1217,45 @@ struct FirstLoginOnboardingView: View {
                     .font(.system(size: 12, weight: .black))
                     .foregroundStyle(OunjePalette.secondaryText)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .bottom, spacing: 22) {
-                        ForEach(cadenceDisplayOrder) { option in
-                            Button {
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                                    cadence = option
-                                }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(option.title)
-                                        .font(.custom("Slee_handwritting-Regular", size: 22))
-                                        .foregroundStyle(cadence == option ? OunjePalette.primaryText : OunjePalette.primaryText.opacity(0.62))
-
-                                    Text(cadenceSubtitle(for: option))
-                                        .font(.system(size: 11, weight: .bold))
-                                        .foregroundStyle(cadence == option ? currentStepAccent : OunjePalette.secondaryText)
-
-                                    Capsule(style: .continuous)
-                                        .fill(cadence == option ? currentStepAccent : Color.white.opacity(0.08))
-                                        .frame(width: cadence == option ? 38 : 18, height: 3)
-                                }
-                                .frame(width: 146, alignment: .leading)
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 8),
+                        GridItem(.flexible(), spacing: 8)
+                    ],
+                    spacing: 8
+                ) {
+                    ForEach(cadenceDisplayOrder) { option in
+                        Button {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                                cadence = option
                             }
-                            .buttonStyle(.plain)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(option.title)
+                                    .font(.custom("Slee_handwritting-Regular", size: 19))
+                                    .foregroundStyle(cadence == option ? .black : OunjePalette.primaryText)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.78)
+
+                                Text(cadenceSubtitle(for: option))
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(cadence == option ? .black.opacity(0.62) : OunjePalette.secondaryText)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.78)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(cadence == option ? currentStepAccent : OunjePalette.elevated)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .stroke(cadence == option ? currentStepAccent : currentStepAccent.opacity(0.22), lineWidth: 1)
+                                    )
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.vertical, 2)
                 }
             }
 
@@ -936,83 +1396,134 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var budgetStepContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingStepHeader(
-                title: "Grocery budget",
-                subtitle: "Pick your spend lane.",
-                turtlePlacement: .leading
-            )
+        introQuestionLayout {
+            VStack(spacing: 10) {
+                Text("Should Ounje watch your budget?")
+                    .font(.system(size: 31, weight: .black, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(-1)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 326)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Budget window")
-                    .font(.custom("Slee_handwritting-Regular", size: 20))
+                Text("Turn this on if you want carts and swaps to stay price-aware.")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .frame(maxWidth: 336)
+            }
 
-                HStack(spacing: 10) {
-                    ForEach(BudgetWindow.allCases) { option in
-                        OnboardingBorderOptionCard(
-                            title: option.title,
-                            subtitle: option == .weekly ? "Faster feedback loop" : "Broader monthly lane",
-                            isSelected: budgetWindow == option,
-                            accent: currentStepAccent
-                        ) {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                                budgetWindow = option
-                            }
-                        }
+            Button {
+                withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                    shouldUseBudgetGuardrail.toggle()
+                    budgetWindow = .weekly
+                }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                persistDraft()
+            } label: {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(shouldUseBudgetGuardrail ? currentStepAccent : Color.white.opacity(0.13))
+                            .frame(width: 62, height: 36)
+
+                        Circle()
+                            .fill(shouldUseBudgetGuardrail ? .black : Color.white.opacity(0.72))
+                            .frame(width: 26, height: 26)
+                            .offset(x: shouldUseBudgetGuardrail ? 13 : -13)
                     }
-                }
-            }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Target")
-                        .font(.custom("Slee_handwritting-Regular", size: 20))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(shouldUseBudgetGuardrail ? "Budget-aware carts" : "No budget guardrail")
+                            .font(.system(size: 16, weight: .black, design: .rounded))
+                            .foregroundStyle(OunjePalette.primaryText)
+                        Text(shouldUseBudgetGuardrail ? "Ounje will plan with this weekly target in mind." : "Ounje will optimize for the recipe first.")
+                            .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(16)
+                .frame(maxWidth: 352, minHeight: 88)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(OunjePalette.elevated)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(Color.white.opacity(0.28), lineWidth: 1.2)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+
+            if shouldUseBudgetGuardrail {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .lastTextBaseline, spacing: 8) {
+                        Text("$")
+                            .font(.system(size: 44, weight: .black, design: .rounded))
+                            .foregroundStyle(OunjePalette.primaryText)
+
+                        TextField("", text: $budgetInput)
+                            .keyboardType(.numberPad)
+                            .submitLabel(.done)
+                            .focused($isBudgetFieldFocused)
+                            .font(.system(size: 44, weight: .black, design: .rounded))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .onTapGesture {
+                                isBudgetFieldFocused = true
+                            }
+                            .onSubmit {
+                                commitBudgetInput()
+                                isBudgetFieldFocused = false
+                            }
+                            .frame(minWidth: 86)
+
+                        Text("per week")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                    }
+
+                    Text("About \((budgetPerCycle * 4).asCurrency) monthly.")
+                        .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(OunjePalette.secondaryText)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .lastTextBaseline, spacing: 8) {
-                            Text("$")
-                                .font(.custom("Slee_handwritting-Regular", size: 50))
-                                .foregroundStyle(OunjePalette.primaryText)
-
-                            TextField("", text: $budgetInput)
-                                .keyboardType(.numberPad)
-                                .submitLabel(.done)
-                                .focused($isBudgetFieldFocused)
-                                .font(.custom("Slee_handwritting-Regular", size: 50))
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .onTapGesture {
-                                    isBudgetFieldFocused = true
+                    Slider(
+                        value: Binding(
+                            get: { budgetPerCycle },
+                            set: { newValue in
+                                budgetPerCycle = newValue
+                                if !isBudgetFieldFocused {
+                                    syncBudgetInput()
                                 }
-                                .onSubmit {
-                                    commitBudgetInput()
-                                    isBudgetFieldFocused = false
-                                }
-                                .frame(minWidth: 88)
+                            }
+                        ),
+                        in: budgetRange(for: .weekly),
+                        step: 5
+                    )
+                        .tint(currentStepAccent)
 
-                            Text(budgetWindow == .weekly ? "per week" : "per month")
-                                .font(.custom("Slee_handwritting-Regular", size: 22))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                        }
-
-                    Text(translatedBudgetSummary)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(OunjePalette.secondaryText)
+                    HStack {
+                        Text("$40")
+                        Spacer()
+                        Text("$500")
+                    }
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.8))
                 }
-
-                Slider(value: $budgetPerCycle, in: budgetRange, step: budgetStep)
-                    .tint(currentStepAccent)
-
-                HStack {
-                    Text(budgetRange.lowerBound.asCurrency)
-                    Spacer()
-                    Text(budgetRange.upperBound.asCurrency)
-                }
-                .font(.custom("Slee_handwritting-Regular", size: 18))
-                .foregroundStyle(OunjePalette.secondaryText)
+                .padding(18)
+                .frame(maxWidth: 352, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color.white.opacity(0.045))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
+                )
             }
-
-            Spacer(minLength: 0)
         }
     }
 
@@ -1101,154 +1612,126 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var orderingStepContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingStepHeader(
-                title: "Autoshop beta",
-                subtitle: "Ounje builds the cart. You review and buy.",
-                turtlePlacement: .trailing
-            )
+        introQuestionLayout {
+            VStack(spacing: 10) {
+                Text("Opt in to Autoshop?")
+                    .font(.system(size: 33, weight: .black, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(-1)
+                    .frame(maxWidth: 326)
 
-            HStack(spacing: 8) {
-                Text("Current access")
-                    .font(.system(size: 11, weight: .bold))
+                Text("Ounje adds the right groceries to Instacart.")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(OunjePalette.secondaryText)
-                Text(selectedPricingTier.title)
-                    .font(.custom("Slee_handwritting-Regular", size: 18))
-                    .foregroundStyle(selectedPricingTier.accentColor)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .frame(maxWidth: 336)
             }
 
-            ForEach(selectableOrderingAutonomyOptions) { option in
-                let isLocked = isOrderingAutonomyLocked(option)
-                OnboardingAutonomyCard(
-                    title: option.title,
-                    subtitle: autonomySubtitle(for: option),
-                    isSelected: orderingAutonomy == option,
-                    isLocked: isLocked,
-                    accent: currentStepAccent
-                ) {
-                    if isOrderingAutonomySelectable(option) {
-                        orderingAutonomy = option
-                    } else if OunjeLaunchFlags.paywallsEnabled {
-                        paywallInitialTier = OunjePricingTier.minimumTier(for: option)
-                        isPaywallPresented = true
-                    }
+            Button {
+                let nextState: OrderingAutonomyLevel = orderingAutonomy == .approvalRequired ? .suggestOnly : .approvalRequired
+                withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                    orderingAutonomy = nextState
                 }
-            }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                persistDraft()
+                if nextState == .approvalRequired {
+                    advanceIntroChoice(after: 0.14)
+                }
+            } label: {
+                HStack(spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(orderingAutonomy == .approvalRequired ? currentStepAccent : Color.white.opacity(0.13))
+                            .frame(width: 62, height: 36)
 
-            Spacer(minLength: 0)
+                        Circle()
+                            .fill(orderingAutonomy == .approvalRequired ? .black : .white.opacity(0.8))
+                            .frame(width: 28, height: 28)
+                            .offset(x: orderingAutonomy == .approvalRequired ? 13 : -13)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Add groceries to my cart")
+                            .font(.system(size: 16, weight: .black, design: .rounded))
+                            .foregroundStyle(OunjePalette.primaryText)
+
+                        Text("No purchase made ever. Just filling cart with best options.")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(18)
+                .frame(maxWidth: 352, minHeight: 92)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(OunjePalette.elevated)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(orderingAutonomy == .approvalRequired ? Color.black.opacity(0.9) : Color.white.opacity(0.38), lineWidth: orderingAutonomy == .approvalRequired ? 2.25 : 1.5)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 
     private var addressStepContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingStepHeader(
-                title: "Delivery",
-                subtitle: "Add your drop-off details.",
-                turtlePlacement: .trailing
-            )
+        introQuestionLayout {
+            Text("Connect Instacart")
+                .font(.system(size: 33, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 306)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Instacart connection beta")
-                    .font(.custom("Slee_handwritting-Regular", size: 20))
-                    .foregroundStyle(OunjePalette.secondaryText)
+            Text("Ounje fills your cart. You choose when to buy.")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 304)
 
-                Button {
-                    openOnboardingInstacartConnection()
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: onboardingInstacartConnectionIcon)
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(onboardingInstacartConnectionTint)
-                            .frame(width: 42, height: 42)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(OunjePalette.elevated)
-                            )
+            Button {
+                openOnboardingInstacartConnection()
+            } label: {
+                HStack(spacing: 14) {
+                    InstacartLogoMark()
+                        .frame(width: 86, height: 36)
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(onboardingInstacartConnectionTitle)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(OunjePalette.primaryText)
-                            Text("Ounje only adds groceries to your cart. You choose when to buy.")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        Spacer(minLength: 12)
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .bold))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(onboardingInstacartConnectionTitle)
+                            .font(.system(size: 16, weight: .black, design: .rounded))
+                            .foregroundStyle(OunjePalette.primaryText)
+                        Text(onboardingInstacartConnectionSubtitle)
+                            .font(.system(size: 13.5, weight: .semibold))
                             .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(OunjePalette.elevated)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(OunjePalette.stroke, lineWidth: 1)
-                            )
-                    )
+
+                    Spacer(minLength: 12)
+
+                    Image(systemName: isOnboardingInstacartConnected ? "checkmark.circle.fill" : "chevron.right")
+                        .font(.system(size: isOnboardingInstacartConnected ? 19 : 13, weight: .bold))
+                        .foregroundStyle(isOnboardingInstacartConnected ? currentStepAccent : OunjePalette.secondaryText)
                 }
-                .buttonStyle(OunjeCardPressButtonStyle())
+                .padding(16)
+                .frame(maxWidth: 352, minHeight: 92, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(OunjePalette.elevated)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(Color.white.opacity(0.28), lineWidth: 1.2)
+                        )
+                )
             }
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Delivery address & instructions")
-                    .font(.custom("Slee_handwritting-Regular", size: 20))
-                    .foregroundStyle(OunjePalette.secondaryText)
-
-                Text("We only use your address for grocery delivery, delivery estimates, and nearby food context.")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.82))
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button {
-                    isAddressSheetPresented = true
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "house.fill")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.black)
-                            .frame(width: 42, height: 42)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(currentStepAccent)
-                            )
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(addressButtonTitle)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(OunjePalette.primaryText)
-                            Text(addressButtonSubtitle)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        Spacer(minLength: 12)
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(OunjePalette.elevated)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(OunjePalette.stroke, lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(OunjeCardPressButtonStyle())
-            }
-
-            Spacer(minLength: 0)
+            .buttonStyle(OunjeCardPressButtonStyle())
         }
     }
 
@@ -1270,16 +1753,24 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var canSubmit: Bool {
-        !preferredName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        (!selectedCuisines.isEmpty || !selectedCuisineCountries.isEmpty) &&
         budgetPerCycle >= 25
     }
 
     private var canAdvanceCurrentStep: Bool {
         switch currentStep {
-        case .name:
-            return !preferredName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .identity:
+            return !selectedFoodPersona.isEmpty
+        case .challenge:
+            return !selectedFoodChallenges.isEmpty
+        case .solution:
+            return true
+        case .solutionWays:
+            return true
+        case .recipeStyle:
+            return true
+        case .allergies:
+            return true
+        case .diets:
             return true
         case .cuisines:
             return !selectedCuisines.isEmpty || !selectedCuisineCountries.isEmpty
@@ -1292,7 +1783,7 @@ struct FirstLoginOnboardingView: View {
         case .ordering:
             return true
         case .address:
-            return canSubmit
+            return true
         }
     }
 
@@ -1389,6 +1880,158 @@ struct FirstLoginOnboardingView: View {
         }
     }
 
+    private func advanceIntroChoice(after delay: TimeInterval) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard usesIntroChoiceLayout, canAdvanceCurrentStep else { return }
+            advance()
+        }
+    }
+
+    private func handleIntroHeaderAction() {
+        if currentStep == .address {
+            moveForward(to: .budget)
+            return
+        }
+
+        if currentStep == .challenge, !selectedFoodChallenges.isEmpty {
+            advance()
+            return
+        }
+
+        if currentStep == .allergies, !parsedAllergies.isEmpty {
+            advance()
+            return
+        }
+
+        if currentStep == .diets, !selectedDietaryPatterns.isEmpty {
+            advance()
+            return
+        }
+
+        if currentStep == .budget {
+            if !shouldUseBudgetGuardrail {
+                budgetWindow = .weekly
+                budgetPerCycle = UserProfile.starter.budgetPerCycle
+                syncBudgetInput()
+            }
+            advance()
+            return
+        }
+
+        if currentStep == .allergies || currentStep == .diets || currentStep == .solution || currentStep == .solutionWays || currentStep == .recipeStyle {
+            advance()
+            return
+        }
+
+        if currentStep == .ordering {
+            orderingAutonomy = .suggestOnly
+            moveForward(to: .budget)
+            return
+        }
+
+        skipIntroQuestions()
+    }
+
+    private func moveForward(to step: SetupStep) {
+        persistDraft(step: step)
+        stepTransitionDirection = 1
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            currentStep = step
+        }
+    }
+
+    private func skipIntroQuestions() {
+        persistDraft(step: .allergies)
+        stepTransitionDirection = 1
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            currentStep = .allergies
+        }
+    }
+
+    private func goBack() {
+        guard let previousStep = currentStep.previous else { return }
+        persistDraft(step: previousStep)
+        stepTransitionDirection = -1
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            currentStep = previousStep
+        }
+    }
+
+    private func toggleFoodChallenge(_ option: String) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+            if selectedFoodChallenges.contains(option) {
+                selectedFoodChallenges.remove(option)
+            } else if selectedFoodChallenges.count < 2 {
+                selectedFoodChallenges.insert(option)
+            }
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        persistDraft()
+
+        if selectedFoodChallenges.count == 2 {
+            advanceIntroChoice(after: 0.16)
+        }
+    }
+
+    private func toggleDietaryPattern(_ option: String) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+            if selectedDietaryPatterns.contains(option) {
+                selectedDietaryPatterns.remove(option)
+            } else {
+                selectedDietaryPatterns.insert(option)
+            }
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        persistDraft()
+    }
+
+    private func revealSolutionPage() {
+        let stepRawValue = currentStep.rawValue
+        let shouldAutoAdvance = stepTransitionDirection >= 0
+        solutionRevealTask?.cancel()
+
+        if completedSolutionAnimationSteps.contains(stepRawValue) {
+            solutionAnimationVisible = true
+            solutionHelpVisibleCount = solutionHelpItems.count
+            return
+        }
+
+        solutionAnimationVisible = false
+        solutionHelpVisibleCount = 0
+        solutionRevealTask = Task { @MainActor in
+            guard currentStep == .solution || currentStep == .solutionWays else { return }
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard currentStep == .solution || currentStep == .solutionWays else { return }
+            withAnimation {
+                solutionAnimationVisible = true
+            }
+
+            if currentStep == .solution {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard currentStep == .solution else { return }
+                completedSolutionAnimationSteps.insert(stepRawValue)
+                if shouldAutoAdvance {
+                    advance()
+                }
+                return
+            }
+
+            for index in 1...solutionHelpItems.count {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard currentStep == .solutionWays else { return }
+                solutionHelpVisibleCount = index
+            }
+
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard currentStep == .solutionWays else { return }
+            completedSolutionAnimationSteps.insert(stepRawValue)
+            if shouldAutoAdvance {
+                advance()
+            }
+        }
+    }
+
     private func handleHorizontalSwipe(_ value: DragGesture.Value) {
         guard !isSaving else { return }
 
@@ -1403,12 +2046,7 @@ struct FirstLoginOnboardingView: View {
             return
         }
 
-        guard let previousStep = currentStep.previous else { return }
-        persistDraft(step: previousStep)
-        stepTransitionDirection = -1
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-            currentStep = previousStep
-        }
+        goBack()
     }
 
     private func schedulePresetSelectionPulse() {
@@ -1472,11 +2110,42 @@ struct FirstLoginOnboardingView: View {
         parseList(allergiesText)
     }
 
+    private var knownAllergyOptions: [String] {
+        Array(commonAllergyOptions.prefix(3))
+    }
+
+    private var customAllergy: String? {
+        parsedAllergies.first { allergy in
+            !knownAllergyOptions.contains { known in
+                allergy.compare(known, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+            }
+        }
+    }
+
+    private var allergyDisplayOptions: [String] {
+        knownAllergyOptions + [customAllergy ?? "Other"]
+    }
+
     private func allergyListContains(_ option: String) -> Bool {
-        parsedAllergies.contains { $0.compare(option, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+        if option == "Other" {
+            return customAllergy != nil
+        }
+
+        if customAllergy?.compare(option, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame,
+           !knownAllergyOptions.contains(where: { $0.compare(option, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) {
+            return true
+        }
+
+        return parsedAllergies.contains { $0.compare(option, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
     }
 
     private func toggleAllergy(_ option: String) {
+        if option == "Other" || customAllergy?.compare(option, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
+            otherAllergyInput = customAllergy ?? ""
+            isOtherAllergyPromptPresented = true
+            return
+        }
+
         var items = parsedAllergies
         if let existingIndex = items.firstIndex(where: { $0.compare(option, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) {
             items.remove(at: existingIndex)
@@ -1484,6 +2153,30 @@ struct FirstLoginOnboardingView: View {
             items.append(option)
         }
         allergiesText = items.joined(separator: ", ")
+        persistDraft()
+    }
+
+    private func addOtherAllergy() {
+        let trimmed = otherAllergyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        otherAllergyInput = ""
+
+        var items = parsedAllergies.filter { allergy in
+            knownAllergyOptions.contains { known in
+                allergy.compare(known, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+            }
+        }
+
+        guard !trimmed.isEmpty else {
+            allergiesText = items.joined(separator: ", ")
+            persistDraft()
+            return
+        }
+
+        if !items.contains(where: { $0.compare(trimmed, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) {
+            items.append(trimmed)
+        }
+        allergiesText = items.joined(separator: ", ")
+        persistDraft()
     }
 
     private var selectedCuisineSummaryText: String {
@@ -1497,6 +2190,10 @@ struct FirstLoginOnboardingView: View {
         onboardingProvidersViewModel.providers.first { $0.id.lowercased() == "instacart" }
     }
 
+    private var isOnboardingInstacartConnected: Bool {
+        onboardingInstacartProvider?.connected == true
+    }
+
     private var onboardingInstacartConnectionTitle: String {
         if onboardingProvidersViewModel.isLoading {
             return "Checking connection"
@@ -1505,6 +2202,16 @@ struct FirstLoginOnboardingView: View {
             return "Connect Instacart"
         }
         return provider.connected ? "Instacart connected" : "Connect Instacart"
+    }
+
+    private var onboardingInstacartConnectionSubtitle: String {
+        if onboardingProvidersViewModel.isLoading {
+            return "Checking your cart connection."
+        }
+        if isOnboardingInstacartConnected {
+            return "Ready to build carts when you are."
+        }
+        return "Connect now, or connect later in the app."
     }
 
     private var onboardingInstacartConnectionTint: Color {
@@ -1621,7 +2328,7 @@ struct FirstLoginOnboardingView: View {
             favoriteFoods: Array(selectedFavoriteFoods).sorted() + parsedExtraFavoriteFoods,
             favoriteFlavors: [],
             neverIncludeFoods: Array(selectedNeverIncludeFoods).sorted() + parsedNeverIncludeFoods,
-            mealPrepGoals: [],
+            mealPrepGoals: onboardingProfileGoalSignals,
             cooksForOthers: cooksForOthers,
             kitchenEquipment: [],
             budgetWindow: budgetWindow,
@@ -1630,6 +2337,20 @@ struct FirstLoginOnboardingView: View {
             orderingAutonomy: orderingAutonomy,
             pricingTier: store.effectivePricingTier
         )
+    }
+
+    private var onboardingProfileGoalSignals: [String] {
+        [
+            selectedFoodPersona.isEmpty ? nil : "Describes me: \(selectedFoodPersona)",
+            selectedFoodChallengeList.isEmpty ? nil : "Food goals: \(selectedFoodChallengeList.joined(separator: "; "))",
+            didChooseRecipeTypographyStyle ? "Recipe style: \(selectedRecipeTypographyStyle.rawValue)" : nil,
+            "Budget considered: \(shouldUseBudgetGuardrail ? "Yes" : "No")"
+        ]
+        .compactMap { $0 }
+    }
+
+    private var selectedRecipeTypographyStyle: RecipeTypographyStyle {
+        RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
     }
 
     private var resolvedOnboardingDeliveryAnchorDate: Date {
@@ -1650,7 +2371,8 @@ struct FirstLoginOnboardingView: View {
             _ = try? await SupabaseAgentBriefService.shared.generateBrief(for: completedProfile)
         }
         Task {
-            await store.completeOnboarding(with: completedProfile, lastStep: SetupStep.address.rawValue)
+            let completedStep = SetupStep.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue
+            await store.completeOnboarding(with: completedProfile, lastStep: completedStep)
             isSaving = false
         }
     }
@@ -1667,18 +2389,50 @@ struct FirstLoginOnboardingView: View {
 
         if !store.isOnboarded {
             currentStep = SetupStep.resumeStep(from: store.lastOnboardingStep)
-            previousStep = currentStep.previous ?? .name
         }
 
         preferredName = sourceProfile.trimmedPreferredName
             ?? store.authSession?.displayName?.components(separatedBy: .whitespacesAndNewlines).first
             ?? preferredName
-        selectedDietaryPatterns = Set(sourceProfile.dietaryPatterns)
+        selectedDietaryPatterns = Set(sourceProfile.dietaryPatterns.filter { dietaryPatternOptions.contains($0) })
         selectedCuisines = Set(sourceProfile.preferredCuisines)
         selectedCuisineCountries = Set(sourceProfile.cuisineCountries)
+        selectedFoodPersona = Self.prefixedProfileSignal(
+            in: sourceProfile.mealPrepGoals,
+            prefix: "Describes me:"
+        ) ?? selectedFoodPersona
+        selectedFoodChallenges = Set(
+            normalizedStoredFoodGoals(
+                from: Self.prefixedProfileSignal(in: sourceProfile.mealPrepGoals, prefix: "Food goals:")
+                    .map { splitStoredProfileSignal($0) }
+                    ?? Self.prefixedProfileSignal(in: sourceProfile.mealPrepGoals, prefix: "Main challenges:")
+                        .map { splitStoredProfileSignal($0) }
+                    ?? Self.prefixedProfileSignal(in: sourceProfile.mealPrepGoals, prefix: "Main challenge:")
+                        .map { [$0] }
+                    ?? Array(selectedFoodChallenges)
+            )
+        )
+        if let storedRecipeStyle = Self.prefixedProfileSignal(
+            in: sourceProfile.mealPrepGoals,
+            prefix: "Recipe style:"
+        ) {
+            recipeTypographyStyleRawValue = storedRecipeStyle
+            didChooseRecipeTypographyStyle = true
+        } else {
+            recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+            didChooseRecipeTypographyStyle = false
+        }
+        if let storedBudgetChoice = Self.prefixedProfileSignal(
+            in: sourceProfile.mealPrepGoals,
+            prefix: "Budget considered:"
+        ) {
+            shouldUseBudgetGuardrail = storedBudgetChoice.localizedCaseInsensitiveContains("yes")
+        } else {
+            shouldUseBudgetGuardrail = false
+        }
         selectedFavoriteFoods = Set(sourceProfile.favoriteFoods)
         selectedNeverIncludeFoods = Set(sourceProfile.neverIncludeFoods)
-        selectedGoals = []
+        selectedGoals = Set(sourceProfile.mealPrepGoals)
         missingEquipment.removeAll()
         cadence = sourceProfile.cadence
         deliveryAnchorDay = sourceProfile.deliveryAnchorDay
@@ -1693,7 +2447,9 @@ struct FirstLoginOnboardingView: View {
         budgetWindow = sourceProfile.budgetWindow
         previousBudgetWindow = sourceProfile.budgetWindow
         budgetFlexibilityScore = UserProfile.starter.budgetFlexibility.calibrationScore
-        allergiesText = sourceProfile.absoluteRestrictions.joined(separator: ", ")
+        allergiesText = store.lastOnboardingStep >= SetupStep.allergies.rawValue
+            ? sourceProfile.absoluteRestrictions.joined(separator: ", ")
+            : ""
         extraFavoriteFoodsText = additionalDraftEntryText(
             from: sourceProfile.favoriteFoods,
             excluding: favoriteFoodOptions
@@ -1709,10 +2465,48 @@ struct FirstLoginOnboardingView: View {
         postalCode = sourceProfile.deliveryAddress.postalCode
         deliveryNotes = sourceProfile.deliveryAddress.deliveryNotes
         purchasingBehavior = sourceProfile.purchasingBehavior
-        orderingAutonomy = sourceProfile.orderingAutonomy == .suggestOnly
-            ? .autoOrderWithinBudget
-            : sourceProfile.orderingAutonomy
+        orderingAutonomy = store.lastOnboardingStep >= SetupStep.ordering.rawValue
+            ? sourceProfile.orderingAutonomy
+            : .suggestOnly
         selectedTierRawValue = sourceProfile.pricingTier.rawValue
+    }
+
+    private func splitStoredProfileSignal(_ value: String) -> [String] {
+        value
+            .split(separator: ";")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func normalizedStoredFoodGoals(from values: [String]) -> [String] {
+        let aliases = [
+            "Bored of the same meals": "Cook new things",
+            "Meal planning is too much": "Save time & energy shopping",
+            "Learning how to cook": "Learn to cook better",
+            "Groceries cost too much": "Spend less on groceries",
+            "No time to shop or prep": "Save time & energy shopping",
+            "Can't find good eats": "Find good eats"
+        ]
+
+        var seen = Set<String>()
+        var result: [String] = []
+
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let mapped = aliases[trimmed] ?? trimmed
+            guard foodChallengeOptions.contains(mapped),
+                  seen.insert(mapped).inserted else { continue }
+            result.append(mapped)
+        }
+
+        return result
+    }
+
+    private static func prefixedProfileSignal(in goals: [String], prefix: String) -> String? {
+        goals
+            .first { $0.localizedCaseInsensitiveContains(prefix) }
+            .map { $0.replacingOccurrences(of: prefix, with: "").trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 
     private func additionalDraftEntryText(from source: [String], excluding knownOptions: [String]) -> String {
@@ -1803,23 +2597,55 @@ struct FirstLoginOnboardingView: View {
     }
 
     enum SetupStep: Int, CaseIterable {
-        case name
-        case identity
-        case cuisines
-        case household
-        case kitchen
-        case budget
-        case ordering
-        case address
+        case identity = 1
+        case challenge = 2
+        case solution = 3
+        case solutionWays = 4
+        case recipeStyle = 12
+        case allergies = 5
+        case diets = 13
+        case cuisines = 6
+        case household = 7
+        case kitchen = 8
+        case budget = 9
+        case ordering = 10
+        case address = 11
 
-        var index: Int { rawValue }
+        static var allCases: [SetupStep] {
+            [
+                .identity,
+                .challenge,
+                .solution,
+                .solutionWays,
+                .allergies,
+                .diets,
+                .ordering,
+                .address,
+                .budget,
+                .recipeStyle
+            ]
+        }
+
+        var index: Int {
+            Self.allCases.firstIndex(of: self) ?? 0
+        }
 
         var title: String {
             switch self {
-            case .name:
-                return "Meet Ounje"
             case .identity:
+                return "You"
+            case .challenge:
+                return "Challenge"
+            case .solution:
+                return "Ounje"
+            case .solutionWays:
+                return "How it works"
+            case .recipeStyle:
+                return "Recipe style"
+            case .allergies:
                 return "Food rules"
+            case .diets:
+                return "Diet"
             case .cuisines:
                 return "Taste"
             case .household:
@@ -1831,16 +2657,26 @@ struct FirstLoginOnboardingView: View {
             case .ordering:
                 return "Autoshop beta"
             case .address:
-                return "Delivery"
+                return "Instacart"
             }
         }
 
         var subtitle: String {
             switch self {
-            case .name:
-                return "Ounje turns a few signals into prep, recurring meals, and a cart."
             case .identity:
+                return "Start with the kind of help that fits your kitchen."
+            case .challenge:
+                return "Tell Ounje what food goals matter right now."
+            case .solution:
+                return "Ounje was made for people like you."
+            case .solutionWays:
+                return "A quick map of what Ounje handles."
+            case .recipeStyle:
+                return "Pick how recipe cards should feel."
+            case .allergies:
                 return "Allergies and hard stops beat every recipe suggestion."
+            case .diets:
+                return "Choose any eating styles Ounje should keep in mind."
             case .cuisines:
                 return "These are the plates Ounje should reach for first."
             case .household:
@@ -1852,16 +2688,26 @@ struct FirstLoginOnboardingView: View {
             case .ordering:
                 return "Ounje can fill the cart. You still make the purchase."
             case .address:
-                return "Connect your cart lane and add delivery details when you're ready."
+                return "Connect the cart lane when you're ready."
             }
         }
 
         var prompt: String {
             switch self {
-            case .name:
-                return "Tell Ounje who it is planning for."
             case .identity:
+                return "Help Ounje understand your food life."
+            case .challenge:
+                return "Pick the food goals Ounje should understand."
+            case .solution:
+                return "See how Ounje will help."
+            case .solutionWays:
+                return "See the plan."
+            case .recipeStyle:
+                return "Choose your recipe look."
+            case .allergies:
                 return "Set the rules Ounje cannot break."
+            case .diets:
+                return "Set the eating styles Ounje should understand."
             case .cuisines:
                 return "Point Ounje toward the food you actually want."
             case .household:
@@ -1873,16 +2719,26 @@ struct FirstLoginOnboardingView: View {
             case .ordering:
                 return "Pick how Ounje should hand the cart back to you."
             case .address:
-                return "Set the handoff details for checkout."
+                return "Connect Instacart for cart building."
             }
         }
 
         var plateEmojis: [String] {
             switch self {
-            case .name:
-                return ["🍽️", "📝", "🛒"]
             case .identity:
+                return ["👤", "🍽️", "✓"]
+            case .challenge:
+                return ["?", "🍳", "→"]
+            case .solution:
+                return ["✨", "🛒", "✓"]
+            case .solutionWays:
+                return ["1", "2", "3"]
+            case .recipeStyle:
+                return ["Aa", "🍣", "✓"]
+            case .allergies:
                 return ["✅", "🥗", "🛡️"]
+            case .diets:
+                return ["🥗", "✓", "AI"]
             case .cuisines:
                 return ["🍛", "🌮", "🍜"]
             case .household:
@@ -1894,16 +2750,26 @@ struct FirstLoginOnboardingView: View {
             case .ordering:
                 return ["🏠", "🛍️", "→"]
             case .address:
-                return ["📍", "📝", "🚪"]
+                return ["🛒", "✓", "→"]
             }
         }
 
         var symbolName: String {
             switch self {
-            case .name:
-                return "person.crop.circle.fill"
             case .identity:
+                return "person.crop.circle.fill"
+            case .challenge:
+                return "questionmark.circle.fill"
+            case .solution:
+                return "sparkles"
+            case .solutionWays:
+                return "list.number"
+            case .recipeStyle:
+                return "textformat"
+            case .allergies:
                 return "checklist"
+            case .diets:
+                return "leaf.fill"
             case .cuisines:
                 return "globe.americas.fill"
             case .household:
@@ -1915,23 +2781,46 @@ struct FirstLoginOnboardingView: View {
             case .ordering:
                 return "cart.fill"
             case .address:
-                return "house.fill"
+                return "cart.fill"
             }
         }
 
         var next: SetupStep? {
-            SetupStep(rawValue: rawValue + 1)
+            guard let index = Self.allCases.firstIndex(of: self),
+                  Self.allCases.indices.contains(index + 1) else { return nil }
+            return Self.allCases[index + 1]
         }
 
         var previous: SetupStep? {
-            SetupStep(rawValue: rawValue - 1)
+            guard let index = Self.allCases.firstIndex(of: self),
+                  index > Self.allCases.startIndex else { return nil }
+            return Self.allCases[index - 1]
         }
 
         static func resumeStep(from rawValue: Int) -> SetupStep {
-            let clampedValue = min(max(rawValue, SetupStep.name.rawValue), SetupStep.address.rawValue)
-            return SetupStep(rawValue: clampedValue) ?? .name
+            guard rawValue >= SetupStep.identity.rawValue else { return .identity }
+            let maxActiveRawValue = Self.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue
+            let clampedValue = min(rawValue, maxActiveRawValue)
+            if let exactStep = SetupStep(rawValue: clampedValue),
+               Self.allCases.contains(exactStep) {
+                return exactStep
+            }
+            return Self.allCases.first(where: { $0.rawValue > clampedValue }) ?? .identity
         }
     }
+}
+
+private struct OnboardingSolutionMetric {
+    let value: String
+    let label: String
+}
+
+private struct OnboardingSolutionProfile {
+    let headline: String
+    let subtitle: String
+    let metrics: [OnboardingSolutionMetric]
+    let reviewer: String
+    let review: String
 }
 
 struct OunjeOnboardingCoachVisual: View {
@@ -2250,12 +3139,6 @@ struct OnboardingStepHeader: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 14) {
-            if turtlePlacement == .leading {
-                OnboardingPointingTurtle()
-                    .frame(width: 116, height: 116)
-                    .accessibilityHidden(true)
-            }
-
             VStack(alignment: .leading, spacing: 7) {
                 Text(title)
                     .font(.system(size: 38, weight: .heavy, design: .rounded))
@@ -2268,16 +3151,6 @@ struct OnboardingStepHeader: View {
             }
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            if turtlePlacement == .trailing {
-                OnboardingPointingTurtle(mirrored: true)
-                    .frame(width: 116, height: 116)
-                    .accessibilityHidden(true)
-            } else if turtlePlacement == .none {
-                Color.clear
-                    .frame(width: 116, height: 116)
-                    .allowsHitTesting(false)
-            }
         }
     }
 }
@@ -2412,9 +3285,7 @@ struct OnboardingCoachPanel: View {
     @State private var isFloating = false
 
     private var greeting: String {
-        let name = preferredName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, step == .name else { return step.prompt }
-        return "Nice. I’ll call you \(name)."
+        step.prompt
     }
 
     var body: some View {
@@ -3128,6 +3999,139 @@ struct OnboardingChoicePill: View {
             .scaleEffect(isSelected ? 1.01 : 1)
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct OnboardingIntroChoiceButton: View {
+    let title: String
+    let isSelected: Bool
+    let accent: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 0) {
+                Text(title)
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .foregroundStyle(isSelected ? .black : OunjePalette.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(isSelected ? accent : OunjePalette.elevated)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(isSelected ? Color.black.opacity(0.9) : Color.white.opacity(0.38), lineWidth: isSelected ? 2.25 : 1.5)
+                    )
+            )
+            .scaleEffect(isSelected ? 1.01 : 1)
+            .shadow(color: isSelected ? accent.opacity(0.22) : .clear, radius: 10, x: 0, y: 6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct OnboardingRecipeStylePreviewChoice: View {
+    let recipe: DiscoverRecipeCardData
+    let style: RecipeTypographyStyle
+    let isSelected: Bool
+    let accent: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    styleLabel
+                        .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText)
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.5))
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Image("CrunchyMisoSalmonPreview")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 112, height: 112)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
+                        .frame(maxWidth: .infinity)
+
+                    RecipeTypographyTitleText(
+                        recipe.title,
+                        size: style == .clean ? 15 : 17,
+                        color: OunjePalette.primaryText,
+                        style: style
+                    )
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.72)
+                    .frame(height: 54, alignment: .topLeading)
+
+                    HStack(spacing: 5) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(recipe.compactCookTime ?? "15 mins")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(OunjePalette.secondaryText)
+                }
+                .padding(12)
+                .frame(width: 148, height: 224, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.075),
+                                    Color.white.opacity(0.035)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(isSelected ? Color.white.opacity(0.9) : Color.white.opacity(0.08), lineWidth: isSelected ? 2 : 1)
+                        )
+                )
+            }
+            .frame(width: 170, alignment: .topLeading)
+            .scaleEffect(isSelected ? 1.01 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.84), value: isSelected)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var styleLabel: some View {
+        if style == .playful {
+            Text(style.displayName)
+                .font(.custom("Slee_handwritting-Regular", size: 20))
+                .fontWeight(.black)
+        } else {
+            Text(style.displayName)
+                .font(.system(size: 14, weight: .black, design: .rounded))
+        }
+    }
+}
+
+struct InstacartLogoMark: View {
+    var body: some View {
+        Image("InstacartLogo")
+            .resizable()
+            .scaledToFit()
+            .accessibilityLabel("Instacart")
     }
 }
 

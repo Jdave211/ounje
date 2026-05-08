@@ -73,7 +73,7 @@ struct RootView: View {
             await store.bootstrapFromSupabaseIfNeeded()
             await store.refreshMembershipEntitlement(trigger: "root-bootstrap")
             let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
-            await notificationCenter.syncForCurrentSession(session)
+            await notificationCenter.syncForCurrentSession(session, force: true)
         }
         .onChange(of: scenePhase) { newPhase in
             guard newPhase == .active else {
@@ -104,7 +104,9 @@ struct RootView: View {
                 realtimeCoordinator.connect(session: session) { event in
                     await handleRealtimeInvalidation(event)
                 }
-                await store.refreshLiveTrackingState()
+                if store.hasLiveInstacartActivity {
+                    await store.refreshLiveTrackingState()
+                }
                 await notificationCenter.syncForCurrentSession(session)
                 let sleepInterval: UInt64 = realtimeCoordinator.isRunning
                     ? (store.hasLiveInstacartActivity ? 15_000_000_000 : 90_000_000_000)
@@ -138,7 +140,7 @@ struct RootView: View {
 
         case "notification.updated":
             let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
-            await notificationCenter.syncForCurrentSession(session)
+            await notificationCenter.syncForCurrentSession(session, force: true)
 
         case "entitlement.updated":
             await store.refreshMembershipEntitlement(trigger: "realtime")
@@ -199,13 +201,22 @@ final class AppNotificationCenterManager: ObservableObject {
     private let notificationCenter = UNUserNotificationCenter.current()
     private var isSyncing = false
     private var lastSyncedUserID: String?
+    private var lastSyncedAt: Date?
     private var lastTrackingAuthFailureAt: Date?
     private var lastTrackingAuthFailureUserID: String?
+    private let passiveSyncInterval: TimeInterval = 5 * 60
 
-    func syncForCurrentSession(_ session: AuthSession?) async {
+    func syncForCurrentSession(_ session: AuthSession?, force: Bool = false) async {
         guard let session,
               !session.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
+            return
+        }
+
+        if !force,
+           lastSyncedUserID == session.userID,
+           let lastSyncedAt,
+           Date().timeIntervalSince(lastSyncedAt) < passiveSyncInterval {
             return
         }
 
@@ -269,8 +280,10 @@ final class AppNotificationCenterManager: ObservableObject {
 
             await refreshInbox(for: session)
             lastSyncedUserID = session.userID
+            lastSyncedAt = Date()
         } catch {
             lastSyncedUserID = session.userID
+            lastSyncedAt = Date()
         }
     }
 
@@ -492,6 +505,9 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
 @MainActor
 private final class RecipeImportHistoryStore: ObservableObject {
     @Published private(set) var completedItems: [RecipeImportCompletedItem] = []
+    private var lastRefreshUserID: String?
+    private var lastRefreshAt: Date?
+    private let passiveRefreshTTL: TimeInterval = 45
 
     var badgeCount: Int {
         completedItems.count
@@ -501,12 +517,22 @@ private final class RecipeImportHistoryStore: ObservableObject {
         completedItems.count
     }
 
-    func refresh(userID: String?) async {
+    func refresh(userID: String?, force: Bool = false) async {
         guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             completedItems = []
+            lastRefreshUserID = nil
+            lastRefreshAt = nil
+            return
+        }
+        if !force,
+           lastRefreshUserID == userID,
+           let lastRefreshAt,
+           Date().timeIntervalSince(lastRefreshAt) < passiveRefreshTTL {
             return
         }
         completedItems = (try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID)) ?? []
+        lastRefreshUserID = userID
+        lastRefreshAt = .now
     }
 }
 
@@ -619,7 +645,8 @@ final class InstacartRunLogsStore: ObservableObject {
                 query: currentQuery,
                 status: currentStatus,
                 limit: 20,
-                offset: currentOffset
+                offset: currentOffset,
+                includeCount: true
             )
             runs = payload.items
             totalCount = payload.total
@@ -652,7 +679,8 @@ final class InstacartRunLogsStore: ObservableObject {
                 query: currentQuery,
                 status: currentStatus,
                 limit: 20,
-                offset: nextOffset
+                offset: nextOffset,
+                includeCount: true
             )
             currentOffset = nextOffset
             runs.append(contentsOf: payload.items)
@@ -706,22 +734,22 @@ private struct AuthenticationView: View {
     @State private var authErrorMessage: String?
     @State private var authStatusMessage: String?
     @State private var appleSignInNonce = ""
-    @State private var showAuthSheet = false
     @State private var revealContent = false
+    @State private var showQuickTour = false
+    @StateObject private var appleSignInDriver = AppleSignInPresentationDriver()
 
     var body: some View {
         ZStack {
-            Image("WelcomeBackground")
-                .resizable()
-                .scaledToFill()
+            WelcomeVideoBackgroundView()
                 .ignoresSafeArea()
 
             LinearGradient(
                 colors: [
-                    .black.opacity(0.2),
-                    .black.opacity(0.5),
-                    OunjePalette.background.opacity(0.92),
-                    OunjePalette.background
+                    .black.opacity(0.0),
+                    .black.opacity(0.04),
+                    .black.opacity(0.12),
+                    .black.opacity(0.3),
+                    .black.opacity(0.58)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -729,66 +757,66 @@ private struct AuthenticationView: View {
             .ignoresSafeArea()
 
             GeometryReader { proxy in
-                let contentWidth = min(420, proxy.size.width - (OunjeLayout.screenHorizontalPadding * 2))
+                let contentWidth = max(1, min(392, proxy.size.width - 36))
+                let authButtonWidth = max(1, min(340, proxy.size.width - 56))
+                let logoTopSpacing = max(148, min(proxy.size.height * 0.22, 190))
+                let bottomSpacing = max(28, proxy.safeAreaInsets.bottom + 22)
 
-                VStack(spacing: 0) {
-                    Spacer(minLength: max(170, proxy.size.height * 0.44))
+                ZStack {
+                    VStack(spacing: 10) {
+                            Text("ounje")
+                                .font(.custom("Slee_handwritting-Regular", size: min(62, proxy.size.width * 0.148)))
+                                .tracking(0.16)
+                                .foregroundStyle(.white)
 
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Plan less.")
-                            .font(.system(size: 48, weight: .black, design: .rounded))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Text("Cook easy.")
-                            .font(.custom("Slee_handwritting-Regular", size: 30))
-                            .tracking(0.08)
-                            .foregroundStyle(OunjePalette.softCream)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        (
-                            Text("Set your food style once. ")
-                                .font(.system(size: 16, weight: .medium, design: .rounded))
-                            + Text("Ounje")
-                                .font(.custom("Slee_handwritting-Regular", size: 22))
-                                .tracking(0.05)
-                            + Text(" handles the weekly prep, recipe picks, and groceries after that.")
-                                .font(.system(size: 16, weight: .medium, design: .rounded))
-                        )
-                            .foregroundStyle(.white.opacity(0.84))
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18)
-
-                    Spacer(minLength: 24)
+                            Text("Your taste, on autopilot")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundStyle(OunjePalette.softCream.opacity(0.8))
+                        }
+                        .frame(maxWidth: contentWidth)
+                        .padding(.horizontal, 28)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .padding(.top, logoTopSpacing)
 
                     VStack(alignment: .center, spacing: 14) {
-                        if let authStatusMessage {
-                            Text(authStatusMessage)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.92))
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.bottom, 6)
-                        }
+                            if let authStatusMessage {
+                                Text(authStatusMessage)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.92))
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.bottom, 4)
+                            }
 
-                        Button {
-                            showAuthSheet = true
-                        } label: {
-                            Text("Get started")
-                                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(PrimaryPillButtonStyle())
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                showQuickTour = true
+                            } label: {
+                                Text("Take a quick tour")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(.black.opacity(0.9))
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(height: 48)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+
+                            SignInWithAppleButton(.signIn) { request in
+                                prepareAppleSignInRequest(request)
+                            } onCompletion: { result in
+                                handleAppleSignIn(result)
+                            }
+                            .signInWithAppleButtonStyle(.black)
+                            .frame(height: 48)
+                            .clipShape(Capsule(style: .continuous))
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.horizontal, 18)
-
-                    Spacer(minLength: max(22, proxy.safeAreaInsets.bottom + 12))
+                    .frame(width: authButtonWidth)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, bottomSpacing)
                 }
-                .frame(maxWidth: contentWidth)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .opacity(revealContent ? 1 : 0)
             .offset(y: revealContent ? 0 : 18)
@@ -801,63 +829,45 @@ private struct AuthenticationView: View {
         } message: {
             Text(authErrorMessage ?? "Please try again.")
         }
-        .sheet(isPresented: $showAuthSheet) {
-            NavigationStack {
-                VStack(alignment: .leading, spacing: 0) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        (
-                            Text("Sign in to ")
-                                .font(.system(size: 28, weight: .black, design: .rounded))
-                            + Text("Ounje")
-                                .font(.custom("Slee_handwritting-Regular", size: 34))
-                                .tracking(0.08)
-                        )
-                            .foregroundStyle(.white)
-
-                        Text("Use Apple to keep your profile, prep, and cookbook synced.")
-                            .font(.system(size: 15, weight: .medium, design: .rounded))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.bottom, 26)
-
-                    if let authStatusMessage {
-                        Text(authStatusMessage)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.bottom, 12)
-                    }
-
-                    VStack(spacing: 12) {
-                        SignInWithAppleButton(.signIn) { request in
-                            request.requestedScopes = [.fullName, .email]
-                            let nonce = randomNonceString()
-                            appleSignInNonce = nonce
-                            request.nonce = sha256(nonce)
-                        } onCompletion: { result in
-                            handleAppleSignIn(result)
-                        }
-                        .signInWithAppleButtonStyle(.white)
-                        .frame(height: OunjeLayout.authButtonHeight)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
-                    .padding(.top, 4)
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 38)
-                .padding(.bottom, 18)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(OunjePalette.background.ignoresSafeArea())
-            }
-            .presentationDetents([.height(320)])
-            .presentationDragIndicator(.visible)
-        }
         .onAppear {
             withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
                 revealContent = true
             }
         }
+        .fullScreenCover(isPresented: $showQuickTour) {
+            WelcomeQuickTourView(
+                onClose: {
+                    showQuickTour = false
+                },
+                onAppleRequest: { request in
+                    prepareAppleSignInRequest(request)
+                },
+                onAppleCompletion: { result in
+                    handleAppleSignIn(result)
+                },
+                onAppleSignInRequested: {
+                    startAppleSignIn()
+                }
+            )
+        }
+    }
+
+    private func startAppleSignIn() {
+        appleSignInDriver.start(
+            configure: { request in
+                prepareAppleSignInRequest(request)
+            },
+            completion: { result in
+                handleAppleSignIn(result)
+            }
+        )
+    }
+
+    private func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
+        request.requestedScopes = [.fullName, .email]
+        let nonce = randomNonceString()
+        appleSignInNonce = nonce
+        request.nonce = sha256(nonce)
     }
 
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
@@ -958,7 +968,23 @@ private struct AuthenticationView: View {
     }
 
     private func completeSignIn(with session: AuthSession, fallbackStatusMessage: String? = nil) async {
-        store.persistAuthSession(session)
+        let isSameCachedUser = store.authSession?.userID == session.userID || store.resolvedTrackingSession?.userID == session.userID
+        let cachedProfile = isSameCachedUser ? store.profile : nil
+        let cachedCompleted = isSameCachedUser && store.isOnboarded && cachedProfile != nil
+        let initialStep = cachedCompleted
+            ? FirstLoginOnboardingView.SetupStep.address.rawValue
+            : (isSameCachedUser ? store.lastOnboardingStep : 0)
+
+        store.signIn(
+            with: session,
+            onboarded: cachedCompleted,
+            profile: cachedProfile,
+            lastOnboardingStep: initialStep
+        )
+        showQuickTour = false
+        authStatusMessage = cachedCompleted
+            ? "Signed in with \(session.provider.title)."
+            : "Signed in. Let's finish setup."
 
         do {
             let remoteState = try await SupabaseProfileStateService.shared.fetchOrCreateProfileState(
@@ -973,9 +999,6 @@ private struct AuthenticationView: View {
                 return
             }
 
-            let isSameCachedUser = store.authSession?.userID == session.userID
-            let cachedProfile = isSameCachedUser ? store.profile : nil
-            let cachedCompleted = isSameCachedUser && store.isOnboarded && cachedProfile != nil
             let resolvedOnboarded = remoteState.onboarded || cachedCompleted
             let resolvedProfile = remoteState.profile ?? cachedProfile
             let resolvedStep = resolvedOnboarded
@@ -988,7 +1011,6 @@ private struct AuthenticationView: View {
                 profile: resolvedProfile,
                 lastOnboardingStep: resolvedStep
             )
-            showAuthSheet = false
 
             if (resolvedOnboarded != remoteState.onboarded ||
                 resolvedProfile != nil && remoteState.profile == nil ||
@@ -1021,16 +1043,9 @@ private struct AuthenticationView: View {
                 : "Signed in. Let's finish setup."
         } catch {
             if let fallbackStatusMessage {
-                store.signIn(
-                    with: session,
-                    onboarded: false,
-                    profile: store.profile,
-                    lastOnboardingStep: store.lastOnboardingStep
-                )
-                showAuthSheet = false
                 authStatusMessage = fallbackStatusMessage
             } else {
-                authErrorMessage = "Sign-in failed. Please try again."
+                authStatusMessage = "Signed in. We’ll keep syncing in the background."
             }
         }
     }
@@ -1059,6 +1074,367 @@ private struct AuthenticationView: View {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+}
+
+@MainActor
+private final class AppleSignInPresentationDriver: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    private var completion: ((Result<ASAuthorization, Error>) -> Void)?
+    private var isPresenting = false
+
+    func start(
+        configure: (ASAuthorizationAppleIDRequest) -> Void,
+        completion: @escaping (Result<ASAuthorization, Error>) -> Void
+    ) {
+        guard !isPresenting else { return }
+
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        configure(request)
+
+        self.completion = completion
+        isPresenting = true
+
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        controller.performRequests()
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+        finish(.success(authorization))
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        finish(.failure(error))
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) ?? UIWindow()
+    }
+
+    private func finish(_ result: Result<ASAuthorization, Error>) {
+        let completion = completion
+        self.completion = nil
+        isPresenting = false
+        completion?(result)
+    }
+}
+
+private struct WelcomeVideoBackgroundView: View {
+    @StateObject private var videoPlayer = WelcomeLoopingVideoPlayer(
+        resourceName: "welcome-vid-bg",
+        fileExtension: "mp4"
+    )
+
+    var body: some View {
+        WelcomeVideoPlayerRepresentable(player: videoPlayer.player)
+            .brightness(0.055)
+            .onAppear {
+                videoPlayer.start()
+            }
+            .onDisappear {
+                videoPlayer.pause()
+            }
+    }
+}
+
+@MainActor
+private final class WelcomeLoopingVideoPlayer: ObservableObject {
+    let player = AVPlayer()
+
+    private let resourceName: String
+    private let fileExtension: String
+    private var endObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+
+    init(resourceName: String, fileExtension: String) {
+        self.resourceName = resourceName
+        self.fileExtension = fileExtension
+        player.volume = 0
+        player.isMuted = true
+        player.actionAtItemEnd = .none
+        player.allowsExternalPlayback = false
+        player.preventsDisplaySleepDuringVideoPlayback = false
+    }
+
+    func start() {
+        configureNonInterruptingAudioSession()
+
+        if player.currentItem == nil,
+           let url = Bundle.main.url(forResource: resourceName, withExtension: fileExtension) {
+            let asset = AVURLAsset(url: url)
+            let item = AVPlayerItem(asset: asset)
+            applySilentAudioMix(to: item, asset: asset)
+            player.replaceCurrentItem(with: item)
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: item,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.player.seek(to: .zero)
+                self.player.play()
+            }
+            interruptionObserver = NotificationCenter.default.addObserver(
+                forName: AVAudioSession.interruptionNotification,
+                object: AVAudioSession.sharedInstance(),
+                queue: .main
+            ) { [weak self] _ in
+                self?.player.play()
+            }
+        }
+
+        player.play()
+    }
+
+    func pause() {
+        player.pause()
+    }
+
+    deinit {
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+        if let interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
+        }
+    }
+
+    private func configureNonInterruptingAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .ambient,
+                mode: .default,
+                options: [.mixWithOthers]
+            )
+        } catch {
+            print("[WelcomeVideo] Failed to configure non-interrupting audio session:", error.localizedDescription)
+        }
+    }
+
+    private func applySilentAudioMix(to item: AVPlayerItem, asset: AVAsset) {
+        Task { @MainActor in
+            let audioTracks = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
+            guard !audioTracks.isEmpty else { return }
+
+            let parameters = audioTracks.map { track in
+                let input = AVMutableAudioMixInputParameters(track: track)
+                input.setVolume(0, at: .zero)
+                return input
+            }
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = parameters
+            item.audioMix = mix
+        }
+    }
+}
+
+private struct WelcomeVideoPlayerRepresentable: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> WelcomeVideoPlayerView {
+        let view = WelcomeVideoPlayerView()
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = .resizeAspectFill
+        view.backgroundColor = .clear
+        view.isOpaque = false
+        return view
+    }
+
+    func updateUIView(_ uiView: WelcomeVideoPlayerView, context: Context) {
+        uiView.playerLayer.player = player
+        uiView.playerLayer.videoGravity = .resizeAspectFill
+    }
+}
+
+private final class WelcomeVideoPlayerView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+    var playerLayer: AVPlayerLayer {
+        layer as! AVPlayerLayer
+    }
+}
+
+private struct WelcomeQuickTourView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let onClose: () -> Void
+    let onAppleRequest: (ASAuthorizationAppleIDRequest) -> Void
+    let onAppleCompletion: (Result<ASAuthorization, Error>) -> Void
+    let onAppleSignInRequested: () -> Void
+
+    private let pages = WelcomeQuickTourPage.orderedPages
+
+    @State private var selectedPage = 0
+    @State private var cardEntered = false
+    @State private var isHandlingLastPageSwipe = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let topVisualHeight = min(proxy.size.height * 0.71, 640)
+            let tourBackground = Color(red: 0.085, green: 0.085, blue: 0.082)
+
+            ZStack {
+                tourBackground
+                    .ignoresSafeArea()
+
+                TabView(selection: $selectedPage) {
+                    ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                        VStack(spacing: 0) {
+                                ZStack(alignment: .bottom) {
+                                    Image(page.assetName)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: proxy.size.width, height: topVisualHeight)
+                                        .clipped()
+
+                                    LinearGradient(
+                                        colors: [
+                                            tourBackground.opacity(0),
+                                            tourBackground.opacity(0.62),
+                                            tourBackground
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                    .frame(height: 150)
+                                }
+                                .offset(y: cardEntered ? 0 : -180)
+                                .opacity(cardEntered ? 1 : 0)
+
+                            VStack(spacing: 8) {
+                                Text(page.title)
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.96))
+                                    .multilineTextAlignment(.center)
+
+                                Text(page.subtitle)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.58))
+                                    .multilineTextAlignment(.center)
+                                    .lineSpacing(1)
+                            }
+                            .frame(maxWidth: 290)
+                            .padding(.top, 30)
+
+                            Spacer(minLength: 16)
+                                .frame(minHeight: 92)
+                        }
+                        .ignoresSafeArea(edges: .top)
+                        .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .ignoresSafeArea(edges: .top)
+
+                VStack(spacing: 14) {
+                    HStack(spacing: 5) {
+                        ForEach(pages.indices, id: \.self) { pageIndex in
+                            Capsule(style: .continuous)
+                                .fill(pageIndex == selectedPage ? Color.white.opacity(0.94) : Color.white.opacity(0.22))
+                                .frame(width: pageIndex == selectedPage ? 14 : 4, height: 4)
+                                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: selectedPage)
+                        }
+                    }
+
+                    SignInWithAppleButton(.signIn) { request in
+                        onAppleRequest(request)
+                    } onCompletion: { result in
+                        onAppleCompletion(result)
+                    }
+                    .signInWithAppleButtonStyle(.black)
+                    .frame(width: max(1, min(340, proxy.size.width - 56)), height: 48)
+                    .clipShape(Capsule(style: .continuous))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, max(18, proxy.safeAreaInsets.bottom + 8))
+                .zIndex(6)
+
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                        onClose()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, max(12, proxy.safeAreaInsets.top + 4))
+                .padding(.trailing, 18)
+                .zIndex(8)
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 28)
+                    .onEnded { value in
+                        guard selectedPage == pages.indices.last else { return }
+                        guard !isHandlingLastPageSwipe else { return }
+                        let horizontalIntent = abs(value.translation.width) > abs(value.translation.height) * 1.2
+                        let didSwipeForward = value.translation.width < -54 || value.predictedEndTranslation.width < -92
+                        guard horizontalIntent, didSwipeForward else { return }
+
+                        isHandlingLastPageSwipe = true
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onAppleSignInRequested()
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            isHandlingLastPageSwipe = false
+                        }
+                    }
+            )
+            .onAppear {
+                withAnimation(.spring(response: 0.62, dampingFraction: 0.83).delay(0.06)) {
+                    cardEntered = true
+                }
+            }
+        }
+    }
+}
+
+private struct WelcomeQuickTourPage {
+    let assetName: String
+    let title: String
+    let subtitle: String
+
+    static let orderedPages: [WelcomeQuickTourPage] = [
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard4",
+            title: "Only cook what you love.",
+            subtitle: "Ounje handles the planning, prep, and shopping so you can just show up in the kitchen."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard5",
+            title: "Send recipes from anywhere.",
+            subtitle: "Share from TikTok or Instagram, or take a picture and we’ll build the recipe."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard2",
+            title: "Build a smarter cart.",
+            subtitle: "Collapse your next prep into one shop list that remembers what you already have."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard8",
+            title: "Agents shop with your say-so.",
+            subtitle: "Connect Instacart and Ounje can find better groceries. You review before checkout."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard1",
+            title: "Edit any recipe with AI.",
+            subtitle: "Make it healthier, add protein, go keto, or change the vibe in one tap."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard9",
+            title: "Build Ounje with us.",
+            subtitle: "Send feedback straight to the founders and help shape what ships next."
+        )
+    ]
 }
 
 private struct MealPlannerShellView: View {
@@ -1221,7 +1597,7 @@ private struct MealPlannerShellView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .recipeImportHistoryNeedsRefresh)) { _ in
             Task {
-                await refreshSharedImportState()
+                await refreshSharedImportState(force: true)
                 lastSharedImportRefreshAt = .now
             }
         }
@@ -1245,7 +1621,7 @@ private struct MealPlannerShellView: View {
                 let hasLiveImport = hasLiveSharedImportWork
                 let shouldRefreshSharedState = hasLiveImport || Date().timeIntervalSince(lastSharedImportRefreshAt) >= 30
                 if shouldRefreshSharedState {
-                    await refreshSharedImportState()
+                    await refreshSharedImportState(force: hasLiveImport)
                     lastSharedImportRefreshAt = .now
                 }
 
@@ -1270,7 +1646,7 @@ private struct MealPlannerShellView: View {
                 await sharedImportInbox.refresh()
                 if hasQueuedSharedImportWork || hasLiveSharedImportWork {
                     await processPendingSharedImports(scope: .queued)
-                    await refreshSharedImportState()
+                    await refreshSharedImportState(force: true)
                     lastSharedImportRefreshAt = .now
                 }
             }
@@ -1373,18 +1749,18 @@ private struct MealPlannerShellView: View {
                     recipeImportHistory: recipeImportHistory,
                     toastCenter: toastCenter,
                     onRefreshSharedImports: {
-                        await refreshSharedImportState()
+                        await refreshSharedImportState(force: true)
                     },
                     onRetryFailedSharedImports: {
                         Task {
                             await processPendingSharedImports(scope: .failed)
-                            await refreshSharedImportState()
+                            await refreshSharedImportState(force: true)
                         }
                     },
                     onDeleteFailedSharedImport: { envelopeID in
                         Task {
                             try? SharedRecipeImportInbox.delete(envelopeID: envelopeID)
-                            await refreshSharedImportState()
+                            await refreshSharedImportState(force: true)
                         }
                     },
                     onSelectRecipe: { recipe in
@@ -1399,9 +1775,9 @@ private struct MealPlannerShellView: View {
     }
 
     @MainActor
-    private func refreshSharedImportState() async {
+    private func refreshSharedImportState(force: Bool = false) async {
         await sharedImportInbox.refresh()
-        await recipeImportHistory.refresh(userID: store.authSession?.userID)
+        await recipeImportHistory.refresh(userID: store.authSession?.userID, force: force)
         await sharedImportInbox.reconcileCompletedImports(
             recipeImportHistory.completedItems,
             onCompletedPreppedImport: { response in
@@ -1512,7 +1888,7 @@ private struct MealPlannerShellView: View {
         Task {
             await sharedImportInbox.refresh()
             await processPendingSharedImports(scope: .queued)
-            await refreshSharedImportState()
+            await refreshSharedImportState(force: true)
             lastSharedImportRefreshAt = .now
         }
     }
@@ -2631,7 +3007,7 @@ private struct CookbookTabView: View {
 
     private func refreshSavedCookbookFeed() async {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        await savedStore.refreshFromRemote(authSession: store.authSession)
+        await savedStore.refreshFromRemote(authSession: store.authSession, force: true)
     }
 
     @ViewBuilder
@@ -4783,18 +5159,12 @@ private struct InstacartRunLogDetailView: View {
         guard !normalizedNames.isEmpty else { return }
 
         do {
-            let records = try await SupabaseIngredientsCatalogService.shared.fetchIngredients(
-                ingredientIDs: [],
+            let imageLookup = try await SupabaseIngredientsCatalogService.shared.fetchImageLookup(
                 normalizedNames: normalizedNames
             )
-
             var lookup = itemImageLookup
-            for record in records {
-                let key = SupabaseIngredientsCatalogService.normalizedName(record.matchKey)
-                guard !key.isEmpty else { continue }
-                guard let imageURLString = record.defaultImageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !imageURLString.isEmpty
-                else { continue }
+            for (key, imageURLString) in imageLookup {
+                guard !key.isEmpty, !imageURLString.isEmpty else { continue }
                 lookup[key] = imageURLString
             }
             itemImageLookup = lookup
@@ -8283,9 +8653,19 @@ private struct OnboardingPromptCard: View {
 
     private var tint: Color {
         switch step {
-        case .name:
-            return OunjePalette.accent
         case .identity:
+            return OunjePalette.accent
+        case .challenge:
+            return OunjePalette.accent
+        case .solution:
+            return OunjePalette.accent
+        case .solutionWays:
+            return OunjePalette.accent
+        case .recipeStyle:
+            return OunjePalette.accent
+        case .allergies:
+            return OunjePalette.accent
+        case .diets:
             return OunjePalette.accent
         case .cuisines:
             return Color(hex: "6AD6FF")

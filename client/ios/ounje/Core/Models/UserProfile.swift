@@ -1607,6 +1607,7 @@ struct UserProfile: Codable, Hashable {
         try container.encode(favoriteFoods, forKey: .favoriteFoods)
         try container.encode(favoriteFlavors, forKey: .favoriteFlavors)
         try container.encode(neverIncludeFoods, forKey: .neverIncludeFoods)
+        try container.encode(mealPrepGoals, forKey: .mealPrepGoals)
         try container.encode(cooksForOthers, forKey: .cooksForOthers)
         try container.encode(budgetWindow, forKey: .budgetWindow)
         try container.encode(purchasingBehavior, forKey: .purchasingBehavior)

@@ -115,8 +115,14 @@ struct DiscoverRemoteRecipeCard: View {
     let isInteractive: Bool
     let showsTopActions: Bool
     let showsImageLoadingSkeleton: Bool
+    let typographyStyleOverride: RecipeTypographyStyle?
     @EnvironmentObject private var savedStore: SavedRecipesStore
+    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
     private let cardHeight: CGFloat = 292
+
+    private var resolvedTypographyStyle: RecipeTypographyStyle {
+        typographyStyleOverride ?? RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+    }
 
     private var transitionContext: RecipeTransitionContext? {
         guard let transitionNamespace else { return nil }
@@ -131,6 +137,7 @@ struct DiscoverRemoteRecipeCard: View {
         isInteractive: Bool = true,
         showsTopActions: Bool = true,
         showsImageLoadingSkeleton: Bool = false,
+        typographyStyleOverride: RecipeTypographyStyle? = nil,
         onSelect: @escaping () -> Void
     ) {
         self.recipe = recipe
@@ -140,6 +147,7 @@ struct DiscoverRemoteRecipeCard: View {
         self.isInteractive = isInteractive
         self.showsTopActions = showsTopActions
         self.showsImageLoadingSkeleton = showsImageLoadingSkeleton
+        self.typographyStyleOverride = typographyStyleOverride
         self.onSelect = onSelect
     }
 
@@ -171,10 +179,11 @@ struct DiscoverRemoteRecipeCard: View {
                 .clipped()
 
             VStack(alignment: .leading, spacing: 8) {
-                SleeRecipeCardTitleText(
+                RecipeTypographyTitleText(
                     recipe.displayTitle,
-                    size: 22,
-                    color: OunjePalette.primaryText
+                    size: resolvedTypographyStyle == .clean ? 19 : 22,
+                    color: OunjePalette.primaryText,
+                    style: resolvedTypographyStyle
                 )
                 .lineLimit(2)
                 .minimumScaleFactor(0.84)

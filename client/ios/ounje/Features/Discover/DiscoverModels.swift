@@ -209,7 +209,9 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
     }
 
     var authorLabel: String {
-        if let authorHandle, !authorHandle.isEmpty { return authorHandle }
+        if let authorHandle, !authorHandle.isEmpty {
+            return authorHandle.hasPrefix("@") ? authorHandle : "@\(authorHandle)"
+        }
         if let authorName, !authorName.isEmpty { return authorName }
         return "Source pending"
     }

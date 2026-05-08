@@ -5,6 +5,7 @@ import { addItemsToInstacartCart } from "../../lib/instacart-cart.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
 import { createAutomationJob } from "../../lib/automation-jobs.js";
 import {
+  getCurrentInstacartRunLogSummary,
   getInstacartRunLog,
   getInstacartRunLogSummary,
   getInstacartRunLogTrace,
@@ -887,7 +888,8 @@ router.get("/instacart/runs", async (req, res) => {
     const status = req.query.status ?? "all";
     const limit = req.query.limit ?? 24;
     const offset = req.query.offset ?? 0;
-    const payload = await listInstacartRunLogs({ userID, accessToken, status, query, limit, offset });
+    const includeCount = coerceBoolean(req.query.include_count ?? req.query.includeCount ?? false);
+    const payload = await listInstacartRunLogs({ userID, accessToken, status, query, limit, offset, includeCount });
     return res.json({
       ...payload,
       query: String(query ?? "").trim() || null,
@@ -896,6 +898,25 @@ router.get("/instacart/runs", async (req, res) => {
     });
   } catch (error) {
     console.error("[instacart/runs] error:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/instacart/runs/current", async (req, res) => {
+  try {
+    const accessToken = extractBearerToken(req.headers.authorization);
+    const userID = req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? null;
+    if (!accessToken && !String(userID ?? "").trim()) {
+      return res.status(401).json({ error: "Authorization required" });
+    }
+    const mealPlanID = req.query.meal_plan_id ?? req.query.mealPlanID ?? null;
+    const summary = await getCurrentInstacartRunLogSummary({ userID, accessToken, mealPlanID });
+    return res.json({
+      summary: summary ?? null,
+      userID: String(userID ?? "").trim() || summary?.userId || null,
+    });
+  } catch (error) {
+    console.error("[instacart/runs/current] error:", error.message);
     return res.status(500).json({ error: error.message });
   }
 });
