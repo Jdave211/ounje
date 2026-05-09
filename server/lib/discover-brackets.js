@@ -42,56 +42,96 @@ let cacheState = {
 
 const BREAKFAST_STRONG_REGEX = /\b(breakfast|brunch|overnight oats?|baked oats?|oatmeal|porridge|pancakes?|waffles?|omelet|omelette|scrambled eggs?|eggs benedict|frittata|granola|parfait|smoothie bowl|yogurt bowl|avocado toast|toast|bagel|breakfast sandwich|hash brown|breakfast burrito|breakfast casserole|biscuit|crepes?)\b/i;
 const BREAKFAST_CORE_REGEX = /\b(overnight oats?|baked oats?|oatmeal|porridge|pancakes?|waffles?|omelet|omelette|scrambled eggs?|eggs benedict|frittata|granola|parfait|smoothie bowl|yogurt bowl|avocado toast|bagel|breakfast sandwich|hash brown|breakfast burrito|breakfast casserole)\b/i;
-const DESSERT_HEAVY_REGEX = /\b(cookies?|cake|cheesecake|brownies?|brookies?|blondies?|ice cream|gelato|pie|pudding|tart|cobbler|madeleines?|cupcakes?|fudge|bars?|sweet rolls?|coffee cake|banana bread|loaf|brioche buns?)\b/i;
-const DRINK_STRONG_REGEX = /\b(smoothies?|juices?|lattes?|coffees?|teas?|matcha|lemonades?|spritz(?:es)?|cocktails?|mocktails?|sodas?|shakes?|margaritas?|martinis?|mojitos?|spritzers?|punch|hot chocolate|cocoa|espresso|americanos?|cappuccinos?|frappes?|slush(?:ies)?|milkshakes?|carajillo)\b/i;
-const DRINK_EXCLUSION_REGEX = /\b(soup|salad|bowl|sandwich|wrap|tacos?|pasta|noodles?|rice|chicken|beef|steak|salmon|shrimp|prawns?|cod|beans?|potatoes?)\b/i;
+const DESSERT_HEAVY_REGEX = /\b(cookies?|cake|cheesecake|brownies?|brookies?|blondies?|ice cream|gelato|pie|pudding|tart|cobbler|madeleines?|cupcakes?|fudge|bars?|sweet rolls?|coffee cake|banana bread|loaf|brioche buns?|tiramisu|tres leches|brul[eé]e|brûlée|flan|jell(?:y|ies)|mousse|custard)\b/i;
+const DRINK_TYPE_REGEX = /\b(drinks?|beverages?|cocktails?|mocktails?|smoothies?|juices?)\b/i;
+const DRINK_STRONG_REGEX = /\b(smoothies?|juices?|iced tea|sweet tea|fruit tea|hibiscus tea|green tea|black tea|chai|lattes?|coffees?|lemonades?|spritz(?:es)?|cocktails?|mocktails?|sodas?|shakes?|margaritas?|martinis?|mojitos?|spritzers?|punch|hot chocolate|cocoa|espresso|americanos?|cappuccinos?|frappes?|slush(?:ies)?|milkshakes?|carajillo|agua fresca|horchata)\b/i;
+const DRINK_EXCLUSION_REGEX = /\b(soup|salad|bowl|sandwich|wrap|tacos?|pasta|noodles?|rice|chicken|beef|steak|salmon|shrimp|prawns?|cod|beans?|potatoes?|cake|cookies?|brownies?|pudding|tiramisu|jell(?:y|ies)|bread|loaf)\b/i;
 const FISH_STRONG_REGEX = /\b(salmon|cod|snapper|tilapia|trout|sea bass|halibut|mackerel|tuna|sardine|anchovy|shrimp|prawn|lobster|crab|scallop|mussels?|clams?|ceviche|seafood|fish)\b/i;
-const NIGERIAN_STRONG_REGEX = /\b(nigerian|west african|westafrican|jollof|egusi|suya|akara|moin\s?moin|ofada|banga|pepper soup|puff puff|yam porridge|okro soup|ogbono)\b/i;
+const NIGERIAN_CONTEXT_REGEX = /\b(nigerian|west african|westafrican)\b/i;
+const NIGERIAN_DISH_REGEX = /\b(jollof|egusi|suya|akara|moin\s?moin|moi\s?moi|ofada|banga|pepper soup|puff puff|yam porridge|asaro|okro soup|okra soup|ogbono|efo riro|ayamase|obe ata|gizdodo|dodo|fufu|eba|garri|tuwo|nsala|edikaikong|afang|kilishi)\b/i;
 
 function buildDiscoverBracketEvidence(recipe = {}) {
+  const titleAndDescription = [recipe?.title, recipe?.description].filter(Boolean).join(" ");
+  const typeCategoryText = [recipe?.recipe_type, recipe?.category, recipe?.subcategory]
+    .filter(Boolean)
+    .join(" ");
+  const titleContextText = [
+    recipe?.title,
+    recipe?.recipe_type,
+    recipe?.category,
+    recipe?.subcategory,
+    ...(recipe?.occasion_tags ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const nigerianEvidenceText = [
+    recipe?.title,
+    recipe?.description,
+    recipe?.recipe_type,
+    recipe?.category,
+    recipe?.subcategory,
+    recipe?.source,
+    recipe?.ingredients_text,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return {
     visibleText: [
       recipe?.title,
       recipe?.description,
       recipe?.recipe_type,
       recipe?.category,
+      recipe?.subcategory,
       ...(recipe?.dietary_tags ?? []),
       ...(recipe?.cuisine_tags ?? []),
       ...(recipe?.occasion_tags ?? []),
     ]
       .filter(Boolean)
       .join(" "),
-    titleAndDescription: [recipe?.title, recipe?.description].filter(Boolean).join(" "),
-    titleContextText: [
-      recipe?.title,
-      recipe?.recipe_type,
-      recipe?.category,
-      ...(recipe?.occasion_tags ?? []),
-    ]
-      .filter(Boolean)
-      .join(" "),
+    titleAndDescription,
+    titleContextText,
+    typeCategoryText,
+    nigerianEvidenceText,
   };
 }
 
 export function sanitizeDiscoverBrackets(recipe = {}, candidateBrackets = []) {
   const unique = [...new Set((candidateBrackets ?? []).map(normalizeDiscoverBracketKey).filter(Boolean))];
   const brackets = new Set(unique);
-  const { visibleText, titleAndDescription, titleContextText } = buildDiscoverBracketEvidence(recipe);
+  const {
+    visibleText,
+    titleAndDescription,
+    titleContextText,
+    typeCategoryText,
+    nigerianEvidenceText,
+  } = buildDiscoverBracketEvidence(recipe);
 
   const hasBreakfastSignal = BREAKFAST_STRONG_REGEX.test(visibleText);
   const hasBreakfastCoreSignal = BREAKFAST_CORE_REGEX.test(titleContextText);
-  const hasDessertHeavySignal = DESSERT_HEAVY_REGEX.test(visibleText);
-  const hasDrinkSignal = DRINK_STRONG_REGEX.test(titleContextText) || String(recipe?.recipe_type ?? "").toLowerCase() === "drinks";
+  const hasDessertHeavySignal = DESSERT_HEAVY_REGEX.test(titleAndDescription) || DESSERT_HEAVY_REGEX.test(typeCategoryText);
+  const hasExplicitDrinkType = DRINK_TYPE_REGEX.test(typeCategoryText);
+  const hasDrinkSignal = hasExplicitDrinkType || DRINK_STRONG_REGEX.test(titleContextText);
   const hasDrinkExclusionSignal = DRINK_EXCLUSION_REGEX.test(titleContextText);
   const hasFishSignal = FISH_STRONG_REGEX.test(visibleText);
-  const hasNigerianSignal = NIGERIAN_STRONG_REGEX.test(visibleText);
+  const hasNigerianDishSignal = NIGERIAN_DISH_REGEX.test(nigerianEvidenceText);
+  const hasNigerianContextSignal = NIGERIAN_CONTEXT_REGEX.test(titleAndDescription);
+  const hasNigerianSignal = hasNigerianDishSignal || hasNigerianContextSignal;
 
   if (brackets.has("breakfast") && ((hasDessertHeavySignal && !hasBreakfastCoreSignal) || (hasDrinkSignal && !hasBreakfastCoreSignal))) {
     brackets.delete("breakfast");
   }
 
-  if (brackets.has("drinks") && (!hasDrinkSignal || hasDrinkExclusionSignal || hasDessertHeavySignal || hasBreakfastCoreSignal)) {
+  if (brackets.has("drinks") && (
+    !hasDrinkSignal
+      || (!hasExplicitDrinkType && (hasDrinkExclusionSignal || hasDessertHeavySignal || hasBreakfastCoreSignal))
+      || (hasExplicitDrinkType && hasDessertHeavySignal && !DRINK_STRONG_REGEX.test(titleAndDescription))
+  )) {
     brackets.delete("drinks");
+  }
+
+  if (brackets.has("dessert") && hasExplicitDrinkType && !hasDessertHeavySignal) {
+    brackets.delete("dessert");
   }
 
   if (brackets.has("fish") && !hasFishSignal) {
@@ -114,8 +154,12 @@ export function sanitizeDiscoverBrackets(recipe = {}, candidateBrackets = []) {
     brackets.add("fish");
   }
 
+  if (hasDrinkSignal && !hasDrinkExclusionSignal && (!hasDessertHeavySignal || hasExplicitDrinkType)) {
+    brackets.add("drinks");
+  }
+
   if (!brackets.size) {
-    if (hasDrinkSignal && !hasDrinkExclusionSignal) brackets.add("drinks");
+    if (hasDrinkSignal && (hasExplicitDrinkType || !hasDrinkExclusionSignal)) brackets.add("drinks");
     else if (hasBreakfastCoreSignal) brackets.add("breakfast");
     else if (hasFishSignal) brackets.add("fish");
     else if (hasNigerianSignal) brackets.add("nigerian");

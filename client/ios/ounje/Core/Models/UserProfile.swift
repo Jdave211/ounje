@@ -950,7 +950,7 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
         case (.plus, .monthly):
             return "net.ounje.plus.monthly"
         case (.plus, .yearly):
-            return "net.ounje.plus.yearly"
+            return "net.ounje.plus.annually"
         case (.autopilot, .monthly):
             return "net.ounje.autopilot.monthly"
         case (.autopilot, .yearly):

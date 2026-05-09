@@ -11,7 +11,7 @@ const ALLOWED_TIERS = new Set(["free", "plus", "autopilot", "foundingLifetime"])
 const ALLOWED_STATUSES = new Set(["active", "expired", "revoked", "inactive"]);
 const ALLOWED_SOURCES = new Set(["app_store", "manual", "system"]);
 const PRODUCT_IDS_BY_TIER = {
-  plus: new Set(["net.ounje.plus.monthly", "net.ounje.plus.yearly"]),
+  plus: new Set(["net.ounje.plus.monthly", "net.ounje.plus.annually", "net.ounje.plus.yearly"]),
   autopilot: new Set(["net.ounje.autopilot.monthly", "net.ounje.autopilot.yearly"]),
 };
 

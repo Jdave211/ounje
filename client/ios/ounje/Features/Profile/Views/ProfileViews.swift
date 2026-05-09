@@ -5,6 +5,7 @@ import UIKit
 import WebKit
 import SafariServices
 import PhotosUI
+import StoreKit
 
 struct ProfileTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
@@ -977,6 +978,7 @@ struct ProfileSettingsPage: View {
         }
         .sheet(isPresented: $isMembershipPresented) {
             MembershipSettingsSheet(currentTier: currentTier)
+                .environmentObject(store)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -1355,16 +1357,55 @@ extension UNAuthorizationStatus {
 }
 
 struct MembershipSettingsSheet: View {
+    @EnvironmentObject private var store: MealPlanningAppStore
     @Environment(\.dismiss) private var dismiss
     let currentTier: OunjePricingTier
+    @State private var isOpeningSubscriptionManager = false
+    @State private var isRestoringPurchases = false
+    @State private var actionMessage: String?
 
     private var benefits: [(String, String)] {
-        [
-            ("Plan", currentTier.title),
+        let entitlement = store.membershipEntitlement
+        let cadence = currentCadence?.title ?? "Managed by Apple"
+        let renewalText = entitlement?.expiresAt.map {
+            $0.formatted(date: .abbreviated, time: .omitted)
+        } ?? "Apple subscription settings"
+
+        return [
+            ("Plan", currentPlanTitle),
             ("Access", currentTier.subtitle),
-            ("Cost", "\(currentTier.priceText) \(currentTier.cadenceText)"),
-            ("Notes", currentTier.economicsText)
+            ("Billing", cadence),
+            ("Renews", renewalText)
         ]
+    }
+
+    private var currentPlanTitle: String {
+        guard currentTier != .free else { return currentTier.title }
+        if let cadence = currentCadence {
+            return "\(currentTier.title) · \(cadence.title)"
+        }
+        return currentTier.title
+    }
+
+    private var currentCadence: OunjeMembershipBillingCadence? {
+        if let raw = store.membershipEntitlement?.metadata["billing_cadence"],
+           let cadence = OunjeMembershipBillingCadence(rawValue: raw) {
+            return cadence
+        }
+
+        guard let productID = store.membershipEntitlement?.productID?.lowercased() else {
+            return nil
+        }
+
+        if productID.contains("annual") || productID.contains("year") {
+            return .yearly
+        }
+
+        if productID.contains("month") {
+            return .monthly
+        }
+
+        return nil
     }
 
     var body: some View {
@@ -1378,7 +1419,7 @@ struct MembershipSettingsSheet: View {
                             Text("Membership")
                                 .font(.system(size: 28, weight: .bold))
                                 .foregroundStyle(OunjePalette.primaryText)
-                            Text("Your active plan is shown here. Billing changes are managed separately from this settings page.")
+                            Text("Change your plan, cancel renewal, or update billing through Apple subscriptions.")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(OunjePalette.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1417,13 +1458,94 @@ struct MembershipSettingsSheet: View {
                         )
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("What it controls")
+                            Text("Manage membership")
                                 .font(.system(size: 17, weight: .semibold))
                                 .foregroundStyle(OunjePalette.primaryText)
-                            Text("Ounje uses your effective tier to clamp automation, browsing depth, and other guarded actions. The app shell stays read-only about billing state unless the server says otherwise.")
+                            Text("Apple handles subscription changes. You can switch monthly or annual, cancel renewal, and update payment there.")
                                 .font(.system(size: 13.5, weight: .medium))
                                 .foregroundStyle(OunjePalette.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
+
+                            Button {
+                                Task { await openSubscriptionManager() }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if isOpeningSubscriptionManager {
+                                        ProgressView()
+                                            .tint(.white)
+                                            .controlSize(.small)
+                                    } else {
+                                        Image(systemName: "arrow.up.arrow.down.circle.fill")
+                                            .font(.system(size: 16, weight: .semibold))
+                                    }
+                                    Text("Change or cancel plan")
+                                        .font(.system(size: 15, weight: .bold))
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .bold))
+                                }
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 15)
+                                .frame(height: 50)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .fill(OunjePalette.accent.opacity(0.92))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isOpeningSubscriptionManager)
+                            .padding(.top, 8)
+
+                            Button {
+                                Task { await restorePurchases() }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    if isRestoringPurchases {
+                                        ProgressView()
+                                            .tint(OunjePalette.primaryText)
+                                            .controlSize(.small)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.system(size: 14, weight: .semibold))
+                                    }
+                                    Text("Restore purchases")
+                                        .font(.system(size: 14, weight: .semibold))
+                                    Spacer(minLength: 0)
+                                }
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .padding(.horizontal, 15)
+                                .frame(height: 46)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                        .fill(OunjePalette.panel.opacity(0.88))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isRestoringPurchases)
+                            .padding(.top, 4)
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Pause membership")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                Text("App Store subscriptions do not support an app-side pause. Cancel renewal instead; your access stays active until Apple’s expiry date.")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.top, 8)
+
+                            if let actionMessage {
+                                Text(actionMessage)
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.top, 4)
+                            }
                         }
                         .padding(16)
                         .background(
@@ -1447,6 +1569,39 @@ struct MembershipSettingsSheet: View {
                 }
             }
         }
+    }
+
+    @MainActor
+    private func openSubscriptionManager() async {
+        guard !isOpeningSubscriptionManager else { return }
+        isOpeningSubscriptionManager = true
+        actionMessage = nil
+        defer { isOpeningSubscriptionManager = false }
+
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else {
+            actionMessage = "Couldn’t open Apple subscription settings from here."
+            return
+        }
+
+        do {
+            try await AppStore.showManageSubscriptions(in: scene)
+            await store.refreshMembershipEntitlement(trigger: "membership-manager")
+        } catch {
+            actionMessage = "Couldn’t open Apple subscription settings. Try again from iOS Settings."
+        }
+    }
+
+    @MainActor
+    private func restorePurchases() async {
+        guard !isRestoringPurchases else { return }
+        isRestoringPurchases = true
+        actionMessage = nil
+        defer { isRestoringPurchases = false }
+
+        let restored = await store.restoreMembershipPurchases()
+        actionMessage = restored ? "Purchases restored." : "No active App Store membership found."
     }
 }
 

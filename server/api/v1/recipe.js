@@ -58,6 +58,7 @@ const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, ser
 
 const SEARCH_RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000;
 const DISCOVER_FEED_CACHE_TTL_MS = 2 * 60 * 1000;
+const DISCOVER_BRACKET_IDS_CACHE_TTL_MS = 10 * 60 * 1000;
 const DISCOVER_BROAD_POOL_CACHE_TTL_MS = 2 * 60 * 1000;
 const INTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -85,6 +86,7 @@ class CappedMap extends Map {
 
 const searchResponseCache = new CappedMap(160);
 const discoverFeedCache = new CappedMap(120);
+const discoverBracketIdsCache = new CappedMap(40);
 const discoverBroadPoolCache = new CappedMap(80);
 const discoverIntentCache = new CappedMap(120);
 const prepRegenerationIntentCache = new CappedMap(80);
@@ -94,6 +96,7 @@ const recipeVideoResolveCache = new CappedMap(120);
 globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
   searchResponse: searchResponseCache.size,
   discoverFeed: discoverFeedCache.size,
+  discoverBracketIds: discoverBracketIdsCache.size,
   discoverBroadPool: discoverBroadPoolCache.size,
   discoverIntent: discoverIntentCache.size,
   prepRegenerationIntent: prepRegenerationIntentCache.size,
@@ -4869,25 +4872,44 @@ async function fetchDbBracketRecipeIds(filter = "All") {
     return [];
   }
 
-  const bracketPayload = `{${preset.key}}`;
-  const url = `${SUPABASE_URL}/rest/v1/recipes?select=id&discover_brackets=cs.${encodeURIComponent(bracketPayload)}&limit=2000`;
-
-  const response = await fetch(url, {
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-  });
-
-  const data = await response.json().catch(() => []);
-  if (!response.ok) {
-    const message = data?.message ?? data?.error ?? "Bracket id fetch failed";
-    throw new Error(message);
+  const cacheKey = `bracket-ids:${preset.key}`;
+  const cachedIds = readTimedCache(discoverBracketIdsCache, cacheKey, DISCOVER_BRACKET_IDS_CACHE_TTL_MS);
+  if (Array.isArray(cachedIds)) {
+    return cachedIds;
   }
 
-  return Array.isArray(data)
-    ? data.map((row) => String(row?.id ?? "").trim()).filter(Boolean)
-    : [];
+  const bracketPayload = `{${preset.key}}`;
+  const ids = [];
+  const pageSize = 1000;
+
+  for (let offset = 0; ; offset += pageSize) {
+    const url = `${SUPABASE_URL}/rest/v1/recipes?select=id&discover_brackets=cs.${encodeURIComponent(bracketPayload)}&limit=${pageSize}&offset=${offset}`;
+    const response = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+    });
+
+    const data = await response.json().catch(() => []);
+    if (!response.ok) {
+      const message = data?.message ?? data?.error ?? "Bracket id fetch failed";
+      throw new Error(message);
+    }
+
+    const pageIds = Array.isArray(data)
+      ? data.map((row) => String(row?.id ?? "").trim()).filter(Boolean)
+      : [];
+    ids.push(...pageIds);
+
+    if (pageIds.length < pageSize) {
+      break;
+    }
+  }
+
+  const uniqueIds = [...new Set(ids)];
+  discoverBracketIdsCache.set(cacheKey, { value: uniqueIds, createdAt: Date.now() });
+  return uniqueIds;
 }
 
 async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "preset" }) {
@@ -4916,7 +4938,7 @@ async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "
   ).map((item) => item.id);
 
   const idsToFetch = shuffledIds.slice(0, Math.min(shuffledIds.length, Math.max(1, limit)));
-  const recipes = await fetchRecipesByIdBatches(idsToFetch);
+  const recipes = await fetchSearchRecipesByIds(idsToFetch);
   return applyPresetCategoryGate(
     applyPresetHardConstraints(recipes, filter),
     filter
@@ -4953,7 +4975,7 @@ async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset
   ).map((item) => item.id);
   const recipes = [];
   const seenRecipeIds = new Set();
-  const scanSize = Math.max(safeLimit * 4, 72);
+  const scanSize = safeLimit;
 
   while (recipes.length < safeLimit && cursor < shuffledIds.length) {
     const batchEnd = Math.min(shuffledIds.length, cursor + scanSize);
@@ -4961,7 +4983,7 @@ async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset
     cursor = batchEnd;
 
     const batchRecipes = applyPresetHardConstraints(
-      dedupeRecipesById(await fetchRecipesByIdBatches(idsToFetch)).filter((recipe) => (
+      dedupeRecipesById(await fetchSearchRecipesByIds(idsToFetch)).filter((recipe) => (
         preset.key === "under500" || recipeHasDiscoverBracket(recipe, filter)
       )),
       filter

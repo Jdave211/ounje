@@ -80,7 +80,7 @@ struct OunjePaywallHostView: View {
                             .fill(OunjePalette.accent)
                             .frame(width: 42, height: 10)
 
-                        Text(introTrialAvailable(for: selectedPlan) ? "3 days free" : "Monthly or yearly")
+                        Text("3 days free")
                             .font(.custom("Slee_handwritting-Regular", size: compact ? 20 : 26))
                             .foregroundStyle(.white.opacity(0.92))
                             .lineLimit(1)
@@ -101,7 +101,7 @@ struct OunjePaywallHostView: View {
                     }
                     .frame(width: contentWidth, alignment: .leading)
                     .padding(.leading, max(16, (proxy.size.width - contentWidth) / 2))
-                    .padding(.bottom, compact ? 24 : 30)
+                    .padding(.bottom, compact ? 44 : 52)
                     .frame(width: proxy.size.width, height: headerHeight, alignment: .bottomLeading)
 
                     VStack {
@@ -130,7 +130,7 @@ struct OunjePaywallHostView: View {
                             }
                             .frame(width: contentWidth * 0.92)
 
-                            Text(introTrialAvailable(for: selectedPlan) ? "Try 3 days free. Cancel anytime." : "Cancel anytime.")
+                            Text("Try 3 days free. Cancel anytime.")
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .foregroundStyle(Color.white.opacity(0.82))
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -270,10 +270,7 @@ struct OunjePaywallHostView: View {
     }
 
     private var ctaTitle: String {
-        if introTrialAvailable(for: selectedPlan) {
-            return "Start Free Trial"
-        }
-        return "Continue with \(displayPriceValue(for: selectedPlan))\(selectedPlan.cadence.cadenceSuffix)"
+        "Start Free Trial"
     }
 
     private var displayedErrorMessage: String? {

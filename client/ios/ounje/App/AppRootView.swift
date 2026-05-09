@@ -1406,8 +1406,8 @@ private struct WelcomeQuickTourPage {
     static let orderedPages: [WelcomeQuickTourPage] = [
         WelcomeQuickTourPage(
             assetName: "FeatureCard4",
-            title: "Only cook what you love.",
-            subtitle: "Ounje handles the planning, prep, and shopping so you can just show up in the kitchen."
+            title: "Ounje handles the hard part.",
+            subtitle: "We take care of the sourcing, plan, and shopping so you can just show up & do what you love."
         ),
         WelcomeQuickTourPage(
             assetName: "FeatureCard5",

@@ -5,7 +5,7 @@ final class SupabaseDiscoverRecipeService {
 
     private init() {}
 
-    func fetchRecipes(limit: Int = 30) async throws -> [DiscoverRecipeCardData] {
+    func fetchRecipes(limit: Int = 30, offset: Int = 0) async throws -> [DiscoverRecipeCardData] {
         let select = [
             "id",
             "title",
@@ -24,7 +24,7 @@ final class SupabaseDiscoverRecipeService {
             "discover_brackets"
         ].joined(separator: ",")
 
-        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(select)&order=updated_at.desc.nullslast,published_date.desc.nullslast&limit=\(limit)") else {
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(select)&order=updated_at.desc.nullslast,published_date.desc.nullslast&limit=\(limit)&offset=\(max(0, offset))") else {
             throw SupabaseProfileStateError.invalidRequest
         }
 
@@ -76,22 +76,18 @@ final class SupabaseDiscoverRecipeService {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalizedQuery.isEmpty {
             let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
-            let fallbackLimit = normalizedFilter == "all" ? limit : max(limit * 10, 180)
-            let fallbackRecipes = try await fetchRecipes(limit: fallbackLimit)
-            let visibleRecipes = normalizedFilter == "all"
-                ? fallbackRecipes
-                : fallbackRecipes.filter { $0.matchesDiscoverFilter(filter) }
-            let pageEnd = min(visibleRecipes.count, offset + limit)
-            let pageRecipes = offset < pageEnd
-                ? Array(visibleRecipes[offset..<pageEnd])
-                : []
+            if normalizedFilter != "all" {
+                return try await fetchBracketRecipesFallback(filter: filter, limit: limit, offset: offset)
+            }
+
+            let fallbackRecipes = try await fetchRecipes(limit: limit, offset: offset)
             return DiscoverRankedRecipesResponse(
-                recipes: pageRecipes,
+                recipes: fallbackRecipes,
                 filters: DiscoverPreset.allTitles,
                 rankingMode: "supabase_direct_fallback",
-                totalAvailable: visibleRecipes.count,
-                hasMore: pageEnd < visibleRecipes.count,
-                nextOffset: pageEnd < visibleRecipes.count ? pageEnd : nil
+                totalAvailable: fallbackRecipes.count,
+                hasMore: fallbackRecipes.count >= limit,
+                nextOffset: fallbackRecipes.count >= limit ? offset + fallbackRecipes.count : nil
             )
         }
 
@@ -138,5 +134,64 @@ final class SupabaseDiscoverRecipeService {
         }
 
         return try JSONDecoder().decode(DiscoverRankedRecipesResponse.self, from: data)
+    }
+
+    private func fetchBracketRecipesFallback(
+        filter: String,
+        limit: Int,
+        offset: Int
+    ) async throws -> DiscoverRankedRecipesResponse {
+        let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
+        let select = [
+            "id",
+            "title",
+            "description",
+            "author_name",
+            "author_handle",
+            "category",
+            "recipe_type",
+            "cook_time_text",
+            "cook_time_minutes",
+            "published_date",
+            "discover_card_image_url",
+            "hero_image_url",
+            "recipe_url",
+            "source",
+            "discover_brackets"
+        ].joined(separator: ",")
+        let fetchLimit = max(1, limit + 1)
+        guard let encodedSelect = select.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let encodedBracket = "{\(normalizedFilter)}".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(encodedSelect)&discover_brackets=cs.\(encodedBracket)&order=id.asc&limit=\(fetchLimit)&offset=\(max(0, offset))")
+        else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Failed to load \(filter) recipes (\(httpResponse.statusCode))."
+            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        let decoded = try JSONDecoder().decode([DiscoverRecipeCardData].self, from: data)
+        let pageRecipes = Array(decoded.prefix(limit))
+        let hasMore = decoded.count > limit
+        return DiscoverRankedRecipesResponse(
+            recipes: pageRecipes,
+            filters: DiscoverPreset.allTitles,
+            rankingMode: "supabase_bracket_direct_fallback",
+            totalAvailable: nil,
+            hasMore: hasMore,
+            nextOffset: hasMore ? offset + pageRecipes.count : nil
+        )
     }
 }

@@ -38,7 +38,7 @@ final class StoreKitMembershipBillingService {
 
     private let productIDsByPlan: [OunjeMembershipPlan: String] = [
         .init(tier: .plus, cadence: .monthly): "net.ounje.plus.monthly",
-        .init(tier: .plus, cadence: .yearly): "net.ounje.plus.yearly",
+        .init(tier: .plus, cadence: .yearly): "net.ounje.plus.annually",
     ]
 
     func fetchProductsByPlan() async throws -> [OunjeMembershipPlan: StoreProductSnapshot] {
