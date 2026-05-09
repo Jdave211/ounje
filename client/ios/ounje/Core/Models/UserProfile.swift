@@ -971,11 +971,11 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
         case (.plus, .monthly):
             return "$7.99"
         case (.plus, .yearly):
-            return "$59.99"
+            return "$69.99"
         case (.autopilot, .monthly):
             return "$7.99"
         case (.autopilot, .yearly):
-            return "$59.99"
+            return "$69.99"
         case (.free, _):
             return "Free"
         case (.foundingLifetime, _):
@@ -996,9 +996,9 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
         guard cadence == .yearly else { return nil }
         switch tier {
         case .plus:
-            return "Save 37%"
+            return "Save 27%"
         case .autopilot:
-            return "Save 37%"
+            return "Save 27%"
         case .free, .foundingLifetime:
             return nil
         }

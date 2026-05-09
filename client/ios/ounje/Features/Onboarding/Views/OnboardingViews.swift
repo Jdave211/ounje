@@ -50,7 +50,10 @@ struct FirstLoginOnboardingView: View {
     @State private var orderingAutonomy: OrderingAutonomyLevel = .suggestOnly
     @State private var isSaving = false
     @State private var isPaywallPresented = false
+    @State private var hasCompletedOnboardingBeforePaywall = false
     @State private var paywallInitialTier: OunjePricingTier? = nil
+    @State private var pendingCompletedOnboardingProfile: UserProfile?
+    @State private var pendingCompletedOnboardingStep: Int?
     @StateObject private var onboardingProvidersViewModel = GroceryProvidersViewModel()
     @State private var selectedOnboardingProvider: GroceryProviderInfo?
     @State private var presetSelectionPulseID = 0
@@ -523,6 +526,11 @@ struct FirstLoginOnboardingView: View {
                 commitBudgetInput()
             }
         }
+        .onChange(of: isPaywallPresented) { isPresented in
+            if !isPresented {
+                completePendingOnboardingAfterPaywall()
+            }
+        }
         .onChange(of: cooksForOthers) { isCookingForOthers in
             if !isCookingForOthers {
                 adults = 1
@@ -587,7 +595,13 @@ struct FirstLoginOnboardingView: View {
             )
         }
         .fullScreenCover(isPresented: paywallPresentationBinding) {
-            OunjePlusPaywallSheet(initialTier: paywallInitialTier)
+            OunjePlusPaywallSheet(
+                initialTier: paywallInitialTier,
+                isDismissible: true,
+                onUpgradeSuccess: {
+                    completePendingOnboardingAfterPaywall()
+                }
+            )
         }
     }
 
@@ -626,21 +640,20 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var introOnboardingHeader: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 12) {
-                Button {
-                    goBack()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(OunjePalette.primaryText.opacity(currentStep.previous == nil ? 0.2 : 0.9))
-                        .frame(width: 30, height: 30)
-                }
-                .buttonStyle(.plain)
-                .disabled(currentStep.previous == nil)
-
-                introProgressSegments
+        HStack(spacing: 12) {
+            Button {
+                goBack()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText.opacity(currentStep.previous == nil ? 0.2 : 0.9))
+                    .frame(width: 30, height: 30)
             }
+            .buttonStyle(.plain)
+            .disabled(currentStep.previous == nil)
+
+            onboardingProgressBar(progress: introProgressFraction)
+                .frame(maxWidth: .infinity)
 
             Button {
                 handleIntroHeaderAction()
@@ -648,21 +661,17 @@ struct FirstLoginOnboardingView: View {
                 Text(introHeaderActionTitle)
                     .font(.system(size: 17, weight: .black, design: .rounded))
                     .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
-                    .frame(minWidth: 78, alignment: .trailing)
-                    .frame(height: 34)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .frame(width: 98, height: 34, alignment: .trailing)
             }
             .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 22)
         .padding(.top, 8)
-        .padding(.bottom, 7)
+        .padding(.bottom, 14)
+        .frame(height: 66, alignment: .center)
         .background(OunjePalette.background.ignoresSafeArea(edges: .top))
-    }
-
-    private var introProgressSegments: some View {
-        onboardingProgressBar(progress: introProgressFraction)
-            .frame(maxWidth: .infinity)
     }
 
     private func onboardingProgressBar(progress: CGFloat) -> some View {
@@ -699,8 +708,9 @@ struct FirstLoginOnboardingView: View {
         if (currentStep == .challenge && !selectedFoodChallenges.isEmpty) ||
             (currentStep == .allergies && !parsedAllergies.isEmpty) ||
             (currentStep == .diets && !selectedDietaryPatterns.isEmpty) ||
-            currentStep == .budget ||
-            currentStep == .recipeStyle {
+            (currentStep == .ordering && orderingAutonomy == .approvalRequired) ||
+            (currentStep == .budget && shouldUseBudgetGuardrail) ||
+            (currentStep == .recipeStyle && didChooseRecipeTypographyStyle) {
             return "Continue"
         }
 
@@ -890,7 +900,7 @@ struct FirstLoginOnboardingView: View {
                 .font(.system(size: 12, weight: .black, design: .rounded))
                 .foregroundStyle(selectedFoodChallenges.isEmpty ? OunjePalette.secondaryText : currentStepAccent)
 
-            VStack(spacing: 12) {
+            VStack(spacing: introOptionSpacing(for: foodChallengeOptions.count)) {
                 ForEach(foodChallengeOptions, id: \.self) { option in
                     OnboardingIntroChoiceButton(
                         title: option,
@@ -913,7 +923,7 @@ struct FirstLoginOnboardingView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 306)
 
-            VStack(spacing: 12) {
+            VStack(spacing: introOptionSpacing(for: dietaryPatternOptions.count)) {
                 ForEach(dietaryPatternOptions, id: \.self) { option in
                     OnboardingIntroChoiceButton(
                         title: option,
@@ -1015,7 +1025,7 @@ struct FirstLoginOnboardingView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 306)
 
-            LazyVGrid(columns: allergyChipColumns, spacing: 10) {
+            LazyVGrid(columns: allergyChipColumns, spacing: 14) {
                 ForEach(allergyDisplayOptions, id: \.self) { option in
                     OnboardingIntroChoiceButton(
                         title: option,
@@ -1041,13 +1051,17 @@ struct FirstLoginOnboardingView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 326)
 
-                Text("We added one of our own handwriting styles to make recipes feel personal. If it gets harder to read, pick the clean version instead.")
-                    .font(.system(size: 14.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 344)
+                VStack(spacing: 8) {
+                    Text("We added our team’s handwriting style to make recipes and cookbooks feel more personal.")
+
+                    Text("Handwritten text can be harder to read for some people, so we also made a cleaner standard style.")
+                }
+                .font(.system(size: 14.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 344)
             }
 
             let previewRecipe = recipeStylePreviewRecipe ?? staticRecipeStylePreviewRecipe
@@ -1144,7 +1158,7 @@ struct FirstLoginOnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 306)
 
-            VStack(spacing: 12) {
+            VStack(spacing: introOptionSpacing(for: options.count)) {
                 ForEach(options, id: \.self) { option in
                     OnboardingIntroChoiceButton(
                         title: option,
@@ -1157,6 +1171,10 @@ struct FirstLoginOnboardingView: View {
             }
             .frame(maxWidth: 352)
         }
+    }
+
+    private func introOptionSpacing(for optionCount: Int) -> CGFloat {
+        optionCount < 5 ? 18 : 12
     }
 
     private func introQuestionLayout<Content: View>(
@@ -1653,12 +1671,8 @@ struct FirstLoginOnboardingView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Add groceries to my cart")
-                            .font(.system(size: 16, weight: .black, design: .rounded))
-                            .foregroundStyle(OunjePalette.primaryText)
-
                         Text("No purchase made ever. Just filling cart with best options.")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .font(.system(size: 15, weight: .black, design: .rounded))
                             .foregroundStyle(OunjePalette.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1925,12 +1939,16 @@ struct FirstLoginOnboardingView: View {
         }
 
         if currentStep == .ordering {
-            orderingAutonomy = .suggestOnly
-            moveForward(to: .budget)
+            if orderingAutonomy == .approvalRequired {
+                advance()
+            } else {
+                orderingAutonomy = .suggestOnly
+                moveForward(to: .budget)
+            }
             return
         }
 
-        skipIntroQuestions()
+        skipCurrentStep()
     }
 
     private func moveForward(to step: SetupStep) {
@@ -1941,12 +1959,12 @@ struct FirstLoginOnboardingView: View {
         }
     }
 
-    private func skipIntroQuestions() {
-        persistDraft(step: .allergies)
-        stepTransitionDirection = 1
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-            currentStep = .allergies
+    private func skipCurrentStep() {
+        guard let next = currentStep.next else {
+            submit()
+            return
         }
+        moveForward(to: next)
     }
 
     private func goBack() {
@@ -2364,16 +2382,41 @@ struct FirstLoginOnboardingView: View {
 
     private func submit() {
         guard canSubmit else { return }
-        isSaving = true
 
         let completedProfile = draftProfile
+        let completedStep = SetupStep.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue
         Task(priority: .utility) {
             _ = try? await SupabaseAgentBriefService.shared.generateBrief(for: completedProfile)
         }
+
+        if OunjeLaunchFlags.paywallsEnabled && !hasCompletedOnboardingBeforePaywall {
+            pendingCompletedOnboardingProfile = completedProfile
+            pendingCompletedOnboardingStep = completedStep
+            paywallInitialTier = .plus
+            isPaywallPresented = true
+            return
+        }
+
+        completeOnboarding(completedProfile, lastStep: completedStep)
+    }
+
+    private func completePendingOnboardingAfterPaywall() {
+        guard let pendingProfile = pendingCompletedOnboardingProfile else { return }
+        let pendingStep = pendingCompletedOnboardingStep ?? (SetupStep.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue)
+        pendingCompletedOnboardingProfile = nil
+        pendingCompletedOnboardingStep = nil
+        hasCompletedOnboardingBeforePaywall = true
+        completeOnboarding(pendingProfile, lastStep: pendingStep)
+    }
+
+    private func completeOnboarding(_ completedProfile: UserProfile, lastStep completedStep: Int) {
+        guard !isSaving else { return }
+        isSaving = true
         Task {
-            let completedStep = SetupStep.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue
             await store.completeOnboarding(with: completedProfile, lastStep: completedStep)
-            isSaving = false
+            await MainActor.run {
+                isSaving = false
+            }
         }
     }
 
@@ -4025,7 +4068,7 @@ struct OnboardingIntroChoiceButton: View {
                     .fill(isSelected ? accent : OunjePalette.elevated)
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(isSelected ? Color.black.opacity(0.9) : Color.white.opacity(0.38), lineWidth: isSelected ? 2.25 : 1.5)
+                            .stroke(Color.black.opacity(isSelected ? 0.9 : 0.72), lineWidth: isSelected ? 2.25 : 1.8)
                     )
             )
             .scaleEffect(isSelected ? 1.01 : 1)
@@ -4045,15 +4088,15 @@ struct OnboardingRecipeStylePreviewChoice: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
+                HStack(spacing: 7) {
                     styleLabel
                         .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText)
-
-                    Spacer(minLength: 8)
 
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.5))
+
+                    Spacer(minLength: 0)
                 }
 
                 VStack(alignment: .leading, spacing: 12) {

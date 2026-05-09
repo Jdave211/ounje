@@ -25,7 +25,7 @@ enum DiscoverPreset: CaseIterable {
 
     var title: String {
         switch self {
-        case .all: return "All"
+        case .all: return "Feed"
         case .breakfast: return "Breakfast"
         case .lunch: return "Lunch"
         case .dinner: return "Dinner"
@@ -105,7 +105,7 @@ enum DiscoverPreset: CaseIterable {
             .replacingOccurrences(of: " ", with: "")
 
         switch lowered {
-        case "", "all":
+        case "", "all", "feed":
             return "all"
         case "breakfast":
             return "breakfast"

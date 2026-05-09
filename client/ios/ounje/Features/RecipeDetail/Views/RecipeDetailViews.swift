@@ -380,7 +380,7 @@ struct RecipeDetailExperienceView: View {
             let heroHeight = max(198, heroSize - heroTopCrop + 18)
             let topControlTop = max(safeTop + 26, 72)
             let videoButtonTop = topControlTop + 64
-            let ingredientColumns = Self.ingredientGridColumns(for: pageWidth)
+            let ingredientGrid = Self.ingredientGridSpec(for: pageWidth)
             ScrollViewReader { proxy in
                 ZStack(alignment: .bottom) {
                     detailBackground
@@ -509,11 +509,15 @@ struct RecipeDetailExperienceView: View {
                                                 RecipeDetailSectionHeader(title: "Ingredients")
 
                                                 LazyVGrid(
-                                                    columns: ingredientColumns,
+                                                    columns: ingredientGrid.columns,
                                                     spacing: 24
                                                 ) {
                                                     ForEach(ingredientItems, id: \.stableID) { ingredient in
-                                                        RecipeIngredientTile(ingredient: ingredient)
+                                                        RecipeIngredientTile(
+                                                            ingredient: ingredient,
+                                                            imageSize: ingredientGrid.tileWidth
+                                                        )
+                                                            .frame(width: ingredientGrid.tileWidth, alignment: .topLeading)
                                                     }
                                                 }
 
@@ -1037,7 +1041,7 @@ struct RecipeDetailExperienceView: View {
         return .american
     }
 
-    private static func ingredientGridColumns(for pageWidth: CGFloat) -> [GridItem] {
+    private static func ingredientGridSpec(for pageWidth: CGFloat) -> (columns: [GridItem], tileWidth: CGFloat) {
         let count: Int
         let spacing: CGFloat
         if pageWidth < 360 {
@@ -1051,7 +1055,10 @@ struct RecipeDetailExperienceView: View {
             spacing = 14
         }
 
-        return Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .top), count: count)
+        let contentWidth = min(pageWidth, 820) - 28
+        let tileWidth = max(72, floor((contentWidth - spacing * CGFloat(count - 1)) / CGFloat(count)))
+        let columns = Array(repeating: GridItem(.fixed(tileWidth), spacing: spacing, alignment: .top), count: count)
+        return (columns, tileWidth)
     }
 
     private func ingredientTileTint(for index: Int) -> Color {
@@ -2129,6 +2136,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
     case lighter
     case dairyFree
     case vegetarian
+    case keto
+    case glutenFree
     case lowCarb
     case saucy
     case crispy
@@ -2150,6 +2159,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .lighter: return "lighter"
         case .dairyFree: return "dairy_free"
         case .vegetarian: return "vegetarian"
+        case .keto: return "keto"
+        case .glutenFree: return "gluten_free"
         case .lowCarb: return "low_carb"
         case .saucy: return "saucy"
         case .crispy: return "crispy"
@@ -2171,6 +2182,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .lighter: return "Lighter"
         case .dairyFree: return "Dairy-free"
         case .vegetarian: return "Vegetarian"
+        case .keto: return "Keto"
+        case .glutenFree: return "Gluten-free"
         case .lowCarb: return "Low carb"
         case .saucy: return "Saucy"
         case .crispy: return "Crunchy"
@@ -2192,6 +2205,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .lighter: return "Make it lighter"
         case .dairyFree: return "Make it dairy-free"
         case .vegetarian: return "Make it vegetarian"
+        case .keto: return "Make it keto"
+        case .glutenFree: return "Make it gluten-free"
         case .lowCarb: return "Make it low carb"
         case .saucy: return "Make it saucy"
         case .crispy: return "Make it crunchy"
@@ -2200,8 +2215,10 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
 
     var pillWidth: CGFloat {
         switch self {
-        case .mealPrep, .vegetarian, .dairyFree:
+        case .mealPrep, .vegetarian, .dairyFree, .glutenFree:
             return 176
+        case .keto:
+            return 150
         case .budgetFriendly:
             return 160
         case .kidFriendly, .moreProtein, .extraVeggies, .lessSugar, .lowCarb:
@@ -2226,6 +2243,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .lighter: return "Less heavy, same comfort."
         case .dairyFree: return "Skip dairy without losing body."
         case .vegetarian: return "Plant-forward, not boring."
+        case .keto: return "Lower carb, still full."
+        case .glutenFree: return "No gluten, still sturdy."
         case .lowCarb: return "Reduce starch where it makes sense."
         case .saucy: return "Add a sauce that fits the dish."
         case .crispy: return "Add crunch and texture."
@@ -2260,6 +2279,10 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return "Make this dairy-free. Remove milk, cream, butter, cheese, yogurt, sour cream, and dairy-based sauces where present. Replace texture, fat, creaminess, or saltiness with realistic dairy-free ingredients, then update quantities and steps so the recipe still cooks properly. Do not leave dairy in ingredients or steps, and do not use unnamed substitutes."
         case .vegetarian:
             return "Make this vegetarian. Remove meat, seafood, gelatin, meat stock, and fish sauce; add a satisfying plant-forward protein or base; update quantities, steps, and tags. Do not simply remove the protein or leave animal ingredients in the method."
+        case .keto:
+            return "Make this keto-friendly. Keep the dish satisfying while sharply reducing high-carb ingredients like bread, pasta, rice, potatoes, flour, sugar, syrup, and sweet sauces. Replace the structure with practical keto-friendly ingredients such as eggs, cheese, avocado, leafy vegetables, cauliflower, nuts, seeds, meat, fish, or tofu where they fit. Update quantities, steps, timing, tags, and serving format. Do not only rename it keto, and do not leave a high-carb base unchanged."
+        case .glutenFree:
+            return "Make this gluten-free. Remove wheat flour, bread, pasta, breadcrumbs, tortillas, soy sauce with wheat, and other gluten-containing ingredients where present. Replace structure or seasoning with practical gluten-free alternatives such as rice, corn tortillas, gluten-free pasta, tamari, potatoes, oats labeled gluten-free, or naturally gluten-free starches where they fit. Update quantities and every affected cooking step. Do not leave gluten-containing ingredients in the ingredients or method."
         case .lowCarb:
             return "Make this lower carb by reducing starch thoughtfully without turning it into a different dish. Replace or reduce bread, pasta, rice, tortillas, potatoes, flour, or sugary components only where it makes culinary sense, then update serving format, quantities, and steps. Do not delete the main base without a practical replacement."
         case .saucy:
@@ -2284,6 +2307,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .lighter: return "wind"
         case .dairyFree: return "drop.fill"
         case .vegetarian: return "leaf.circle.fill"
+        case .keto: return "chart.pie.fill"
+        case .glutenFree: return "checkmark.seal.fill"
         case .lowCarb: return "chart.line.downtrend.xyaxis"
         case .saucy: return "drop.circle.fill"
         case .crispy: return "circle.grid.cross.fill"
@@ -2316,6 +2341,10 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return Color(hex: "B8A27A")
         case .dairyFree:
             return Color(hex: "A7D8FF")
+        case .keto:
+            return Color(hex: "C7E27A")
+        case .glutenFree:
+            return Color(hex: "F1D67A")
         case .lowCarb:
             return Color(hex: "FFB35C")
         case .saucy:
@@ -2353,6 +2382,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .sweeter,
                 .quick,
                 .dairyFree,
+                .glutenFree,
+                .keto,
                 .kidFriendly,
                 .lighter,
                 .saucy,
@@ -2373,6 +2404,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .quick,
                 .moreProtein,
                 .healthier,
+                .keto,
+                .glutenFree,
                 .lighter,
                 .lessSugar,
                 .crispy,
@@ -2396,17 +2429,19 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .moreProtein,
                 .spicy,
                 .extraVeggies,
+                .keto,
+                .dairyFree,
+                .vegetarian,
+                .glutenFree,
                 .saucy,
                 .quick,
                 .mealPrep,
                 .budgetFriendly,
                 .lighter,
-                .vegetarian,
                 .lowCarb,
                 .crispy,
                 .kidFriendly,
                 .healthier,
-                .dairyFree,
                 .lessSugar,
                 .sweeter,
             ]
@@ -2415,15 +2450,17 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                 .moreProtein,
                 .spicy,
                 .extraVeggies,
+                .keto,
+                .dairyFree,
+                .vegetarian,
+                .glutenFree,
                 .saucy,
                 .quick,
                 .mealPrep,
                 .budgetFriendly,
                 .lighter,
                 .crispy,
-                .vegetarian,
                 .lowCarb,
-                .dairyFree,
                 .kidFriendly,
                 .healthier,
                 .lessSugar,
@@ -3907,6 +3944,7 @@ enum IngredientMonogramFormatter {
 
 struct RecipeIngredientTile: View {
     let ingredient: RecipeDetailIngredient
+    let imageSize: CGFloat
     @StateObject private var loader = DiscoverRecipeImageLoader()
 
     var body: some View {
@@ -3929,11 +3967,12 @@ struct RecipeIngredientTile: View {
                         .sleeDisplayFont(22)
                         .foregroundStyle(OunjePalette.softCream.opacity(0.9))
                         .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 }
 
             }
-            .frame(height: 70)
+            .frame(width: imageSize, height: imageSize)
+            .clipped()
             .task(id: ingredient.stableID) {
                 if let url = ingredient.imageURL {
                     await loader.load(from: [url])
@@ -3956,7 +3995,7 @@ struct RecipeIngredientTile: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(width: imageSize, alignment: .topLeading)
     }
 }
 

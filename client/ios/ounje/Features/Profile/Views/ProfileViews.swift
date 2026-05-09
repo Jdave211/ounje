@@ -15,6 +15,7 @@ struct ProfileTabView: View {
     @State private var selectedCadence: MealCadence = .weekly
     @State private var selectedAnchorDate = Date()
     @State private var isSettingsPresented = false
+    @State private var isNameEditorPresented = false
     @State private var isPaywallPresented = false
     @State private var isFeedbackPresented = false
     @State private var isBudgetSheetPresented = false
@@ -97,6 +98,7 @@ struct ProfileTabView: View {
                     ProfileMinimalHeader(
                         displayName: profileDisplayName,
                         email: accountEmail,
+                        onEditName: { isNameEditorPresented = true },
                         onOpenFeedback: { isFeedbackPresented = true },
                         onOpenSettings: { isSettingsPresented = true }
                     )
@@ -144,6 +146,14 @@ struct ProfileTabView: View {
             if let profile {
                 FoodProfileSheet(profile: profile)
             }
+        }
+        .sheet(isPresented: $isNameEditorPresented) {
+            ProfileNameEditSheet(
+                initialName: profile?.trimmedPreferredName ?? accountDisplayName,
+                onSave: updateProfileName(_:)
+            )
+            .presentationDetents([.height(260)])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $isBudgetSheetPresented) {
             ProfileBudgetSheet()
@@ -218,7 +228,7 @@ struct ProfileTabView: View {
                 action: { isAddressSheetPresented = true }
             ),
             .init(
-                title: "Rhythm",
+                title: "Schedule",
                 detail: "\(profile.cadenceScheduleSummary) · \(profile.deliveryTimeText)",
                 symbolName: "calendar",
                 tint: Color(hex: "8ED4FF"),
@@ -265,7 +275,7 @@ struct ProfileTabView: View {
                 action: { isRecurringRecipesPresented = true }
             ),
             .init(
-                title: "Delivery rhythm",
+                title: "Delivery schedule",
                 detail: "\(profile.cadenceScheduleSummary) · \(profile.deliveryTimeText)",
                 value: "Edit",
                 action: {
@@ -406,6 +416,13 @@ struct ProfileTabView: View {
         store.updateProfile(updated)
         isCadencePickerPresented = false
     }
+
+    private func updateProfileName(_ name: String) {
+        guard var updated = store.profile else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.preferredName = trimmed.isEmpty ? nil : trimmed
+        store.updateProfile(updated)
+    }
 }
 
 struct ProfileMinimalRowModel: Identifiable {
@@ -430,15 +447,26 @@ struct ProfileGridActionModel: Identifiable {
 struct ProfileMinimalHeader: View {
     let displayName: String
     let email: String?
+    let onEditName: () -> Void
     let onOpenFeedback: () -> Void
     let onOpenSettings: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 7) {
-                BiroScriptDisplayText(displayName, size: 34, color: OunjePalette.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                Button(action: onEditName) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        BiroScriptDisplayText(displayName, size: 34, color: OunjePalette.primaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+
+                        Image(systemName: "pencil")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
 
                 if let email, !email.isEmpty {
                     Text(email)
@@ -483,6 +511,67 @@ struct ProfileHeaderIconButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct ProfileNameEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    let onSave: (String) -> Void
+
+    init(initialName: String, onSave: @escaping (String) -> Void) {
+        _name = State(initialValue: initialName)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Profile name")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Text("This is how Ounje addresses you in the app.")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+
+                TextField("Your name", text: $name)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled(false)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .padding(.horizontal, 14)
+                    .frame(height: 52)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(OunjePalette.surface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(0.82), lineWidth: 2)
+                            )
+                    )
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+            .padding(.top, 20)
+            .background(OunjePalette.background.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(name)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
     }
 }
 
@@ -542,12 +631,8 @@ struct ProfileMinimalActionGrid: View {
                         HStack(alignment: .center, spacing: 0) {
                             Image(systemName: action.symbolName)
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(action.tint)
+                                .foregroundStyle(OunjePalette.primaryText)
                                 .frame(width: 30, height: 30)
-                                .background(
-                                    Circle()
-                                        .fill(action.tint.opacity(0.14))
-                                )
 
                             Spacer(minLength: 0)
 
@@ -558,7 +643,7 @@ struct ProfileMinimalActionGrid: View {
 
                         VStack(alignment: .leading, spacing: 5) {
                             Text(action.title)
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.system(size: 16, weight: .bold))
                                 .foregroundStyle(OunjePalette.primaryText)
                                 .lineLimit(1)
 
@@ -579,7 +664,7 @@ struct ProfileMinimalActionGrid: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(action.tint.opacity(0.18), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.82), lineWidth: 2)
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
@@ -640,10 +725,12 @@ struct ProfileSettingsPage: View {
     @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
     @StateObject private var providersViewModel = GroceryProvidersViewModel()
     @State private var isAutonomyPickerPresented = false
     @State private var isMembershipPresented = false
     @State private var isProvidersPresented = false
+    @State private var isRecipeStylePresented = false
     @State private var isFeedbackPresented = false
     @State private var isFoundersCallDialogPresented = false
     @State private var isSignOutDialogPresented = false
@@ -688,13 +775,6 @@ struct ProfileSettingsPage: View {
         return provider.connected ? "checkmark.circle.fill" : "xmark.circle.fill"
     }
 
-    private var membershipPresentationBinding: Binding<Bool> {
-        Binding(
-            get: { OunjeLaunchFlags.paywallsEnabled && isMembershipPresented },
-            set: { isMembershipPresented = $0 }
-        )
-    }
-
     private var settingsOrderingAutonomyOptions: [OrderingAutonomyLevel] {
         if !OunjeLaunchFlags.paywallsEnabled {
             return [.approvalRequired]
@@ -718,61 +798,16 @@ struct ProfileSettingsPage: View {
         URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/terms")
     }
 
-    private var accountSectionRows: [ProfileSettingsMenuRowModel] {
-        var rows: [ProfileSettingsMenuRowModel] = []
-
-        if OunjeLaunchFlags.paywallsEnabled {
-            rows.append(
-                ProfileSettingsMenuRowModel(
-                    icon: "creditcard.fill",
-                    iconTint: OunjePalette.secondaryText,
-                    title: "Membership",
-                    detail: "Current plan and billing access",
-                    trailingValue: currentTier.title,
-                    trailingTint: OunjePalette.secondaryText,
-                    action: { isMembershipPresented = true }
-                )
-            )
-        }
-
-        rows.append(
-            ProfileSettingsMenuRowModel(
-                icon: "slider.horizontal.3",
-                iconTint: OunjePalette.secondaryText,
-                title: "Autoshop beta",
-                detail: "Launching real soon. Cart runs are manual for now.",
-                trailingValue: "Manual",
-                trailingTint: OunjePalette.secondaryText,
-                action: { isAutonomyPickerPresented = true }
-            )
-        )
-
-        return rows
-    }
-
     private var sections: [ProfileSettingsSectionModel] {
         [
-            ProfileSettingsSectionModel(
-                title: "Account",
-                rows: accountSectionRows
-            ),
             ProfileSettingsSectionModel(
                 title: "Connections",
                 rows: [
                     ProfileSettingsMenuRowModel(
-                        icon: "cart.fill",
-                        iconTint: OunjePalette.secondaryText,
-                        title: "Grocery providers",
-                        detail: "Connected stores and login state",
-                        trailingValue: providersSummary,
-                        trailingTint: OunjePalette.secondaryText,
-                        action: { isProvidersPresented = true }
-                    ),
-                    ProfileSettingsMenuRowModel(
                         icon: instacartConnectionIcon,
                         iconTint: instacartConnectionTint,
-                        title: "Instacart connection",
-                        detail: "Autoshop beta. Launching real soon.",
+                        title: "Instacart",
+                        detail: "Connection status for cart filling",
                         trailingValue: instacartConnectionSummary,
                         trailingTint: instacartConnectionTint,
                         action: {
@@ -898,6 +933,15 @@ struct ProfileSettingsPage: View {
                         settingsHeader
 
                         VStack(alignment: .leading, spacing: 22) {
+                            ProfileSettingsAccountSectionView(
+                                membershipTier: currentTier,
+                                membershipSummary: currentTier.subtitle,
+                                recipeStyle: RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue),
+                                isAutoshopEnabled: autoshopOptInBinding,
+                                onOpenMembership: { isMembershipPresented = true },
+                                onOpenRecipeStyle: { isRecipeStylePresented = true }
+                            )
+
                             ForEach(sections) { section in
                                 ProfileSettingsSectionView(section: section)
                             }
@@ -931,9 +975,14 @@ struct ProfileSettingsPage: View {
                 Text("Choose who you want to reach.")
             }
         }
-        .sheet(isPresented: membershipPresentationBinding) {
+        .sheet(isPresented: $isMembershipPresented) {
             MembershipSettingsSheet(currentTier: currentTier)
                 .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isRecipeStylePresented) {
+            RecipeStyleSettingsSheet()
+                .presentationDetents([.height(460)])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $isProvidersPresented) {
@@ -1021,6 +1070,20 @@ struct ProfileSettingsPage: View {
         }
     }
 
+    private var autoshopOptInBinding: Binding<Bool> {
+        Binding(
+            get: {
+                store.profile?.orderingAutonomy == .approvalRequired
+            },
+            set: { isEnabled in
+                guard var updated = store.profile else { return }
+                updated.orderingAutonomy = isEnabled ? .approvalRequired : .suggestOnly
+                store.updateProfile(updated)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        )
+    }
+
     private var settingsHeader: some View {
         VStack(alignment: .leading, spacing: 14) {
             ZStack {
@@ -1079,6 +1142,94 @@ struct ProfileSettingsMenuRowModel: Identifiable {
     let trailingTint: Color
     var showsChevron: Bool = true
     let action: () -> Void
+}
+
+struct ProfileSettingsAccountSectionView: View {
+    let membershipTier: OunjePricingTier
+    let membershipSummary: String
+    let recipeStyle: RecipeTypographyStyle
+    @Binding var isAutoshopEnabled: Bool
+    let onOpenMembership: () -> Void
+    let onOpenRecipeStyle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Account")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .padding(.leading, 2)
+
+            VStack(spacing: 0) {
+                ProfileSettingsMenuRow(
+                    row: ProfileSettingsMenuRowModel(
+                        icon: "creditcard.fill",
+                        iconTint: OunjePalette.secondaryText,
+                        title: "Membership",
+                        detail: membershipSummary,
+                        trailingValue: membershipTier.title,
+                        trailingTint: OunjePalette.secondaryText,
+                        action: onOpenMembership
+                    )
+                )
+
+                Divider()
+                    .overlay(OunjePalette.stroke.opacity(0.75))
+                    .padding(.leading, 36)
+
+                ProfileSettingsAutoshopToggleRow(isEnabled: $isAutoshopEnabled)
+
+                Divider()
+                    .overlay(OunjePalette.stroke.opacity(0.75))
+                    .padding(.leading, 36)
+
+                ProfileSettingsMenuRow(
+                    row: ProfileSettingsMenuRowModel(
+                        icon: recipeStyle == .playful ? "signature" : "textformat",
+                        iconTint: OunjePalette.secondaryText,
+                        title: "Visual style",
+                        detail: "Choose Personal handwriting or Clean type",
+                        trailingValue: recipeStyle.displayName,
+                        trailingTint: OunjePalette.secondaryText,
+                        action: onOpenRecipeStyle
+                    )
+                )
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+}
+
+struct ProfileSettingsAutoshopToggleRow: View {
+    @Binding var isEnabled: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "cart.badge.plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Autoshop")
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(1)
+
+                Text("Fill Instacart for review. Ounje never checks out.")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 10)
+
+            Toggle("", isOn: $isEnabled)
+                .labelsHidden()
+                .tint(OunjePalette.accent)
+        }
+        .padding(.vertical, 14)
+        .contentShape(Rectangle())
+    }
 }
 
 struct ProfileSettingsSectionView: View {
@@ -1296,6 +1447,148 @@ struct MembershipSettingsSheet: View {
                 }
             }
         }
+    }
+}
+
+struct RecipeStyleSettingsSheet: View {
+    @EnvironmentObject private var store: MealPlanningAppStore
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+
+    private var selectedStyle: RecipeTypographyStyle {
+        RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+    }
+
+    private var previewRecipe: DiscoverRecipeCardData {
+        DiscoverRecipeCardData(
+            id: "8c02aaff-33cd-4927-8c81-aae45e015c0d",
+            title: "Crunchy Miso Salmon Bites",
+            description: "Crunchy broiled miso salmon bites over rice.",
+            authorName: "@kalejunkie",
+            authorHandle: "@kalejunkie",
+            category: "Dinner Recipes",
+            recipeType: "Dinner",
+            cookTimeText: "15 mins",
+            cookTimeMinutes: 15,
+            publishedDate: nil,
+            imageURLString: nil,
+            heroImageURLString: nil,
+            recipeURLString: nil,
+            source: "Ounje"
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                OunjePalette.background.ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Visual style")
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundStyle(OunjePalette.primaryText)
+
+                        Text("Switch between our personal handwritten recipe style and a cleaner standard style.")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack(spacing: 12) {
+                        styleChoice(.playful)
+                        styleChoice(.clean)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+                .padding(.top, 20)
+            }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func styleChoice(_ style: RecipeTypographyStyle) -> some View {
+        Button {
+            recipeTypographyStyleRawValue = style.rawValue
+            persistRecipeStyle(style)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    if style == .playful {
+                        Text(style.displayName)
+                            .sleeDisplayFont(20)
+                            .foregroundStyle(OunjePalette.primaryText)
+                    } else {
+                        Text(style.displayName)
+                            .font(.system(size: 17, weight: .bold, design: .serif))
+                            .foregroundStyle(OunjePalette.primaryText)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: selectedStyle == style ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(selectedStyle == style ? OunjePalette.accent : Color.white.opacity(0.42))
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Image("CrunchyMisoSalmonPreview")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 108, height: 108)
+                        .clipShape(Circle())
+                        .frame(maxWidth: .infinity)
+
+                    RecipeTypographyTitleText(
+                        previewRecipe.title,
+                        size: style == .clean ? 15 : 17,
+                        color: OunjePalette.primaryText,
+                        style: style
+                    )
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.72)
+                    .frame(height: 54, alignment: .topLeading)
+
+                    HStack(spacing: 5) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(previewRecipe.compactCookTime ?? "15 mins")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .foregroundStyle(OunjePalette.secondaryText)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 224, maxHeight: 224, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(OunjePalette.panel.opacity(0.95))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(selectedStyle == style ? Color.white.opacity(0.9) : OunjePalette.stroke.opacity(0.8), lineWidth: selectedStyle == style ? 2 : 1)
+                        )
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func persistRecipeStyle(_ style: RecipeTypographyStyle) {
+        guard var updated = store.profile else { return }
+        let prefix = "Recipe style:"
+        var goals = updated.mealPrepGoals.filter {
+            !$0.localizedCaseInsensitiveContains(prefix)
+        }
+        goals.append("\(prefix) \(style.rawValue)")
+        updated.mealPrepGoals = goals
+        store.updateProfile(updated)
     }
 }
 
@@ -3209,626 +3502,6 @@ struct OunjePlusPaywallSheet: View {
             onClose: { dismiss() },
             onUpgradeSuccess: onUpgradeSuccess
         )
-    }
-}
-
-struct OunjePaywallHostView: View {
-    let initialTier: OunjePricingTier?
-    let isDismissible: Bool
-    let onClose: () -> Void
-    let onUpgradeSuccess: (() -> Void)?
-
-    @EnvironmentObject private var store: MealPlanningAppStore
-    @Environment(\.openURL) private var openURL
-    @State private var selectedTier: OunjePricingTier
-    @State private var selectedCadence: OunjeMembershipBillingCadence
-    @State private var localErrorMessage: String?
-    @State private var purchaseVisualState: PurchaseCTAVisualState = .idle
-
-    init(
-        initialTier: OunjePricingTier?,
-        isDismissible: Bool = true,
-        onClose: @escaping () -> Void,
-        onUpgradeSuccess: (() -> Void)? = nil
-    ) {
-        self.initialTier = initialTier
-        self.isDismissible = isDismissible
-        self.onClose = onClose
-        self.onUpgradeSuccess = onUpgradeSuccess
-        _selectedTier = State(initialValue: Self.defaultTier(from: initialTier))
-        _selectedCadence = State(initialValue: .monthly)
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let compact = proxy.size.height < 760
-            let contentWidth = min(proxy.size.width - 32, 430)
-            let headerHeight = max(compact ? 236 : 286, proxy.size.height * (compact ? 0.34 : 0.36))
-            let panelOverlap: CGFloat = compact ? 12 : 18
-            let panelHeight = max(0, proxy.size.height - headerHeight + panelOverlap + proxy.safeAreaInsets.bottom)
-            let contentBottomPadding = max(14, proxy.safeAreaInsets.bottom + 8)
-            let headerBaseColor = OunjePalette.background
-            let inkColor = OunjePalette.primaryText
-
-            ZStack(alignment: .topTrailing) {
-                OunjePalette.background
-                    .ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    ZStack(alignment: .topTrailing) {
-                        ZStack {
-                            headerBaseColor
-
-                            Image("OunjePaywallHero")
-                                .resizable()
-                                .scaledToFill()
-                                .opacity(0.08)
-                                .blendMode(.plusLighter)
-
-                            LinearGradient(
-                                colors: [
-                                    Color(hex: "0D1014"),
-                                    OunjePalette.background.opacity(0.94),
-                                    OunjePalette.panel.opacity(0.92)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        }
-                        .frame(width: proxy.size.width, height: headerHeight)
-                        .clipped()
-
-                        VStack(alignment: .leading, spacing: compact ? 9 : 12) {
-                            Capsule()
-                                .fill(OunjePalette.accent)
-                                .frame(width: 42, height: 10)
-
-                            Text("7 days free")
-                                .font(.custom("Slee_handwritting-Regular", size: compact ? 20 : 26))
-                                .foregroundStyle(OunjePalette.accent)
-                                .lineLimit(1)
-                                .padding(.top, 2)
-
-                            Text(paywallTitle)
-                                .font(.system(size: compact ? 26 : 32, weight: .bold, design: .rounded))
-                                .foregroundStyle(inkColor)
-                                .lineSpacing(1)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            Text(paywallSubtitle)
-                                .font(.system(size: compact ? 12 : 13, weight: .semibold, design: .rounded))
-                                .foregroundStyle(inkColor.opacity(0.62))
-                                .lineSpacing(2)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(width: contentWidth, alignment: .leading)
-                        .padding(.leading, max(16, (proxy.size.width - contentWidth) / 2))
-                        .padding(.bottom, compact ? 36 : 46)
-                        .frame(width: proxy.size.width, height: headerHeight, alignment: .bottomLeading)
-                    }
-
-                    VStack {
-                        VStack(spacing: compact ? 7 : 10) {
-                            PlusPaywallIntroStrip()
-                            .padding(.top, compact ? 10 : 14)
-
-                            HStack {
-                                Text("Choose your billing")
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-
-                                Spacer(minLength: 8)
-
-                                Text("Cancel anytime")
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.72))
-                            }
-
-                            CleanPaywallCadenceCard(
-                                title: "Monthly",
-                                price: "\(displayPriceValue(for: monthlyPlan))/month",
-                                detail: trialDetail(for: monthlyPlan),
-                                badgeText: selectedCadence == .monthly ? "Trial" : nil,
-                                comparisonPrice: nil,
-                                isSelected: selectedCadence == .monthly
-                            ) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    selectedCadence = .monthly
-                                }
-                            }
-
-                            CleanPaywallCadenceCard(
-                                title: "Annual",
-                                price: "\(displayPriceValue(for: yearlyPlan))/year",
-                                detail: trialDetail(for: yearlyPlan),
-                                badgeText: yearlySavingsBadgeText,
-                                comparisonPrice: yearlyReferencePriceText,
-                                isSelected: selectedCadence == .yearly
-                            ) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    selectedCadence = .yearly
-                                }
-                            }
-
-                            if let error = displayedErrorMessage {
-                                Text(error)
-                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(Color(hex: "FF8E8E"))
-                                    .lineLimit(2)
-                                    .minimumScaleFactor(0.8)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            PurchasingCTAButton(
-                                title: ctaTitle,
-                                state: purchaseVisualState,
-                                height: compact ? 38 : 44,
-                                isDisabled: store.isBillingBusy
-                            ) {
-                                Task {
-                                    await purchaseSelectedPlan()
-                                }
-                            }
-                            .padding(.top, 2)
-
-                            VStack(spacing: compact ? 5 : 7) {
-                                PaywallTrialBenefit(
-                                    icon: "checkmark.circle.fill",
-                                    text: "Plus turns TikTok and Instagram shares into recipes, then keeps prep and cart sync working together."
-                                )
-
-                                PaywallTrialBenefit(
-                                    icon: "calendar.badge.clock",
-                                    text: "Try it free for 7 days. Your selected plan starts after the trial."
-                                )
-                            }
-                            .padding(.top, 2)
-
-                            HStack(spacing: 14) {
-                                Button("Restore") {
-                                    Task {
-                                        _ = await store.restoreMembershipPurchases()
-                                        if store.membershipEntitlement?.isActive == true {
-                                            handleUnlockSuccess()
-                                        }
-                                    }
-                                }
-
-                                Button("Terms") { openURL(termsOfServiceURL) }
-                                Button("Privacy") { openURL(privacyPolicyURL) }
-                            }
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.82))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .padding(.top, 2)
-                        }
-                        .frame(width: contentWidth)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, contentBottomPadding)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: panelHeight, alignment: .top)
-                    .background(
-                        UnevenRoundedRectangle(
-                            cornerRadii: RectangleCornerRadii(
-                                topLeading: 18,
-                                bottomLeading: 0,
-                                bottomTrailing: 0,
-                                topTrailing: 18
-                            ),
-                            style: .continuous
-                        )
-                            .fill(OunjePalette.panel)
-                            .ignoresSafeArea(edges: .bottom)
-                    )
-                    .offset(y: -panelOverlap)
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height + panelOverlap, alignment: .top)
-                .clipped()
-
-                if isDismissible {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(OunjePalette.primaryText.opacity(0.82))
-                            .padding(10)
-                            .background(OunjePalette.panel.opacity(0.92))
-                            .clipShape(Circle())
-                    }
-                    .padding(.top, max(16, proxy.safeAreaInsets.top + 8))
-                    .padding(.trailing, 22)
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
-        .interactiveDismissDisabled(!isDismissible)
-        .task {
-            await store.refreshMembershipEntitlement(trigger: "paywall-presented")
-            if store.membershipEntitlement?.isActive == true {
-                handleUnlockSuccess()
-            }
-        }
-        .onChange(of: store.membershipEntitlement?.isActive == true) { isActive in
-            if isActive {
-                handleUnlockSuccess()
-            }
-        }
-        .onChange(of: selectedCadence) { _ in
-            localErrorMessage = nil
-            purchaseVisualState = .idle
-        }
-        .onChange(of: selectedTier) { _ in
-            localErrorMessage = nil
-            purchaseVisualState = .idle
-        }
-    }
-
-    private static func defaultTier(from initialTier: OunjePricingTier?) -> OunjePricingTier {
-        .plus
-    }
-
-    private var selectedPlan: OunjeMembershipPlan {
-        .init(tier: selectedTier, cadence: selectedCadence)
-    }
-
-    private var monthlyPlan: OunjeMembershipPlan {
-        .init(tier: selectedTier, cadence: .monthly)
-    }
-
-    private var yearlyPlan: OunjeMembershipPlan {
-        .init(tier: selectedTier, cadence: .yearly)
-    }
-
-    private var paywallTitle: String {
-        return "Try Ounje\nPlus"
-    }
-
-    private var paywallSubtitle: String {
-        return "Import recipe videos, build prep, and keep your grocery list synced."
-    }
-
-    private var ctaTitle: String {
-        return "Start 7-day free trial"
-    }
-
-    private var displayedErrorMessage: String? {
-        let message = localErrorMessage ?? store.billingStatusMessage
-        guard let message, !message.isEmpty else { return nil }
-        let lowercased = message.lowercased()
-        if lowercased.contains("invalid jwt")
-            || lowercased.contains("token is expired")
-            || lowercased.contains("unable to parse or verify signature")
-            || lowercased.contains("membership session is missing") {
-            return nil
-        }
-
-        if message.hasPrefix("["),
-           let closingBracket = message.firstIndex(of: "]"),
-           message.index(after: closingBracket) < message.endIndex {
-            let start = message.index(after: closingBracket)
-            let trimmed = message[start...].trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? message : trimmed
-        }
-
-        return message
-    }
-
-    private func displayPriceValue(for plan: OunjeMembershipPlan) -> String {
-        if let snapshot = store.availableMembershipProducts[plan] {
-            return snapshot.displayPrice
-        }
-        return plan.displayPriceText
-    }
-
-    private func trialDetail(for plan: OunjeMembershipPlan) -> String {
-        "7 days free, then \(displayPriceValue(for: plan))\(plan.cadence.cadenceSuffix)"
-    }
-
-    private func displayCadencePrice(_ cadence: OunjeMembershipBillingCadence) -> String {
-        let plan = OunjeMembershipPlan(tier: selectedTier, cadence: cadence)
-        let suffix = cadence == .yearly ? "YR" : "MO"
-        return "\(displayPriceValue(for: plan))/\(suffix)"
-    }
-
-    private var yearlySavingsBadgeText: String? {
-        guard let savings = yearlyPlan.savingsText else { return nil }
-        let normalized = savings
-            .replacingOccurrences(of: "Save ", with: "")
-            .uppercased()
-        return "\(normalized) SAVINGS"
-    }
-
-    private var yearlyReferencePriceText: String? {
-        let monthlyPrice = displayPriceValue(for: monthlyPlan)
-        guard let monthlyAmount = numericAmount(from: monthlyPrice) else { return nil }
-        let symbol = currencySymbol(in: monthlyPrice)
-        let annualized = monthlyAmount * 12
-        return "\(formattedCurrency(annualized, symbol: symbol))/YR"
-    }
-
-    private func currencySymbol(in rawPrice: String) -> String {
-        if let symbol = rawPrice.first(where: { !$0.isNumber && $0 != "." && $0 != "," && !$0.isWhitespace }) {
-            return String(symbol)
-        }
-        return "$"
-    }
-
-    private func numericAmount(from rawPrice: String) -> Double? {
-        let digitsAndSeparator = rawPrice.filter { $0.isNumber || $0 == "." || $0 == "," }
-        let normalized = digitsAndSeparator.replacingOccurrences(of: ",", with: ".")
-        return Double(normalized)
-    }
-
-    private func formattedCurrency(_ value: Double, symbol: String) -> String {
-        let rounded = ((value * 100).rounded() / 100)
-        if rounded.rounded() == rounded {
-            return "\(symbol)\(Int(rounded))"
-        }
-        return "\(symbol)\(String(format: "%.2f", rounded))"
-    }
-
-    @MainActor
-    private func purchaseSelectedPlan() async {
-        guard !store.isBillingBusy else { return }
-        localErrorMessage = nil
-        purchaseVisualState = .processing
-
-        if await store.purchaseMembershipPlan(selectedPlan) {
-            purchaseVisualState = .success
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            handleUnlockSuccess()
-        } else {
-            purchaseVisualState = .failed
-            localErrorMessage = store.billingStatusMessage ?? "Purchase failed."
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            purchaseVisualState = .idle
-        }
-    }
-
-    private func handleUnlockSuccess() {
-        onUpgradeSuccess?()
-        if isDismissible {
-            onClose()
-        }
-    }
-}
-
-struct MembershipDisclosureBlock: View {
-    let plan: OunjeMembershipPlan
-    let price: String
-
-    var body: some View {
-        Text("\(plan.marketingName): \(price) for \(plan.durationLabel). Auto-renews unless canceled at least 24 hours before the current period ends. Manage subscriptions in App Store settings.")
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(Color.black.opacity(0.52))
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .multilineTextAlignment(.center)
-    }
-}
-
-struct PlusPaywallIntroStrip: View {
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(OunjePalette.accent)
-                .frame(width: 30, height: 30)
-                .background(
-                    Circle()
-                        .fill(OunjePalette.accent.opacity(0.14))
-                )
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("One Plus plan")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(OunjePalette.primaryText)
-                Text("Social recipe imports, meal prep, cookbook, and cart sync.")
-                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(OunjePalette.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1)
-                )
-        )
-    }
-}
-
-struct CleanPaywallTierCard: View {
-    let title: String
-    let detail: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 4)
-
-                    Circle()
-                        .fill(isSelected ? OunjePalette.accent : Color.clear)
-                        .frame(width: 12, height: 12)
-                        .overlay {
-                            if isSelected {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 6, weight: .bold))
-                                    .foregroundStyle(.black)
-                            } else {
-                                Circle()
-                                    .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1.2)
-                            }
-                        }
-                }
-
-                Text(detail)
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .lineLimit(2)
-                    .lineSpacing(1)
-                    .minimumScaleFactor(0.86)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
-            .padding(10)
-            .background(isSelected ? OunjePalette.accent.opacity(0.14) : OunjePalette.surface)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? OunjePalette.accent : OunjePalette.stroke.opacity(0.9), lineWidth: isSelected ? 1.4 : 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(title). \(detail)")
-    }
-}
-
-struct PaywallTrialBenefit: View {
-    let icon: String
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(OunjePalette.accent)
-                .frame(width: 16, height: 16)
-
-            Text(text)
-                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(OunjePalette.secondaryText)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct CleanPaywallCadenceCard: View {
-    let title: String
-    let price: String
-    let detail: String?
-    let badgeText: String?
-    let comparisonPrice: String?
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(OunjePalette.primaryText)
-                        .lineLimit(1)
-
-                    Text(price)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-
-                    if let detail {
-                        Text(detail)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .lineLimit(1)
-                    }
-
-                    if let comparisonPrice, !comparisonPrice.isEmpty {
-                        Text(comparisonPrice)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.72))
-                            .strikethrough()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                }
-
-                Spacer(minLength: 0)
-
-                if let badgeText {
-                    Text(badgeText.uppercased())
-                        .font(.system(size: 8, weight: .heavy))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(OunjePalette.accent)
-                        .clipShape(Capsule())
-                }
-
-                ZStack {
-                    Circle()
-                        .stroke(isSelected ? OunjePalette.accent : OunjePalette.stroke.opacity(0.9), lineWidth: 1.5)
-                        .frame(width: 16, height: 16)
-
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(.black)
-                            .frame(width: 16, height: 16)
-                            .background(OunjePalette.accent)
-                            .clipShape(Circle())
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(minHeight: 66)
-            .background(isSelected ? OunjePalette.accent.opacity(0.12) : OunjePalette.surface)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(
-                        isSelected ? OunjePalette.accent : OunjePalette.stroke.opacity(0.9),
-                        style: StrokeStyle(lineWidth: isSelected ? 1.4 : 1, dash: isSelected ? [] : [4, 3])
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-extension OunjeMembershipPlan {
-    var marketingName: String {
-        switch tier {
-        case .plus:
-            return "Ounje Plus"
-        case .autopilot:
-            return "Ounje Plus"
-        case .free:
-            return "Ounje Free"
-        case .foundingLifetime:
-            return "Founding Lifetime Plus"
-        }
-    }
-
-    var durationLabel: String {
-        switch cadence {
-        case .monthly:
-            return "1 month"
-        case .yearly:
-            return "1 year"
-        }
     }
 }
 

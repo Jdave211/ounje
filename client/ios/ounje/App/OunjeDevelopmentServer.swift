@@ -1,7 +1,7 @@
 import Foundation
 
 enum OunjeLaunchFlags {
-    static let paywallsEnabled = false
+    static let paywallsEnabled = true
 }
 
 enum OunjeDevelopmentServer {

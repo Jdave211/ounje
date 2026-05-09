@@ -17,6 +17,13 @@ final class DiscoverRecipesViewModel: ObservableObject {
         var entries: [String: DiscoverShelfCacheEntry] = [:]
     }
 
+    private struct InMemoryDiscoverCacheEntry {
+        let recipes: [DiscoverRecipeCardData]
+        let filters: [String]
+        let hasMoreRecipes: Bool
+        let nextOffset: Int
+    }
+
     @Published private(set) var recipes: [DiscoverRecipeCardData] = []
     @Published private(set) var filters: [String]
     @Published private(set) var isLoading = false
@@ -25,17 +32,17 @@ final class DiscoverRecipesViewModel: ObservableObject {
     @Published private(set) var hasMoreRecipes = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var hasResolvedInitialLoad = false
-    @Published var selectedFilter = "All"
+    @Published var selectedFilter = DiscoverPreset.all.title
 
     private var lastLoadKey: String?
-    private var responseCache: [String: [DiscoverRecipeCardData]] = [:]
+    private var responseCache: [String: InMemoryDiscoverCacheEntry] = [:]
     private var activeRequestID: UUID?
     private let sessionSeed = String(UUID().uuidString.prefix(8))
     private let filterShuffleSeed = UUID().uuidString
     private var baseFeedRotationIndex = 0
     private var baseFeedRefreshToken = UUID().uuidString
     private var lastBaseRotationAt: Date?
-    private var lastLoadedFilter = "All"
+    private var lastLoadedFilter = DiscoverPreset.all.title
     private var feedbackRevision = 0
     private let stagedPageSize = 18
     private var currentFeedLimit = 18
@@ -81,7 +88,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
         let requestID = UUID()
         activeRequestID = requestID
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        var hadExistingRecipes = !recipes.isEmpty
+        let hadExistingRecipes = !recipes.isEmpty
         let isPresetTransition = normalizedQuery.isEmpty && selectedFilter != lastLoadedFilter
         let requestedLimit = max(1, limit ?? currentFeedLimit)
         currentFeedLimit = requestedLimit
@@ -91,13 +98,13 @@ final class DiscoverRecipesViewModel: ObservableObject {
         let shelfKey = persistentShelfKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
 
         if !forceNetwork,
-           let cachedRecipes = responseCache[loadKey],
-           !cachedRecipes.isEmpty {
+           let cachedEntry = responseCache[loadKey],
+           !cachedEntry.recipes.isEmpty {
             applyCachedRecipes(
-                cachedRecipes,
-                filters: filters,
-                hasMore: cachedRecipes.count >= requestedLimit,
-                nextOffset: requestedOffset + cachedRecipes.count,
+                cachedEntry.recipes,
+                filters: cachedEntry.filters,
+                hasMore: cachedEntry.hasMoreRecipes,
+                nextOffset: cachedEntry.nextOffset,
                 loadKey: loadKey,
                 appendResults: appendResults,
                 requestedOffset: requestedOffset
@@ -107,12 +114,13 @@ final class DiscoverRecipesViewModel: ObservableObject {
             return
         }
 
-        if !appendResults,
+        let canUseStoredShelf = DiscoverPreset.normalizedKey(for: selectedFilter) == "all"
+        if canUseStoredShelf,
+           !appendResults,
            !forceNetwork,
            let storedShelf = storedShelf(for: shelfKey),
            !storedShelf.recipes.isEmpty {
             applyStoredShelf(storedShelf, loadKey: loadKey)
-            hadExistingRecipes = true
             if Date().timeIntervalSince(storedShelf.storedAt) < shelfCacheTTL {
                 isLoading = false
                 isTransitioningFeed = false
@@ -159,7 +167,12 @@ final class DiscoverRecipesViewModel: ObservableObject {
             recipes = appendResults && requestedOffset > 0
                 ? dedupeRecipesByID(recipes + response.recipes)
                 : response.recipes
-            responseCache[loadKey] = response.recipes
+            responseCache[loadKey] = InMemoryDiscoverCacheEntry(
+                recipes: response.recipes,
+                filters: response.filters,
+                hasMoreRecipes: response.hasMore ?? (response.recipes.count >= requestedLimit),
+                nextOffset: response.nextOffset ?? (requestedOffset + response.recipes.count)
+            )
             filters = DiscoverPreset.shuffledTitles(seed: filterShuffleSeed)
             errorMessage = nil
             hasResolvedInitialLoad = true
@@ -168,9 +181,9 @@ final class DiscoverRecipesViewModel: ObservableObject {
             lastLoadedFilter = selectedFilter
             lastLoadKey = loadKey
             if !filters.contains(selectedFilter) {
-                selectedFilter = "All"
+                selectedFilter = DiscoverPreset.all.title
             }
-            if !appendResults && requestedOffset == 0 {
+            if canUseStoredShelf && !appendResults && requestedOffset == 0 {
                 storeShelf(
                     key: shelfKey,
                     recipes: response.recipes,
@@ -194,7 +207,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
     func loadMoreIfNeeded(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
         guard hasResolvedInitialLoad, hasMoreRecipes, !isLoading, !isFetchingMore else { return }
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nextOffset = recipes.count
+        let nextOffset = currentFeedOffset
         let loadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset)
         guard responseCache[loadKey] == nil else {
             currentFeedOffset = nextOffset
@@ -246,17 +259,22 @@ final class DiscoverRecipesViewModel: ObservableObject {
     func selectFilter(_ filter: String, isSearching: Bool) {
         guard selectedFilter != filter else { return }
         selectedFilter = filter
+        lastLoadKey = nil
+        currentFeedOffset = 0
+        hasMoreRecipes = false
+        errorMessage = nil
         if !isSearching {
             isTransitioningFeed = true
-            currentFeedOffset = 0
+            hasResolvedInitialLoad = false
+            recipes = []
         }
     }
 
     func prepareForQueryRefresh() {
         isTransitioningFeed = true
-        if recipes.isEmpty {
-            hasMoreRecipes = false
-        }
+        recipes = []
+        hasResolvedInitialLoad = false
+        hasMoreRecipes = false
         errorMessage = nil
         currentFeedOffset = 0
     }
@@ -349,7 +367,12 @@ final class DiscoverRecipesViewModel: ObservableObject {
             appendResults: false,
             requestedOffset: 0
         )
-        responseCache[loadKey] = shelf.recipes
+        responseCache[loadKey] = InMemoryDiscoverCacheEntry(
+            recipes: shelf.recipes,
+            filters: shelf.filters,
+            hasMoreRecipes: shelf.hasMoreRecipes,
+            nextOffset: shelf.nextOffset
+        )
     }
 
     private func storedShelf(for key: String) -> DiscoverShelfCacheEntry? {
@@ -415,7 +438,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
 
     private func fallbackRecipeLimit(for normalizedQuery: String) -> Int {
         if normalizedQuery.isEmpty {
-            return selectedFilter == "All" ? 300 : 600
+            return DiscoverPreset.normalizedKey(for: selectedFilter) == "all" ? 300 : 600
         }
         return 600
     }

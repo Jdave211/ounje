@@ -613,6 +613,36 @@ async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole =
   }
 }
 
+function ingredientDisplayNameFromKey(value) {
+  const normalized = normalizeKey(value);
+  if (!normalized) return null;
+  const smallWords = new Set(["and", "or", "of", "in", "with"]);
+  return normalized
+    .split(" ")
+    .filter(Boolean)
+    .map((part, index) => {
+      if (index > 0 && smallWords.has(part)) return part;
+      return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+    })
+    .join(" ");
+}
+
+function isUtilityIngredient(name) {
+  const normalized = normalizeKey(name);
+  if (!normalized) return true;
+  const utilityIngredients = new Set([
+    "water",
+    "hot water",
+    "cold water",
+    "warm water",
+    "boiling water",
+    "ice",
+    "ice cube",
+    "ice cubes",
+  ]);
+  return utilityIngredients.has(normalized);
+}
+
 async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   const normalized = cleanURL(sourceURL);
   if (!normalized) return null;
@@ -3558,7 +3588,7 @@ async function resolveIngredientCatalog(ingredients) {
   const names = uniqueStrings((ingredients ?? []).map((ingredient) => normalizeKey(ingredient.display_name))).filter(Boolean);
   if (!names.length) return new Map();
 
-  const rows = await fetchRows(
+  let rows = await fetchRows(
     "ingredients",
     "id,display_name,normalized_name,default_image_url",
     {
@@ -3567,19 +3597,103 @@ async function resolveIngredientCatalog(ingredients) {
     }
   );
 
+  const existingKeys = new Set(rows.map((row) => normalizeKey(row.normalized_name ?? row.display_name)));
+  const missingNames = names.filter((name) => !existingKeys.has(normalizeKey(name)));
+  if (missingNames.length) {
+    const displayNameByKey = new Map(
+      (ingredients ?? [])
+        .map((ingredient) => [normalizeKey(ingredient.display_name), normalizeText(ingredient.display_name)])
+        .filter(([key, value]) => key && value)
+    );
+    const inserted = await insertRows(
+      "ingredients",
+      missingNames.map((name) => ({
+        id: crypto.randomUUID(),
+        normalized_name: normalizeKey(name),
+        display_name: displayNameByKey.get(normalizeKey(name)) ?? ingredientDisplayNameFromKey(name) ?? name,
+      })),
+      {
+        onConflict: "normalized_name",
+        prefer: "resolution=merge-duplicates,return=representation",
+      }
+    ).catch((error) => {
+      console.warn("[recipe-ingestion] canonical ingredient insert failed:", error.message);
+      return [];
+    });
+    rows = [...rows, ...inserted];
+  }
+
   return new Map(
     rows.map((row) => [normalizeKey(row.normalized_name ?? row.display_name), row])
   );
 }
 
+async function resolveTrustedIngredientImageLookup(catalog, ingredients) {
+  const lookup = new Map();
+  const candidates = [];
+  const seenIngredientIDs = new Set();
+
+  for (const ingredient of ingredients ?? []) {
+    const key = normalizeKey(ingredient.display_name);
+    if (!key || isUtilityIngredient(key)) continue;
+    const row = catalog.get(key);
+    const defaultImageURL = cleanURL(row?.default_image_url ?? null);
+    if (defaultImageURL) {
+      lookup.set(key, defaultImageURL);
+      continue;
+    }
+    const ingredientID = normalizeText(row?.id ?? ingredient.ingredient_id ?? "");
+    if (!ingredientID || seenIngredientIDs.has(ingredientID)) continue;
+    seenIngredientIDs.add(ingredientID);
+    candidates.push({ key, ingredientID });
+  }
+
+  if (!candidates.length) return lookup;
+
+  const rows = await fetchRows(
+    "recipe_ingredients",
+    "ingredient_id,display_name,image_url",
+    {
+      filters: [
+        `ingredient_id=in.${buildInClause(candidates.map((candidate) => candidate.ingredientID))}`,
+        "image_url=not.is.null",
+      ],
+      order: ["ingredient_id.asc"],
+      limit: 1000,
+    }
+  ).catch((error) => {
+    console.warn("[recipe-ingestion] trusted ingredient image lookup failed:", error.message);
+    return [];
+  });
+
+  const imageByIngredientID = new Map();
+  for (const row of rows) {
+    const ingredientID = normalizeText(row?.ingredient_id ?? "");
+    const imageURL = cleanURL(row?.image_url ?? null);
+    if (!ingredientID || !imageURL || imageByIngredientID.has(ingredientID)) continue;
+    imageByIngredientID.set(ingredientID, imageURL);
+  }
+
+  for (const candidate of candidates) {
+    const imageURL = imageByIngredientID.get(candidate.ingredientID);
+    if (imageURL && !lookup.has(candidate.key)) {
+      lookup.set(candidate.key, imageURL);
+    }
+  }
+
+  return lookup;
+}
+
 async function hydrateIngredientIdentity(normalized) {
   const catalog = await resolveIngredientCatalog(normalized.ingredients);
+  const trustedImageByIngredientKey = await resolveTrustedIngredientImageLookup(catalog, normalized.ingredients);
   const nextIngredients = normalized.ingredients.map((ingredient) => {
-    const match = catalog.get(normalizeKey(ingredient.display_name));
+    const key = normalizeKey(ingredient.display_name);
+    const match = catalog.get(key);
     return {
       ...ingredient,
       ingredient_id: ingredient.ingredient_id ?? match?.id ?? null,
-      image_url: ingredient.image_url ?? match?.default_image_url ?? null,
+      image_url: ingredient.image_url ?? trustedImageByIngredientKey.get(key) ?? null,
     };
   });
 

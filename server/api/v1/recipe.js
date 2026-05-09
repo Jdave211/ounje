@@ -975,7 +975,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
     feedContext = null,
   } = req.body ?? {};
   const trimmedQuery = String(query ?? "").trim();
-  const normalizedFilter = String(filter ?? "All").trim().toLowerCase();
+  const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
   const isBaseDiscover = normalizedFilter === "all";
   const requestedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 30;
   const requestedOffset = Number.isFinite(Number(offset)) ? Math.max(0, Number(offset)) : 0;
@@ -1009,19 +1009,23 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         return res.json(cachedPayload);
       }
 
-      const { recipes, rankingMode } = isBaseDiscover
-        ? await buildFastBaseDiscoverRecipes({
-            profile,
-            filter,
-            feedContext,
-            limit: requestedWindowLimit,
-          })
-        : await buildPresetDiscoverRecipes({
-            profile,
-            filter,
-            feedContext,
-            limit: requestedWindowLimit,
-          });
+      if (!isBaseDiscover) {
+        const payload = await buildPresetDiscoverPayload({
+          filter,
+          feedContext,
+          limit: requestedLimit,
+          offset: requestedOffset,
+        });
+        discoverFeedCache.set(feedCacheKey, { value: payload, createdAt: Date.now() });
+        return res.json(payload);
+      }
+
+      const { recipes, rankingMode } = await buildFastBaseDiscoverRecipes({
+        profile,
+        filter,
+        feedContext,
+        limit: requestedWindowLimit,
+      });
 
       const payload = pageDiscoverResults({
         recipes,
@@ -1728,7 +1732,7 @@ async function buildFastBaseDiscoverRecipes({
   feedContext = null,
   limit = 30,
 }) {
-  const normalizedFilter = String(filter ?? "All").trim().toLowerCase();
+  const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
   const target = Math.min(Math.max(limit, 30), normalizedFilter === "all" ? 120 : 90);
   const baseSeed = `${feedContext?.sessionSeed ?? "base"}|${feedContext?.windowKey ?? "now"}|${normalizedFilter}|fast|${target}`;
 
@@ -1778,10 +1782,10 @@ async function buildBaseDiscoverRecipes({
   feedContext = null,
   limit = 360,
 }) {
-  const normalizedFilter = String(filter ?? "All").trim().toLowerCase();
+  const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
   const minimumPoolTarget = normalizedFilter === "all" ? 360 : 240;
   const target = Math.max(limit, minimumPoolTarget);
-  const baseSeed = `${feedContext?.sessionSeed ?? "base"}|${feedContext?.windowKey ?? "now"}|${String(filter ?? "All").toLowerCase()}|${target}`;
+  const baseSeed = `${feedContext?.sessionSeed ?? "base"}|${feedContext?.windowKey ?? "now"}|${normalizedFilter}|${target}`;
 
   const sharedPool = await fetchDiscoverBroadPool({
     profile,
@@ -1814,7 +1818,7 @@ async function buildBaseDiscoverRecipes({
     seed: baseSeed,
   });
 
-  if (String(filter ?? "All").trim().toLowerCase() !== "all") {
+  if (normalizedFilter !== "all") {
     recipes = frontloadPresetRecipes(recipes, filter, target);
   }
 
@@ -1857,7 +1861,7 @@ async function buildPresetDiscoverRecipes({
   feedContext = null,
   limit = 240,
 }) {
-  const normalizedFilter = String(filter ?? "All").trim().toLowerCase();
+  const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
   if (normalizedFilter === "all") {
     return buildBaseDiscoverRecipes({ profile, filter, feedContext, limit: Math.max(limit, 360) });
   }
@@ -1867,40 +1871,62 @@ async function buildPresetDiscoverRecipes({
 
   const presetPool = await fetchPresetBracketRecipes({
     filter,
-    limit: Math.max(target * 2, 180),
+    limit: Math.max(target, 180),
     seed: `${seedRoot}|pool`,
   }).catch((error) => {
     console.warn("[recipe/discover] preset pool failed:", error.message);
     return [];
   });
-  const presetLatestFallback = await fetchLatestRecipes(Math.max(target, 180)).catch((error) => {
-    console.warn("[recipe/discover] preset latest fallback failed:", error.message);
-    return [];
-  });
-  const fallbackWidePool = dedupeRecipesById(
+  const randomized = stableShuffle(
     applyPresetCategoryGate(
-      applyPresetHardConstraints(
-        [
-          ...presetPool,
-          ...presetLatestFallback,
-        ],
-        filter
-      ),
+      applyPresetHardConstraints(dedupeRecipesById(presetPool), filter),
       filter
-    )
-  );
-
-  const ranked = rankPresetShelfRecipes(
-    dedupeRecipesById([
-      ...presetPool,
-      ...fallbackWidePool,
-    ]),
-    { filter, profile, feedContext, seed: `${seedRoot}|shelf` }
+    ),
+    `${seedRoot}|direct-bracket-shelf`
   );
 
   return {
-    recipes: ranked.slice(0, target),
-    rankingMode: "preset_bracket_shelf_rotating",
+    recipes: randomized.slice(0, target),
+    rankingMode: "preset_bracket_direct_random",
+  };
+}
+
+async function buildPresetDiscoverPayload({
+  filter = "All",
+  feedContext = null,
+  limit = 18,
+  offset = 0,
+}) {
+  const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
+  if (normalizedFilter === "all") {
+    const { recipes, rankingMode } = await buildFastBaseDiscoverRecipes({
+      profile: null,
+      filter,
+      feedContext,
+      limit: Math.max(limit + offset, 360),
+    });
+    return pageDiscoverResults({
+      recipes,
+      filters: deriveDiscoverFilters(recipes),
+      rankingMode,
+    }, offset, limit);
+  }
+
+  const seedRoot = `${feedContext?.sessionSeed ?? "preset"}|${feedContext?.windowKey ?? "now"}|${normalizedFilter}`;
+  const result = await fetchPresetBracketRecipePage({
+    filter,
+    limit,
+    offset,
+    seed: `${seedRoot}|direct-bracket-shelf`,
+  });
+
+  return {
+    recipes: result.recipes,
+    filters: getDiscoverPresetTitles(),
+    rankingMode: "preset_bracket_direct_random",
+    totalAvailable: result.totalAvailable,
+    hasMore: result.hasMore,
+    nextOffset: result.nextOffset,
   };
 }
 
@@ -4870,15 +4896,14 @@ async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "
     return fetchRandomDiscoverRecipes({ limit, seed, filter: "All" });
   }
 
-  let bracketIds = getCachedRecipeIdsForBracket(filter);
-  if (!bracketIds.length) {
-    try {
-      bracketIds = await fetchDbBracketRecipeIds(filter);
-    } catch (error) {
-      if (!isMissingRecipeColumnError(error.message)) {
-        throw error;
-      }
+  let bracketIds = [];
+  try {
+    bracketIds = await fetchDbBracketRecipeIds(filter);
+  } catch (error) {
+    if (!isMissingRecipeColumnError(error.message)) {
+      throw error;
     }
+    bracketIds = getCachedRecipeIdsForBracket(filter);
   }
 
   if (!bracketIds.length) {
@@ -4896,6 +4921,70 @@ async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "
     applyPresetHardConstraints(recipes, filter),
     filter
   ).slice(0, Math.max(1, limit));
+}
+
+async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset = 0, seed = "preset-page" }) {
+  const preset = getDiscoverPreset(filter);
+  if (!preset || preset.key === "all") {
+    const recipes = await fetchRandomDiscoverRecipes({ limit, seed, filter: "All" });
+    return {
+      recipes,
+      totalAvailable: recipes.length,
+      hasMore: false,
+      nextOffset: null,
+    };
+  }
+
+  let bracketIds = [];
+  try {
+    bracketIds = await fetchDbBracketRecipeIds(filter);
+  } catch (error) {
+    if (!isMissingRecipeColumnError(error.message)) {
+      throw error;
+    }
+    bracketIds = getCachedRecipeIdsForBracket(filter);
+  }
+
+  const safeLimit = Math.max(1, Number(limit) || 18);
+  let cursor = Math.max(0, Number(offset) || 0);
+  const shuffledIds = stableShuffle(
+    bracketIds.map((id) => ({ id })),
+    `${seed}|${preset.key}|ids`
+  ).map((item) => item.id);
+  const recipes = [];
+  const seenRecipeIds = new Set();
+  const scanSize = Math.max(safeLimit * 4, 72);
+
+  while (recipes.length < safeLimit && cursor < shuffledIds.length) {
+    const batchEnd = Math.min(shuffledIds.length, cursor + scanSize);
+    const idsToFetch = shuffledIds.slice(cursor, batchEnd);
+    cursor = batchEnd;
+
+    const batchRecipes = applyPresetHardConstraints(
+      dedupeRecipesById(await fetchRecipesByIdBatches(idsToFetch)).filter((recipe) => (
+        preset.key === "under500" || recipeHasDiscoverBracket(recipe, filter)
+      )),
+      filter
+    );
+
+    for (const recipe of batchRecipes) {
+      if (!recipe?.id || seenRecipeIds.has(recipe.id)) {
+        continue;
+      }
+      seenRecipeIds.add(recipe.id);
+      recipes.push(recipe);
+      if (recipes.length >= safeLimit) {
+        break;
+      }
+    }
+  }
+
+  return {
+    recipes,
+    totalAvailable: cursor < shuffledIds.length ? shuffledIds.length : Math.max(offset + recipes.length, recipes.length),
+    hasMore: cursor < shuffledIds.length,
+    nextOffset: cursor < shuffledIds.length ? cursor : null,
+  };
 }
 
 function rankPresetShelfRecipes(recipes, { filter = "All", profile = null, feedContext = null, seed = "preset-shelf" }) {

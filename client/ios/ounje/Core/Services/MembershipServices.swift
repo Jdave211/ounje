@@ -4,6 +4,8 @@ import StoreKit
 struct StoreProductSnapshot: Hashable {
     let productID: String
     let displayPrice: String
+    let hasIntroductoryOffer: Bool
+    let isEligibleForIntroOffer: Bool
 }
 
 enum StoreBillingError: LocalizedError {
@@ -45,9 +47,13 @@ final class StoreKitMembershipBillingService {
         var snapshots: [OunjeMembershipPlan: StoreProductSnapshot] = [:]
         for (plan, productID) in productIDsByPlan {
             guard let product = productsByID[productID] else { continue }
+            let subscription = product.subscription
+            let isEligibleForIntroOffer = await subscription?.isEligibleForIntroOffer ?? false
             snapshots[plan] = StoreProductSnapshot(
                 productID: product.id,
-                displayPrice: product.displayPrice
+                displayPrice: product.displayPrice,
+                hasIntroductoryOffer: subscription?.introductoryOffer != nil,
+                isEligibleForIntroOffer: isEligibleForIntroOffer
             )
         }
         return snapshots

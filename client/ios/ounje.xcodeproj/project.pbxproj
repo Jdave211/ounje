@@ -65,9 +65,15 @@
 		DAD00000000000000000007 /* InstacartAutomationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000007 /* InstacartAutomationServices.swift */; };
 		DAD00000000000000000008 /* OnboardingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000008 /* OnboardingViews.swift */; };
 		DAD00000000000000000009 /* ProfileViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000009 /* ProfileViews.swift */; };
-		DAD0000000000000000000A /* CartViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000A /* CartViews.swift */; };
-		DAD0000000000000000000B /* PrepViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000B /* PrepViews.swift */; };
-		DAD0000000000000000000C /* RecipeDetailViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000C /* RecipeDetailViews.swift */; };
+			DAD0000000000000000000A /* CartViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000A /* CartViews.swift */; };
+			DAD0000000000000000000B /* PrepViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000B /* PrepViews.swift */; };
+			DAD0000000000000000000C /* RecipeDetailViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000C /* RecipeDetailViews.swift */; };
+			DAD0000000000000000000D /* OunjePaywallHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000D /* OunjePaywallHostView.swift */; };
+			DAD0000000000000000000E /* CleanPaywallCadenceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000E /* CleanPaywallCadenceCard.swift */; };
+			DAD0000000000000000000F /* DiscoverHeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000F /* DiscoverHeaderView.swift */; };
+			DAD00000000000000000010 /* DiscoverSearchField.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000010 /* DiscoverSearchField.swift */; };
+			DAD00000000000000000011 /* DiscoverLoadingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000011 /* DiscoverLoadingViews.swift */; };
+			DAD00000000000000000012 /* DiscoverRecipeFeedContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000012 /* DiscoverRecipeFeedContentView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -154,9 +160,15 @@
 		DAE00000000000000000007 /* InstacartAutomationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/InstacartAutomationServices.swift; sourceTree = "<group>"; };
 		DAE00000000000000000008 /* OnboardingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Onboarding/Views/OnboardingViews.swift; sourceTree = "<group>"; };
 		DAE00000000000000000009 /* ProfileViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Profile/Views/ProfileViews.swift; sourceTree = "<group>"; };
-		DAE0000000000000000000A /* CartViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/Views/CartViews.swift; sourceTree = "<group>"; };
-		DAE0000000000000000000B /* PrepViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Prep/Views/PrepViews.swift; sourceTree = "<group>"; };
-		DAE0000000000000000000C /* RecipeDetailViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/RecipeDetail/Views/RecipeDetailViews.swift; sourceTree = "<group>"; };
+			DAE0000000000000000000A /* CartViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/Views/CartViews.swift; sourceTree = "<group>"; };
+			DAE0000000000000000000B /* PrepViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Prep/Views/PrepViews.swift; sourceTree = "<group>"; };
+			DAE0000000000000000000C /* RecipeDetailViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/RecipeDetail/Views/RecipeDetailViews.swift; sourceTree = "<group>"; };
+			DAE0000000000000000000D /* OunjePaywallHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Profile/Views/Paywall/OunjePaywallHostView.swift; sourceTree = "<group>"; };
+			DAE0000000000000000000E /* CleanPaywallCadenceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Profile/Views/Paywall/CleanPaywallCadenceCard.swift; sourceTree = "<group>"; };
+			DAE0000000000000000000F /* DiscoverHeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/Views/DiscoverHeaderView.swift; sourceTree = "<group>"; };
+			DAE00000000000000000010 /* DiscoverSearchField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/Views/DiscoverSearchField.swift; sourceTree = "<group>"; };
+			DAE00000000000000000011 /* DiscoverLoadingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/Views/DiscoverLoadingViews.swift; sourceTree = "<group>"; };
+			DAE00000000000000000012 /* DiscoverRecipeFeedContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/Views/DiscoverRecipeFeedContentView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -320,6 +332,10 @@
 			isa = PBXGroup;
 			children = (
 				DAB00000000000000000006 /* DiscoverTabView.swift */,
+				DAE0000000000000000000F /* DiscoverHeaderView.swift */,
+				DAE00000000000000000010 /* DiscoverSearchField.swift */,
+				DAE00000000000000000011 /* DiscoverLoadingViews.swift */,
+				DAE00000000000000000012 /* DiscoverRecipeFeedContentView.swift */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -466,14 +482,24 @@
 			name = Models;
 			sourceTree = "<group>";
 		};
-		DAC00000000000000000025 /* Views */ = {
-			isa = PBXGroup;
-			children = (
-				DAE00000000000000000009 /* ProfileViews.swift */,
-			);
-			name = Views;
-			sourceTree = "<group>";
-		};
+			DAC00000000000000000025 /* Views */ = {
+				isa = PBXGroup;
+				children = (
+					DAE00000000000000000009 /* ProfileViews.swift */,
+					DAC0000000000000000002A /* Paywall */,
+				);
+				name = Views;
+				sourceTree = "<group>";
+			};
+			DAC0000000000000000002A /* Paywall */ = {
+				isa = PBXGroup;
+				children = (
+					DAE0000000000000000000D /* OunjePaywallHostView.swift */,
+					DAE0000000000000000000E /* CleanPaywallCadenceCard.swift */,
+				);
+				name = Paywall;
+				sourceTree = "<group>";
+			};
 		DAC00000000000000000026 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -693,10 +719,16 @@
 				DAD00000000000000000007 /* InstacartAutomationServices.swift in Sources */,
 				DAD00000000000000000008 /* OnboardingViews.swift in Sources */,
 				DAD00000000000000000009 /* ProfileViews.swift in Sources */,
-				DAD0000000000000000000A /* CartViews.swift in Sources */,
-				DAD0000000000000000000B /* PrepViews.swift in Sources */,
-				DAD0000000000000000000C /* RecipeDetailViews.swift in Sources */,
-				DAA00000000000000000020 /* SavedRecipesStore.swift in Sources */,
+					DAD0000000000000000000A /* CartViews.swift in Sources */,
+					DAD0000000000000000000B /* PrepViews.swift in Sources */,
+					DAD0000000000000000000C /* RecipeDetailViews.swift in Sources */,
+					DAD0000000000000000000D /* OunjePaywallHostView.swift in Sources */,
+					DAD0000000000000000000E /* CleanPaywallCadenceCard.swift in Sources */,
+					DAD0000000000000000000F /* DiscoverHeaderView.swift in Sources */,
+					DAD00000000000000000010 /* DiscoverSearchField.swift in Sources */,
+					DAD00000000000000000011 /* DiscoverLoadingViews.swift in Sources */,
+					DAD00000000000000000012 /* DiscoverRecipeFeedContentView.swift in Sources */,
+					DAA00000000000000000020 /* SavedRecipesStore.swift in Sources */,
 				DAA00000000000000000021 /* FeedbackService.swift in Sources */,
 				DAA00000000000000000002 /* OunjePalette.swift in Sources */,
 				DAA00000000000000000007 /* OunjeLayout.swift in Sources */,

@@ -1463,9 +1463,6 @@ private struct MealPlannerShellView: View {
     @State private var tabTransitionDirection: CGFloat = 1
     @State private var requestedCookbookImportText: String?
     @State private var isPhotoImportComposerPresented = false
-    @State private var clipboardRecipeImportURL: String?
-    @State private var isClipboardImportPromptPresented = false
-    @AppStorage("ounje.lastPromptedClipboardRecipeURL") private var lastPromptedClipboardRecipeURL = ""
 
     private enum SharedImportProcessingScope {
         case queued
@@ -1639,7 +1636,6 @@ private struct MealPlannerShellView: View {
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
-            checkClipboardForRecipeImport()
             Task {
                 await prewarmBaseDiscoverFeed()
                 await store.runAutomationPassIfNeeded(trigger: "scene_active")
@@ -1651,9 +1647,6 @@ private struct MealPlannerShellView: View {
                 }
             }
         }
-        .onAppear {
-            checkClipboardForRecipeImport()
-        }
         .onChange(of: selectedTab) { newTab in
             let previousTab = previousSelectedTab
             tabTransitionDirection = newTab.motionIndex >= previousTab.motionIndex ? 1 : -1
@@ -1661,19 +1654,6 @@ private struct MealPlannerShellView: View {
             if newTab != .discover {
                 discoverSearchText = ""
             }
-        }
-        .confirmationDialog(
-            "Import this recipe?",
-            isPresented: $isClipboardImportPromptPresented,
-            titleVisibility: .visible
-        ) {
-            Button("Import link") {
-                guard let clipboardRecipeImportURL else { return }
-                openCookbookImportComposer(with: clipboardRecipeImportURL)
-            }
-            Button("Not now", role: .cancel) {}
-        } message: {
-            Text("Ounje found a TikTok or Instagram recipe link on your clipboard.")
         }
         .sheet(isPresented: $isPhotoImportComposerPresented) {
             DiscoverComposerSheet(context: .saved, initialText: nil)
@@ -1914,25 +1894,9 @@ private struct MealPlannerShellView: View {
 
     private func openCookbookImportComposer(with text: String) {
         requestedCookbookImportText = text
-        clipboardRecipeImportURL = nil
         withAnimation(OunjeMotion.heroSpring) {
             selectedTab = .cookbook
         }
-    }
-
-    private func checkClipboardForRecipeImport() {
-        guard store.authSession != nil else { return }
-        let pasteboard = UIPasteboard.general
-        guard pasteboard.hasStrings,
-              let rawText = pasteboard.string,
-              let supportedURL = recipeSocialImportURL(in: rawText),
-              supportedURL != lastPromptedClipboardRecipeURL else {
-            return
-        }
-
-        lastPromptedClipboardRecipeURL = supportedURL
-        clipboardRecipeImportURL = supportedURL
-        isClipboardImportPromptPresented = true
     }
 
     private var hasQueuedSharedImportWork: Bool {
@@ -2404,6 +2368,11 @@ struct PurchasingCTAButton: View {
     let state: PurchaseCTAVisualState
     var height: CGFloat = 44
     var isDisabled: Bool = false
+    var foregroundColor: Color = .black
+    var fillColor: Color = OunjePalette.accent
+    var progressFillColor: Color = Color.white.opacity(0.28)
+    var cornerRadius: CGFloat = 8
+    var fontSize: CGFloat = 11
     let action: () -> Void
 
     @GestureState private var isPressed = false
@@ -2415,12 +2384,12 @@ struct PurchasingCTAButton: View {
                 let progress = fillProgress(at: context.date)
 
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(hex: "17191F"))
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(fillColor)
 
                     if progress > 0 {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(OunjePalette.accent.opacity(state == .failed ? 0.34 : 0.82))
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(state == .failed ? Color.white.opacity(0.20) : progressFillColor)
                             .frame(maxWidth: .infinity)
                             .scaleEffect(x: progress, y: 1, anchor: .leading)
                     }
@@ -2437,15 +2406,15 @@ struct PurchasingCTAButton: View {
                         }
 
                         Text(state == .success ? "All set" : title)
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
+                            .font(.system(size: fontSize, weight: .bold, design: .rounded))
+                            .foregroundStyle(foregroundColor)
                             .textCase(.uppercase)
                             .lineLimit(1)
                             .minimumScaleFactor(0.82)
 
                         Spacer(minLength: 0)
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(foregroundColor)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: height)
@@ -5691,48 +5660,6 @@ private func conciseInstacartPriceText(_ raw: String?) -> String? {
     return value.isEmpty ? nil : value
 }
 
-private func recipeSocialImportURL(in text: String) -> String? {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-
-    let nsRange = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
-    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
-        return nil
-    }
-
-    for match in detector.matches(in: trimmed, options: [], range: nsRange) {
-        let candidate: String?
-        if let url = match.url {
-            candidate = url.absoluteString
-        } else if let range = Range(match.range, in: trimmed) {
-            candidate = URL(string: String(trimmed[range]))?.absoluteString
-        } else {
-            candidate = nil
-        }
-
-        guard let candidate,
-              let url = URL(string: candidate),
-              isSupportedRecipeSocialURL(url) else {
-            continue
-        }
-        return candidate
-    }
-
-    if let url = URL(string: trimmed), isSupportedRecipeSocialURL(url) {
-        return url.absoluteString
-    }
-
-    return nil
-}
-
-private func isSupportedRecipeSocialURL(_ url: URL) -> Bool {
-    guard let host = url.host?.lowercased() else { return false }
-    return host == "instagram.com"
-        || host.hasSuffix(".instagram.com")
-        || host == "tiktok.com"
-        || host.hasSuffix(".tiktok.com")
-}
-
 private enum RecipeImportProgressStage: Int, CaseIterable {
     case fetching
     case readingVideo
@@ -6521,20 +6448,11 @@ private struct DiscoverComposerSheet: View {
                                 }
 
                             HStack(alignment: .bottom, spacing: 12) {
-                                Button {
-                                    insertLinkFromClipboard()
-                                } label: {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "link")
-                                            .font(.system(size: 14, weight: .semibold))
-                                        Text("Link")
-                                            .font(.system(size: 14, weight: .medium))
-                                            .lineLimit(1)
-                                    }
-                                    .foregroundStyle(OunjePalette.primaryText)
-                                    .opacity(isSubmitting ? 0.6 : 1)
+                                PasteButton(payloadType: String.self) { pastedStrings in
+                                    insertPastedLink(pastedStrings.first)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonBorderShape(.roundedRectangle(radius: 14))
+                                .tint(OunjePalette.surface)
                                 .disabled(isSubmitting)
 
                                 PhotosPicker(
@@ -6884,9 +6802,9 @@ private struct DiscoverComposerSheet: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func insertLinkFromClipboard() {
+    private func insertPastedLink(_ rawValue: String?) {
         errorMessage = nil
-        if let raw = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let raw = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
            !raw.isEmpty {
             let normalized: String
             if raw.lowercased().hasPrefix("http://") || raw.lowercased().hasPrefix("https://") {
@@ -6906,7 +6824,7 @@ private struct DiscoverComposerSheet: View {
             return
         }
 
-        errorMessage = "Copy a link first, then tap Link."
+        errorMessage = "Copy a link first, then tap Paste."
         isTextFocused = true
     }
 

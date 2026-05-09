@@ -3501,20 +3501,19 @@ struct CookbookSavedEmptyState: View {
     let onAddRecipe: () -> Void
 
     var body: some View {
-        VStack(spacing: 18) {
-            ShareToOunjeEmptyArtwork(maxWidth: 220, maxHeight: 280)
+        VStack(spacing: 16) {
+            ShareToOunjeEmptyArtwork(maxWidth: 300, maxHeight: 330)
 
             VStack(spacing: 8) {
-                BiroScriptDisplayText(
-                    hasSavedRecipes ? "No saved matches" : "Send a recipe from TikTok or Instagram",
-                    size: 28,
-                    color: OunjePalette.primaryText
-                )
+                Text(hasSavedRecipes ? "No saved matches" : "Send recipes from anywhere.")
+                    .font(.system(size: 25, weight: .heavy))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .multilineTextAlignment(.center)
 
                 Text(
                     hasSavedRecipes
                         ? "Try another search, browse Discover, or import from a photo."
-                        : "Tap Share on TikTok or Instagram, choose Ounje, or browse Discover. You can also take a picture of a dish."
+                        : "Share from TikTok or Instagram, or take a picture and we’ll build the recipe."
                 )
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(OunjePalette.secondaryText)
@@ -3575,12 +3574,23 @@ private struct ShareToOunjeEmptyArtwork: View {
     let maxHeight: CGFloat
 
     var body: some View {
-        Image("ShareToOunjeEmptyIllustration")
+        Image("FeatureCard5")
             .renderingMode(.original)
             .resizable()
             .interpolation(.high)
             .scaledToFit()
             .frame(maxWidth: maxWidth, maxHeight: maxHeight)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .white, location: 0),
+                        .init(color: .white, location: 0.76),
+                        .init(color: .clear, location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
     }
 }
 

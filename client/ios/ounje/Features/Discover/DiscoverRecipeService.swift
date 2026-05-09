@@ -75,14 +75,23 @@ final class SupabaseDiscoverRecipeService {
 
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalizedQuery.isEmpty {
-            let fallbackRecipes = try await fetchRecipes(limit: limit)
+            let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
+            let fallbackLimit = normalizedFilter == "all" ? limit : max(limit * 10, 180)
+            let fallbackRecipes = try await fetchRecipes(limit: fallbackLimit)
+            let visibleRecipes = normalizedFilter == "all"
+                ? fallbackRecipes
+                : fallbackRecipes.filter { $0.matchesDiscoverFilter(filter) }
+            let pageEnd = min(visibleRecipes.count, offset + limit)
+            let pageRecipes = offset < pageEnd
+                ? Array(visibleRecipes[offset..<pageEnd])
+                : []
             return DiscoverRankedRecipesResponse(
-                recipes: fallbackRecipes,
+                recipes: pageRecipes,
                 filters: DiscoverPreset.allTitles,
                 rankingMode: "supabase_direct_fallback",
-                totalAvailable: fallbackRecipes.count,
-                hasMore: fallbackRecipes.count >= limit,
-                nextOffset: offset + fallbackRecipes.count
+                totalAvailable: visibleRecipes.count,
+                hasMore: pageEnd < visibleRecipes.count,
+                nextOffset: pageEnd < visibleRecipes.count ? pageEnd : nil
             )
         }
 

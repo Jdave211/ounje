@@ -7,7 +7,7 @@ const CACHE_PATH = path.resolve(
 );
 
 const DISCOVER_PRESETS = [
-  { key: "all", title: "All", description: "Keep the feed broad and varied." },
+  { key: "all", title: "Feed", description: "Keep the feed broad and varied." },
   { key: "breakfast", title: "Breakfast", description: "Breakfast and brunch recipes." },
   { key: "lunch", title: "Lunch", description: "Lunch-friendly recipes." },
   { key: "dinner", title: "Dinner", description: "Dinner recipes." },
@@ -179,6 +179,7 @@ export function normalizeDiscoverBracketKey(value) {
 
   switch (lowered) {
     case "all":
+    case "feed":
       return "all";
     case "breakfast":
       return "breakfast";
