@@ -101,7 +101,7 @@ struct OunjePaywallHostView: View {
                     }
                     .frame(width: contentWidth, alignment: .leading)
                     .padding(.leading, max(16, (proxy.size.width - contentWidth) / 2))
-                    .padding(.bottom, compact ? 44 : 52)
+                    .padding(.bottom, compact ? 54 : 64)
                     .frame(width: proxy.size.width, height: headerHeight, alignment: .bottomLeading)
 
                     VStack {
@@ -134,7 +134,7 @@ struct OunjePaywallHostView: View {
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .foregroundStyle(Color.white.opacity(0.82))
                                 .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, compact ? 16 : 20)
+                                .padding(.top, compact ? 24 : 30)
 
                             if let error = displayedErrorMessage {
                                 Text(error)
@@ -266,7 +266,7 @@ struct OunjePaywallHostView: View {
     }
 
     private var paywallSubtitle: String {
-        "Import recipe videos, build prep, and keep your grocery list synced."
+        "Unlimited recipe imports, fully customizable prep, and an Instacart agent that finds better groceries for less."
     }
 
     private var ctaTitle: String {

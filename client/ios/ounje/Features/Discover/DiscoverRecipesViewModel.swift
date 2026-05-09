@@ -134,8 +134,11 @@ final class DiscoverRecipesViewModel: ObservableObject {
             isTransitioningFeed = true
         }
         let shouldClearVisibleRecipes = !appendResults
-            && responseCache[loadKey] == nil
-            && !hadExistingRecipes
+            && (
+                forceNetwork
+                || isPresetTransition
+                || (responseCache[loadKey] == nil && !hadExistingRecipes)
+            )
         if shouldClearVisibleRecipes {
             recipes = []
         }
@@ -161,7 +164,8 @@ final class DiscoverRecipesViewModel: ObservableObject {
                 sessionSeed: requestSeed,
                 feedContext: feedContext,
                 limit: requestedLimit,
-                offset: requestedOffset
+                offset: requestedOffset,
+                forceRefresh: forceNetwork
             )
             guard activeRequestID == requestID else { return }
             recipes = appendResults && requestedOffset > 0

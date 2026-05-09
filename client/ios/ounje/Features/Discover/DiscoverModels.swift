@@ -482,6 +482,7 @@ struct DiscoverRankedRecipesRequest: Encodable {
     let limit: Int
     let offset: Int
     let feedContext: DiscoverFeedContext
+    let forceRefresh: Bool
 }
 
 struct DiscoverFeedContext: Encodable {

@@ -53,7 +53,8 @@ final class SupabaseDiscoverRecipeService {
         sessionSeed: String,
         feedContext: DiscoverFeedContext,
         limit: Int = 30,
-        offset: Int = 0
+        offset: Int = 0,
+        forceRefresh: Bool = false
     ) async throws -> DiscoverRankedRecipesResponse {
         var lastError: Error?
         for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
@@ -66,7 +67,8 @@ final class SupabaseDiscoverRecipeService {
                     sessionSeed: sessionSeed,
                     feedContext: feedContext,
                     limit: limit,
-                    offset: offset
+                    offset: offset,
+                    forceRefresh: forceRefresh
                 )
             } catch {
                 lastError = error
@@ -102,7 +104,8 @@ final class SupabaseDiscoverRecipeService {
         sessionSeed: String,
         feedContext: DiscoverFeedContext,
         limit: Int,
-        offset: Int
+        offset: Int,
+        forceRefresh: Bool
     ) async throws -> DiscoverRankedRecipesResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/discover") else {
             throw SupabaseProfileStateError.invalidRequest
@@ -112,6 +115,9 @@ final class SupabaseDiscoverRecipeService {
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if forceRefresh {
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        }
         request.httpBody = try JSONEncoder().encode(
             DiscoverRankedRecipesRequest(
                 profile: profile,
@@ -119,7 +125,8 @@ final class SupabaseDiscoverRecipeService {
                 query: query.isEmpty ? nil : query,
                 limit: limit,
                 offset: offset,
-                feedContext: feedContext.withSessionSeed(sessionSeed)
+                feedContext: feedContext.withSessionSeed(sessionSeed),
+                forceRefresh: forceRefresh
             )
         )
 

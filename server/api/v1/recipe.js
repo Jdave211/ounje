@@ -976,6 +976,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
     limit = 30,
     offset = 0,
     feedContext = null,
+    forceRefresh = false,
   } = req.body ?? {};
   const trimmedQuery = String(query ?? "").trim();
   const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
@@ -983,9 +984,11 @@ recipe_router.post("/recipe/discover", async (req, res) => {
   const requestedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 30;
   const requestedOffset = Number.isFinite(Number(offset)) ? Math.max(0, Number(offset)) : 0;
   const requestedWindowLimit = Math.max(requestedLimit + requestedOffset, requestedLimit);
+  const bypassDiscoverCache = Boolean(forceRefresh)
+    || String(req.get("cache-control") ?? "").toLowerCase().includes("no-cache");
 
   try {
-    if (trimmedQuery) {
+    if (trimmedQuery && !bypassDiscoverCache) {
       const searchCacheKey = buildDiscoverSearchCacheKey({
         query: trimmedQuery,
         filter,
@@ -1007,9 +1010,11 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         limit: requestedLimit,
         offset: requestedOffset,
       });
-      const cachedPayload = readTimedCache(discoverFeedCache, feedCacheKey, DISCOVER_FEED_CACHE_TTL_MS);
-      if (cachedPayload) {
-        return res.json(cachedPayload);
+      if (!bypassDiscoverCache) {
+        const cachedPayload = readTimedCache(discoverFeedCache, feedCacheKey, DISCOVER_FEED_CACHE_TTL_MS);
+        if (cachedPayload) {
+          return res.json(cachedPayload);
+        }
       }
 
       if (!isBaseDiscover) {
@@ -1018,6 +1023,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
           feedContext,
           limit: requestedLimit,
           offset: requestedOffset,
+          forceRefresh: bypassDiscoverCache,
         });
         discoverFeedCache.set(feedCacheKey, { value: payload, createdAt: Date.now() });
         return res.json(payload);
@@ -1168,16 +1174,18 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         requestedOffset,
         requestedWindowLimit,
       });
-      searchResponseCache.set(
-        buildDiscoverSearchCacheKey({
-          query: trimmedQuery,
-          filter,
-          limit: requestedLimit,
-          offset: requestedOffset,
-          profile,
-        }),
-        { value: fallbackPayload, createdAt: Date.now() }
-      );
+      if (!bypassDiscoverCache) {
+        searchResponseCache.set(
+          buildDiscoverSearchCacheKey({
+            query: trimmedQuery,
+            filter,
+            limit: requestedLimit,
+            offset: requestedOffset,
+            profile,
+          }),
+          { value: fallbackPayload, createdAt: Date.now() }
+        );
+      }
       return res.json(fallbackPayload);
     }
 
@@ -1188,16 +1196,18 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         ? "fast_hybrid_search_embeddings_lexical_anchors"
         : "fast_hybrid_search_embeddings",
     }, requestedOffset, requestedLimit);
-    searchResponseCache.set(
-      buildDiscoverSearchCacheKey({
-        query: trimmedQuery,
-        filter,
-        limit: requestedLimit,
-        offset: requestedOffset,
-        profile,
-      }),
-      { value: payload, createdAt: Date.now() }
-    );
+    if (!bypassDiscoverCache) {
+      searchResponseCache.set(
+        buildDiscoverSearchCacheKey({
+          query: trimmedQuery,
+          filter,
+          limit: requestedLimit,
+          offset: requestedOffset,
+          profile,
+        }),
+        { value: payload, createdAt: Date.now() }
+      );
+    }
     return res.json(payload);
   } catch (error) {
     console.error("[recipe/discover] ranking failed:", error.message);
@@ -1899,6 +1909,7 @@ async function buildPresetDiscoverPayload({
   feedContext = null,
   limit = 18,
   offset = 0,
+  forceRefresh = false,
 }) {
   const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
   if (normalizedFilter === "all") {
@@ -1921,6 +1932,7 @@ async function buildPresetDiscoverPayload({
     limit,
     offset,
     seed: `${seedRoot}|direct-bracket-shelf`,
+    forceRefresh,
   });
 
   return {
@@ -4866,16 +4878,18 @@ async function fetchDiscoverBroadPool({
   return pool;
 }
 
-async function fetchDbBracketRecipeIds(filter = "All") {
+async function fetchDbBracketRecipeIds(filter = "All", { forceRefresh = false } = {}) {
   const preset = getDiscoverPreset(filter);
   if (!preset || preset.key === "all") {
     return [];
   }
 
   const cacheKey = `bracket-ids:${preset.key}`;
-  const cachedIds = readTimedCache(discoverBracketIdsCache, cacheKey, DISCOVER_BRACKET_IDS_CACHE_TTL_MS);
-  if (Array.isArray(cachedIds)) {
-    return cachedIds;
+  if (!forceRefresh) {
+    const cachedIds = readTimedCache(discoverBracketIdsCache, cacheKey, DISCOVER_BRACKET_IDS_CACHE_TTL_MS);
+    if (Array.isArray(cachedIds)) {
+      return cachedIds;
+    }
   }
 
   const bracketPayload = `{${preset.key}}`;
@@ -4912,7 +4926,7 @@ async function fetchDbBracketRecipeIds(filter = "All") {
   return uniqueIds;
 }
 
-async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "preset" }) {
+async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "preset", forceRefresh = false }) {
   const preset = getDiscoverPreset(filter);
   if (!preset || preset.key === "all") {
     return fetchRandomDiscoverRecipes({ limit, seed, filter: "All" });
@@ -4920,7 +4934,7 @@ async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "
 
   let bracketIds = [];
   try {
-    bracketIds = await fetchDbBracketRecipeIds(filter);
+    bracketIds = await fetchDbBracketRecipeIds(filter, { forceRefresh });
   } catch (error) {
     if (!isMissingRecipeColumnError(error.message)) {
       throw error;
@@ -4945,7 +4959,7 @@ async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "
   ).slice(0, Math.max(1, limit));
 }
 
-async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset = 0, seed = "preset-page" }) {
+async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset = 0, seed = "preset-page", forceRefresh = false }) {
   const preset = getDiscoverPreset(filter);
   if (!preset || preset.key === "all") {
     const recipes = await fetchRandomDiscoverRecipes({ limit, seed, filter: "All" });
@@ -4959,7 +4973,7 @@ async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset
 
   let bracketIds = [];
   try {
-    bracketIds = await fetchDbBracketRecipeIds(filter);
+    bracketIds = await fetchDbBracketRecipeIds(filter, { forceRefresh });
   } catch (error) {
     if (!isMissingRecipeColumnError(error.message)) {
       throw error;
@@ -5003,7 +5017,7 @@ async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset
 
   return {
     recipes,
-    totalAvailable: cursor < shuffledIds.length ? shuffledIds.length : Math.max(offset + recipes.length, recipes.length),
+    totalAvailable: shuffledIds.length,
     hasMore: cursor < shuffledIds.length,
     nextOffset: cursor < shuffledIds.length ? cursor : null,
   };
