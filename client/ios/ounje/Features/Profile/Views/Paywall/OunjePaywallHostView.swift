@@ -4,6 +4,7 @@ import SwiftUI
 struct OunjePaywallHostView: View {
     let initialTier: OunjePricingTier?
     let isDismissible: Bool
+    let usesDummyTrialFlow: Bool
     let onClose: () -> Void
     let onUpgradeSuccess: (() -> Void)?
 
@@ -13,15 +14,18 @@ struct OunjePaywallHostView: View {
     @State private var selectedCadence: OunjeMembershipBillingCadence
     @State private var localErrorMessage: String?
     @State private var purchaseVisualState: PurchaseCTAVisualState = .idle
+    @State private var confettiBurstID = 0
 
     init(
         initialTier: OunjePricingTier?,
         isDismissible: Bool = true,
+        usesDummyTrialFlow: Bool = false,
         onClose: @escaping () -> Void,
         onUpgradeSuccess: (() -> Void)? = nil
     ) {
         self.initialTier = initialTier
         self.isDismissible = isDismissible
+        self.usesDummyTrialFlow = usesDummyTrialFlow
         self.onClose = onClose
         self.onUpgradeSuccess = onUpgradeSuccess
         _selectedTier = State(initialValue: Self.defaultTier(from: initialTier))
@@ -149,7 +153,7 @@ struct OunjePaywallHostView: View {
                                 title: ctaTitle,
                                 state: purchaseVisualState,
                                 height: compact ? 44 : 50,
-                                isDisabled: store.isBillingBusy,
+                                isDisabled: store.isBillingBusy || purchaseVisualState == .processing,
                                 foregroundColor: .white,
                                 fillColor: Color(hex: "1F4D3A"),
                                 progressFillColor: Color(hex: "2A634C"),
@@ -157,7 +161,11 @@ struct OunjePaywallHostView: View {
                                 fontSize: compact ? 12 : 13
                             ) {
                                 Task {
-                                    await purchaseSelectedPlan()
+                                    if usesDummyTrialFlow {
+                                        await startDummyTrial()
+                                    } else {
+                                        await purchaseSelectedPlan()
+                                    }
                                 }
                             }
                             .frame(width: contentWidth * 0.88)
@@ -220,6 +228,12 @@ struct OunjePaywallHostView: View {
                     .padding(.top, max(16, proxy.safeAreaInsets.top + 8))
                     .padding(.trailing, 22)
                 }
+
+                if confettiBurstID > 0 {
+                    PaywallConfettiBurst(burstID: confettiBurstID)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -270,7 +284,10 @@ struct OunjePaywallHostView: View {
     }
 
     private var ctaTitle: String {
-        "Start Free Trial"
+        if usesDummyTrialFlow && purchaseVisualState == .processing {
+            return "Opening Ounje"
+        }
+        return "Start Free Trial"
     }
 
     private var displayedErrorMessage: String? {
@@ -316,6 +333,18 @@ struct OunjePaywallHostView: View {
     }
 
     @MainActor
+    private func startDummyTrial() async {
+        guard purchaseVisualState != .processing else { return }
+        localErrorMessage = nil
+        purchaseVisualState = .processing
+        confettiBurstID += 1
+        try? await Task.sleep(nanoseconds: 650_000_000)
+        purchaseVisualState = .success
+        try? await Task.sleep(nanoseconds: 550_000_000)
+        handleUnlockSuccess()
+    }
+
+    @MainActor
     private func purchaseSelectedPlan() async {
         guard !store.isBillingBusy else { return }
         localErrorMessage = nil
@@ -335,11 +364,79 @@ struct OunjePaywallHostView: View {
 
     private func handleUnlockSuccess() {
         onUpgradeSuccess?()
-        if isDismissible {
-            onClose()
-        }
+        onClose()
     }
 }
 
 private let paywallPrivacyPolicyURL = URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/privacy")!
 private let paywallTermsOfServiceURL = URL(string: "\(OunjeDevelopmentServer.productionBaseURL)/terms")!
+
+private struct PaywallConfettiBurst: View {
+    let burstID: Int
+    @State private var isExpanded = false
+
+    private let pieces = Array(0..<34)
+    private let colors: [Color] = [
+        OunjePalette.accent,
+        Color(hex: "F6E7B0"),
+        Color(hex: "FFFFFF"),
+        Color(hex: "9BE7B0"),
+        Color(hex: "F8B36A")
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                ForEach(pieces, id: \.self) { index in
+                    let vector = vector(for: index, in: proxy.size)
+                    let color = colors[index % colors.count]
+
+                    ConfettiPiece(color: color, isCapsule: index % 3 == 0)
+                        .frame(width: index % 3 == 0 ? 7 : 8, height: index % 3 == 0 ? 14 : 8)
+                        .rotationEffect(.degrees(isExpanded ? Double(index * 37 + 160) : Double(index * 11)))
+                        .position(x: proxy.size.width * 0.5, y: proxy.size.height * 0.66)
+                        .offset(x: isExpanded ? vector.dx : 0, y: isExpanded ? vector.dy : 0)
+                        .opacity(isExpanded ? 0 : 1)
+                        .animation(
+                            .easeOut(duration: 1.05).delay(Double(index % 8) * 0.018),
+                            value: isExpanded
+                        )
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .onAppear {
+                isExpanded = false
+                DispatchQueue.main.async {
+                    isExpanded = true
+                }
+            }
+            .id(burstID)
+        }
+    }
+
+    private func vector(for index: Int, in size: CGSize) -> (dx: CGFloat, dy: CGFloat) {
+        let angle = (-150.0 + Double(index) * (300.0 / Double(max(1, pieces.count - 1)))) * Double.pi / 180
+        let radius = min(size.width, size.height) * CGFloat(0.20 + Double(index % 7) * 0.022)
+        let dx = cos(angle) * radius
+        let dy = sin(angle) * radius - CGFloat(70 + (index % 5) * 18)
+        return (dx, dy)
+    }
+}
+
+private struct ConfettiPiece: View {
+    let color: Color
+    let isCapsule: Bool
+
+    var body: some View {
+        Group {
+            if isCapsule {
+                Capsule(style: .continuous)
+                    .fill(color)
+            } else {
+                Circle()
+                    .fill(color)
+            }
+        }
+        .shadow(color: color.opacity(0.28), radius: 6, y: 3)
+    }
+}

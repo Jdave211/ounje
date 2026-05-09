@@ -100,6 +100,10 @@ final class MealPlanningAppStore: ObservableObject {
         UserDefaults(suiteName: SharedRecipeImportConstants.appGroupID)
     }
 
+    private var shouldForceOnboardingIncomplete: Bool {
+        OunjeLaunchFlags.forceOnboardingIncomplete
+    }
+
     init() {
         loadState()
     }
@@ -210,10 +214,11 @@ final class MealPlanningAppStore: ObservableObject {
         }
         authSession = session
         cachedLiveUserID = session.userID
-        isOnboarded = onboarded
+        let effectiveOnboarded = shouldForceOnboardingIncomplete ? false : onboarded
+        isOnboarded = effectiveOnboarded
         lastOnboardingStep = remoteStep
         hasResolvedInitialState = true
-        cacheAuthenticatedEntryRoute(onboarded ? .planner : .onboarding)
+        cacheAuthenticatedEntryRoute(effectiveOnboarded ? .planner : .onboarding)
         saveAuthSession(session)
         saveOnboardingState()
         saveOnboardingStep()
@@ -361,11 +366,11 @@ final class MealPlanningAppStore: ObservableObject {
 
     func completeOnboarding(with profile: UserProfile, lastStep: Int) async {
         self.profile = profile
-        isOnboarded = true
+        isOnboarded = shouldForceOnboardingIncomplete ? false : true
         lastOnboardingStep = lastStep
         hasResolvedInitialState = true
         isCompletingOnboarding = true
-        cacheAuthenticatedEntryRoute(.planner)
+        cacheAuthenticatedEntryRoute(isOnboarded ? .planner : .onboarding)
         saveProfile()
         saveOnboardingState()
         saveOnboardingStep()
@@ -460,9 +465,10 @@ final class MealPlanningAppStore: ObservableObject {
             }
 
             let cachedCompleted = isOnboarded && profile != nil
-            let resolvedOnboarded = remoteState.onboarded || cachedCompleted
+            let persistedOnboarded = remoteState.onboarded || cachedCompleted
+            let resolvedOnboarded = shouldForceOnboardingIncomplete ? false : persistedOnboarded
             let recoveredProfile = remoteState.profile ?? profile
-            let recoveredStep = resolvedOnboarded
+            let recoveredStep = persistedOnboarded
                 ? remoteState.lastOnboardingStep
                 : max(remoteState.lastOnboardingStep, lastOnboardingStep)
 
@@ -525,16 +531,17 @@ final class MealPlanningAppStore: ObservableObject {
             await emitLifecycleNotificationsIfNeeded(trigger: "bootstrap")
             await emitEngagementNudgesIfNeeded()
 
-            if resolvedOnboarded != remoteState.onboarded ||
+            if !shouldForceOnboardingIncomplete,
+                (persistedOnboarded != remoteState.onboarded ||
                 recoveredProfile != nil && remoteState.profile == nil ||
                 recoveredStep != remoteState.lastOnboardingStep ||
-                remoteState.authProvider != session.provider {
+                remoteState.authProvider != session.provider) {
                 try? await SupabaseProfileStateService.shared.upsertProfile(
                     userID: session.userID,
                     email: remoteState.email ?? session.email,
                     displayName: recoveredProfile?.trimmedPreferredName ?? remoteState.displayName ?? session.displayName,
                     authProvider: session.provider,
-                    onboarded: resolvedOnboarded,
+                    onboarded: persistedOnboarded,
                     lastOnboardingStep: recoveredStep,
                     profile: recoveredProfile
                 )
@@ -1338,7 +1345,8 @@ final class MealPlanningAppStore: ObservableObject {
         let resolvedUserID = authSession?.userID ?? cachedLiveUserID
 
         hasPersistedOnboardingState = UserDefaults.standard.object(forKey: onboardedKey) != nil
-        isOnboarded = UserDefaults.standard.bool(forKey: onboardedKey)
+        let persistedOnboardingState = UserDefaults.standard.bool(forKey: onboardedKey)
+        isOnboarded = shouldForceOnboardingIncomplete ? false : persistedOnboardingState
         lastOnboardingStep = UserDefaults.standard.integer(forKey: onboardingStepKey)
         if let rawRoute = UserDefaults.standard.string(forKey: cachedEntryRouteKey) {
             cachedAuthenticatedEntryRoute = CachedAuthenticatedEntryRoute(rawValue: rawRoute)
@@ -3146,30 +3154,17 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func cartSetupWindowOpenDate(for profile: UserProfile, nextDelivery: Date) -> Date {
         let calendar = Calendar.current
-        switch profile.cadence {
-        case .daily:
-            return nextDelivery.addingTimeInterval(-(8 * 60 * 60))
-        case .everyFewDays:
-            return nextDelivery.addingTimeInterval(-(18 * 60 * 60))
-        case .twiceWeekly:
-            return nextDelivery.addingTimeInterval(-(30 * 60 * 60))
-        case .weekly, .biweekly, .monthly:
-            return calendar.date(byAdding: .day, value: -2, to: nextDelivery) ?? nextDelivery.addingTimeInterval(-(48 * 60 * 60))
-        }
+        let prepDayStart = calendar.startOfDay(for: nextDelivery)
+        return calendar.date(byAdding: .day, value: -profile.autoshopLeadDays, to: prepDayStart) ?? nextDelivery
     }
 
     private func cartConfirmationWindowOpenDate(for profile: UserProfile, nextDelivery: Date) -> Date {
         let calendar = Calendar.current
-        switch profile.cadence {
-        case .daily:
-            return nextDelivery.addingTimeInterval(-(3 * 60 * 60))
-        case .everyFewDays:
-            return nextDelivery.addingTimeInterval(-(10 * 60 * 60))
-        case .twiceWeekly:
-            return nextDelivery.addingTimeInterval(-(18 * 60 * 60))
-        case .weekly, .biweekly, .monthly:
-            return calendar.date(byAdding: .day, value: -1, to: nextDelivery) ?? nextDelivery.addingTimeInterval(-(24 * 60 * 60))
+        let prepDayStart = calendar.startOfDay(for: nextDelivery)
+        guard profile.autoshopLeadDays > 1 else {
+            return cartSetupWindowOpenDate(for: profile, nextDelivery: nextDelivery)
         }
+        return calendar.date(byAdding: .day, value: -1, to: prepDayStart) ?? nextDelivery
     }
 
     private func automationCartSignature(for items: [GroceryItem]) -> String {

@@ -1090,6 +1090,7 @@ struct UserProfile: Codable, Hashable {
     var deliveryAnchorDay: DeliveryAnchorDay
     var deliveryAnchorDate: Date?
     var deliveryTimeMinutes: Int
+    var autoshopLeadDays: Int
     var rotationPreference: RecipeRotationPreference
     var maxRepeatsPerCycle: Int
     var storage: StorageProfile
@@ -1123,6 +1124,7 @@ struct UserProfile: Codable, Hashable {
         deliveryAnchorDay: DeliveryAnchorDay = .sunday,
         deliveryAnchorDate: Date? = nil,
         deliveryTimeMinutes: Int = 18 * 60,
+        autoshopLeadDays: Int = 1,
         rotationPreference: RecipeRotationPreference,
         maxRepeatsPerCycle: Int,
         storage: StorageProfile,
@@ -1155,6 +1157,7 @@ struct UserProfile: Codable, Hashable {
         self.deliveryAnchorDay = deliveryAnchorDay
         self.deliveryAnchorDate = deliveryAnchorDate
         self.deliveryTimeMinutes = max(0, min(deliveryTimeMinutes, 23 * 60 + 59))
+        self.autoshopLeadDays = max(0, min(autoshopLeadDays, 7))
         self.rotationPreference = rotationPreference
         self.maxRepeatsPerCycle = maxRepeatsPerCycle
         self.storage = storage
@@ -1189,6 +1192,7 @@ struct UserProfile: Codable, Hashable {
         deliveryAnchorDay: .sunday,
         deliveryAnchorDate: .now,
         deliveryTimeMinutes: 18 * 60,
+        autoshopLeadDays: 1,
         rotationPreference: .dynamic,
         maxRepeatsPerCycle: 2,
         storage: .starter,
@@ -1247,6 +1251,17 @@ struct UserProfile: Codable, Hashable {
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mm a"
         return formatter.string(from: dateForDeliveryTime())
+    }
+
+    var autoshopLeadDaysText: String {
+        switch autoshopLeadDays {
+        case 0:
+            return "Same day"
+        case 1:
+            return "1 day before"
+        default:
+            return "\(autoshopLeadDays) days before"
+        }
     }
 
     func scheduledDeliveryDate(after reference: Date = .now) -> Date {
@@ -1518,6 +1533,7 @@ struct UserProfile: Codable, Hashable {
         case deliveryAnchorDay
         case deliveryAnchorDate
         case deliveryTimeMinutes
+        case autoshopLeadDays
         case rotationPreference
         case maxRepeatsPerCycle
         case storage
@@ -1553,6 +1569,7 @@ struct UserProfile: Codable, Hashable {
         deliveryAnchorDay = try container.decodeIfPresent(DeliveryAnchorDay.self, forKey: .deliveryAnchorDay) ?? .sunday
         deliveryAnchorDate = try container.decodeIfPresent(Date.self, forKey: .deliveryAnchorDate)
         deliveryTimeMinutes = try container.decodeIfPresent(Int.self, forKey: .deliveryTimeMinutes) ?? UserProfile.starter.deliveryTimeMinutes
+        autoshopLeadDays = max(0, min(try container.decodeIfPresent(Int.self, forKey: .autoshopLeadDays) ?? UserProfile.starter.autoshopLeadDays, 7))
         rotationPreference = try container.decode(RecipeRotationPreference.self, forKey: .rotationPreference)
         maxRepeatsPerCycle = try container.decode(Int.self, forKey: .maxRepeatsPerCycle)
         storage = try container.decode(StorageProfile.self, forKey: .storage)
@@ -1590,6 +1607,7 @@ struct UserProfile: Codable, Hashable {
         try container.encode(deliveryAnchorDay, forKey: .deliveryAnchorDay)
         try container.encodeIfPresent(deliveryAnchorDate, forKey: .deliveryAnchorDate)
         try container.encode(deliveryTimeMinutes, forKey: .deliveryTimeMinutes)
+        try container.encode(autoshopLeadDays, forKey: .autoshopLeadDays)
         try container.encode(rotationPreference, forKey: .rotationPreference)
         try container.encode(maxRepeatsPerCycle, forKey: .maxRepeatsPerCycle)
         try container.encode(storage, forKey: .storage)

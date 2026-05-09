@@ -1749,13 +1749,20 @@ async function buildFastBaseDiscoverRecipes({
   const target = Math.min(Math.max(limit, 30), normalizedFilter === "all" ? 120 : 90);
   const baseSeed = `${feedContext?.sessionSeed ?? "base"}|${feedContext?.windowKey ?? "now"}|${normalizedFilter}|fast|${target}`;
 
-  const sharedPool = await fetchDiscoverBroadPool({
+  let sharedPool = await fetchDiscoverBroadPool({
     profile,
     filter,
     feedContext,
     seed: baseSeed,
     limit: Math.max(target * 2, 60),
   });
+
+  if (!sharedPool.length) {
+    sharedPool = await fetchLatestRecipes(Math.max(target * 2, 60)).catch((error) => {
+      console.warn("[recipe/discover] fast base latest fallback failed:", error.message);
+      return [];
+    });
+  }
 
   const constrainedPool = applyPresetHardConstraints(
     filterRecipesByAllergies(sharedPool, profile),
@@ -1781,6 +1788,17 @@ async function buildFastBaseDiscoverRecipes({
 
   if (normalizedFilter !== "all") {
     recipes = frontloadPresetRecipes(recipes, filter, target);
+  }
+
+  if (!recipes.length && normalizedFilter === "all") {
+    const fallbackLatest = await fetchLatestRecipes(Math.max(target, 48)).catch((error) => {
+      console.warn("[recipe/discover] fast base final fallback failed:", error.message);
+      return [];
+    });
+    recipes = stableShuffle(
+      filterRecipesByAllergies(fallbackLatest, profile),
+      `${baseSeed}|final-latest-fallback`
+    );
   }
 
   return {

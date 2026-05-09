@@ -59,7 +59,7 @@ final class SupabaseDiscoverRecipeService {
         var lastError: Error?
         for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                return try await fetchRankedRecipes(
+                let response = try await fetchRankedRecipes(
                     baseURL: candidateBaseURL,
                     profile: profile,
                     filter: filter,
@@ -70,8 +70,50 @@ final class SupabaseDiscoverRecipeService {
                     offset: offset,
                     forceRefresh: forceRefresh
                 )
+                if response.recipes.isEmpty,
+                   query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
+                    if normalizedFilter != "all" {
+                        let fallback = try await fetchBracketRecipesFallback(filter: filter, limit: limit, offset: offset)
+                        debugLogDiscoverFallback(
+                            "render empty; bracket fallback",
+                            filter: filter,
+                            offset: offset,
+                            recipes: fallback.recipes.count,
+                            mode: fallback.rankingMode
+                        )
+                        return fallback
+                    }
+
+                    let fallbackRecipes = try await fetchRecipes(limit: limit, offset: offset)
+                    debugLogDiscoverFallback(
+                        "render empty; feed fallback",
+                        filter: filter,
+                        offset: offset,
+                        recipes: fallbackRecipes.count,
+                        mode: "supabase_direct_empty_response_fallback"
+                    )
+                    return DiscoverRankedRecipesResponse(
+                        recipes: fallbackRecipes,
+                        filters: DiscoverPreset.allTitles,
+                        rankingMode: "supabase_direct_empty_response_fallback",
+                        totalAvailable: fallbackRecipes.count,
+                        hasMore: fallbackRecipes.count >= limit,
+                        nextOffset: fallbackRecipes.count >= limit ? offset + fallbackRecipes.count : nil
+                    )
+                }
+
+                return response
             } catch {
                 lastError = error
+                debugLogDiscoverFallback(
+                    "render candidate failed",
+                    filter: filter,
+                    offset: offset,
+                    recipes: 0,
+                    mode: nil,
+                    error: error
+                )
             }
         }
 
@@ -79,10 +121,25 @@ final class SupabaseDiscoverRecipeService {
         if normalizedQuery.isEmpty {
             let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
             if normalizedFilter != "all" {
-                return try await fetchBracketRecipesFallback(filter: filter, limit: limit, offset: offset)
+                let fallback = try await fetchBracketRecipesFallback(filter: filter, limit: limit, offset: offset)
+                debugLogDiscoverFallback(
+                    "all render candidates failed; bracket fallback",
+                    filter: filter,
+                    offset: offset,
+                    recipes: fallback.recipes.count,
+                    mode: fallback.rankingMode
+                )
+                return fallback
             }
 
             let fallbackRecipes = try await fetchRecipes(limit: limit, offset: offset)
+            debugLogDiscoverFallback(
+                "all render candidates failed; feed fallback",
+                filter: filter,
+                offset: offset,
+                recipes: fallbackRecipes.count,
+                mode: "supabase_direct_fallback"
+            )
             return DiscoverRankedRecipesResponse(
                 recipes: fallbackRecipes,
                 filters: DiscoverPreset.allTitles,
@@ -200,5 +257,21 @@ final class SupabaseDiscoverRecipeService {
             hasMore: hasMore,
             nextOffset: hasMore ? offset + pageRecipes.count : nil
         )
+    }
+
+    private func debugLogDiscoverFallback(
+        _ message: String,
+        filter: String,
+        offset: Int,
+        recipes: Int,
+        mode: String?,
+        error: Error? = nil
+    ) {
+        #if DEBUG
+        let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
+        let modeDescription = mode.map { " mode=\($0)" } ?? ""
+        let errorDescription = error.map { " error=\($0.localizedDescription)" } ?? ""
+        print("[DiscoverService] \(message) filter=\(normalizedFilter) offset=\(offset) recipes=\(recipes)\(modeDescription)\(errorDescription)")
+        #endif
     }
 }

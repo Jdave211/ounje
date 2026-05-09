@@ -9,6 +9,7 @@ struct DiscoverRecipeFeedContentView: View {
     let isTransitioningFeed: Bool
     let isFetchingMore: Bool
     let hasMoreRecipes: Bool
+    let selectedFilter: String
     let visibleRecipes: [DiscoverRecipeCardData]
     let recipeColumns: [GridItem]
     let transitionNamespace: Namespace.ID
@@ -49,8 +50,8 @@ struct DiscoverRecipeFeedContentView: View {
             )
         } else if visibleRecipes.isEmpty {
             RecipesEmptyState(
-                title: "No recipes matched",
-                detail: "Try a different keyword or category.",
+                title: emptyStateTitle,
+                detail: emptyStateDetail,
                 symbolName: "fork.knife",
                 assetName: "CookbookEmptyIllustrationLight"
             )
@@ -90,5 +91,21 @@ struct DiscoverRecipeFeedContentView: View {
                     }
                 }
         }
+    }
+
+    private var isFeedFilter: Bool {
+        DiscoverPreset.normalizedKey(for: selectedFilter) == "all"
+    }
+
+    private var emptyStateTitle: String {
+        if isSearching { return "No recipes matched" }
+        return isFeedFilter ? "Recipe feed unavailable" : "No recipes here yet"
+    }
+
+    private var emptyStateDetail: String {
+        if isSearching { return "Try a different keyword or category." }
+        return isFeedFilter
+            ? "Pull to refresh or try another section."
+            : "Try another section or pull to refresh."
     }
 }

@@ -3638,15 +3638,18 @@ struct OunjePlusPaywallSheet: View {
     @Environment(\.dismiss) private var dismiss
     let initialTier: OunjePricingTier?
     let isDismissible: Bool
+    let usesDummyTrialFlow: Bool
     let onUpgradeSuccess: (() -> Void)?
 
     init(
         initialTier: OunjePricingTier?,
         isDismissible: Bool = true,
+        usesDummyTrialFlow: Bool = false,
         onUpgradeSuccess: (() -> Void)? = nil
     ) {
         self.initialTier = initialTier
         self.isDismissible = isDismissible
+        self.usesDummyTrialFlow = usesDummyTrialFlow
         self.onUpgradeSuccess = onUpgradeSuccess
     }
 
@@ -3654,6 +3657,7 @@ struct OunjePlusPaywallSheet: View {
         OunjePaywallHostView(
             initialTier: initialTier,
             isDismissible: isDismissible,
+            usesDummyTrialFlow: usesDummyTrialFlow,
             onClose: { dismiss() },
             onUpgradeSuccess: onUpgradeSuccess
         )

@@ -106,6 +106,116 @@ struct MealPrepLoadingArtworkBlock: View {
     }
 }
 
+enum DiscoverRemoteRecipeCardLayout {
+    case standard
+    case compact
+
+    var cardHeight: CGFloat {
+        switch self {
+        case .standard: return 292
+        case .compact: return 214
+        }
+    }
+
+    var imageFrameHeight: CGFloat {
+        switch self {
+        case .standard: return 188
+        case .compact: return 116
+        }
+    }
+
+    var imageSize: CGFloat {
+        switch self {
+        case .standard: return 146
+        case .compact: return 100
+        }
+    }
+
+    var outerPadding: CGFloat {
+        switch self {
+        case .standard: return 14
+        case .compact: return 11
+        }
+    }
+
+    var contentSpacing: CGFloat {
+        switch self {
+        case .standard: return 14
+        case .compact: return 9
+        }
+    }
+
+    var titleHeight: CGFloat {
+        switch self {
+        case .standard: return 42
+        case .compact: return 38
+        }
+    }
+
+    var detailsHeight: CGFloat {
+        switch self {
+        case .standard: return 64
+        case .compact: return 52
+        }
+    }
+
+    var titleSizeClean: CGFloat {
+        switch self {
+        case .standard: return 19
+        case .compact: return 14
+        }
+    }
+
+    var titleSizeExpressive: CGFloat {
+        switch self {
+        case .standard: return 22
+        case .compact: return 16
+        }
+    }
+
+    var detailsSpacing: CGFloat {
+        switch self {
+        case .standard: return 8
+        case .compact: return 6
+        }
+    }
+
+    var metadataTextSize: CGFloat {
+        switch self {
+        case .standard: return 12
+        case .compact: return 10.5
+        }
+    }
+
+    var metadataIconSize: CGFloat {
+        switch self {
+        case .standard: return 11
+        case .compact: return 10
+        }
+    }
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .standard: return 24
+        case .compact: return 20
+        }
+    }
+
+    var fallbackEmojiSize: CGFloat {
+        switch self {
+        case .standard: return 56
+        case .compact: return 42
+        }
+    }
+
+    var fallbackLabelSize: CGFloat {
+        switch self {
+        case .standard: return 13
+        case .compact: return 11
+        }
+    }
+}
+
 struct DiscoverRemoteRecipeCard: View {
     let recipe: DiscoverRecipeCardData
     let showsSaveAction: Bool
@@ -116,9 +226,9 @@ struct DiscoverRemoteRecipeCard: View {
     let showsTopActions: Bool
     let showsImageLoadingSkeleton: Bool
     let typographyStyleOverride: RecipeTypographyStyle?
+    let layout: DiscoverRemoteRecipeCardLayout
     @EnvironmentObject private var savedStore: SavedRecipesStore
     @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
-    private let cardHeight: CGFloat = 292
 
     private var resolvedTypographyStyle: RecipeTypographyStyle {
         typographyStyleOverride ?? RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
@@ -138,6 +248,7 @@ struct DiscoverRemoteRecipeCard: View {
         showsTopActions: Bool = true,
         showsImageLoadingSkeleton: Bool = false,
         typographyStyleOverride: RecipeTypographyStyle? = nil,
+        layout: DiscoverRemoteRecipeCardLayout = .standard,
         onSelect: @escaping () -> Void
     ) {
         self.recipe = recipe
@@ -148,6 +259,7 @@ struct DiscoverRemoteRecipeCard: View {
         self.showsTopActions = showsTopActions
         self.showsImageLoadingSkeleton = showsImageLoadingSkeleton
         self.typographyStyleOverride = typographyStyleOverride
+        self.layout = layout
         self.onSelect = onSelect
     }
 
@@ -168,45 +280,48 @@ struct DiscoverRemoteRecipeCard: View {
 
     @ViewBuilder
     private var cardBody: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: layout.contentSpacing) {
             DiscoverRemoteRecipeImage(
                 recipe: recipe,
                 transitionContext: transitionContext,
-                showsLoadingSkeleton: showsImageLoadingSkeleton
+                showsLoadingSkeleton: showsImageLoadingSkeleton,
+                imageSize: layout.imageSize,
+                fallbackEmojiSize: layout.fallbackEmojiSize,
+                fallbackLabelSize: layout.fallbackLabelSize
             )
                 .frame(maxWidth: .infinity)
-                .frame(height: 188)
+                .frame(height: layout.imageFrameHeight)
                 .clipped()
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: layout.detailsSpacing) {
                 RecipeTypographyTitleText(
                     recipe.displayTitle,
-                    size: resolvedTypographyStyle == .clean ? 19 : 22,
+                    size: resolvedTypographyStyle == .clean ? layout.titleSizeClean : layout.titleSizeExpressive,
                     color: OunjePalette.primaryText,
                     style: resolvedTypographyStyle
                 )
                 .lineLimit(2)
                 .minimumScaleFactor(0.84)
-                .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 42, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: layout.titleHeight, maxHeight: layout.titleHeight, alignment: .topLeading)
                 .modifier(RecipeTitleTransitionModifier(transitionContext: transitionContext))
 
                 HStack(spacing: 5) {
                     Image(systemName: "clock")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: layout.metadataIconSize, weight: .medium))
                         .foregroundStyle(OunjePalette.secondaryText)
                     Text(recipe.compactCookTime ?? recipe.filterLabel)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: layout.metadataTextSize, weight: .medium))
                         .foregroundStyle(OunjePalette.secondaryText)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: layout.detailsHeight, maxHeight: layout.detailsHeight, alignment: .topLeading)
             .padding(.horizontal, 2)
             .padding(.bottom, 2)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: cardHeight, maxHeight: cardHeight, alignment: .topLeading)
+        .padding(layout.outerPadding)
+        .frame(maxWidth: .infinity, minHeight: layout.cardHeight, maxHeight: layout.cardHeight, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
@@ -218,9 +333,9 @@ struct DiscoverRemoteRecipeCard: View {
                     )
                 )
         )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous)
                 .stroke(.white.opacity(0.06), lineWidth: 1)
         )
         .overlay(alignment: .topTrailing) {
@@ -307,6 +422,9 @@ private struct DiscoverRemoteRecipeImage: View {
     let recipe: DiscoverRecipeCardData
     let transitionContext: RecipeTransitionContext?
     var showsLoadingSkeleton: Bool = false
+    var imageSize: CGFloat = 146
+    var fallbackEmojiSize: CGFloat = 56
+    var fallbackLabelSize: CGFloat = 13
     @StateObject private var loader = DiscoverRecipeImageLoader()
     @State private var shimmerOffset: CGFloat = -1.2
 
@@ -316,7 +434,7 @@ private struct DiscoverRemoteRecipeImage: View {
                 Image(uiImage: uiImage)
                             .resizable()
                             .scaledToFill()
-                    .frame(width: 146, height: 146)
+                    .frame(width: imageSize, height: imageSize)
                     .clipShape(Circle())
                     .overlay(
                         Circle()
@@ -350,9 +468,9 @@ private struct DiscoverRemoteRecipeImage: View {
     private var fallback: some View {
         VStack(spacing: 10) {
             Text(recipe.emoji)
-                .font(.system(size: 56))
+                .font(.system(size: fallbackEmojiSize))
             Text(recipe.filterLabel)
-                .biroHeaderFont(13)
+                .biroHeaderFont(fallbackLabelSize)
                 .foregroundStyle(OunjePalette.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

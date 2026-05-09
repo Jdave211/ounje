@@ -252,14 +252,20 @@ final class SavedRecipesStore: ObservableObject {
         let primaryKey = storageKey(for: userID)
         let deletedKey = deletedStorageKey(for: userID)
         let fallbackKey = userID == nil ? legacyKey : nil
+        let guestKey = userID == nil ? nil : storageKey(for: nil)
 
         let data = defaults.data(forKey: primaryKey)
             ?? fallbackKey.flatMap { defaults.data(forKey: $0) }
+        let guestData = guestKey.flatMap { defaults.data(forKey: $0) }
         let deletedData = defaults.data(forKey: deletedKey)
 
-        guard let data,
-              let decoded = try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: data)
-        else {
+        let primaryRecipes = data
+            .flatMap { try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: $0) } ?? []
+        let guestRecipes = guestData
+            .flatMap { try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: $0) } ?? []
+        let decoded = deduplicated(primaryRecipes + guestRecipes)
+
+        guard !decoded.isEmpty else {
             savedRecipes = []
             deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
             return
@@ -268,8 +274,9 @@ final class SavedRecipesStore: ObservableObject {
         deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
         savedRecipes = deduplicated(decoded.filter { !deletedSavedRecipeIDs.contains($0.id) })
 
-        if defaults.data(forKey: primaryKey) == nil {
-            defaults.set(data, forKey: primaryKey)
+        if let mergedData = try? JSONEncoder().encode(savedRecipes),
+           defaults.data(forKey: primaryKey) == nil || primaryRecipes != savedRecipes {
+            defaults.set(mergedData, forKey: primaryKey)
         }
     }
 

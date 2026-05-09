@@ -3,9 +3,11 @@ import Foundation
 
 struct FirstLoginOnboardingView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var toastCenter: AppToastCenter
     @AppStorage("ounje.selectedPricingTier") private var selectedTierRawValue = "free"
     @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
+    @StateObject private var onboardingSavedStore = SavedRecipesStore(toastCenter: AppToastCenter())
     @State private var currentStep: SetupStep = .identity
     @State private var preferredName = ""
     @State private var selectedFoodPersona = ""
@@ -69,6 +71,10 @@ struct FirstLoginOnboardingView: View {
     @State private var solutionRevealTask: Task<Void, Never>?
     @State private var recipeStylePreviewRecipe: DiscoverRecipeCardData?
     @State private var isRecipeStylePreviewLoading = false
+    @State private var recipeEditDemoRecipes: [OnboardingRecipeEditDemoRecipe] = []
+    @State private var isRecipeEditDemoLoading = false
+    @State private var selectedRecipeEditDemoRecipe: OnboardingRecipeEditDemoRecipe?
+    @State private var hasCompletedRecipeEditDemo = false
     @State private var didChooseRecipeTypographyStyle = false
     @State private var shouldUseBudgetGuardrail = false
     @FocusState private var isBudgetFieldFocused: Bool
@@ -484,31 +490,32 @@ struct FirstLoginOnboardingView: View {
     ]
 
     var body: some View {
-        ZStack {
-            onboardingLessonBackground
-
-            VStack(spacing: 0) {
-                onboardingLessonHeader
-
-                VStack(alignment: .leading, spacing: 16) {
-                    currentStepContent
-                        .transition(stepTransition)
-                }
-                .id(currentStep)
-                .padding(.horizontal, usesIntroChoiceLayout ? 22 : OunjeLayout.screenHorizontalPadding)
-                .padding(.top, usesIntroChoiceLayout ? 0 : 8)
-                .padding(.bottom, usesIntroChoiceLayout ? 0 : 18)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-                onboardingLessonFooter
+        GeometryReader { proxy in
+            ZStack {
+                onboardingLessonBackground
+                onboardingStepContentLayer(
+                    topSafeArea: proxy.safeAreaInsets.top,
+                    bottomSafeArea: proxy.safeAreaInsets.bottom
+                )
+                onboardingChromeLayer(
+                    topSafeArea: proxy.safeAreaInsets.top,
+                    bottomSafeArea: proxy.safeAreaInsets.bottom
+                )
             }
         }
+        .ignoresSafeArea(.container, edges: .all)
+        .environmentObject(onboardingSavedStore)
         .tint(currentStepAccent)
         .preferredColorScheme(.dark)
         .onChange(of: currentStep) { newStep in
             schedulePresetSelectionPulse()
             if newStep == .solution || newStep == .solutionWays {
                 revealSolutionPage()
+            }
+            if newStep == .recipeEditDemo {
+                Task {
+                    await loadRecipeEditDemoIfNeeded()
+                }
             }
             persistDraft(step: newStep)
         }
@@ -548,6 +555,11 @@ struct FirstLoginOnboardingView: View {
             }
             loadOnboardingProviders()
             schedulePresetSelectionPulse()
+            if currentStep == .recipeEditDemo {
+                Task {
+                    await loadRecipeEditDemoIfNeeded()
+                }
+            }
         }
         .onDisappear {
             presetSelectionPulseTask?.cancel()
@@ -594,15 +606,83 @@ struct FirstLoginOnboardingView: View {
                 }
             )
         }
+        .fullScreenCover(item: $selectedRecipeEditDemoRecipe) { demoRecipe in
+            RecipeDetailExperienceView(
+                presentedRecipe: PresentedRecipeDetail(
+                    recipeCard: demoRecipe.card,
+                    initialDetail: demoRecipe.detail
+                ),
+                onOpenCart: {},
+                toastCenter: toastCenter,
+                onDismiss: {
+                    selectedRecipeEditDemoRecipe = nil
+                },
+                onboardingContext: .baseDemo(
+                    demoRecipe: demoRecipe,
+                    selectedDietaryPatterns: selectedDietaryPatterns,
+                    onComplete: completeRecipeEditDemo
+                )
+            )
+            .environmentObject(onboardingSavedStore)
+            .environmentObject(store)
+        }
         .fullScreenCover(isPresented: paywallPresentationBinding) {
             OunjePlusPaywallSheet(
                 initialTier: paywallInitialTier,
-                isDismissible: true,
+                isDismissible: false,
+                usesDummyTrialFlow: true,
                 onUpgradeSuccess: {
                     completePendingOnboardingAfterPaywall()
                 }
             )
         }
+    }
+
+    private func onboardingStepContentLayer(topSafeArea: CGFloat, bottomSafeArea: CGFloat) -> some View {
+        let protectedTopInset = onboardingProtectedTopInset(topSafeArea)
+
+        return VStack(alignment: .leading, spacing: 16) {
+            currentStepContent
+                .transition(stepTransition)
+        }
+        .id(currentStep)
+        .padding(.horizontal, usesIntroChoiceLayout ? 22 : OunjeLayout.screenHorizontalPadding)
+        .padding(.top, protectedTopInset + onboardingTopChromeHeight + (usesIntroChoiceLayout ? 0 : 8))
+        .padding(.bottom, bottomSafeArea + onboardingBottomChromeHeight + (usesIntroChoiceLayout ? 0 : 18))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func onboardingChromeLayer(topSafeArea: CGFloat, bottomSafeArea: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            onboardingTopChrome(topSafeArea: topSafeArea)
+            Spacer(minLength: 0)
+            onboardingBottomChrome(bottomSafeArea: bottomSafeArea)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func onboardingTopChrome(topSafeArea: CGFloat) -> some View {
+        onboardingLessonHeader
+            .padding(.top, onboardingProtectedTopInset(topSafeArea))
+            .background(OunjePalette.background.ignoresSafeArea(edges: .top))
+    }
+
+    private func onboardingBottomChrome(bottomSafeArea: CGFloat) -> some View {
+        onboardingLessonFooter
+            .padding(.bottom, usesIntroChoiceLayout ? 0 : bottomSafeArea)
+            .background(OunjePalette.background.ignoresSafeArea(edges: .bottom))
+    }
+
+    private var onboardingTopChromeHeight: CGFloat {
+        usesIntroChoiceLayout ? 58 : 44
+    }
+
+    private var onboardingBottomChromeHeight: CGFloat {
+        usesIntroChoiceLayout ? 0 : 74
+    }
+
+    private func onboardingProtectedTopInset(_ topSafeArea: CGFloat) -> CGFloat {
+        max(topSafeArea, 64)
     }
 
     private var onboardingLessonBackground: some View {
@@ -631,8 +711,7 @@ struct FirstLoginOnboardingView: View {
                 .monospacedDigit()
         }
         .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .frame(height: onboardingTopChromeHeight, alignment: .center)
         .background(
             OunjePalette.background
                 .ignoresSafeArea(edges: .top)
@@ -666,11 +745,10 @@ struct FirstLoginOnboardingView: View {
                     .frame(width: 98, height: 34, alignment: .trailing)
             }
             .buttonStyle(.plain)
+            .disabled(introHeaderActionTitle.isEmpty)
         }
         .padding(.horizontal, 22)
-        .padding(.top, 8)
-        .padding(.bottom, 14)
-        .frame(height: 66, alignment: .center)
+        .frame(height: onboardingTopChromeHeight, alignment: .center)
         .background(OunjePalette.background.ignoresSafeArea(edges: .top))
     }
 
@@ -703,6 +781,10 @@ struct FirstLoginOnboardingView: View {
     private var introHeaderActionTitle: String {
         if currentStep == .address {
             return isOnboardingInstacartConnected ? "Continue" : "Connect Later"
+        }
+
+        if currentStep == .recipeEditDemo {
+            return hasCompletedRecipeEditDemo ? "Continue" : ""
         }
 
         if (currentStep == .challenge && !selectedFoodChallenges.isEmpty) ||
@@ -813,6 +895,7 @@ struct FirstLoginOnboardingView: View {
         currentStep == .recipeStyle ||
         currentStep == .allergies ||
         currentStep == .diets ||
+        currentStep == .recipeEditDemo ||
         currentStep == .budget ||
         currentStep == .ordering ||
         currentStep == .address
@@ -856,6 +939,8 @@ struct FirstLoginOnboardingView: View {
             allergyStepContent
         case .diets:
             dietStepContent
+        case .recipeEditDemo:
+            recipeEditDemoStepContent
         case .cuisines:
             cuisineStepContent
         case .household:
@@ -936,6 +1021,159 @@ struct FirstLoginOnboardingView: View {
             }
             .frame(maxWidth: 352)
         }
+    }
+
+    private var recipeEditDemoStepContent: some View {
+        VStack(spacing: 12) {
+            Text("Pick a recipe to upgrade")
+                .font(.system(size: 31, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 320)
+
+            Text("Choose one card and Ounje will walk you through a guided recipe edit.")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 320)
+
+            if isRecipeEditDemoLoading && recipeEditDemoRecipes.isEmpty {
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .tint(currentStepAccent)
+                    Text("Loading demo recipes")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+            } else if recipeEditDemoRecipes.isEmpty {
+                VStack(spacing: 14) {
+                    Text("We couldn't load the demo right now.")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Button {
+                        Task {
+                            await loadRecipeEditDemoIfNeeded(forceRefresh: true)
+                        }
+                    } label: {
+                        Text("Try again")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 18)
+                            .frame(height: 42)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(currentStepAccent)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+            } else {
+                OnboardingRecipeEditDemoPickerGrid(
+                    recipes: recipeEditDemoRecipes,
+                    onSelect: openRecipeEditDemo
+                )
+                .frame(maxWidth: 360)
+                .padding(.top, 6)
+            }
+        }
+        .padding(.top, 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private struct OnboardingRecipeEditDemoPickerGrid: View {
+        let recipes: [OnboardingRecipeEditDemoRecipe]
+        let onSelect: (OnboardingRecipeEditDemoRecipe) -> Void
+
+        private let spacing: CGFloat = 12
+        private let layout: DiscoverRemoteRecipeCardLayout = .compact
+
+        var body: some View {
+            GeometryReader { proxy in
+                let displayedRecipes = Array(recipes.prefix(4))
+                let gridWidth = min(proxy.size.width, 360)
+                let cardWidth = (gridWidth - spacing) / 2
+                let gridHeight = (layout.cardHeight * 2) + spacing
+
+                ZStack(alignment: .topLeading) {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.fixed(cardWidth), spacing: spacing),
+                            GridItem(.fixed(cardWidth), spacing: spacing)
+                        ],
+                        spacing: spacing
+                    ) {
+                        ForEach(displayedRecipes) { demoRecipe in
+                            DiscoverRemoteRecipeCard(
+                                recipe: demoRecipe.card,
+                                showsSaveAction: false,
+                                showsTopActions: false,
+                                showsImageLoadingSkeleton: false,
+                                layout: layout
+                            ) {
+                                onSelect(demoRecipe)
+                            }
+                            .frame(width: cardWidth, height: layout.cardHeight)
+                        }
+                    }
+                    .frame(width: gridWidth, height: gridHeight, alignment: .top)
+
+                    OnboardingRecipeCardCueOverlay(
+                        cardCount: displayedRecipes.count,
+                        cardWidth: cardWidth,
+                        cardHeight: layout.cardHeight,
+                        spacing: spacing
+                    )
+                }
+                .frame(width: gridWidth, height: gridHeight, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .frame(height: (layout.cardHeight * 2) + spacing)
+        }
+    }
+
+    private struct OnboardingRecipeCardCueOverlay: View {
+        let cardCount: Int
+        let cardWidth: CGFloat
+        let cardHeight: CGFloat
+        let spacing: CGFloat
+
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var cueStep = 0
+
+        private var sequence: [Int] {
+            [0, 1, 3, 2].filter { $0 < cardCount }
+        }
+
+        var body: some View {
+            if let cardIndex = sequence.isEmpty ? nil : sequence[cueStep % sequence.count] {
+                let column = CGFloat(cardIndex % 2)
+                let row = CGFloat(cardIndex / 2)
+                let x = column * (cardWidth + spacing) + cardWidth * 0.78
+                let y = row * (cardHeight + spacing) + cardHeight * 0.34
+
+                OnboardingTapCueView()
+                    .scaleEffect(0.9)
+                    .position(x: x, y: y)
+                    .animation(.spring(response: 0.62, dampingFraction: 0.76), value: cueStep)
+                    .allowsHitTesting(false)
+                    .task {
+                        guard !reduceMotion, sequence.count > 1 else { return }
+                        while !Task.isCancelled {
+                            try? await Task.sleep(nanoseconds: 1_180_000_000)
+                            cueStep += 1
+                        }
+                    }
+                    .accessibilityHidden(true)
+                }
+            }
     }
 
     private var solutionStepContent: some View {
@@ -1786,6 +2024,8 @@ struct FirstLoginOnboardingView: View {
             return true
         case .diets:
             return true
+        case .recipeEditDemo:
+            return hasCompletedRecipeEditDemo
         case .cuisines:
             return !selectedCuisines.isEmpty || !selectedCuisineCountries.isEmpty
         case .household:
@@ -1923,6 +2163,13 @@ struct FirstLoginOnboardingView: View {
             return
         }
 
+        if currentStep == .recipeEditDemo {
+            if hasCompletedRecipeEditDemo {
+                advance()
+            }
+            return
+        }
+
         if currentStep == .budget {
             if !shouldUseBudgetGuardrail {
                 budgetWindow = .weekly
@@ -1974,6 +2221,28 @@ struct FirstLoginOnboardingView: View {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
             currentStep = previousStep
         }
+    }
+
+    @MainActor
+    private func loadRecipeEditDemoIfNeeded(forceRefresh: Bool = false) async {
+        if isRecipeEditDemoLoading { return }
+        if !forceRefresh, !recipeEditDemoRecipes.isEmpty { return }
+
+        isRecipeEditDemoLoading = true
+        let recipes = await OnboardingRecipeEditDemoService.shared.loadRecipes(forceRefresh: forceRefresh)
+        recipeEditDemoRecipes = recipes
+        isRecipeEditDemoLoading = false
+    }
+
+    private func openRecipeEditDemo(_ demoRecipe: OnboardingRecipeEditDemoRecipe) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        selectedRecipeEditDemoRecipe = demoRecipe
+    }
+
+    private func completeRecipeEditDemo() {
+        hasCompletedRecipeEditDemo = true
+        selectedRecipeEditDemoRecipe = nil
+        moveForward(to: .ordering)
     }
 
     private func toggleFoodChallenge(_ option: String) {
@@ -2433,6 +2702,7 @@ struct FirstLoginOnboardingView: View {
         if !store.isOnboarded {
             currentStep = SetupStep.resumeStep(from: store.lastOnboardingStep)
         }
+        hasCompletedRecipeEditDemo = currentStep.index > SetupStep.recipeEditDemo.index
 
         preferredName = sourceProfile.trimmedPreferredName
             ?? store.authSession?.displayName?.components(separatedBy: .whitespacesAndNewlines).first
@@ -2647,6 +2917,7 @@ struct FirstLoginOnboardingView: View {
         case recipeStyle = 12
         case allergies = 5
         case diets = 13
+        case recipeEditDemo = 14
         case cuisines = 6
         case household = 7
         case kitchen = 8
@@ -2662,6 +2933,7 @@ struct FirstLoginOnboardingView: View {
                 .solutionWays,
                 .allergies,
                 .diets,
+                .recipeEditDemo,
                 .ordering,
                 .address,
                 .budget,
@@ -2689,6 +2961,8 @@ struct FirstLoginOnboardingView: View {
                 return "Food rules"
             case .diets:
                 return "Diet"
+            case .recipeEditDemo:
+                return "Recipe edit"
             case .cuisines:
                 return "Taste"
             case .household:
@@ -2720,6 +2994,8 @@ struct FirstLoginOnboardingView: View {
                 return "Allergies and hard stops beat every recipe suggestion."
             case .diets:
                 return "Choose any eating styles Ounje should keep in mind."
+            case .recipeEditDemo:
+                return "See how recipe edits work before Ounje starts planning for you."
             case .cuisines:
                 return "These are the plates Ounje should reach for first."
             case .household:
@@ -2751,6 +3027,8 @@ struct FirstLoginOnboardingView: View {
                 return "Set the rules Ounje cannot break."
             case .diets:
                 return "Set the eating styles Ounje should understand."
+            case .recipeEditDemo:
+                return "Pick a recipe and try a guided edit."
             case .cuisines:
                 return "Point Ounje toward the food you actually want."
             case .household:
@@ -2782,6 +3060,8 @@ struct FirstLoginOnboardingView: View {
                 return ["✅", "🥗", "🛡️"]
             case .diets:
                 return ["🥗", "✓", "AI"]
+            case .recipeEditDemo:
+                return ["✍️", "🍽️", "✨"]
             case .cuisines:
                 return ["🍛", "🌮", "🍜"]
             case .household:
@@ -2813,6 +3093,8 @@ struct FirstLoginOnboardingView: View {
                 return "checklist"
             case .diets:
                 return "leaf.fill"
+            case .recipeEditDemo:
+                return "wand.and.stars"
             case .cuisines:
                 return "globe.americas.fill"
             case .household:

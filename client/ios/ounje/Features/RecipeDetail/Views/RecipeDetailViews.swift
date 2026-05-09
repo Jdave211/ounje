@@ -4,12 +4,60 @@ import UIKit
 import AVKit
 import WebKit
 
+struct RecipeAskOnboardingConfig {
+    let demoRecipe: OnboardingRecipeEditDemoRecipe
+    let selectedDietaryPatterns: Set<String>
+    let onComplete: () -> Void
+}
+
+enum RecipeAskMode {
+    case live
+    case onboarding(RecipeAskOnboardingConfig)
+}
+
+enum RecipeDetailOnboardingContext {
+    case baseDemo(
+        demoRecipe: OnboardingRecipeEditDemoRecipe,
+        selectedDietaryPatterns: Set<String>,
+        onComplete: () -> Void
+    )
+    case adaptedDemo(onContinue: () -> Void)
+
+    var askMode: RecipeAskMode? {
+        switch self {
+        case let .baseDemo(demoRecipe, selectedDietaryPatterns, onComplete):
+            return .onboarding(
+                RecipeAskOnboardingConfig(
+                    demoRecipe: demoRecipe,
+                    selectedDietaryPatterns: selectedDietaryPatterns,
+                    onComplete: onComplete
+                )
+            )
+        case .adaptedDemo:
+            return nil
+        }
+    }
+
+    var showsAskCue: Bool {
+        if case .baseDemo = self {
+            return true
+        }
+        return false
+    }
+
+    var continueAction: (() -> Void)? {
+        guard case let .adaptedDemo(onContinue) = self else { return nil }
+        return onContinue
+    }
+}
+
 struct RecipeDetailExperienceView: View {
     let presentedRecipe: PresentedRecipeDetail
     let onOpenCart: () -> Void
     let onDismiss: (() -> Void)?
     let transitionNamespace: Namespace.ID?
     let onOpenToastDestination: ((AppToastDestination) -> Void)?
+    let onboardingContext: RecipeDetailOnboardingContext?
     @ObservedObject private var toastCenter: AppToastCenter
 
     @Environment(\.dismiss) private var dismiss
@@ -34,6 +82,7 @@ struct RecipeDetailExperienceView: View {
     @State private var isResolvingVideo = false
     @State private var webVideoAction: RecipeWebVideoAction = .none
     @State private var detailChromeVisible = false
+    @State private var hasScrolledAdaptedOnboardingRecipe = false
 
     private let detailBackground = OunjePalette.background
     private let sectionDivider = OunjePalette.stroke
@@ -49,13 +98,15 @@ struct RecipeDetailExperienceView: View {
         toastCenter: AppToastCenter,
         onDismiss: (() -> Void)? = nil,
         transitionNamespace: Namespace.ID? = nil,
-        onOpenToastDestination: ((AppToastDestination) -> Void)? = nil
+        onOpenToastDestination: ((AppToastDestination) -> Void)? = nil,
+        onboardingContext: RecipeDetailOnboardingContext? = nil
     ) {
         self.presentedRecipe = presentedRecipe
         self.onOpenCart = onOpenCart
         self.onDismiss = onDismiss
         self.transitionNamespace = transitionNamespace
         self.onOpenToastDestination = onOpenToastDestination
+        self.onboardingContext = onboardingContext
         _toastCenter = ObservedObject(wrappedValue: toastCenter)
         _viewModel = StateObject(wrappedValue: RecipeDetailViewModel(initialDetail: presentedRecipe.initialDetail))
     }
@@ -116,6 +167,25 @@ struct RecipeDetailExperienceView: View {
             return true
         }
         return false
+    }
+
+    private var isOnboardingDemo: Bool {
+        onboardingContext != nil
+    }
+
+    private var showsOnboardingAskCue: Bool {
+        onboardingContext?.showsAskCue == true
+    }
+
+    private var onboardingContinueAction: (() -> Void)? {
+        onboardingContext?.continueAction
+    }
+
+    private func markAdaptedOnboardingRecipeScrolled() {
+        guard onboardingContinueAction != nil, !hasScrolledAdaptedOnboardingRecipe else { return }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+            hasScrolledAdaptedOnboardingRecipe = true
+        }
     }
 
     private var descriptionText: String? {
@@ -388,6 +458,15 @@ struct RecipeDetailExperienceView: View {
 
                     ScrollView {
                         VStack(spacing: 0) {
+                            GeometryReader { scrollProxy in
+                                Color.clear
+                                    .preference(
+                                        key: RecipeDetailScrollOffsetPreferenceKey.self,
+                                        value: scrollProxy.frame(in: .named("recipe-detail-scroll")).minY
+                                    )
+                            }
+                            .frame(height: 0)
+
                             ZStack(alignment: .top) {
                                 Color.clear
                                     .frame(height: heroHeight)
@@ -399,7 +478,7 @@ struct RecipeDetailExperienceView: View {
                                             .allowsHitTesting(false)
                                     }
                                     .overlay(alignment: .topTrailing) {
-                                        if hasVideoSource {
+                                        if hasVideoSource && !isOnboardingDemo {
                                             RecipeDetailTopVideoButton(isActive: showInlineVideo) {
                                                 toggleInlineVideo()
                                             }
@@ -439,34 +518,44 @@ struct RecipeDetailExperienceView: View {
                                         }
                                     }
 
-                                    HStack(spacing: 8) {
-                                        RecipeDetailCompactActionButton(
-                                            title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Save",
-                                            systemImage: savedStore.isSaved(presentedRecipe.recipeCard) ? "bookmark.fill" : "bookmark",
-                                            compact: true
-                                        ) {
-                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
-                                                savedStore.toggle(presentedRecipe.recipeCard)
+                                    if !isOnboardingDemo || onboardingContinueAction == nil {
+                                        HStack(spacing: 8) {
+                                            if !isOnboardingDemo {
+                                                RecipeDetailCompactActionButton(
+                                                    title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Save",
+                                                    systemImage: savedStore.isSaved(presentedRecipe.recipeCard) ? "bookmark.fill" : "bookmark",
+                                                    compact: true
+                                                ) {
+                                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+                                                        savedStore.toggle(presentedRecipe.recipeCard)
+                                                    }
+                                                }
                                             }
-                                        }
 
-                                        RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
-                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                            showAskSheet = true
-                                        }
-
-                                        RecipeDetailCompactActionButton(title: "Story", showsInstagramGlyph: true, compact: true) {
-                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                            showStorySheet = true
-                                        }
-
-                                        if hasVideoSource {
-                                            RecipeDetailCompactActionButton(title: "Watch", systemImage: "play.fill", compact: true) {
+                                            RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
                                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                                toggleInlineVideo()
+                                                showAskSheet = true
+                                            }
+                                            .overlay(alignment: .topTrailing) {
+                                                if showsOnboardingAskCue {
+                                                    OnboardingAskButtonCueView()
+                                                }
+                                            }
+
+                                            if !isOnboardingDemo {
+                                                RecipeDetailCompactActionButton(title: "Story", showsInstagramGlyph: true, compact: true) {
+                                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                                    showStorySheet = true
+                                                }
+                                            }
+
+                                            if hasVideoSource && !isOnboardingDemo {
+                                                RecipeDetailCompactActionButton(title: "Watch", systemImage: "play.fill", compact: true) {
+                                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                                    toggleInlineVideo()
+                                                }
                                             }
                                         }
-
                                     }
                                 }
                                 .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 12, delay: 0.04))
@@ -521,7 +610,9 @@ struct RecipeDetailExperienceView: View {
                                                     }
                                                 }
 
-                                                ingredientSecondaryButton
+                                                if !isOnboardingDemo {
+                                                    ingredientSecondaryButton
+                                                }
                                             }
                                             .padding(.top, detailMetrics.isEmpty ? 6 : 20)
                                         }
@@ -544,7 +635,7 @@ struct RecipeDetailExperienceView: View {
                                             .padding(.top, ingredientItems.isEmpty ? 8 : 26)
                                         }
 
-                                        if detail != nil {
+                                        if detail != nil && !isOnboardingDemo {
                                             RecipeDetailEnjoySection(
                                                 recipes: viewModel.similarRecipes,
                                                 isLoading: isLoadingSimilarRecipes,
@@ -565,7 +656,21 @@ struct RecipeDetailExperienceView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
+                    .coordinateSpace(name: "recipe-detail-scroll")
                     .scrollIndicators(.hidden)
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 8)
+                            .onChanged { value in
+                                if value.translation.height < -8 {
+                                    markAdaptedOnboardingRecipeScrolled()
+                                }
+                            }
+                    )
+                    .onPreferenceChange(RecipeDetailScrollOffsetPreferenceKey.self) { minY in
+                        if minY < -16 {
+                            markAdaptedOnboardingRecipeScrolled()
+                        }
+                    }
                     .onChange(of: shouldScrollToSteps) { shouldScroll in
                         guard shouldScroll else { return }
                         withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
@@ -574,13 +679,15 @@ struct RecipeDetailExperienceView: View {
                         shouldScrollToSteps = false
                     }
 
-                    RecipeCookBottomBar(
-                        servingsCount: $servingsCount,
-                        actionTitle: primaryBottomActionTitle
-                    ) {
-                        handlePrimaryBottomAction()
+                    if !isOnboardingDemo {
+                        RecipeCookBottomBar(
+                            servingsCount: $servingsCount,
+                            actionTitle: primaryBottomActionTitle
+                        ) {
+                            handlePrimaryBottomAction()
+                        }
+                        .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 22, delay: 0.1))
                     }
-                    .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 22, delay: 0.1))
                 }
                 .overlay(alignment: .top) {
                     HStack(alignment: .top) {
@@ -588,13 +695,33 @@ struct RecipeDetailExperienceView: View {
                             closeExperience()
                         }
                         Spacer()
-                        RecipeDetailTopIconButton(symbolName: "arrow.up.right", isLoading: isPreparingShareLink) {
-                            handleShareTap()
+                        if !isOnboardingDemo {
+                            RecipeDetailTopIconButton(symbolName: "arrow.up.right", isLoading: isPreparingShareLink) {
+                                handleShareTap()
+                            }
                         }
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, topControlTop)
                     .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: -8, delay: 0.02))
+                }
+                .overlay(alignment: .center) {
+                    if onboardingContinueAction != nil {
+                        OnboardingAdaptedRecipeNavigationCueView(
+                            isTargetingContinue: hasScrolledAdaptedOnboardingRecipe,
+                            availableHeight: geometry.size.height
+                        )
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if let onboardingContinueAction {
+                        OnboardingRecipeContinueBar(action: onboardingContinueAction)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 18, delay: 0.12))
+                    }
                 }
                 .overlay(alignment: .topTrailing) {
                     if showInlineVideo, let resolvedVideo, let resolvedURL = resolvedVideo.url {
@@ -660,6 +787,7 @@ struct RecipeDetailExperienceView: View {
                 let loadedCount = presentedRecipe.plannedRecipe?.servings ?? viewModel.detail?.displayServings ?? 4
                 baseServingsCount = max(1, loadedCount)
                 servingsCount = max(1, loadedCount)
+                guard !isOnboardingDemo else { return }
                 await viewModel.load(for: presentedRecipe.id, similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID)
             }
         }
@@ -693,7 +821,8 @@ struct RecipeDetailExperienceView: View {
                 profile: store.profile,
                 onOpenCart: onOpenCart,
                 toastCenter: toastCenter,
-                onOpenToastDestination: onOpenToastDestination
+                onOpenToastDestination: onOpenToastDestination,
+                mode: onboardingContext?.askMode ?? .live
             )
             .ignoresSafeArea()
         }
@@ -728,7 +857,7 @@ struct RecipeDetailExperienceView: View {
             }
         }
         .task(id: videoSourceURL?.absoluteString ?? "no-video") {
-            guard videoSourceURL != nil else {
+            guard videoSourceURL != nil, !isOnboardingDemo else {
                 resolvedVideo = nil
                 return
             }
@@ -1233,7 +1362,10 @@ struct RecipeDetailTopIconButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
             ZStack {
                 if isLoading {
                     ProgressView()
@@ -1255,7 +1387,8 @@ struct RecipeDetailTopIconButton: View {
                     )
                     .shadow(color: Color.black.opacity(0.16), radius: 14, x: 0, y: 8)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(10)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(isLoading)
@@ -2541,6 +2674,26 @@ struct RecipeAdaptationRecipe: Decodable, Identifiable {
 
     var id: String { title }
 
+    init(
+        title: String,
+        summary: String,
+        cookTimeText: String,
+        ingredients: [String],
+        steps: [String],
+        substitutions: [String],
+        pairingNotes: [String],
+        dietaryFit: [String]
+    ) {
+        self.title = title
+        self.summary = summary
+        self.cookTimeText = cookTimeText
+        self.ingredients = ingredients
+        self.steps = steps
+        self.substitutions = substitutions
+        self.pairingNotes = pairingNotes
+        self.dietaryFit = dietaryFit
+    }
+
     enum CodingKeys: String, CodingKey {
         case title
         case summary
@@ -2813,6 +2966,7 @@ struct RecipeAskSheet: View {
     let onOpenCart: () -> Void
     let toastCenter: AppToastCenter
     let onOpenToastDestination: ((AppToastDestination) -> Void)?
+    let mode: RecipeAskMode
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var savedStore: SavedRecipesStore
@@ -2821,18 +2975,81 @@ struct RecipeAskSheet: View {
     @State private var selectedIntent: RecipeAlterationIntent?
     @State private var presentedAdaptedRecipe: PresentedRecipeDetail?
     @State private var isAddingAdaptedRecipeToPrep = false
+    @State private var onboardingResult: RecipeAdaptationResponse?
+    @State private var isOnboardingGenerating = false
 
     private var canGenerate: Bool {
-        !(userID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-            && !viewModel.isGenerating
+        switch mode {
+        case .live:
+            return !(userID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                && !viewModel.isGenerating
+        case .onboarding:
+            return !isOnboardingGenerating
+        }
+    }
+
+    private var isGenerating: Bool {
+        switch mode {
+        case .live:
+            return viewModel.isGenerating
+        case .onboarding:
+            return isOnboardingGenerating
+        }
+    }
+
+    private var onboardingConfig: RecipeAskOnboardingConfig? {
+        guard case let .onboarding(config) = mode else { return nil }
+        return config
+    }
+
+    private var isLiveMode: Bool {
+        if case .live = mode {
+            return true
+        }
+        return false
+    }
+
+    private var onboardingFixtures: [OnboardingRecipeEditDemoOptionFixture] {
+        guard let onboardingConfig else { return [] }
+        return onboardingConfig.demoRecipe.resolvedOptionFixtures(
+            selectedDietaryPatterns: onboardingConfig.selectedDietaryPatterns
+        )
+    }
+
+    private var selectedOnboardingFixture: OnboardingRecipeEditDemoOptionFixture? {
+        guard let selectedIntent else { return nil }
+        return onboardingFixtures.first { $0.intent == selectedIntent }
+    }
+
+    private var displayedResults: [RecipeAdaptationResponse] {
+        switch mode {
+        case .live:
+            return viewModel.history
+        case .onboarding:
+            return onboardingResult.map { [$0] } ?? []
+        }
     }
 
     private func submit(_ intent: RecipeAlterationIntent) {
         guard canGenerate else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         selectedIntent = intent
-        Task {
-            await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: intent.promptSeed, intent: intent, profile: profile)
+        switch mode {
+        case .live:
+            Task {
+                await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: intent.promptSeed, intent: intent, profile: profile)
+            }
+        case let .onboarding(config):
+            guard let fixture = onboardingFixtures.first(where: { $0.intent == intent }) else { return }
+            onboardingResult = nil
+            isOnboardingGenerating = true
+
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_300_000_000)
+                guard !Task.isCancelled else { return }
+                onboardingResult = fixture.makeResponse(from: config.demoRecipe)
+                isOnboardingGenerating = false
+            }
         }
     }
 
@@ -2842,6 +3059,26 @@ struct RecipeAskSheet: View {
             initialDetail: result.recipeDetail,
             adaptedFromRecipeID: result.adaptedFromRecipeID ?? recipeID
         )
+    }
+
+    private func clearConversation() {
+        selectedIntent = nil
+        switch mode {
+        case .live:
+            viewModel.clearResult()
+        case .onboarding:
+            onboardingResult = nil
+        }
+    }
+
+    private func completeOnboardingRecipeFlow(_ config: RecipeAskOnboardingConfig) {
+        presentedAdaptedRecipe = nil
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            dismiss()
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            config.onComplete()
+        }
     }
 
     private func addAdaptedRecipeToPrep(_ result: RecipeAdaptationResponse) {
@@ -2910,36 +3147,43 @@ struct RecipeAskSheet: View {
                     HStack(alignment: .center) {
                         SleeScriptDisplayText("Ask Ounje", size: 30, color: OunjePalette.primaryText)
 
-                        Spacer(minLength: 12)
+                        if isLiveMode {
+                            Spacer(minLength: 12)
 
-                        Button {
-                            viewModel.clearResult()
-                            selectedIntent = nil
-                        } label: {
-                            Text("Clear chat")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
-                                .padding(.horizontal, 15)
-                                .frame(height: 38)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(OunjePalette.surface.opacity(0.88))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(OunjePalette.stroke.opacity(0.85), lineWidth: 1)
-                                )
+                            Button {
+                                clearConversation()
+                            } label: {
+                                Text("Clear chat")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.primaryText.opacity(0.88))
+                                    .padding(.horizontal, 15)
+                                    .frame(height: 38)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(OunjePalette.surface.opacity(0.88))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(OunjePalette.stroke.opacity(0.85), lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
 
                     (
                         Text("Bonjour.")
                             .fontWeight(.bold)
-                        + Text(" Did you have a special request about this ")
+                        + Text(isLiveMode
+                            ? " Did you have a special request about this "
+                            : " Pick one of these guided edits for this "
+                        )
                         + Text(recipeTitle)
                             .underline(true, color: OunjePalette.primaryText.opacity(0.86))
-                        + Text(" recipe? I can modify it based on your dietary restrictions, taste preferences and more. Just ask!")
+                        + Text(isLiveMode
+                            ? " recipe? I can modify it based on your dietary restrictions, taste preferences and more. Just ask!"
+                            : " recipe. I already planned the exact changes so you can preview the experience."
+                        )
                     )
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(OunjePalette.primaryText)
@@ -2947,47 +3191,68 @@ struct RecipeAskSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if viewModel.isGenerating {
-                    RecipeAskGeneratingPanel()
+                if isGenerating {
+                    RecipeAskGeneratingPanel(
+                        message: isLiveMode
+                            ? "Great! Give me a few seconds while I prepare a different recipe for you."
+                            : "Great. Give me a couple seconds while I apply the planned edit.",
+                        supportingText: nil
+                    )
                         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                 }
 
-                if !viewModel.history.isEmpty {
+                if !displayedResults.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        if viewModel.history.count > 1 {
+                        if isLiveMode && displayedResults.count > 1 {
                             Text("Recent rewrites")
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(OunjePalette.secondaryText)
                         }
 
-                        ForEach(viewModel.history, id: \.historyID) { result in
-                            RecipeAskInlineResultPanel(
-                                result: result,
-                                baseImageURL: baseImageURL,
-                                isSaved: savedStore.isSaved(result.recipeCard),
-                                isAddingToPrep: isAddingAdaptedRecipeToPrep,
-                                onAskAgain: {
-                                    viewModel.clearResult()
-                                    selectedIntent = nil
-                                },
-                                onSave: {
-                                    if !savedStore.isSaved(result.recipeCard) {
-                                        savedStore.toggle(result.recipeCard)
+                        ForEach(displayedResults, id: \.historyID) { result in
+                            if isLiveMode {
+                                RecipeAskInlineResultPanel(
+                                    result: result,
+                                    baseImageURL: baseImageURL,
+                                    isSaved: savedStore.isSaved(result.recipeCard),
+                                    isAddingToPrep: isAddingAdaptedRecipeToPrep,
+                                    onAskAgain: {
+                                        clearConversation()
+                                    },
+                                    onSave: {
+                                        if !savedStore.isSaved(result.recipeCard) {
+                                            savedStore.toggle(result.recipeCard)
+                                        }
+                                    },
+                                    onOpenPreview: {
+                                        openAdaptedRecipePreview(result)
+                                    },
+                                    onAddToPrep: {
+                                        addAdaptedRecipeToPrep(result)
                                     }
-                                },
-                                onOpenPreview: {
-                                    openAdaptedRecipePreview(result)
-                                },
-                                onAddToPrep: {
-                                    addAdaptedRecipeToPrep(result)
-                                }
-                            )
+                                )
+                            } else {
+                                OnboardingRecipeAskInlineResultPanel(
+                                    result: result,
+                                    baseImageURL: baseImageURL,
+                                    isSaved: savedStore.isSaved(result.recipeCard),
+                                    summary: selectedOnboardingFixture?.oneLineChangeSummary ?? result.changeSummary,
+                                    onSave: {
+                                        if !savedStore.isSaved(result.recipeCard) {
+                                            saveOnboardingAdaptedRecipe(result)
+                                        }
+                                    },
+                                    onOpenPreview: {
+                                        openAdaptedRecipePreview(result)
+                                    }
+                                )
+                            }
                         }
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                 }
 
-                if let errorMessage = viewModel.errorMessage {
+                if let errorMessage = viewModel.errorMessage, isLiveMode {
                     Text(errorMessage)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.red.opacity(0.9))
@@ -2996,20 +3261,30 @@ struct RecipeAskSheet: View {
 
                 Spacer(minLength: 0)
 
-                RecipeInspirationSwiper(
-                    selectedIntent: selectedIntent,
-                    isGenerating: viewModel.isGenerating,
-                    canGenerate: canGenerate,
-                    recipeKind: recipeKind,
-                    recipeTitle: recipeTitle,
-                    onSelect: submit
-                )
+                if isLiveMode {
+                    RecipeInspirationSwiper(
+                        selectedIntent: selectedIntent,
+                        isGenerating: isGenerating,
+                        canGenerate: canGenerate,
+                        recipeKind: recipeKind,
+                        recipeTitle: recipeTitle,
+                        onSelect: submit
+                    )
+                } else {
+                    OnboardingRecipeInspirationList(
+                        fixtures: onboardingFixtures,
+                        selectedIntent: selectedIntent,
+                        isGenerating: isGenerating,
+                        onSelect: submit
+                    )
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
             .padding(.bottom, 100)
         }
         .task(id: "\(userID ?? "")::\(recipeID)") {
+            guard isLiveMode else { return }
             await viewModel.loadHistory(recipeID: recipeID, userID: userID)
         }
         .fullScreenCover(item: $presentedAdaptedRecipe) { recipe in
@@ -3017,21 +3292,48 @@ struct RecipeAskSheet: View {
                 presentedRecipe: recipe,
                 onOpenCart: onOpenCart,
                 toastCenter: toastCenter,
-                onOpenToastDestination: onOpenToastDestination
+                onOpenToastDestination: onOpenToastDestination,
+                onboardingContext: onboardingConfig.map { config in
+                    .adaptedDemo(onContinue: {
+                        completeOnboardingRecipeFlow(config)
+                    })
+                }
             )
             .environmentObject(savedStore)
             .environmentObject(store)
         }
     }
+
+    private func saveOnboardingAdaptedRecipe(_ result: RecipeAdaptationResponse) {
+        savedStore.saveImportedRecipe(result.recipeCard, showToast: false)
+        toastCenter.show(
+            title: "Your first of many.",
+            subtitle: result.recipeCard.title,
+            systemImage: "bookmark.fill",
+            thumbnailURLString: result.recipeCard.imageURLString ?? result.recipeCard.heroImageURLString,
+            destination: .recipe(result.recipeCard)
+        )
+    }
 }
 
 struct RecipeAskGeneratingPanel: View {
+    var message = "Great! Give me a few seconds while I prepare a different recipe for you."
+    var supportingText: String? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Great! Give me a few seconds while I prepare a different recipe for you.")
+            Text(message)
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(OunjePalette.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let supportingText,
+               !supportingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(supportingText)
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             ProgressView()
                 .progressViewStyle(.circular)
@@ -3039,6 +3341,32 @@ struct RecipeAskGeneratingPanel: View {
                 .scaleEffect(1.08)
         }
         .padding(.top, 6)
+    }
+}
+
+struct OnboardingRecipePlanSummaryCard: View {
+    let summary: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Planned changes")
+                .font(.system(size: 12, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            Text(summary)
+                .font(.system(size: 14.5, weight: .medium))
+                .foregroundStyle(OunjePalette.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.85), lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -3125,6 +3453,62 @@ struct RecipeAskInlineResultPanel: View {
     }
 }
 
+struct OnboardingRecipeAskInlineResultPanel: View {
+    let result: RecipeAdaptationResponse
+    let baseImageURL: URL?
+    let isSaved: Bool
+    let summary: String?
+    let onSave: () -> Void
+    let onOpenPreview: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                (
+                    Text("Great, here is the new recipe: ")
+                        .fontWeight(.bold)
+                    + Text(summary)
+                )
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(OunjePalette.primaryText)
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            RecipeAdaptedPreviewCard(
+                result: result,
+                baseImageURL: baseImageURL,
+                showsOnboardingCue: true,
+                onOpen: onOpenPreview
+            )
+
+            Button(action: onSave) {
+                HStack(spacing: 8) {
+                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 13, weight: .semibold))
+
+                    Text(isSaved ? "Saved" : "Save this recipe")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
+                .frame(maxWidth: .infinity)
+                .frame(height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(OunjePalette.surface.opacity(0.94))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.84), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isSaved)
+        }
+        .padding(.top, 6)
+    }
+}
+
 struct RecipeInspirationSwiper: View {
     let selectedIntent: RecipeAlterationIntent?
     let isGenerating: Bool
@@ -3161,6 +3545,48 @@ struct RecipeInspirationSwiper: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.trailing, 20)
+            }
+            .padding(.horizontal, -20)
+            .frame(height: 46)
+        }
+    }
+}
+
+struct OnboardingRecipeInspirationList: View {
+    let fixtures: [OnboardingRecipeEditDemoOptionFixture]
+    let selectedIntent: RecipeAlterationIntent?
+    let isGenerating: Bool
+    let onSelect: (RecipeAlterationIntent) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Need some inspiration? Try these")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 9) {
+                    ForEach(fixtures) { fixture in
+                        Button {
+                            onSelect(fixture.intent)
+                        } label: {
+                            RecipeAdaptationIntentPill(
+                                intent: fixture.intent,
+                                isSelected: selectedIntent == fixture.intent,
+                                isDisabled: isGenerating
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isGenerating)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.trailing, 20)
+            }
+            .overlay(alignment: .topLeading) {
+                if selectedIntent == nil && !isGenerating {
+                    OnboardingInspirationCueView()
+                }
             }
             .padding(.horizontal, -20)
             .frame(height: 46)
@@ -3309,11 +3735,18 @@ struct RecipeAdaptationResultSheet: View {
 struct RecipeAdaptedPreviewCard: View {
     let result: RecipeAdaptationResponse
     let baseImageURL: URL?
+    let showsOnboardingCue: Bool
     let onOpen: () -> Void
 
-    init(result: RecipeAdaptationResponse, baseImageURL: URL? = nil, onOpen: @escaping () -> Void) {
+    init(
+        result: RecipeAdaptationResponse,
+        baseImageURL: URL? = nil,
+        showsOnboardingCue: Bool = false,
+        onOpen: @escaping () -> Void
+    ) {
         self.result = result
         self.baseImageURL = baseImageURL
+        self.showsOnboardingCue = showsOnboardingCue
         self.onOpen = onOpen
     }
 
@@ -3361,6 +3794,13 @@ struct RecipeAdaptedPreviewCard: View {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .stroke(Color.white.opacity(0.16), lineWidth: 1)
             )
+            .overlay(alignment: .topTrailing) {
+                if showsOnboardingCue {
+                    OnboardingTakeLookCueView()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .buttonStyle(.plain)
     }
@@ -3843,6 +4283,331 @@ struct RecipeDetailCompactActionButton: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct RecipeDetailScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+struct OnboardingTapCueView: View {
+    let label: String?
+    let labelOffset: CGSize
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isFloating = false
+    @State private var isPulsing = false
+
+    init(label: String? = nil, labelOffset: CGSize = CGSize(width: -48, height: -32)) {
+        self.label = label
+        self.labelOffset = labelOffset
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 34, height: 34)
+                .scaleEffect(isPulsing ? 1.16 : 0.88)
+                .opacity(isPulsing ? 0.18 : 0.46)
+
+            Image(systemName: "hand.tap.fill")
+                .font(.system(size: 24, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white, Color.white.opacity(0.8))
+                .shadow(color: .black.opacity(0.22), radius: 8, y: 6)
+                .rotationEffect(.degrees(-10))
+
+            if let label {
+                OnboardingCueLabel(text: label)
+                    .offset(labelOffset)
+            }
+        }
+        .offset(y: reduceMotion ? 0 : (isFloating ? -7 : 5))
+        .scaleEffect(reduceMotion ? 1 : (isPulsing ? 1.02 : 0.96))
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
+                isFloating = true
+            }
+            withAnimation(.easeInOut(duration: 0.78).repeatForever(autoreverses: true)) {
+                isPulsing = true
+            }
+        }
+    }
+}
+
+struct OnboardingCueLabel: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .black, design: .rounded))
+            .foregroundStyle(OunjePalette.primaryText)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.96))
+                    .shadow(color: .black.opacity(0.22), radius: 10, y: 6)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+            )
+    }
+}
+
+struct OnboardingAskButtonCueView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+            let offset = reduceMotion ? CGPoint(x: 16, y: 8) : cueOffset(at: timeline.date)
+
+            OnboardingTapCueView(label: "Edit Recipe", labelOffset: CGSize(width: 50, height: -32))
+                .offset(x: offset.x, y: offset.y)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func cueOffset(at date: Date) -> CGPoint {
+        let cycle: TimeInterval = 4.2
+        let progress = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: cycle) / cycle
+        let points = [
+            CGPoint(x: 16, y: 8),
+            CGPoint(x: 34, y: -24),
+            CGPoint(x: -8, y: -18),
+            CGPoint(x: 26, y: 0),
+            CGPoint(x: 16, y: 8)
+        ]
+        let scaled = progress * Double(points.count - 1)
+        let index = min(points.count - 2, max(0, Int(scaled)))
+        let localProgress = CGFloat(scaled - Double(index))
+        let eased = localProgress * localProgress * (3 - 2 * localProgress)
+        let start = points[index]
+        let end = points[index + 1]
+        let bob = CGFloat(sin(progress * Double.pi * 2)) * 2
+
+        return CGPoint(
+            x: start.x + (end.x - start.x) * eased,
+            y: start.y + (end.y - start.y) * eased + bob
+        )
+    }
+}
+
+struct OnboardingInspirationCueView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var startDate: Date?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+            let offset = reduceMotion ? CGPoint(x: 122, y: 1) : cueOffset(at: timeline.date)
+
+            OnboardingTapCueView()
+                .scaleEffect(0.88)
+                .offset(x: offset.x, y: offset.y)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .onAppear {
+            if startDate == nil {
+                startDate = Date()
+            }
+        }
+    }
+
+    private func cueOffset(at date: Date) -> CGPoint {
+        let introDuration: TimeInterval = 1.35
+        let elapsed = max(0, date.timeIntervalSince(startDate ?? date))
+        let settledPoint = CGPoint(x: 122, y: 1)
+
+        if elapsed < introDuration {
+            return interpolatedPoint(
+                from: CGPoint(x: 145, y: -220),
+                to: settledPoint,
+                progress: CGFloat(elapsed / introDuration),
+                bobPhase: elapsed
+            )
+        }
+
+        let cycle: TimeInterval = 3.9
+        let hoverElapsed = elapsed - introDuration
+        let progress = hoverElapsed.truncatingRemainder(dividingBy: cycle) / cycle
+        let points = [
+            settledPoint,
+            CGPoint(x: 180, y: -18),
+            CGPoint(x: 246, y: 8),
+            CGPoint(x: 154, y: 18),
+            settledPoint
+        ]
+        return pathPoint(points: points, progress: progress, bobPhase: hoverElapsed)
+    }
+
+    private func interpolatedPoint(from start: CGPoint, to end: CGPoint, progress: CGFloat, bobPhase: TimeInterval) -> CGPoint {
+        let eased = progress * progress * (3 - 2 * progress)
+        let bob = CGFloat(sin(bobPhase * Double.pi * 2)) * 2
+
+        return CGPoint(
+            x: start.x + (end.x - start.x) * eased,
+            y: start.y + (end.y - start.y) * eased + bob
+        )
+    }
+
+    private func pathPoint(points: [CGPoint], progress: TimeInterval, bobPhase: TimeInterval) -> CGPoint {
+        let scaled = progress * Double(points.count - 1)
+        let index = min(points.count - 2, max(0, Int(scaled)))
+        let localProgress = CGFloat(scaled - Double(index))
+        let eased = localProgress * localProgress * (3 - 2 * localProgress)
+        let start = points[index]
+        let end = points[index + 1]
+        let bob = CGFloat(sin(bobPhase * Double.pi * 2)) * 2
+
+        return CGPoint(
+            x: start.x + (end.x - start.x) * eased,
+            y: start.y + (end.y - start.y) * eased + bob
+        )
+    }
+}
+
+struct OnboardingAdaptedRecipeNavigationCueView: View {
+    let isTargetingContinue: Bool
+    let availableHeight: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isDragging = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            OnboardingCueLabel(text: isTargetingContinue ? "Finish onboarding" : "Scroll to review")
+
+            Image(systemName: "hand.point.down.fill")
+                .font(.system(size: 30, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white, Color.white.opacity(0.76))
+                .shadow(color: .black.opacity(0.24), radius: 10, y: 7)
+                .rotationEffect(.degrees(isTargetingContinue ? -28 : 0))
+                .offset(y: reduceMotion ? 0 : (isDragging ? (isTargetingContinue ? 9 : 18) : (isTargetingContinue ? -5 : -4)))
+        }
+        .offset(
+            x: isTargetingContinue ? 14 : 0,
+            y: isTargetingContinue ? max(96, availableHeight * 0.36) : 0
+        )
+        .animation(.spring(response: 0.82, dampingFraction: 0.84), value: isTargetingContinue)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.96).repeatForever(autoreverses: true)) {
+                isDragging = true
+            }
+        }
+    }
+}
+
+struct OnboardingTakeLookCueView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var startDate: Date?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+            let offset = reduceMotion ? CGPoint(x: -22, y: 12) : cueOffset(at: timeline.date)
+
+            OnboardingTapCueView(label: "Take a look")
+                .scaleEffect(0.9)
+                .offset(x: offset.x, y: offset.y)
+        }
+        .onAppear {
+            if startDate == nil {
+                startDate = Date()
+            }
+        }
+    }
+
+    private func cueOffset(at date: Date) -> CGPoint {
+        let introDuration: TimeInterval = 1.15
+        let elapsed = max(0, date.timeIntervalSince(startDate ?? date))
+        let settledPoint = CGPoint(x: -22, y: 12)
+
+        if elapsed < introDuration {
+            let progress = CGFloat(elapsed / introDuration)
+            let eased = progress * progress * (3 - 2 * progress)
+            return CGPoint(
+                x: -6 + (settledPoint.x + 6) * eased,
+                y: 156 + (settledPoint.y - 156) * eased
+            )
+        }
+
+        let hoverElapsed = elapsed - introDuration
+        let cycle: TimeInterval = 3.6
+        let progress = hoverElapsed.truncatingRemainder(dividingBy: cycle) / cycle
+        let points = [
+            settledPoint,
+            CGPoint(x: -36, y: 4),
+            CGPoint(x: -18, y: -3),
+            CGPoint(x: -8, y: 16),
+            settledPoint
+        ]
+
+        return OnboardingCuePath.point(points: points, progress: progress, bobPhase: hoverElapsed)
+    }
+}
+
+struct OnboardingRecipeContinueBar: View {
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: action) {
+                Text("Continue")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(OunjePalette.accent)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 0)
+        .padding(.bottom, 14)
+        .background(
+            LinearGradient(
+                colors: [
+                    OunjePalette.background.opacity(0),
+                    OunjePalette.background.opacity(0.84),
+                    OunjePalette.background
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea(edges: .bottom)
+        )
+    }
+}
+
+private enum OnboardingCuePath {
+    static func point(points: [CGPoint], progress: TimeInterval, bobPhase: TimeInterval) -> CGPoint {
+        let scaled = progress * Double(points.count - 1)
+        let index = min(points.count - 2, max(0, Int(scaled)))
+        let localProgress = CGFloat(scaled - Double(index))
+        let eased = localProgress * localProgress * (3 - 2 * localProgress)
+        let start = points[index]
+        let end = points[index + 1]
+        let bob = CGFloat(sin(bobPhase * Double.pi * 2)) * 2
+
+        return CGPoint(
+            x: start.x + (end.x - start.x) * eased,
+            y: start.y + (end.y - start.y) * eased + bob
+        )
     }
 }
 

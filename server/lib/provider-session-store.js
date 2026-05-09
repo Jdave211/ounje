@@ -7,7 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL_PROVIDER_STORE_PATH = path.resolve(__dirname, "../.sessions/provider-accounts.json");
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+const SUPABASE_KEY = SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
 
 function ensureLocalProviderStore() {
   fs.mkdirSync(path.dirname(LOCAL_PROVIDER_STORE_PATH), { recursive: true });
@@ -95,7 +96,8 @@ function mostRecent(records) {
 }
 
 export async function loadProviderSession({ userId = null, provider, accessToken = null }) {
-  const supabase = accessToken && isUUID(userId) ? getSupabase(accessToken) : null;
+  const canReadSupabase = isUUID(userId) && Boolean(accessToken || SUPABASE_SERVICE_ROLE_KEY);
+  const supabase = canReadSupabase ? getSupabase(accessToken) : null;
   if (supabase) {
     try {
       const { data } = await supabase

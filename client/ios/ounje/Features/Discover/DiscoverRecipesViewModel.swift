@@ -49,17 +49,23 @@ final class DiscoverRecipesViewModel: ObservableObject {
     private var currentFeedOffset = 0
     private let shelfCacheTTL: TimeInterval = 12 * 60 * 60
     private let shelfCacheStoreKey = "ounje-discover-shelf-cache-v2"
-    private let shelfCacheSchemaVersion = "2026-04-27"
+    private let shelfCacheSchemaVersion = "2026-05-09-onboarding-blend"
     private let recipeCatalogVersion = "ounje-recipes-v1"
-    private let rankingConfigVersion = "ranked-discover-v1"
+    private let rankingConfigVersion = "ranked-discover-v2-onboarding-profile"
 
     init() {
         filters = DiscoverPreset.shuffledTitles(seed: filterShuffleSeed)
     }
 
-    func loadIfNeeded(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
+    func loadIfNeeded(
+        profile: UserProfile?,
+        query: String = "",
+        feedContext: DiscoverFeedContext,
+        behaviorSeeds: [DiscoverRecipeCardData] = []
+    ) async {
         let loadKey = cacheKey(
             profile: profile,
+            behaviorSeeds: behaviorSeeds,
             filter: selectedFilter,
             query: query.trimmingCharacters(in: .whitespacesAndNewlines),
             feedContext: feedContext,
@@ -73,13 +79,14 @@ final class DiscoverRecipesViewModel: ObservableObject {
         }
         currentFeedLimit = stagedPageSize
         currentFeedOffset = 0
-        await refresh(profile: profile, query: query, feedContext: feedContext, limit: currentFeedLimit, offset: 0)
+        await refresh(profile: profile, query: query, feedContext: feedContext, behaviorSeeds: behaviorSeeds, limit: currentFeedLimit, offset: 0)
     }
 
     func refresh(
         profile: UserProfile?,
         query: String = "",
         feedContext: DiscoverFeedContext,
+        behaviorSeeds: [DiscoverRecipeCardData] = [],
         limit: Int? = nil,
         offset: Int = 0,
         appendResults: Bool = false,
@@ -89,13 +96,17 @@ final class DiscoverRecipesViewModel: ObservableObject {
         activeRequestID = requestID
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let hadExistingRecipes = !recipes.isEmpty
+        let previousRecipes = recipes
+        let previousHasMoreRecipes = hasMoreRecipes
+        let previousFeedOffset = currentFeedOffset
+        let previousLastLoadedFilter = lastLoadedFilter
         let isPresetTransition = normalizedQuery.isEmpty && selectedFilter != lastLoadedFilter
         let requestedLimit = max(1, limit ?? currentFeedLimit)
         currentFeedLimit = requestedLimit
         let requestedOffset = max(0, offset)
         currentFeedOffset = requestedOffset
-        let loadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: requestedLimit, offset: requestedOffset)
-        let shelfKey = persistentShelfKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
+        let loadKey = cacheKey(profile: profile, behaviorSeeds: behaviorSeeds, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: requestedLimit, offset: requestedOffset)
+        let shelfKey = persistentShelfKey(profile: profile, behaviorSeeds: behaviorSeeds, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
 
         if !forceNetwork,
            let cachedEntry = responseCache[loadKey],
@@ -133,7 +144,12 @@ final class DiscoverRecipesViewModel: ObservableObject {
         if isPresetTransition {
             isTransitioningFeed = true
         }
+        let shouldPreserveVisibleRecipes = forceNetwork
+            && !appendResults
+            && hadExistingRecipes
+            && normalizedQuery.isEmpty
         let shouldClearVisibleRecipes = !appendResults
+            && !shouldPreserveVisibleRecipes
             && (
                 forceNetwork
                 || isPresetTransition
@@ -168,19 +184,68 @@ final class DiscoverRecipesViewModel: ObservableObject {
                 forceRefresh: forceNetwork
             )
             guard activeRequestID == requestID else { return }
-            recipes = appendResults && requestedOffset > 0
-                ? dedupeRecipesByID(recipes + response.recipes)
-                : response.recipes
-            responseCache[loadKey] = InMemoryDiscoverCacheEntry(
+            let mixedRecipes = DiscoverOnboardingFeedMixer.mixedFeed(
                 recipes: response.recipes,
+                profile: profile,
+                behaviorSeeds: behaviorSeeds,
+                requestSeed: requestSeed,
+                filter: selectedFilter,
+                query: normalizedQuery
+            )
+            let firstPageEmpty = !appendResults
+                && requestedOffset == 0
+                && normalizedQuery.isEmpty
+                && mixedRecipes.isEmpty
+            if firstPageEmpty {
+                debugLogDiscoverRefresh(
+                    "empty first-page response",
+                    filter: selectedFilter,
+                    query: normalizedQuery,
+                    forceNetwork: forceNetwork,
+                    fallbackMode: response.rankingMode,
+                    keptExistingRecipes: hadExistingRecipes
+                )
+                if hadExistingRecipes {
+                    recipes = previousRecipes
+                    errorMessage = nil
+                    hasResolvedInitialLoad = true
+                    hasMoreRecipes = previousHasMoreRecipes
+                    currentFeedOffset = previousFeedOffset
+                    lastLoadedFilter = previousLastLoadedFilter
+                    return
+                }
+
+                if DiscoverPreset.normalizedKey(for: selectedFilter) != "all" {
+                    recipes = []
+                    errorMessage = nil
+                    hasResolvedInitialLoad = true
+                    hasMoreRecipes = false
+                    currentFeedOffset = 0
+                    lastLoadedFilter = selectedFilter
+                    lastLoadKey = loadKey
+                    return
+                }
+
+                errorMessage = "We couldn’t load the live recipe feed."
+                hasResolvedInitialLoad = true
+                hasMoreRecipes = false
+                currentFeedOffset = 0
+                return
+            }
+
+            recipes = appendResults && requestedOffset > 0
+                ? dedupeRecipesByID(recipes + mixedRecipes)
+                : mixedRecipes
+            responseCache[loadKey] = InMemoryDiscoverCacheEntry(
+                recipes: mixedRecipes,
                 filters: response.filters,
-                hasMoreRecipes: response.hasMore ?? (response.recipes.count >= requestedLimit),
+                hasMoreRecipes: response.hasMore ?? (mixedRecipes.count >= requestedLimit),
                 nextOffset: response.nextOffset ?? (requestedOffset + response.recipes.count)
             )
             filters = DiscoverPreset.shuffledTitles(seed: filterShuffleSeed)
             errorMessage = nil
             hasResolvedInitialLoad = true
-            hasMoreRecipes = response.hasMore ?? (response.recipes.count >= requestedLimit)
+            hasMoreRecipes = response.hasMore ?? (mixedRecipes.count >= requestedLimit)
             currentFeedOffset = response.nextOffset ?? (requestedOffset + response.recipes.count)
             lastLoadedFilter = selectedFilter
             lastLoadKey = loadKey
@@ -190,7 +255,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
             if canUseStoredShelf && !appendResults && requestedOffset == 0 {
                 storeShelf(
                     key: shelfKey,
-                    recipes: response.recipes,
+                    recipes: mixedRecipes,
                     filters: filters,
                     hasMore: hasMoreRecipes,
                     nextOffset: currentFeedOffset
@@ -199,31 +264,58 @@ final class DiscoverRecipesViewModel: ObservableObject {
         } catch {
             guard activeRequestID == requestID else { return }
             hasResolvedInitialLoad = true
-            hasMoreRecipes = false
             if hadExistingRecipes {
+                recipes = previousRecipes
+                hasMoreRecipes = previousHasMoreRecipes
+                currentFeedOffset = previousFeedOffset
+                lastLoadedFilter = previousLastLoadedFilter
                 errorMessage = nil
+                debugLogDiscoverRefresh(
+                    "refresh failed; keeping stale recipes",
+                    filter: selectedFilter,
+                    query: normalizedQuery,
+                    forceNetwork: forceNetwork,
+                    fallbackMode: nil,
+                    keptExistingRecipes: true,
+                    error: error
+                )
             } else {
+                hasMoreRecipes = false
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "We couldn’t load the live recipe feed."
+                debugLogDiscoverRefresh(
+                    "cold refresh failed",
+                    filter: selectedFilter,
+                    query: normalizedQuery,
+                    forceNetwork: forceNetwork,
+                    fallbackMode: nil,
+                    keptExistingRecipes: false,
+                    error: error
+                )
             }
         }
     }
 
-    func loadMoreIfNeeded(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
+    func loadMoreIfNeeded(
+        profile: UserProfile?,
+        query: String = "",
+        feedContext: DiscoverFeedContext,
+        behaviorSeeds: [DiscoverRecipeCardData] = []
+    ) async {
         guard hasResolvedInitialLoad, hasMoreRecipes, !isLoading, !isFetchingMore else { return }
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let nextOffset = currentFeedOffset
-        let loadKey = cacheKey(profile: profile, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset)
+        let loadKey = cacheKey(profile: profile, behaviorSeeds: behaviorSeeds, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset)
         guard responseCache[loadKey] == nil else {
             currentFeedOffset = nextOffset
-            return await refresh(profile: profile, query: query, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset, appendResults: true)
+            return await refresh(profile: profile, query: query, feedContext: feedContext, behaviorSeeds: behaviorSeeds, limit: stagedPageSize, offset: nextOffset, appendResults: true)
         }
 
         isFetchingMore = true
         defer { isFetchingMore = false }
-        await refresh(profile: profile, query: query, feedContext: feedContext, limit: stagedPageSize, offset: nextOffset, appendResults: true)
+        await refresh(profile: profile, query: query, feedContext: feedContext, behaviorSeeds: behaviorSeeds, limit: stagedPageSize, offset: nextOffset, appendResults: true)
     }
 
-    func rotateBaseFeedIfNeeded(profile: UserProfile?, feedContext: DiscoverFeedContext) async {
+    func rotateBaseFeedIfNeeded(profile: UserProfile?, feedContext: DiscoverFeedContext, behaviorSeeds: [DiscoverRecipeCardData] = []) async {
         let now = Date()
         if let lastBaseRotationAt, now.timeIntervalSince(lastBaseRotationAt) < 4 {
             return
@@ -231,17 +323,23 @@ final class DiscoverRecipesViewModel: ObservableObject {
 
         invalidateBaseFeedRotation()
         lastBaseRotationAt = now
-        await refresh(profile: profile, query: "", feedContext: feedContext)
-    }
-
-    func forceReload(profile: UserProfile?, query: String = "", feedContext: DiscoverFeedContext) async {
-        await forceReload(profile: profile, query: query, feedContext: feedContext, rotateBaseFeed: false, forceNetwork: false)
+        await refresh(profile: profile, query: "", feedContext: feedContext, behaviorSeeds: behaviorSeeds)
     }
 
     func forceReload(
         profile: UserProfile?,
         query: String = "",
         feedContext: DiscoverFeedContext,
+        behaviorSeeds: [DiscoverRecipeCardData] = []
+    ) async {
+        await forceReload(profile: profile, query: query, feedContext: feedContext, behaviorSeeds: behaviorSeeds, rotateBaseFeed: false, forceNetwork: false)
+    }
+
+    func forceReload(
+        profile: UserProfile?,
+        query: String = "",
+        feedContext: DiscoverFeedContext,
+        behaviorSeeds: [DiscoverRecipeCardData] = [],
         rotateBaseFeed: Bool,
         forceNetwork: Bool
     ) async {
@@ -251,7 +349,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
         if rotateBaseFeed {
             invalidateBaseFeedRotation()
         }
-        await refresh(profile: profile, query: query, feedContext: feedContext, limit: currentFeedLimit, offset: 0, forceNetwork: forceNetwork)
+        await refresh(profile: profile, query: query, feedContext: feedContext, behaviorSeeds: behaviorSeeds, limit: currentFeedLimit, offset: 0, forceNetwork: forceNetwork)
     }
 
     func resetFeedPagination() {
@@ -294,23 +392,40 @@ final class DiscoverRecipesViewModel: ObservableObject {
         lastLoadKey = nil
     }
 
-    private func cacheKey(profile: UserProfile?, filter: String, query: String, feedContext: DiscoverFeedContext, limit: Int, offset: Int = 0) -> String {
+    private func cacheKey(
+        profile: UserProfile?,
+        behaviorSeeds: [DiscoverRecipeCardData],
+        filter: String,
+        query: String,
+        feedContext: DiscoverFeedContext,
+        limit: Int,
+        offset: Int = 0
+    ) -> String {
         let cuisines = profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
         let dietary = profile?.dietaryPatterns.joined(separator: ",") ?? ""
         let foods = profile?.favoriteFoods.joined(separator: ",") ?? ""
         let flavors = profile?.favoriteFlavors.joined(separator: ",") ?? ""
+        let profileKey = String(profileFingerprint(profile).prefix(16))
+        let behaviorKey = DiscoverOnboardingFeedMixer.behaviorSignature(behaviorSeeds)
         let baseRotationKey = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "|rotation:\(baseFeedRotationIndex)|token:\(baseFeedRefreshToken)"
             : ""
-        return "\(sessionSeed)|\(feedContext.cacheKey)|\(filter)|\(cuisines)|\(dietary)|\(foods)|\(flavors)|\(query)|feedback:\(feedbackRevision)|limit:\(limit)|offset:\(offset)\(baseRotationKey)"
+        return "\(sessionSeed)|\(feedContext.cacheKey)|\(filter)|\(profileKey)|\(cuisines)|\(dietary)|\(foods)|\(flavors)|behavior:\(behaviorKey)|\(query)|feedback:\(feedbackRevision)|limit:\(limit)|offset:\(offset)\(baseRotationKey)"
     }
 
-    private func persistentShelfKey(profile: UserProfile?, filter: String, query: String, feedContext: DiscoverFeedContext) -> String {
+    private func persistentShelfKey(
+        profile: UserProfile?,
+        behaviorSeeds: [DiscoverRecipeCardData],
+        filter: String,
+        query: String,
+        feedContext: DiscoverFeedContext
+    ) -> String {
         [
             shelfCacheSchemaVersion,
             recipeCatalogVersion,
             rankingConfigVersion,
             profileFingerprint(profile),
+            normalizedCacheComponent(DiscoverOnboardingFeedMixer.behaviorSignature(behaviorSeeds)),
             normalizedCacheComponent(filter),
             normalizedCacheComponent(query),
             normalizedCacheComponent(feedContext.locationLabel ?? ""),
@@ -438,6 +553,23 @@ final class DiscoverRecipesViewModel: ObservableObject {
         baseFeedRotationIndex += 1
         baseFeedRefreshToken = UUID().uuidString
         lastLoadKey = nil
+    }
+
+    private func debugLogDiscoverRefresh(
+        _ message: String,
+        filter: String,
+        query: String,
+        forceNetwork: Bool,
+        fallbackMode: String?,
+        keptExistingRecipes: Bool,
+        error: Error? = nil
+    ) {
+        #if DEBUG
+        let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
+        let errorDescription = error.map { " error=\($0.localizedDescription)" } ?? ""
+        let fallbackDescription = fallbackMode.map { " fallback=\($0)" } ?? ""
+        print("[Discover] \(message) filter=\(normalizedFilter) query=\"\(query)\" force=\(forceNetwork) keptExisting=\(keptExistingRecipes)\(fallbackDescription)\(errorDescription)")
+        #endif
     }
 
     private func fallbackRecipeLimit(for normalizedQuery: String) -> Int {

@@ -149,17 +149,20 @@ router.get("/connect/:provider/status", async (req, res) => {
   const userId = req.headers["x-user-id"];
   const { sessionId } = req.query;
 
-  if (!userId) {
-    return res.status(401).json({ error: "User ID required" });
-  }
-
   // Check active session first
   if (sessionId && activeSessions.has(sessionId)) {
     const session = activeSessions.get(sessionId);
+    if (userId && session.userId !== userId) {
+      return res.status(403).json({ error: "Session does not belong to this user" });
+    }
     return res.json({
       status: session.status,
       connected: session.status === 'connected',
     });
+  }
+
+  if (!userId) {
+    return res.status(401).json({ error: "User ID required" });
   }
 
   // Check database for existing connection
@@ -167,12 +170,12 @@ router.get("/connect/:provider/status", async (req, res) => {
     const supabase = getSupabase();
     const { data } = await supabase
       .from("user_provider_accounts")
-      .select("id, provider, login_status, last_used_at")
+      .select("id, provider, login_status, last_used_at, is_active, session_cookies")
       .eq("user_id", userId)
       .eq("provider", provider)
-      .single();
+      .maybeSingle();
 
-    if (data) {
+    if (isProviderAccountConnected(data)) {
       return res.json({
         status: 'connected',
         connected: true,
@@ -517,8 +520,8 @@ router.post("/connect/:provider/save-session", async (req, res) => {
     return res.status(401).json({ error: "User ID required" });
   }
 
-  if (!cookies || !Array.isArray(cookies)) {
-    return res.status(400).json({ error: "Cookies array required" });
+  if (!cookies || !Array.isArray(cookies) || cookies.length === 0) {
+    return res.status(400).json({ error: "Non-empty cookies array required" });
   }
 
   const config = PROVIDERS[provider];
@@ -650,6 +653,7 @@ async function monitorLogin(sessionId, config) {
             session_cookies: JSON.stringify(cookies),
             login_status: 'logged_in',
             last_used_at: new Date().toISOString(),
+            is_active: true,
           }, {
             onConflict: 'user_id,provider',
           });

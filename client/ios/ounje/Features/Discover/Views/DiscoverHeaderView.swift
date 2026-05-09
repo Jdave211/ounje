@@ -4,6 +4,7 @@ struct DiscoverHeaderView: View {
     @Binding var searchText: String
     let filters: [String]
     let selectedFilter: String
+    let resetToken: UUID
     let onSubmitSearch: () -> Void
     let onSelectFilter: (String) -> Void
 
@@ -39,10 +40,10 @@ struct DiscoverHeaderView: View {
                     .padding(.bottom, 4)
                 }
                 .onAppear {
-                    scrollSelectedFilterIntoView(proxy)
+                    scrollFilterRailToStart(proxy)
                 }
-                .onChange(of: selectedFilter) { _ in
-                    scrollSelectedFilterIntoView(proxy)
+                .onChange(of: resetToken) { _ in
+                    scrollFilterRailToStart(proxy)
                 }
             }
         }
@@ -51,12 +52,10 @@ struct DiscoverHeaderView: View {
         .padding(.bottom, 10)
     }
 
-    private func scrollSelectedFilterIntoView(_ proxy: ScrollViewProxy) {
-        guard filters.contains(selectedFilter) else { return }
+    private func scrollFilterRailToStart(_ proxy: ScrollViewProxy) {
+        guard let firstFilter = filters.first else { return }
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.22)) {
-                proxy.scrollTo(selectedFilter, anchor: .center)
-            }
+            proxy.scrollTo(firstFilter, anchor: .leading)
         }
     }
 }

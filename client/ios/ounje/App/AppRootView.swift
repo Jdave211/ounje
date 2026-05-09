@@ -999,9 +999,10 @@ private struct AuthenticationView: View {
                 return
             }
 
-            let resolvedOnboarded = remoteState.onboarded || cachedCompleted
+            let persistedOnboarded = remoteState.onboarded || cachedCompleted
+            let resolvedOnboarded = OunjeLaunchFlags.forceOnboardingIncomplete ? false : persistedOnboarded
             let resolvedProfile = remoteState.profile ?? cachedProfile
-            let resolvedStep = resolvedOnboarded
+            let resolvedStep = persistedOnboarded
                 ? max(remoteState.lastOnboardingStep, FirstLoginOnboardingView.SetupStep.address.rawValue)
                 : max(remoteState.lastOnboardingStep, isSameCachedUser ? store.lastOnboardingStep : 0)
 
@@ -1012,7 +1013,8 @@ private struct AuthenticationView: View {
                 lastOnboardingStep: resolvedStep
             )
 
-            if (resolvedOnboarded != remoteState.onboarded ||
+            if !OunjeLaunchFlags.forceOnboardingIncomplete &&
+                (persistedOnboarded != remoteState.onboarded ||
                 resolvedProfile != nil && remoteState.profile == nil ||
                 resolvedStep != remoteState.lastOnboardingStep ||
                 remoteState.authProvider != session.provider),
@@ -1022,11 +1024,13 @@ private struct AuthenticationView: View {
                     email: session.email,
                     displayName: resolvedProfile.trimmedPreferredName ?? session.displayName,
                     authProvider: session.provider,
-                    onboarded: true,
+                    onboarded: persistedOnboarded,
                     lastOnboardingStep: resolvedStep,
                     profile: resolvedProfile
                 )
-            } else if !resolvedOnboarded && resolvedStep != remoteState.lastOnboardingStep {
+            } else if !OunjeLaunchFlags.forceOnboardingIncomplete &&
+                        !persistedOnboarded &&
+                        resolvedStep != remoteState.lastOnboardingStep {
                 try? await SupabaseProfileStateService.shared.upsertProfile(
                     userID: session.userID,
                     email: session.email,
@@ -1815,7 +1819,8 @@ private struct MealPlannerShellView: View {
         await discoverRecipesViewModel.loadIfNeeded(
             profile: store.profile,
             query: "",
-            feedContext: discoverEnvironmentModel.feedContext
+            feedContext: discoverEnvironmentModel.feedContext,
+            behaviorSeeds: savedStore.savedRecipes
         )
     }
 
@@ -1928,7 +1933,7 @@ private struct MealPlannerShellView: View {
     }
 
     private var discoverFeedbackRevision: Int {
-        savedStore.savedRecipes.count / 3
+        savedStore.savedRecipes.count
     }
 
     private var hasLiveSharedImportWork: Bool {
@@ -6137,6 +6142,9 @@ private struct CustomTabBar: View {
                     withAnimation(OunjeMotion.tabSpring) {
                         selectedTab = tab
                     }
+                    if tab == .discover {
+                        NotificationCenter.default.post(name: .ounjeDiscoverTabTapped, object: nil)
+                    }
                 } label: {
                     VStack(spacing: 3) {
                         if selectedTab == tab {
@@ -8584,6 +8592,8 @@ private struct OnboardingPromptCard: View {
         case .allergies:
             return OunjePalette.accent
         case .diets:
+            return OunjePalette.accent
+        case .recipeEditDemo:
             return OunjePalette.accent
         case .cuisines:
             return Color(hex: "6AD6FF")

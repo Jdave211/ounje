@@ -1,0 +1,1776 @@
+{
+  "base_recipes": [
+    {
+      "id": "cdf56b03-71e8-4386-acb1-262837286a36",
+      "title": "Berries & Cream French Toast Bake",
+      "description": "A delightful and easy-to-make French toast bake with fresh mixed berries and a creamy custard center. Perfect for Easter brunch or any special breakfast.",
+      "author_name": "@kalefornia_kravings",
+      "author_handle": "@kalefornia_kravings",
+      "source": "withjulienne",
+      "category": "Breakfast Recipes",
+      "recipe_type": "Breakfast",
+      "cook_time_text": "45 mins",
+      "cook_time_minutes": 45,
+      "hero_image_url": "https://firebasestorage.googleapis.com:443/v0/b/julienne-3555a.appspot.com/o/thumbnails%2F6_15_2025%2F9C76634B-F677-4A3E-BD98-574F68A94C1A.jpg?alt=media&token=c9ddf423-e9bf-4086-8f60-f66285ebbb96",
+      "discover_card_image_url": "https://firebasestorage.googleapis.com:443/v0/b/julienne-3555a.appspot.com/o/thumbnails%2F6_15_2025%2F9C76634B-F677-4A3E-BD98-574F68A94C1A.jpg?alt=media&token=c9ddf423-e9bf-4086-8f60-f66285ebbb96",
+      "recipe_url": "https://withjulienne.com/days/6_16_2025/recipes/64031692-EA4A-4BFF-B765-C69BC7C451BE",
+      "original_recipe_url": null,
+      "dietary_tags": [
+        "vegetarian"
+      ],
+      "flavor_tags": [
+        "sweet",
+        "creamy"
+      ],
+      "cuisine_tags": [
+        "French",
+        "International"
+      ],
+      "occasion_tags": [
+        "breakfast",
+        "special-occasion"
+      ],
+      "ingredients": [
+        {
+          "display_name": "French Bread",
+          "quantity_text": "1 loaf",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fbread.jpg?alt=media&token=807dc59e-48c0-4aad-9fa7-25cad4d88fa4?t=1774248093183"
+        },
+        {
+          "display_name": "Cream Cheese",
+          "quantity_text": "1 Cups",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fcream_cheese.jpg?alt=media&token=71caaf79-811a-4e00-aed9-bd619739fcbc?t=1774248116365"
+        },
+        {
+          "display_name": "Powdered Sugar",
+          "quantity_text": "8 tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fpowdered_sugar.jpg?alt=media&token=83dd2678-c95a-4bb3-bddc-76662b8dfde2?t=1774248206205"
+        },
+        {
+          "display_name": "Strawberries",
+          "quantity_text": "1 Cup",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fstrawberries.jpg?alt=media&token=2d449ccd-304f-4fe0-97e0-d82e9d1d5731?t=1774248090139"
+        },
+        {
+          "display_name": "Blackberries",
+          "quantity_text": "1 Cup",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fblackberries.jpg?alt=media&token=a6573c59-10f8-49cf-b4fe-c9e46126833d?t=1774248206205"
+        },
+        {
+          "display_name": "Blueberries",
+          "quantity_text": "1 Cup",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fblueberries.jpg?alt=media&token=8c41a961-89e6-4096-a9fa-433ebec42af5?t=1774248090139"
+        },
+        {
+          "display_name": "Eggs",
+          "quantity_text": null,
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fegg.jpg?alt=media&token=b86ce62e-a668-4f88-8d54-d508c1ac8783?t=1774248089417"
+        },
+        {
+          "display_name": "Milk",
+          "quantity_text": "2 Cups",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fmilk.jpg?alt=media&token=0dd8a299-f10b-4842-9999-ced50ef93c21?t=1774248091433"
+        },
+        {
+          "display_name": "Vanilla Extract",
+          "quantity_text": "1½ tsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fvanilla_extract.jpg?alt=media&token=31acda27-5c62-47e9-b94d-f252e2a95100?t=1774248096153"
+        },
+        {
+          "display_name": "Cinnamon",
+          "quantity_text": "1½ tsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fcinnamon.jpg?alt=media&token=ac9d842f-0a18-4029-8e64-e18510aa752c?t=1774248156982"
+        },
+        {
+          "display_name": "Salt",
+          "quantity_text": "½ tsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsalt.jpg?alt=media&token=0140d2fd-6e8a-4b50-8a82-19b316ccc8d7?t=1774248091461"
+        },
+        {
+          "display_name": "Sugar",
+          "quantity_text": "2 Tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsugar.jpg?alt=media&token=ff61ece6-a356-4ab9-8604-cbfcdc31250b?t=1774248091318"
+        },
+        {
+          "display_name": "Maple Syrup",
+          "quantity_text": null,
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fmaple_syrup.jpg?alt=media&token=581ec677-d4c3-4350-9390-8f9f4b6af668?t=1774248156527"
+        }
+      ],
+      "steps": [
+        {
+          "number": 1,
+          "text": "Cut the French bread into cubes.",
+          "ingredient_refs": [
+            "French Bread"
+          ]
+        },
+        {
+          "number": 2,
+          "text": "Whip cream cheese with powdered sugar until smooth.",
+          "ingredient_refs": [
+            "Cream Cheese",
+            "Powdered Sugar"
+          ]
+        },
+        {
+          "number": 3,
+          "text": "In a large dish, layer the bread cubes, dollops of sweetened cream cheese, and mixed berries.",
+          "ingredient_refs": [
+            "Strawberries",
+            "Blackberries",
+            "Blueberries"
+          ]
+        },
+        {
+          "number": 4,
+          "text": "In a bowl, whisk together eggs, milk, vanilla extract, cinnamon, and salt.",
+          "ingredient_refs": [
+            "Eggs",
+            "Milk",
+            "Vanilla Extract",
+            "Cinnamon",
+            "Salt"
+          ]
+        },
+        {
+          "number": 5,
+          "text": "Pour the egg mixture over the layered bread and berries. Cover and refrigerate overnight.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 6,
+          "text": "Preheat the oven to 375°F (190°C).",
+          "ingredient_refs": []
+        },
+        {
+          "number": 7,
+          "text": "Sprinkle cinnamon sugar over the top and bake for 45 minutes, until the top is golden brown and crispy.",
+          "ingredient_refs": [
+            "Cinnamon",
+            "Sugar"
+          ]
+        },
+        {
+          "number": 8,
+          "text": "Serve warm with maple syrup.",
+          "ingredient_refs": [
+            "Maple Syrup"
+          ]
+        }
+      ],
+      "servings_count": 8
+    },
+    {
+      "id": "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7",
+      "title": "Nigerian Rice & Chicken Stew",
+      "description": "West African-style chicken stew in tomato and pepper sauce, served with boiled white rice and golden fried plantain.",
+      "author_name": "Tayo Oredola",
+      "author_handle": null,
+      "source": "withjulienne",
+      "category": "Main Course",
+      "recipe_type": "Lunch",
+      "cook_time_text": "45 mins",
+      "cook_time_minutes": 45,
+      "hero_image_url": "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/manual/white-rice-and-stew-v4.jpg",
+      "discover_card_image_url": "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe_images/manual/white-rice-and-stew-v4.jpg",
+      "recipe_url": "https://lowcarbafrica.com/nigerian-chicken-stew/",
+      "original_recipe_url": null,
+      "dietary_tags": [
+        "high-protein"
+      ],
+      "flavor_tags": [
+        "savory",
+        "rich"
+      ],
+      "cuisine_tags": [
+        "Nigerian",
+        "West African"
+      ],
+      "occasion_tags": [
+        "dinner",
+        "comfort-food"
+      ],
+      "ingredients": [
+        {
+          "display_name": "Chicken thighs",
+          "quantity_text": "2 lbs",
+          "image_url": null
+        },
+        {
+          "display_name": "Tomatoes",
+          "quantity_text": "3",
+          "image_url": null
+        },
+        {
+          "display_name": "Red bell pepper",
+          "quantity_text": "1",
+          "image_url": null
+        },
+        {
+          "display_name": "Habanero pepper",
+          "quantity_text": "1",
+          "image_url": null
+        },
+        {
+          "display_name": "Olive oil",
+          "quantity_text": "1/2 cup",
+          "image_url": null
+        },
+        {
+          "display_name": "Chicken stock",
+          "quantity_text": "1 cup",
+          "image_url": null
+        },
+        {
+          "display_name": "Onion",
+          "quantity_text": "1",
+          "image_url": null
+        },
+        {
+          "display_name": "Bouillon powder",
+          "quantity_text": "1 tsp",
+          "image_url": null
+        },
+        {
+          "display_name": "Thyme",
+          "quantity_text": "1/2 tsp",
+          "image_url": null
+        },
+        {
+          "display_name": "Black pepper",
+          "quantity_text": "1/2 tsp plus extra to taste",
+          "image_url": null
+        },
+        {
+          "display_name": "Curry powder",
+          "quantity_text": "1/2 tsp",
+          "image_url": null
+        },
+        {
+          "display_name": "Salt",
+          "quantity_text": "1/2 tsp plus extra to taste",
+          "image_url": null
+        },
+        {
+          "display_name": "White rice",
+          "quantity_text": "3 cups uncooked",
+          "image_url": null
+        },
+        {
+          "display_name": "Water",
+          "quantity_text": "6 cups",
+          "image_url": null
+        },
+        {
+          "display_name": "Ripe plantain",
+          "quantity_text": "2, peeled and diced",
+          "image_url": null
+        },
+        {
+          "display_name": "Neutral frying oil",
+          "quantity_text": "about 1/3 cup",
+          "image_url": null
+        }
+      ],
+      "steps": [
+        {
+          "number": 1,
+          "text": "Wash and pat dry the chicken thighs, then season with salt and black pepper.",
+          "ingredient_refs": [
+            "Chicken thighs",
+            "Salt",
+            "Black pepper"
+          ]
+        },
+        {
+          "number": 2,
+          "text": "Heat olive oil and brown the chicken on both sides, then set the chicken aside.",
+          "ingredient_refs": [
+            "Olive oil",
+            "Chicken thighs"
+          ]
+        },
+        {
+          "number": 3,
+          "text": "Blend tomatoes, red bell pepper, habanero, and half the onion until smooth.",
+          "ingredient_refs": [
+            "Tomatoes",
+            "Red bell pepper",
+            "Habanero pepper",
+            "Onion"
+          ]
+        },
+        {
+          "number": 4,
+          "text": "Sauté the remaining chopped onion in the pan until translucent.",
+          "ingredient_refs": [
+            "Onion"
+          ]
+        },
+        {
+          "number": 5,
+          "text": "Pour in the blended mixture and boil for 5 minutes.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 6,
+          "text": "Add chicken stock, bouillon powder, thyme, curry powder, and black pepper, then return chicken to the sauce.",
+          "ingredient_refs": [
+            "Chicken stock",
+            "Bouillon powder",
+            "Thyme",
+            "Curry powder",
+            "Black pepper",
+            "Chicken thighs"
+          ]
+        },
+        {
+          "number": 7,
+          "text": "Simmer for about 20 minutes until the chicken is fully cooked and the stew thickens; adjust salt to taste.",
+          "ingredient_refs": [
+            "Salt"
+          ]
+        },
+        {
+          "number": 8,
+          "text": "Boil the white rice in water until tender, then drain or steam-dry and fluff.",
+          "ingredient_refs": [
+            "White rice",
+            "Water"
+          ]
+        },
+        {
+          "number": 9,
+          "text": "Fry diced ripe plantain in hot oil until golden brown, then drain.",
+          "ingredient_refs": [
+            "Ripe plantain",
+            "Neutral frying oil"
+          ]
+        },
+        {
+          "number": 10,
+          "text": "Serve the chicken stew over white rice with fried plantain on the side.",
+          "ingredient_refs": []
+        }
+      ],
+      "servings_count": 6
+    },
+    {
+      "id": "eaa85ffd-1a66-44e9-84e7-2c7d4b950390",
+      "title": "Spinach One-Pot Pasta",
+      "description": "This shockingly simple dish achieves success thanks to a small yet mighty powerhouse: Salty, umami-rich anchovies melt into the cooking oil, giving the dish subtle complexity and oomph. This pasta uses only a few ingredients and just one pot, making it perfect for quick dinners.",
+      "author_name": null,
+      "author_handle": null,
+      "source": "withjulienne",
+      "category": "Dinner Recipes",
+      "recipe_type": "Dinner",
+      "cook_time_text": "15 mins",
+      "cook_time_minutes": 15,
+      "hero_image_url": "https://firebasestorage.googleapis.com:443/v0/b/julienne-3555a.appspot.com/o/thumbnails%2F1_24_2025%2FEF8F1A95-B018-43A1-94B8-E030F0084CBD.jpg?alt=media&token=94de5dbc-b837-4200-a0df-5a7194d04027",
+      "discover_card_image_url": "https://firebasestorage.googleapis.com:443/v0/b/julienne-3555a.appspot.com/o/thumbnails%2F1_24_2025%2FEF8F1A95-B018-43A1-94B8-E030F0084CBD.jpg?alt=media&token=94de5dbc-b837-4200-a0df-5a7194d04027",
+      "recipe_url": "https://withjulienne.com/days/1_24_2025/recipes/1DEC51D4-348E-44E3-B1EE-2CAE046ECC73",
+      "original_recipe_url": null,
+      "dietary_tags": [],
+      "flavor_tags": [
+        "savory",
+        "umami"
+      ],
+      "cuisine_tags": [
+        "Italian"
+      ],
+      "occasion_tags": [
+        "weeknight"
+      ],
+      "ingredients": [
+        {
+          "display_name": "Salt",
+          "quantity_text": null,
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsalt.jpg?alt=media&token=0140d2fd-6e8a-4b50-8a82-19b316ccc8d7?t=1774330870929"
+        },
+        {
+          "display_name": "Short-shaped Pasta",
+          "quantity_text": "12 oz",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fpasta.jpg?alt=media&token=909bf7b4-6857-4f70-8ed8-5c6fe087c6c0?t=1774330871011"
+        },
+        {
+          "display_name": "Mature Spinach",
+          "quantity_text": "16 oz",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fspinach.jpg?alt=media&token=bb3b236f-4cec-488f-b36d-346a7e31c7e7?t=1774330871304"
+        },
+        {
+          "display_name": "Olive Oil",
+          "quantity_text": "2 tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Folive_oil.jpg?alt=media&token=c2d859ad-887e-422a-af1a-6d1c2b642fcb?t=1774330870925"
+        },
+        {
+          "display_name": "Anchovies",
+          "quantity_text": null,
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fanchovy_filets.jpg?alt=media&token=81aa169d-7bab-4c14-8645-1eb77ca8f314?t=1774333515632"
+        },
+        {
+          "display_name": "Grated Parmesan",
+          "quantity_text": "13 tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fparmesan_cheese.jpg?alt=media&token=41595f2d-19cc-4781-ba5b-92c2e1e9a732?t=1774330872651"
+        },
+        {
+          "display_name": "Red-pepper Flakes",
+          "quantity_text": "¼ tsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchili_flakes.jpg?alt=media&token=5e372122-e466-4fac-a826-56f4156b2ec4?t=1774331841546"
+        },
+        {
+          "display_name": "Lemon",
+          "quantity_text": null,
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Flemon.jpg?alt=media&token=6e56ddcf-5baa-4579-9daa-faff656ae967?t=1774330871935"
+        }
+      ],
+      "steps": [
+        {
+          "number": 1,
+          "text": "Bring a large pot of salted water to a boil. Add the pasta and adjust the heat to maintain a gentle boil. Cook until just shy of al dente, about 1 minute less than the package instructions.",
+          "ingredient_refs": [
+            "Salt",
+            "Short-shaped Pasta"
+          ]
+        },
+        {
+          "number": 2,
+          "text": "Reserve 1/2 cup pasta water.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 3,
+          "text": "Place the spinach in a large colander in the sink. Drain the pasta over the spinach. Drizzle with oil and stir to prevent the noodles from sticking.",
+          "ingredient_refs": [
+            "Mature Spinach",
+            "Olive Oil"
+          ]
+        },
+        {
+          "number": 4,
+          "text": "Wipe out the pot and place it over medium-high heat. Carefully add 2 tablespoons olive oil and the anchovies (it might splatter) and stir until they start to dissolve, about 30 seconds.",
+          "ingredient_refs": [
+            "Olive Oil",
+            "Anchovies"
+          ]
+        },
+        {
+          "number": 5,
+          "text": "Pour the pasta and spinach into the pot, add the cheese and red-pepper flakes, and stir until a glossy sauce forms and the spinach fully wilts, 1 to 2 minutes.",
+          "ingredient_refs": [
+            "Grated Parmesan",
+            "Red-pepper Flakes"
+          ]
+        },
+        {
+          "number": 6,
+          "text": "Squeeze a lemon half over everything. Taste and season as needed with more salt or lemon.",
+          "ingredient_refs": [
+            "Lemon",
+            "Salt"
+          ]
+        }
+      ],
+      "servings_count": 4
+    },
+    {
+      "id": "4bcf072c-b95d-49fa-9997-d2749a118a15",
+      "title": "Guava Lemon Bars",
+      "description": "These Guava Lemon Bars combine the zesty brightness of lemons with the tropical sweetness of guava, layered on a buttery shortbread crust for a delightful treat.",
+      "author_name": null,
+      "author_handle": null,
+      "source": "withjulienne",
+      "category": "Dessert Recipes",
+      "recipe_type": "Dessert",
+      "cook_time_text": "95 mins",
+      "cook_time_minutes": 95,
+      "hero_image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/cropped-images%2FF5668C2E-E5C2-4968-802C-7B389CCBC691.jpg?alt=media&token=a28992de-8ba9-4ba1-a10c-75a36cbbe20b",
+      "discover_card_image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/cropped-images%2FF5668C2E-E5C2-4968-802C-7B389CCBC691.jpg?alt=media&token=a28992de-8ba9-4ba1-a10c-75a36cbbe20b",
+      "recipe_url": "https://withjulienne.com/days/8_3_2025/recipes/07CC4AD5-1003-45B1-8FAA-977437950A21",
+      "original_recipe_url": null,
+      "dietary_tags": [],
+      "flavor_tags": [
+        "sweet",
+        "tangy"
+      ],
+      "cuisine_tags": [
+        "International",
+        "Dessert"
+      ],
+      "occasion_tags": [
+        "party",
+        "special-occasion"
+      ],
+      "ingredients": [
+        {
+          "display_name": "All-purpose Flour",
+          "quantity_text": "2 Cups",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fflour.jpg?alt=media&token=0c58143c-815d-40bb-80cc-9a3b3c34b681?t=1774256493345"
+        },
+        {
+          "display_name": "Powdered Sugar",
+          "quantity_text": "13 tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fpowdered_sugar.jpg?alt=media&token=83dd2678-c95a-4bb3-bddc-76662b8dfde2?t=1774256781816"
+        },
+        {
+          "display_name": "Salt",
+          "quantity_text": "¼ tsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsalt.jpg?alt=media&token=0140d2fd-6e8a-4b50-8a82-19b316ccc8d7?t=1774256493234"
+        },
+        {
+          "display_name": "Unsalted Butter",
+          "quantity_text": "1 Cup",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fbutter.jpg?alt=media&token=0d3b0fec-a623-457d-80a8-3da7db42fdb3?t=1774256492999"
+        },
+        {
+          "display_name": "Eggs",
+          "quantity_text": "4 large",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fegg.jpg?alt=media&token=b86ce62e-a668-4f88-8d54-d508c1ac8783?t=1774256489164"
+        },
+        {
+          "display_name": "Granulated Sugar",
+          "quantity_text": "1 Cup",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsugar.jpg?alt=media&token=ff61ece6-a356-4ab9-8604-cbfcdc31250b?t=1774256493490"
+        },
+        {
+          "display_name": "Lemon Zest",
+          "quantity_text": "1 tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Flemon_zest.jpg?alt=media&token=941ee26b-bbb4-4573-8a32-116b1e42994c?t=1774256781790"
+        },
+        {
+          "display_name": "Lemon Juice",
+          "quantity_text": "5 tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Flemon_juice.jpg?alt=media&token=a3605dad-4923-4d3d-9d58-a5bb82777546?t=1774256781786"
+        },
+        {
+          "display_name": "Guava Puree",
+          "quantity_text": "8 tbsp",
+          "image_url": "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fguava.jpg?alt=media&token=0c33e900-ca98-483f-a2e4-e3d54cdaa765?t=1774256782232"
+        }
+      ],
+      "steps": [
+        {
+          "number": 1,
+          "text": "Preheat your oven to 350°F (175°C) and adjust the oven rack to the middle position.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 2,
+          "text": "Line a 9x13-inch baking dish with parchment paper, leaving an overhang on the sides.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 3,
+          "text": "In a medium bowl, whisk together 2 cups of all-purpose flour, 1/2 cup of powdered sugar, and 1/4 teaspoon of salt.",
+          "ingredient_refs": [
+            "All-purpose Flour",
+            "Powdered Sugar",
+            "Salt"
+          ]
+        },
+        {
+          "number": 4,
+          "text": "Cut 1 cup (two sticks) of unsalted butter into small cubes and mix into the flour mixture using a pastry cutter or your fingers until mixture resembles coarse crumbs.",
+          "ingredient_refs": [
+            "Unsalted Butter"
+          ]
+        },
+        {
+          "number": 5,
+          "text": "Press the mixture evenly into the prepared baking dish to form the crust.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 6,
+          "text": "Bake the crust for 20-25 minutes, or until lightly golden brown.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 7,
+          "text": "While the crust is baking, combine 4 large eggs, 1 cup granulated sugar, 1 tablespoon lemon zest, and 1/3 cup fresh lemon juice in a large bowl.",
+          "ingredient_refs": [
+            "Eggs",
+            "Granulated Sugar",
+            "Lemon Zest",
+            "Lemon Juice"
+          ]
+        },
+        {
+          "number": 8,
+          "text": "Add 1/2 cup of guava puree and 1 tablespoon of all-purpose flour to the egg mixture and whisk until well combined.",
+          "ingredient_refs": [
+            "Guava Puree",
+            "All-purpose Flour"
+          ]
+        },
+        {
+          "number": 9,
+          "text": "Pour the guava lemon filling over the hot baked crust, spreading evenly with a spatula.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 10,
+          "text": "Bake for another 25-30 minutes, or until the filling is set and slightly golden around the edges.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 11,
+          "text": "Remove from the oven and let the bars cool completely in the pan on a wire rack.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 12,
+          "text": "Once cool, lift the bars out of the pan using the parchment overhang and cut into squares.",
+          "ingredient_refs": []
+        },
+        {
+          "number": 13,
+          "text": "Dust with powdered sugar before serving, if desired.",
+          "ingredient_refs": [
+            "Powdered Sugar"
+          ]
+        }
+      ],
+      "servings_count": 12
+    }
+  ],
+  "fixtures": [
+    {
+      "recipe_id": "cdf56b03-71e8-4386-acb1-262837286a36",
+      "intent_key": "moreProtein",
+      "preplanned_summary": "Increased protein by adding Greek yogurt and adjusting the egg quantity; reduced powdered sugar to balance sweetness.",
+      "adapted_recipe": {
+        "title": "High-Protein Berries & Cream French Toast Bake",
+        "summary": "A delightful and easy-to-make French toast bake enriched with high-protein Greek yogurt, fresh mixed berries, and a creamy custard center. Perfect for Easter brunch or any special breakfast.",
+        "cook_time_text": "45 mins",
+        "ingredients": [
+          "1 loaf French Bread",
+          "1 cup Cream Cheese",
+          "4 tbsp Powdered Sugar",
+          "1 cup Greek Yogurt",
+          "1 cup Strawberries",
+          "1 cup Blackberries",
+          "1 cup Blueberries",
+          "6 large Eggs",
+          "1 cup Milk",
+          "1½ tsp Vanilla Extract",
+          "1½ tsp Cinnamon",
+          "½ tsp Salt",
+          "2 tbsp Sugar",
+          "to taste Maple Syrup"
+        ],
+        "steps": [
+          "Cut the French bread into cubes.",
+          "In a bowl, whip cream cheese with powdered sugar until smooth. Stir in the Greek yogurt until well combined.",
+          "In a large dish, layer the bread cubes, dollops of sweetened cream cheese and yogurt mixture, and mixed berries.",
+          "In a separate bowl, whisk together the eggs, milk, vanilla extract, cinnamon, and salt.",
+          "Pour the egg mixture over the layered bread and berries. Cover and refrigerate overnight.",
+          "Preheat the oven to 375°F (190°C).",
+          "Sprinkle cinnamon sugar over the top and bake for 45 minutes, until the top is golden brown and crispy.",
+          "Serve warm with maple syrup."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "vegetarian",
+          "high-protein"
+        ]
+      },
+      "change_summary": "Increased protein by adding Greek yogurt and adjusting the egg quantity; reduced powdered sugar to balance sweetness.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Greek Yogurt"
+        ],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Greek Yogurt",
+          "Powdered Sugar"
+        ],
+        "changed_quantities": [
+          "Cream Cheese: 1 Cups -> 1 cup",
+          "Powdered Sugar: 8 tbsp -> 4 tbsp",
+          "Eggs: unspecified -> 6 large",
+          "Milk: 2 Cups -> 1 cup",
+          "Maple Syrup: unspecified -> to taste",
+          "4 tbsp",
+          "1 cup",
+          "6 large"
+        ],
+        "changed_steps": [
+          "Step 2: in a bowl whip cream cheese with powdered sugar until smooth stir in the greek yogurt until well combined",
+          "Step 3: in a large dish layer the bread cubes dollops of sweetened cream cheese and yogurt mixture and mixed berries",
+          "Step 4: in a separate bowl whisk together the eggs milk vanilla extract cinnamon and salt",
+          "In a bowl, whip cream cheese with powdered sugar until smooth. Stir in the Greek yogurt until well combined.",
+          "In a separate bowl, whisk together the eggs, milk, vanilla extract, cinnamon, and salt."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "cdf56b03-71e8-4386-acb1-262837286a36",
+      "intent_key": "lessSugar",
+      "preplanned_summary": "Reduced powdered sugar from 8 tbsp to 4 tbsp, reduced granulated sugar from 2 tbsp to 1 tbsp, updated steps to reflect these changes.",
+      "adapted_recipe": {
+        "title": "Berries & Cream French Toast Bake",
+        "summary": "A delightful and easy-to-make French toast bake with fresh mixed berries and a creamy custard center, now with less sweetness. Perfect for Easter brunch or any special breakfast without overwhelming sugar.",
+        "cook_time_text": "45 mins",
+        "ingredients": [
+          "1 loaf French Bread",
+          "1 Cups Cream Cheese",
+          "4 tbsp Powdered Sugar",
+          "1 Cup Strawberries",
+          "1 Cup Blackberries",
+          "1 Cup Blueberries",
+          "4 large Eggs",
+          "2 Cups Milk",
+          "1½ tsp Vanilla Extract",
+          "1½ tsp Cinnamon",
+          "½ tsp Salt",
+          "1 Tbsp Sugar",
+          "to taste Maple Syrup"
+        ],
+        "steps": [
+          "Cut the French bread into cubes.",
+          "Whip cream cheese with powdered sugar until smooth.",
+          "In a large dish, layer the bread cubes, dollops of sweetened cream cheese, and mixed berries.",
+          "In a bowl, whisk together eggs, milk, vanilla extract, cinnamon, and salt.",
+          "Pour the egg mixture over the layered bread and berries. Cover and refrigerate overnight.",
+          "Preheat the oven to 375°F (190°C).",
+          "Sprinkle cinnamon and reduced sugar over the top and bake for 45 minutes, until the top is golden brown and crispy.",
+          "Serve warm with maple syrup to taste."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "vegetarian"
+        ]
+      },
+      "change_summary": "Reduced powdered sugar from 8 tbsp to 4 tbsp, reduced granulated sugar from 2 tbsp to 1 tbsp, updated steps to reflect these changes.",
+      "edit_summary": {
+        "added_ingredients": [],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Powdered Sugar",
+          "Sugar"
+        ],
+        "changed_quantities": [
+          "Powdered Sugar: 8 tbsp -> 4 tbsp",
+          "Eggs: unspecified -> 4 large",
+          "Sugar: 2 Tbsp -> 1 Tbsp",
+          "Maple Syrup: unspecified -> to taste",
+          "8 tbsp to 4 tbsp",
+          "2 Tbsp to 1 Tbsp"
+        ],
+        "changed_steps": [
+          "Step 7: sprinkle cinnamon and reduced sugar over the top and bake for 45 minutes until the top is golden brown and crispy",
+          "Step 8: serve warm with maple syrup to taste",
+          "Whip cream cheese with powdered sugar until smooth.",
+          "Sprinkle cinnamon and reduced sugar over the top and bake for 45 minutes, until the top is golden brown and crispy."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "cdf56b03-71e8-4386-acb1-262837286a36",
+      "intent_key": "quick",
+      "preplanned_summary": "Reduced prep and cook time by simplifying steps, eliminating the overnight refrigeration and reducing the baking time. Adjusted ingredient quantities to streamline the recipe.",
+      "adapted_recipe": {
+        "title": "Quick Berries & Cream French Toast Bake",
+        "summary": "A simplified and faster version of the classic French toast bake with fresh berries and a creamy custard center, perfect for a busy day breakfast.",
+        "cook_time_text": "30 mins",
+        "ingredients": [
+          "1 loaf, cubed French Bread",
+          "1 cup, softened Cream Cheese",
+          "4 tbsp Powdered Sugar",
+          "3 cups (strawberries, blackberries, blueberries) Mixed Berries",
+          "6 large Eggs",
+          "1 ½ cups Milk",
+          "1 tsp Vanilla Extract",
+          "1 tsp Cinnamon",
+          "½ tsp Salt",
+          "1 tbsp Sugar",
+          "to serve Maple Syrup"
+        ],
+        "steps": [
+          "Preheat the oven to 375°F (190°C).",
+          "Cut the French bread into cubes and place in a greased baking dish.",
+          "Whip cream cheese with powdered sugar until smooth and dollop over the bread cubes.",
+          "Add mixed berries on top of the bread and cream cheese.",
+          "In a bowl, whisk together eggs, milk, vanilla extract, cinnamon, and salt.",
+          "Pour the egg mixture over the bread and berries, ensuring it's evenly coated.",
+          "Sprinkle with sugar and bake for 25-30 minutes until golden brown and set.",
+          "Serve warm with maple syrup."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "vegetarian"
+        ]
+      },
+      "change_summary": "Reduced prep and cook time by simplifying steps, eliminating the overnight refrigeration and reducing the baking time. Adjusted ingredient quantities to streamline the recipe.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Mixed Berries"
+        ],
+        "removed_ingredients": [
+          "Strawberries",
+          "Blackberries",
+          "Blueberries",
+          "2 Tbsp Sugar for sprinkling, now included in the combined sugar step."
+        ],
+        "changed_ingredients": [
+          "Mixed Berries",
+          "Strawberries",
+          "Blackberries",
+          "Blueberries",
+          "Powdered Sugar reduced from 8 tbsp to 4 tbsp",
+          "Cinnamon reduced from 1½ tsp to 1 tsp",
+          "Eggs increased from unspecified to 6 large",
+          "Milk reduced from 2 cups to 1 ½ cups",
+          "Mixed Berries combined into a single ingredient for convenience"
+        ],
+        "changed_quantities": [
+          "French Bread: 1 loaf -> 1 loaf, cubed",
+          "Cream Cheese: 1 Cups -> 1 cup, softened",
+          "Powdered Sugar: 8 tbsp -> 4 tbsp",
+          "Eggs: unspecified -> 6 large",
+          "Milk: 2 Cups -> 1 ½ cups",
+          "Sugar: 2 Tbsp -> 1 tbsp",
+          "Maple Syrup: unspecified -> to serve"
+        ],
+        "changed_steps": [
+          "Step 1: preheat the oven to 375 f 190 c",
+          "Step 2: cut the french bread into cubes and place in a greased baking dish",
+          "Step 3: whip cream cheese with powdered sugar until smooth and dollop over the bread cubes",
+          "Step 4: add mixed berries on top of the bread and cream cheese",
+          "Step 5: in a bowl whisk together eggs milk vanilla extract cinnamon and salt",
+          "Step 6: pour the egg mixture over the bread and berries ensuring its evenly coated",
+          "Step 7: sprinkle with sugar and bake for 25 30 minutes until golden brown and set",
+          "Removed overnight refrigeration step to save time.",
+          "Shortened baking time from 45 minutes to 25-30 minutes."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7",
+      "intent_key": "moreProtein",
+      "preplanned_summary": "Added black beans to increase protein content while maintaining the dish's integrity. Adjusted chicken quantity to balance flavors and textures.",
+      "adapted_recipe": {
+        "title": "Nigerian Rice & Chicken Stew with Black Beans",
+        "summary": "A hearty West African-style chicken stew in tomato and pepper sauce, enhanced with black beans for added protein, served with boiled white rice and golden fried plantain.",
+        "cook_time_text": "50 mins",
+        "est_calories_text": "505 calories per serving",
+        "calories_kcal": 505,
+        "protein_g": 32,
+        "carbs_g": 65,
+        "fat_g": 14,
+        "ingredients": [
+          {
+            "display_name": "Chicken thighs",
+            "quantity_text": "1.5 lbs"
+          },
+          {
+            "display_name": "Black beans",
+            "quantity_text": "1 can (15 oz), drained and rinsed"
+          },
+          {
+            "display_name": "Tomatoes",
+            "quantity_text": "3"
+          },
+          {
+            "display_name": "Red bell pepper",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Habanero pepper",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Olive oil",
+            "quantity_text": "1/2 cup"
+          },
+          {
+            "display_name": "Chicken stock",
+            "quantity_text": "1 cup"
+          },
+          {
+            "display_name": "Onion",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Bouillon powder",
+            "quantity_text": "1 tsp"
+          },
+          {
+            "display_name": "Thyme",
+            "quantity_text": "1/2 tsp"
+          },
+          {
+            "display_name": "Black pepper",
+            "quantity_text": "1/2 tsp plus extra to taste"
+          },
+          {
+            "display_name": "Curry powder",
+            "quantity_text": "1/2 tsp"
+          },
+          {
+            "display_name": "Salt",
+            "quantity_text": "1/2 tsp plus extra to taste"
+          },
+          {
+            "display_name": "White rice",
+            "quantity_text": "3 cups uncooked"
+          },
+          {
+            "display_name": "Water",
+            "quantity_text": "6 cups"
+          },
+          {
+            "display_name": "Ripe plantain",
+            "quantity_text": "2, peeled and diced"
+          },
+          {
+            "display_name": "Neutral frying oil",
+            "quantity_text": "about 1/3 cup"
+          }
+        ],
+        "steps": [
+          "Wash and pat dry the chicken thighs, then season with salt and black pepper.",
+          "Heat olive oil and brown the chicken on both sides, then set the chicken aside.",
+          "Blend tomatoes, red bell pepper, habanero, and half the onion until smooth.",
+          "Sauté the remaining chopped onion in the pan until translucent.",
+          "Pour in the blended mixture and boil for 5 minutes.",
+          "Add chicken stock, bouillon powder, thyme, curry powder, and black pepper, then return chicken to the sauce.",
+          "Add the drained black beans to the pot and stir to combine, then simmer for about 20 minutes until the chicken is fully cooked and the stew thickens; adjust salt to taste.",
+          "Boil the white rice in water until tender, then drain or steam-dry and fluff.",
+          "Fry diced ripe plantain in hot oil until golden brown, then drain.",
+          "Serve the chicken and black bean stew over white rice with fried plantain on the side."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "high-protein",
+          "gluten-free"
+        ],
+        "change_summary": "Added black beans to increase protein content while maintaining the dish's integrity. Adjusted chicken quantity to balance flavors and textures.",
+        "edit_summary": {
+          "added_ingredients": [
+            "Black beans"
+          ],
+          "removed_ingredients": [],
+          "changed_ingredients": [
+            "Black beans",
+            "Chicken thighs"
+          ],
+          "changed_quantities": [
+            "Chicken thighs: 2 lbs -> 1.5 lbs",
+            "1.5 lbs",
+            "1 can (15 oz)"
+          ],
+          "changed_steps": [
+            "Step 7: add the drained black beans to the pot and stir to combine then simmer for about 20 minutes until the chicken is fully cooked and the stew thickens adjust salt to taste",
+            "Step 10: serve the chicken and black bean stew over white rice with fried plantain on the side",
+            "Add the drained black beans to the pot and stir to combine, then simmer for about 20 minutes until the chicken is fully cooked and the stew thickens; adjust salt to taste."
+          ],
+          "validation_notes": [
+            "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+          ]
+        }
+      },
+      "change_summary": "Added black beans to increase protein content while maintaining the dish's integrity. Adjusted chicken quantity to balance flavors and textures.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Black beans"
+        ],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Black beans",
+          "Chicken thighs"
+        ],
+        "changed_quantities": [
+          "Chicken thighs: 2 lbs -> 1.5 lbs",
+          "1.5 lbs",
+          "1 can (15 oz)"
+        ],
+        "changed_steps": [
+          "Step 7: add the drained black beans to the pot and stir to combine then simmer for about 20 minutes until the chicken is fully cooked and the stew thickens adjust salt to taste",
+          "Step 10: serve the chicken and black bean stew over white rice with fried plantain on the side",
+          "Add the drained black beans to the pot and stir to combine, then simmer for about 20 minutes until the chicken is fully cooked and the stew thickens; adjust salt to taste."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7",
+      "intent_key": "spicy",
+      "preplanned_summary": "Added cayenne pepper for heat and lime juice for acidity.",
+      "adapted_recipe": {
+        "title": "Spicy Nigerian Rice & Chicken Stew",
+        "summary": "A fiery West African-style chicken stew infused with heat from habanero and cayenne, balanced with the richness of olive oil and the tang of lime, served with boiled white rice and golden fried plantain.",
+        "cook_time_text": "45 mins",
+        "est_calories_text": "480 calories per serving",
+        "calories_kcal": 480,
+        "protein_g": 30,
+        "carbs_g": 55,
+        "fat_g": 15,
+        "ingredients": [
+          {
+            "display_name": "Chicken thighs",
+            "quantity_text": "2 lbs"
+          },
+          {
+            "display_name": "Tomatoes",
+            "quantity_text": "3"
+          },
+          {
+            "display_name": "Red bell pepper",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Habanero pepper",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Cayenne pepper",
+            "quantity_text": "1 tsp"
+          },
+          {
+            "display_name": "Olive oil",
+            "quantity_text": "1/2 cup"
+          },
+          {
+            "display_name": "Chicken stock",
+            "quantity_text": "1 cup"
+          },
+          {
+            "display_name": "Onion",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Bouillon powder",
+            "quantity_text": "1 tsp"
+          },
+          {
+            "display_name": "Thyme",
+            "quantity_text": "1/2 tsp"
+          },
+          {
+            "display_name": "Black pepper",
+            "quantity_text": "1/2 tsp plus extra to taste"
+          },
+          {
+            "display_name": "Curry powder",
+            "quantity_text": "1/2 tsp"
+          },
+          {
+            "display_name": "Salt",
+            "quantity_text": "1/2 tsp plus extra to taste"
+          },
+          {
+            "display_name": "Lime juice",
+            "quantity_text": "2 tbsp"
+          },
+          {
+            "display_name": "White rice",
+            "quantity_text": "3 cups uncooked"
+          },
+          {
+            "display_name": "Water",
+            "quantity_text": "6 cups"
+          },
+          {
+            "display_name": "Ripe plantain",
+            "quantity_text": "2, peeled and diced"
+          },
+          {
+            "display_name": "Neutral frying oil",
+            "quantity_text": "about 1/3 cup"
+          }
+        ],
+        "steps": [
+          "Wash and pat dry the chicken thighs, then season with salt and black pepper.",
+          "Heat olive oil in a large pot and brown the chicken on both sides, then set the chicken aside.",
+          "Blend tomatoes, red bell pepper, habanero, and half the onion until smooth.",
+          "Sauté the remaining chopped onion in the pot until translucent.",
+          "Add cayenne pepper to the sautéed onion and cook for 1 minute to bloom the spice.",
+          "Pour in the blended mixture and boil for 5 minutes.",
+          "Add chicken stock, bouillon powder, thyme, curry powder, and black pepper, then return chicken to the sauce.",
+          "Simmer for about 20 minutes until the chicken is fully cooked and the stew thickens; adjust salt to taste.",
+          "Stir in lime juice before serving to add brightness and balance to the heat.",
+          "Boil the white rice in water until tender, then drain or steam-dry and fluff.",
+          "Fry diced ripe plantain in hot oil until golden brown, then drain.",
+          "Serve the chicken stew over white rice with fried plantain on the side."
+        ],
+        "substitutions": [],
+        "pairing_notes": [
+          "Serve with a lime wedge for extra acidity.",
+          "Fresh cilantro or parsley can be added for garnish."
+        ],
+        "dietary_fit": [
+          "high-protein"
+        ],
+        "change_summary": "Added cayenne pepper for heat and lime juice for acidity.",
+        "edit_summary": {
+          "added_ingredients": [
+            "Cayenne pepper",
+            "Lime juice"
+          ],
+          "removed_ingredients": [],
+          "changed_ingredients": [
+            "Cayenne pepper",
+            "Lime juice"
+          ],
+          "changed_quantities": [
+            "1 tsp",
+            "2 tbsp"
+          ],
+          "changed_steps": [
+            "Step 2: heat olive oil in a large pot and brown the chicken on both sides then set the chicken aside",
+            "Step 4: saut the remaining chopped onion in the pot until translucent",
+            "Step 5: add cayenne pepper to the saut ed onion and cook for 1 minute to bloom the spice",
+            "Step 6: pour in the blended mixture and boil for 5 minutes",
+            "Step 7: add chicken stock bouillon powder thyme curry powder and black pepper then return chicken to the sauce",
+            "Step 8: simmer for about 20 minutes until the chicken is fully cooked and the stew thickens adjust salt to taste",
+            "Step 9: stir in lime juice before serving to add brightness and balance to the heat",
+            "Step 10: boil the white rice in water until tender then drain or steam dry and fluff",
+            "Step 11: fry diced ripe plantain in hot oil until golden brown then drain",
+            "Step 12: serve the chicken stew over white rice with fried plantain on the side",
+            "Add cayenne pepper to the sautéed onion and cook for 1 minute to bloom the spice.",
+            "Stir in lime juice before serving to add brightness and balance to the heat."
+          ],
+          "validation_notes": [
+            "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+          ]
+        }
+      },
+      "change_summary": "Added cayenne pepper for heat and lime juice for acidity.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Cayenne pepper",
+          "Lime juice"
+        ],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Cayenne pepper",
+          "Lime juice"
+        ],
+        "changed_quantities": [
+          "1 tsp",
+          "2 tbsp"
+        ],
+        "changed_steps": [
+          "Step 2: heat olive oil in a large pot and brown the chicken on both sides then set the chicken aside",
+          "Step 4: saut the remaining chopped onion in the pot until translucent",
+          "Step 5: add cayenne pepper to the saut ed onion and cook for 1 minute to bloom the spice",
+          "Step 6: pour in the blended mixture and boil for 5 minutes",
+          "Step 7: add chicken stock bouillon powder thyme curry powder and black pepper then return chicken to the sauce",
+          "Step 8: simmer for about 20 minutes until the chicken is fully cooked and the stew thickens adjust salt to taste",
+          "Step 9: stir in lime juice before serving to add brightness and balance to the heat",
+          "Step 10: boil the white rice in water until tender then drain or steam dry and fluff",
+          "Step 11: fry diced ripe plantain in hot oil until golden brown then drain",
+          "Step 12: serve the chicken stew over white rice with fried plantain on the side",
+          "Add cayenne pepper to the sautéed onion and cook for 1 minute to bloom the spice.",
+          "Stir in lime juice before serving to add brightness and balance to the heat."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7",
+      "intent_key": "mealPrep",
+      "preplanned_summary": "Modified the recipe to ensure components store well separately, added steps for cooling and packing, and included extra sauce for reheating.",
+      "adapted_recipe": {
+        "title": "Meal Prep Nigerian Rice & Chicken Stew",
+        "summary": "A hearty West African chicken stew in a tomato and pepper sauce, served with boiled white rice and crispy fried plantain, designed for easy reheating and meal prep.",
+        "cook_time_text": "45 mins",
+        "est_calories_text": "450 calories per serving",
+        "calories_kcal": 450,
+        "protein_g": 30,
+        "carbs_g": 60,
+        "fat_g": 15,
+        "ingredients": [
+          {
+            "display_name": "Chicken thighs",
+            "quantity_text": "2 lbs"
+          },
+          {
+            "display_name": "Tomatoes",
+            "quantity_text": "3"
+          },
+          {
+            "display_name": "Red bell pepper",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Habanero pepper",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Olive oil",
+            "quantity_text": "1/2 cup"
+          },
+          {
+            "display_name": "Chicken stock",
+            "quantity_text": "1 cup"
+          },
+          {
+            "display_name": "Onion",
+            "quantity_text": "1"
+          },
+          {
+            "display_name": "Bouillon powder",
+            "quantity_text": "1 tsp"
+          },
+          {
+            "display_name": "Thyme",
+            "quantity_text": "1/2 tsp"
+          },
+          {
+            "display_name": "Black pepper",
+            "quantity_text": "1/2 tsp plus extra to taste"
+          },
+          {
+            "display_name": "Curry powder",
+            "quantity_text": "1/2 tsp"
+          },
+          {
+            "display_name": "Salt",
+            "quantity_text": "1/2 tsp plus extra to taste"
+          },
+          {
+            "display_name": "White rice",
+            "quantity_text": "3 cups uncooked"
+          },
+          {
+            "display_name": "Water",
+            "quantity_text": "6 cups"
+          },
+          {
+            "display_name": "Ripe plantain",
+            "quantity_text": "2, peeled and diced"
+          },
+          {
+            "display_name": "Neutral frying oil",
+            "quantity_text": "about 1/3 cup"
+          },
+          {
+            "display_name": "Extra sauce for reheating",
+            "quantity_text": "1/4 cup (optional)"
+          }
+        ],
+        "steps": [
+          "Wash and pat dry the chicken thighs, then season with salt and black pepper.",
+          "Heat olive oil and brown the chicken on both sides, then set the chicken aside.",
+          "Blend tomatoes, red bell pepper, habanero, and half the onion until smooth.",
+          "Sauté the remaining chopped onion in the pan until translucent.",
+          "Pour in the blended mixture and boil for 5 minutes.",
+          "Add chicken stock, bouillon powder, thyme, curry powder, and black pepper, then return chicken to the sauce.",
+          "Simmer for about 20 minutes until the chicken is fully cooked and the stew thickens; adjust salt to taste.",
+          "Boil the white rice in water until tender, then drain or steam-dry and fluff.",
+          "Fry diced ripe plantain in hot oil until golden brown, then drain.",
+          "Cool the stew and rice completely before packing them separately in meal prep containers. Store fried plantain in a separate container to keep it crispy. Optionally, add extra sauce for reheating."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "high-protein",
+          "meal-prep-friendly"
+        ],
+        "change_summary": "Modified the recipe to ensure components store well separately, added steps for cooling and packing, and included extra sauce for reheating.",
+        "edit_summary": {
+          "added_ingredients": [
+            "Extra sauce for reheating"
+          ],
+          "removed_ingredients": [],
+          "changed_ingredients": [
+            "Extra sauce for reheating",
+            "added extra sauce for reheating"
+          ],
+          "changed_quantities": [],
+          "changed_steps": [
+            "Step 10: cool the stew and rice completely before packing them separately in meal prep containers store fried plantain in a separate container to keep it crispy optionally add extra sauce for reheating",
+            "Cool the stew and rice completely before packing them separately in meal prep containers. Store fried plantain in a separate container to keep it crispy. Optionally, add extra sauce for reheating."
+          ],
+          "validation_notes": [
+            "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+          ]
+        }
+      },
+      "change_summary": "Modified the recipe to ensure components store well separately, added steps for cooling and packing, and included extra sauce for reheating.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Extra sauce for reheating"
+        ],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Extra sauce for reheating",
+          "added extra sauce for reheating"
+        ],
+        "changed_quantities": [],
+        "changed_steps": [
+          "Step 10: cool the stew and rice completely before packing them separately in meal prep containers store fried plantain in a separate container to keep it crispy optionally add extra sauce for reheating",
+          "Cool the stew and rice completely before packing them separately in meal prep containers. Store fried plantain in a separate container to keep it crispy. Optionally, add extra sauce for reheating."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "eaa85ffd-1a66-44e9-84e7-2c7d4b950390",
+      "intent_key": "moreProtein",
+      "preplanned_summary": "Increased protein by adding 2 cups of shredded cooked chicken and ½ cup of Greek yogurt. Adjusted the amount of Parmesan cheese to maintain balance. Updated cooking steps to incorporate these changes.",
+      "adapted_recipe": {
+        "title": "High-Protein Spinach One-Pot Pasta",
+        "summary": "This simple yet satisfying dish is elevated with the addition of chicken and Greek yogurt, creating a creamy texture while boosting protein content. The salty anchovies add umami, making this one-pot pasta a perfect quick dinner option.",
+        "cook_time_text": "20 mins",
+        "ingredients": [
+          "Salt",
+          "12 oz Short-shaped Pasta",
+          "16 oz Mature Spinach",
+          "2 tbsp Olive Oil",
+          "Anchovies",
+          "2 cups Cooked Chicken Breast, shredded",
+          "10 tbsp Grated Parmesan",
+          "½ cup Greek Yogurt",
+          "¼ tsp Red-pepper Flakes",
+          "Lemon"
+        ],
+        "steps": [
+          "Bring a large pot of salted water to a boil. Add the pasta and adjust the heat to maintain a gentle boil. Cook until just shy of al dente, about 1 minute less than the package instructions.",
+          "Reserve 1/2 cup pasta water.",
+          "Place the spinach in a large colander in the sink. Drain the pasta over the spinach. Drizzle with olive oil and stir to prevent the noodles from sticking.",
+          "Wipe out the pot and place it over medium-high heat. Carefully add 2 tablespoons olive oil and the anchovies (it might splatter) and stir until they start to dissolve, about 30 seconds.",
+          "Pour the pasta, spinach, and shredded chicken into the pot. Add the Greek yogurt, grated Parmesan, and red-pepper flakes, and stir until a creamy sauce forms and the spinach fully wilts, 1 to 2 minutes.",
+          "Squeeze a lemon half over everything. Taste and season as needed with more salt or lemon."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "high-protein"
+        ]
+      },
+      "change_summary": "Increased protein by adding 2 cups of shredded cooked chicken and ½ cup of Greek yogurt. Adjusted the amount of Parmesan cheese to maintain balance. Updated cooking steps to incorporate these changes.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Cooked Chicken Breast, shredded",
+          "Greek Yogurt"
+        ],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Cooked Chicken Breast, shredded",
+          "Greek Yogurt"
+        ],
+        "changed_quantities": [
+          "Grated Parmesan: 13 tbsp -> 10 tbsp",
+          "10 tbsp Grated Parmesan (reduced from 13 tbsp)"
+        ],
+        "changed_steps": [
+          "Step 3: place the spinach in a large colander in the sink drain the pasta over the spinach drizzle with olive oil and stir to prevent the noodles from sticking",
+          "Step 5: pour the pasta spinach and shredded chicken into the pot add the greek yogurt grated parmesan and red pepper flakes and stir until a creamy sauce forms and the spinach fully wilts 1 to 2 minutes",
+          "Add the shredded chicken and Greek yogurt in step 5 to create a creamy sauce."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "eaa85ffd-1a66-44e9-84e7-2c7d4b950390",
+      "intent_key": "keto",
+      "preplanned_summary": "Replaced pasta with fresh spinach, reduced cheese quantity, and added lemon juice for flavor. Adjusted cooking steps to reflect these changes.",
+      "adapted_recipe": {
+        "title": "Keto Spinach and Anchovy Skillet",
+        "summary": "This quick and satisfying dish replaces traditional pasta with a delightful mix of sautéed spinach, anchovies, and creamy cheese, achieving a rich umami flavor without the carbs. Perfect for a keto-friendly dinner in just one pot!",
+        "cook_time_text": "15 mins",
+        "ingredients": [
+          "Salt",
+          "16 oz Fresh Spinach",
+          "2 tbsp Olive Oil",
+          "4 fillets Anchovies",
+          "6 oz Grated Parmesan",
+          "¼ tsp Red-pepper Flakes",
+          "1 tbsp Lemon Juice"
+        ],
+        "steps": [
+          "Heat a large skillet over medium-high heat. Add the olive oil and anchovies, stirring until the anchovies dissolve, about 1 minute.",
+          "Add the fresh spinach to the skillet and sauté until wilted, about 2-3 minutes.",
+          "Stir in the grated Parmesan cheese and red-pepper flakes, mixing until a creamy sauce forms, about 1-2 minutes.",
+          "Remove from heat and squeeze lemon juice over the dish. Taste and season with more salt if needed.",
+          "Serve hot, garnished with additional Parmesan if desired."
+        ],
+        "substitutions": [],
+        "pairing_notes": [
+          "Pair with avocado slices for added creaminess.",
+          "Serve alongside grilled chicken or fish for extra protein."
+        ],
+        "dietary_fit": [
+          "Keto",
+          "Low-Carb"
+        ]
+      },
+      "change_summary": "Replaced pasta with fresh spinach, reduced cheese quantity, and added lemon juice for flavor. Adjusted cooking steps to reflect these changes.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Fresh Spinach",
+          "Lemon Juice"
+        ],
+        "removed_ingredients": [
+          "Short-shaped Pasta",
+          "Mature Spinach",
+          "Lemon"
+        ],
+        "changed_ingredients": [
+          "Fresh Spinach",
+          "Lemon Juice",
+          "Short-shaped Pasta",
+          "Mature Spinach",
+          "Lemon",
+          "Short-shaped Pasta to Fresh Spinach",
+          "Reduced Grated Parmesan from 13 tbsp to 6 oz",
+          "Added Lemon Juice instead of whole lemon"
+        ],
+        "changed_quantities": [
+          "Anchovies: unspecified -> 4 fillets",
+          "Grated Parmesan: 13 tbsp -> 6 oz",
+          "12 oz of pasta to 16 oz of spinach",
+          "2 tbsp of olive oil remains the same",
+          "Anchovies increased from unspecified to 4 fillets"
+        ],
+        "changed_steps": [
+          "Step 1: heat a large skillet over medium high heat add the olive oil and anchovies stirring until the anchovies dissolve about 1 minute",
+          "Step 2: add the fresh spinach to the skillet and saut until wilted about 2 3 minutes",
+          "Step 3: stir in the grated parmesan cheese and red pepper flakes mixing until a creamy sauce forms about 1 2 minutes",
+          "Step 4: remove from heat and squeeze lemon juice over the dish taste and season with more salt if needed",
+          "Step 5: serve hot garnished with additional parmesan if desired",
+          "Rewrote steps to remove pasta cooking and incorporate sautéing spinach directly in the skillet with anchovies and cheese."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "eaa85ffd-1a66-44e9-84e7-2c7d4b950390",
+      "intent_key": "lighter",
+      "preplanned_summary": "Reduced olive oil from 2 tbsp to 1 tbsp, decreased grated Parmesan from 13 tbsp to 6 tbsp, added fresh basil for brightness.",
+      "adapted_recipe": {
+        "title": "Lightened Spinach One-Pot Pasta",
+        "summary": "This lighter version of Spinach One-Pot Pasta reduces richness while maintaining flavor and comfort. By using less cheese and adding fresh lemon juice and herbs, this dish remains vibrant and satisfying, perfect for a quick and healthy dinner.",
+        "cook_time_text": "15 mins",
+        "ingredients": [
+          "Salt",
+          "12 oz Short-shaped Pasta",
+          "16 oz Mature Spinach",
+          "1 tbsp Olive Oil",
+          "Anchovies",
+          "6 tbsp Grated Parmesan",
+          "¼ tsp Red-pepper Flakes",
+          "1, juiced Lemon",
+          "¼ cup, chopped Fresh Basil"
+        ],
+        "steps": [
+          "Bring a large pot of salted water to a boil. Add the pasta and adjust the heat to maintain a gentle boil. Cook until just shy of al dente, about 1 minute less than the package instructions.",
+          "Reserve 1/2 cup pasta water.",
+          "Place the spinach in a large colander in the sink. Drain the pasta over the spinach. Drizzle with 1 tablespoon of olive oil and stir to prevent the noodles from sticking.",
+          "Wipe out the pot and place it over medium-high heat. Carefully add 1 tablespoon of olive oil and the anchovies (it might splatter) and stir until they start to dissolve, about 30 seconds.",
+          "Pour the pasta and spinach into the pot, add 6 tablespoons of grated Parmesan and red-pepper flakes, and stir until a glossy sauce forms and the spinach fully wilts, 1 to 2 minutes.",
+          "Squeeze the juice of one lemon over everything, add the chopped fresh basil, and taste. Season as needed with more salt or lemon juice."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "light",
+          "healthy",
+          "Italian"
+        ]
+      },
+      "change_summary": "Reduced olive oil from 2 tbsp to 1 tbsp, decreased grated Parmesan from 13 tbsp to 6 tbsp, added fresh basil for brightness.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Fresh Basil"
+        ],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Fresh Basil",
+          "Olive Oil",
+          "Grated Parmesan"
+        ],
+        "changed_quantities": [
+          "Olive Oil: 2 tbsp -> 1 tbsp",
+          "Grated Parmesan: 13 tbsp -> 6 tbsp",
+          "Lemon: unspecified -> 1, juiced",
+          "2 tbsp to 1 tbsp",
+          "13 tbsp to 6 tbsp",
+          "added ¼ cup, chopped"
+        ],
+        "changed_steps": [
+          "Step 3: place the spinach in a large colander in the sink drain the pasta over the spinach drizzle with 1 tablespoon of olive oil and stir to prevent the noodles from sticking",
+          "Step 4: wipe out the pot and place it over medium high heat carefully add 1 tablespoon of olive oil and the anchovies it might splatter and stir until they start to dissolve about 30 seconds",
+          "Step 5: pour the pasta and spinach into the pot add 6 tablespoons of grated parmesan and red pepper flakes and stir until a glossy sauce forms and the spinach fully wilts 1 to 2 minutes",
+          "Step 6: squeeze the juice of one lemon over everything add the chopped fresh basil and taste season as needed with more salt or lemon juice",
+          "Drizzle with 1 tablespoon of olive oil",
+          "add 6 tablespoons of grated Parmesan and red-pepper flakes",
+          "add the chopped fresh basil"
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "4bcf072c-b95d-49fa-9997-d2749a118a15",
+      "intent_key": "lessSugar",
+      "preplanned_summary": "Reduced the amount of powdered sugar from 13 tablespoons to 5 tablespoons, and granulated sugar from 1 cup to ½ cup. Adjusted the steps to reflect these changes.",
+      "adapted_recipe": {
+        "title": "Reduced-Sugar Guava Lemon Bars",
+        "summary": "These Guava Lemon Bars feature the zesty brightness of lemons and tropical guava, layered on a buttery shortbread crust, with reduced sweetness for a more balanced treat.",
+        "cook_time_text": "95 mins",
+        "ingredients": [
+          "2 Cups All-purpose Flour",
+          "5 tbsp Powdered Sugar",
+          "¼ tsp Salt",
+          "1 Cup Unsalted Butter",
+          "4 large Eggs",
+          "½ Cup Granulated Sugar",
+          "1 tbsp Lemon Zest",
+          "5 tbsp Lemon Juice",
+          "8 tbsp Guava Puree",
+          "1 tbsp All-purpose Flour"
+        ],
+        "steps": [
+          "Preheat your oven to 350°F (175°C) and adjust the oven rack to the middle position.",
+          "Line a 9x13-inch baking dish with parchment paper, leaving an overhang on the sides.",
+          "In a medium bowl, whisk together 2 cups of all-purpose flour, 5 tablespoons of powdered sugar, and ¼ teaspoon of salt.",
+          "Cut 1 cup (two sticks) of unsalted butter into small cubes and mix into the flour mixture using a pastry cutter or your fingers until mixture resembles coarse crumbs.",
+          "Press the mixture evenly into the prepared baking dish to form the crust.",
+          "Bake the crust for 20-25 minutes, or until lightly golden brown.",
+          "While the crust is baking, combine 4 large eggs, ½ cup granulated sugar, 1 tablespoon lemon zest, and 5 tablespoons fresh lemon juice in a large bowl.",
+          "Add ½ cup of guava puree and 1 tablespoon of all-purpose flour to the egg mixture and whisk until well combined.",
+          "Pour the guava lemon filling over the hot baked crust, spreading evenly with a spatula.",
+          "Bake for another 25-30 minutes, or until the filling is set and slightly golden around the edges.",
+          "Remove from the oven and let the bars cool completely in the pan on a wire rack.",
+          "Once cool, lift the bars out of the pan using the parchment overhang and cut into squares."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": []
+      },
+      "change_summary": "Reduced the amount of powdered sugar from 13 tablespoons to 5 tablespoons, and granulated sugar from 1 cup to ½ cup. Adjusted the steps to reflect these changes.",
+      "edit_summary": {
+        "added_ingredients": [],
+        "removed_ingredients": [],
+        "changed_ingredients": [
+          "Powdered Sugar",
+          "Granulated Sugar"
+        ],
+        "changed_quantities": [
+          "All-purpose Flour: 2 Cups -> 1 tbsp",
+          "Powdered Sugar: 13 tbsp -> 5 tbsp",
+          "Granulated Sugar: 1 Cup -> ½ Cup",
+          "13 tbsp to 5 tbsp",
+          "1 Cup to ½ Cup"
+        ],
+        "changed_steps": [
+          "Step 3: in a medium bowl whisk together 2 cups of all purpose flour 5 tablespoons of powdered sugar and teaspoon of salt",
+          "Step 7: while the crust is baking combine 4 large eggs cup granulated sugar 1 tablespoon lemon zest and 5 tablespoons fresh lemon juice in a large bowl",
+          "Step 8: add cup of guava puree and 1 tablespoon of all purpose flour to the egg mixture and whisk until well combined",
+          "Updated sugar quantities in steps 3 and 7."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "4bcf072c-b95d-49fa-9997-d2749a118a15",
+      "intent_key": "glutenFree",
+      "preplanned_summary": "Replaced all-purpose flour with gluten-free all-purpose flour to make the recipe gluten-free. Updated steps to reflect this change. No other ingredients were altered.",
+      "adapted_recipe": {
+        "title": "Gluten-Free Guava Lemon Bars",
+        "summary": "These Gluten-Free Guava Lemon Bars combine the zesty brightness of lemons with the tropical sweetness of guava, layered on a gluten-free shortbread crust for a delightful treat.",
+        "cook_time_text": "95 mins",
+        "ingredients": [
+          "2 Cups Gluten-Free All-Purpose Flour",
+          "13 tbsp Powdered Sugar",
+          "¼ tsp Salt",
+          "1 Cup Unsalted Butter",
+          "4 large Eggs",
+          "1 Cup Granulated Sugar",
+          "1 tbsp Lemon Zest",
+          "5 tbsp Lemon Juice",
+          "8 tbsp Guava Puree"
+        ],
+        "steps": [
+          "Preheat your oven to 350°F (175°C) and adjust the oven rack to the middle position.",
+          "Line a 9x13-inch baking dish with parchment paper, leaving an overhang on the sides.",
+          "In a medium bowl, whisk together 2 cups of gluten-free all-purpose flour, 13 tablespoons of powdered sugar, and ¼ teaspoon of salt.",
+          "Cut 1 cup (two sticks) of unsalted butter into small cubes and mix into the flour mixture using a pastry cutter or your fingers until mixture resembles coarse crumbs.",
+          "Press the mixture evenly into the prepared baking dish to form the crust.",
+          "Bake the crust for 20-25 minutes, or until lightly golden brown.",
+          "While the crust is baking, combine 4 large eggs, 1 cup granulated sugar, 1 tablespoon lemon zest, and 5 tablespoons fresh lemon juice in a large bowl.",
+          "Add 8 tablespoons of guava puree to the egg mixture and whisk until well combined.",
+          "Pour the guava lemon filling over the hot baked crust, spreading evenly with a spatula.",
+          "Bake for another 25-30 minutes, or until the filling is set and slightly golden around the edges.",
+          "Remove from the oven and let the bars cool completely in the pan on a wire rack.",
+          "Once cool, lift the bars out of the pan using the parchment overhang and cut into squares. Dust with powdered sugar before serving, if desired."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": [
+          "Gluten-Free"
+        ]
+      },
+      "change_summary": "Replaced all-purpose flour with gluten-free all-purpose flour to make the recipe gluten-free. Updated steps to reflect this change. No other ingredients were altered.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Gluten-Free All-Purpose Flour"
+        ],
+        "removed_ingredients": [
+          "All-purpose Flour"
+        ],
+        "changed_ingredients": [
+          "Gluten-Free All-Purpose Flour",
+          "All-purpose Flour",
+          "All-purpose Flour -> Gluten-Free All-Purpose Flour"
+        ],
+        "changed_quantities": [],
+        "changed_steps": [
+          "Step 3: in a medium bowl whisk together 2 cups of gluten free all purpose flour 13 tablespoons of powdered sugar and teaspoon of salt",
+          "Step 7: while the crust is baking combine 4 large eggs 1 cup granulated sugar 1 tablespoon lemon zest and 5 tablespoons fresh lemon juice in a large bowl",
+          "Step 8: add 8 tablespoons of guava puree to the egg mixture and whisk until well combined",
+          "Step 12: once cool lift the bars out of the pan using the parchment overhang and cut into squares dust with powdered sugar before serving if desired",
+          "In a medium bowl, whisk together 2 cups of gluten-free all-purpose flour, 13 tablespoons of powdered sugar, and ¼ teaspoon of salt."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    },
+    {
+      "recipe_id": "4bcf072c-b95d-49fa-9997-d2749a118a15",
+      "intent_key": "lighter",
+      "preplanned_summary": "Reduced butter and sugar, replaced with coconut oil and less granulated sugar, adjusted flour quantity for a lighter crust, and decreased guava puree amount to balance the filling.",
+      "adapted_recipe": {
+        "title": "Light Guava Lemon Bars",
+        "summary": "These Light Guava Lemon Bars maintain the zesty brightness of lemons and the tropical sweetness of guava, now with a lighter crust and filling for a refreshing treat.",
+        "cook_time_text": "75 mins",
+        "ingredients": [
+          "1 1/2 Cups All-purpose Flour",
+          "6 tbsp Powdered Sugar",
+          "¼ tsp Salt",
+          "1/2 Cup Coconut Oil",
+          "3 large Eggs",
+          "1/2 Cup Granulated Sugar",
+          "1 tbsp Lemon Zest",
+          "5 tbsp Lemon Juice",
+          "6 tbsp Guava Puree"
+        ],
+        "steps": [
+          "Preheat your oven to 350°F (175°C) and adjust the oven rack to the middle position.",
+          "Line a 9x13-inch baking dish with parchment paper, leaving an overhang on the sides.",
+          "In a medium bowl, whisk together 1 1/2 cups of all-purpose flour, 6 tablespoons of powdered sugar, and 1/4 teaspoon of salt.",
+          "Melt 1/2 cup of coconut oil and mix it into the flour mixture until it resembles coarse crumbs.",
+          "Press the mixture evenly into the prepared baking dish to form the crust.",
+          "Bake the crust for 15-20 minutes, or until lightly golden brown.",
+          "While the crust is baking, combine 3 large eggs, 1/2 cup granulated sugar, 1 tablespoon lemon zest, and 5 tablespoons fresh lemon juice in a large bowl.",
+          "Add 6 tablespoons of guava puree and 1 tablespoon of all-purpose flour to the egg mixture and whisk until well combined.",
+          "Pour the guava lemon filling over the hot baked crust, spreading evenly with a spatula.",
+          "Bake for another 20-25 minutes, or until the filling is set and slightly golden around the edges.",
+          "Remove from the oven and let the bars cool completely in the pan on a wire rack.",
+          "Once cool, lift the bars out of the pan using the parchment overhang and cut into squares."
+        ],
+        "substitutions": [],
+        "pairing_notes": [],
+        "dietary_fit": []
+      },
+      "change_summary": "Reduced butter and sugar, replaced with coconut oil and less granulated sugar, adjusted flour quantity for a lighter crust, and decreased guava puree amount to balance the filling.",
+      "edit_summary": {
+        "added_ingredients": [
+          "Coconut Oil"
+        ],
+        "removed_ingredients": [
+          "Unsalted Butter"
+        ],
+        "changed_ingredients": [
+          "Coconut Oil",
+          "Unsalted Butter",
+          "Unsalted Butter -> Coconut Oil",
+          "Granulated Sugar -> 1/2 Cup",
+          "Powdered Sugar -> 6 tbsp",
+          "Guava Puree -> 6 tbsp"
+        ],
+        "changed_quantities": [
+          "All-purpose Flour: 2 Cups -> 1 1/2 Cups",
+          "Powdered Sugar: 13 tbsp -> 6 tbsp",
+          "Eggs: 4 large -> 3 large",
+          "Granulated Sugar: 1 Cup -> 1/2 Cup",
+          "Guava Puree: 8 tbsp -> 6 tbsp",
+          "2 Cups of All-purpose Flour -> 1 1/2 Cups",
+          "1 Cup of Granulated Sugar -> 1/2 Cup"
+        ],
+        "changed_steps": [
+          "Step 3: in a medium bowl whisk together 1 1 2 cups of all purpose flour 6 tablespoons of powdered sugar and 1 4 teaspoon of salt",
+          "Step 4: melt 1 2 cup of coconut oil and mix it into the flour mixture until it resembles coarse crumbs",
+          "Step 6: bake the crust for 15 20 minutes or until lightly golden brown",
+          "Step 7: while the crust is baking combine 3 large eggs 1 2 cup granulated sugar 1 tablespoon lemon zest and 5 tablespoons fresh lemon juice in a large bowl",
+          "Step 8: add 6 tablespoons of guava puree and 1 tablespoon of all purpose flour to the egg mixture and whisk until well combined",
+          "Step 10: bake for another 20 25 minutes or until the filling is set and slightly golden around the edges",
+          "Cut 1/2 Cup of coconut oil into the flour mixture instead of butter.",
+          "Bake the crust for 15-20 minutes instead of 20-25 minutes.",
+          "Use 3 large eggs instead of 4."
+        ],
+        "validation_notes": [
+          "Semantic validation skipped in the launch path for latency; deterministic structural validation passed."
+        ]
+      },
+      "validation_status": "structural_passed",
+      "model_mode": "flavorgraph_llm_recipe_adaptation",
+      "model": "gpt-4o-mini"
+    }
+  ]
+}

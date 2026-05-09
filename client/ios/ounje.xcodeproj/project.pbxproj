@@ -64,6 +64,8 @@
 		DAD00000000000000000006 /* RecipeImportAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000006 /* RecipeImportAPIService.swift */; };
 		DAD00000000000000000007 /* InstacartAutomationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000007 /* InstacartAutomationServices.swift */; };
 		DAD00000000000000000008 /* OnboardingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000008 /* OnboardingViews.swift */; };
+		DAD00000000000000000013 /* OnboardingRecipeEditDemoCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000013 /* OnboardingRecipeEditDemoCatalog.swift */; };
+		DAD00000000000000000014 /* OnboardingRecipeEditDemoCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000014 /* OnboardingRecipeEditDemoCatalog.json */; };
 		DAD00000000000000000009 /* ProfileViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000009 /* ProfileViews.swift */; };
 			DAD0000000000000000000A /* CartViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000A /* CartViews.swift */; };
 			DAD0000000000000000000B /* PrepViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE0000000000000000000B /* PrepViews.swift */; };
@@ -159,6 +161,8 @@
 		DAE00000000000000000006 /* RecipeImportAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cookbook/RecipeImportAPIService.swift; sourceTree = "<group>"; };
 		DAE00000000000000000007 /* InstacartAutomationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/InstacartAutomationServices.swift; sourceTree = "<group>"; };
 		DAE00000000000000000008 /* OnboardingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Onboarding/Views/OnboardingViews.swift; sourceTree = "<group>"; };
+		DAE00000000000000000013 /* OnboardingRecipeEditDemoCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Onboarding/Models/OnboardingRecipeEditDemoCatalog.swift; sourceTree = "<group>"; };
+		DAE00000000000000000014 /* OnboardingRecipeEditDemoCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ounje/OnboardingRecipeEditDemoCatalog.json; sourceTree = "<group>"; };
 		DAE00000000000000000009 /* ProfileViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Profile/Views/ProfileViews.swift; sourceTree = "<group>"; };
 			DAE0000000000000000000A /* CartViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/Views/CartViews.swift; sourceTree = "<group>"; };
 			DAE0000000000000000000B /* PrepViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Prep/Views/PrepViews.swift; sourceTree = "<group>"; };
@@ -211,6 +215,7 @@
 				F10000000000000000000004 /* rbutton.riv */,
 				F10000000000000000000006 /* liquid.riv */,
 				F10000000000000000000008 /* skills.riv */,
+				DAE00000000000000000014 /* OnboardingRecipeEditDemoCatalog.json */,
 			);
 			name = ounje;
 			sourceTree = "<group>";
@@ -441,6 +446,7 @@
 		DAC00000000000000000019 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				DAE00000000000000000013 /* OnboardingRecipeEditDemoCatalog.swift */,
 			);
 			name = Models;
 			sourceTree = "<group>";
@@ -649,6 +655,7 @@
 				F10000000000000000000003 /* rbutton.riv in Resources */,
 				F10000000000000000000005 /* liquid.riv in Resources */,
 				F10000000000000000000007 /* skills.riv in Resources */,
+				DAD00000000000000000014 /* OnboardingRecipeEditDemoCatalog.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -718,6 +725,7 @@
 				DAD00000000000000000006 /* RecipeImportAPIService.swift in Sources */,
 				DAD00000000000000000007 /* InstacartAutomationServices.swift in Sources */,
 				DAD00000000000000000008 /* OnboardingViews.swift in Sources */,
+				DAD00000000000000000013 /* OnboardingRecipeEditDemoCatalog.swift in Sources */,
 				DAD00000000000000000009 /* ProfileViews.swift in Sources */,
 					DAD0000000000000000000A /* CartViews.swift in Sources */,
 					DAD0000000000000000000B /* PrepViews.swift in Sources */,

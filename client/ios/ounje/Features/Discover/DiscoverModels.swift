@@ -475,6 +475,546 @@ struct DiscoverRankedRecipesResponse: Decodable {
     let nextOffset: Int?
 }
 
+struct DiscoverOnboardingFeedMixer {
+    private struct ScoredRecipe {
+        let recipe: DiscoverRecipeCardData
+        let originalIndex: Int
+        let onboardingScore: Double
+        let qualityScore: Double
+        let diversityScore: Double
+        let activationScore: Double
+        let hardPenalty: Double
+        let deterministicNoise: Double
+    }
+
+    fileprivate struct TasteProfile {
+        let persona: String?
+        let goals: [String]
+        let dietaryPatterns: [String]
+        let restrictions: [String]
+        let favoriteTerms: [String]
+        let cuisineTerms: [String]
+        let behaviorTerms: [String]
+        let cooksForOthers: Bool
+        let householdSize: Int
+        let budgetPerServing: Double
+        let budgetFlexibility: BudgetFlexibility
+        let purchasingBehavior: PurchasingBehavior
+    }
+
+    static func mixedFeed(
+        recipes: [DiscoverRecipeCardData],
+        profile: UserProfile?,
+        behaviorSeeds: [DiscoverRecipeCardData],
+        requestSeed: String,
+        filter: String,
+        query: String
+    ) -> [DiscoverRecipeCardData] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedQuery.isEmpty,
+              DiscoverPreset.normalizedKey(for: filter) == "all",
+              !recipes.isEmpty
+        else {
+            return recipes
+        }
+
+        let tasteProfile = TasteProfile(profile: profile, behaviorSeeds: behaviorSeeds)
+        let scored = recipes.enumerated().map { index, recipe in
+            ScoredRecipe(
+                recipe: recipe,
+                originalIndex: index,
+                onboardingScore: onboardingScore(for: recipe, tasteProfile: tasteProfile),
+                qualityScore: qualityScore(for: recipe),
+                diversityScore: diversityScore(for: recipe, tasteProfile: tasteProfile),
+                activationScore: activationScore(for: recipe),
+                hardPenalty: hardPenalty(for: recipe, tasteProfile: tasteProfile),
+                deterministicNoise: deterministicNoise(for: recipe.id, seed: requestSeed)
+            )
+        }
+
+        let safeRecipes = scored.filter { $0.hardPenalty < 100 }
+        let candidates = safeRecipes.isEmpty ? scored : safeRecipes
+        let targetCount = candidates.count
+        let onboardingTarget = max(1, Int((Double(targetCount) * 0.40).rounded()))
+        let qualityTarget = max(1, Int((Double(targetCount) * 0.25).rounded()))
+        let diversityTarget = max(1, Int((Double(targetCount) * 0.20).rounded()))
+        let activationTarget = max(1, targetCount - onboardingTarget - qualityTarget - diversityTarget)
+
+        var selectedIDs = Set<String>()
+        var sections: [[ScoredRecipe]] = []
+        sections.append(takeTop(candidates, count: onboardingTarget, selectedIDs: &selectedIDs) {
+            weightedScore($0, onboarding: 1.0, quality: 0.18, diversity: 0.12, activation: 0.08)
+        })
+        sections.append(takeTop(candidates, count: qualityTarget, selectedIDs: &selectedIDs) {
+            weightedScore($0, onboarding: 0.18, quality: 1.0, diversity: 0.16, activation: 0.12)
+        })
+        sections.append(takeDiverse(candidates, count: diversityTarget, selectedIDs: &selectedIDs))
+        sections.append(takeTop(candidates, count: activationTarget, selectedIDs: &selectedIDs) {
+            weightedScore($0, onboarding: 0.22, quality: 0.18, diversity: 0.12, activation: 1.0)
+        })
+
+        let remaining = candidates
+            .filter { !selectedIDs.contains($0.recipe.id) }
+            .sorted { lhs, rhs in
+                weightedScore(lhs, onboarding: 0.36, quality: 0.30, diversity: 0.20, activation: 0.14)
+                    > weightedScore(rhs, onboarding: 0.36, quality: 0.30, diversity: 0.20, activation: 0.14)
+            }
+
+        let interleaved = interleave(sections) + remaining
+        return interleaved.map { $0.recipe }
+    }
+
+    static func behaviorSignature(_ behaviorSeeds: [DiscoverRecipeCardData]) -> String {
+        behaviorSeeds
+            .prefix(8)
+            .flatMap { recipe in
+                [recipe.id, recipe.filterLabel, recipe.category, recipe.recipeType]
+                    .compactMap { $0 }
+            }
+            .map(normalizedToken)
+            .filter { !$0.isEmpty }
+            .joined(separator: ",")
+    }
+
+    private static func onboardingScore(for recipe: DiscoverRecipeCardData, tasteProfile: TasteProfile) -> Double {
+        let haystack = recipe.searchableText
+        var score = 0.0
+
+        for term in tasteProfile.favoriteTerms where haystack.contains(term) {
+            score += 2.2
+        }
+        for term in tasteProfile.cuisineTerms where haystack.contains(term) {
+            score += 1.7
+        }
+        for term in tasteProfile.behaviorTerms where haystack.contains(term) {
+            score += 2.8
+        }
+        for pattern in tasteProfile.dietaryPatterns where dietMatches(pattern, haystack: haystack) {
+            score += 2.0
+        }
+
+        let goals = tasteProfile.goals.joined(separator: " ")
+        if goals.contains("spend less") || goals.contains("save money") || goals.contains("budget") {
+            score += matchesAny(haystack, ["budget", "cheap", "pantry", "beans", "potato", "rice", "chicken", "one pot"]) ? 2.4 : 0
+        }
+        if goals.contains("eat less takeout") || goals.contains("find good eats") {
+            score += matchesAny(haystack, ["nigerian", "curry", "stew", "spicy", "bowl", "dinner", "lunch"]) ? 2.0 : 0
+        }
+        if goals.contains("learn to cook") || goals.contains("cook new things") {
+            score += matchesAny(haystack, ["beginner", "easy", "simple", "guide", "classic"]) ? 1.8 : 0
+            score += tasteProfile.cuisineTerms.contains(where: { haystack.contains($0) }) ? 1.0 : 0
+        }
+        if goals.contains("stick to a diet") || goals.contains("diet") {
+            score += tasteProfile.dietaryPatterns.contains(where: { dietMatches($0, haystack: haystack) }) ? 2.0 : 0
+        }
+        if goals.contains("time") || goals.contains("energy") {
+            score += quickRecipeScore(recipe)
+        }
+
+        if let persona = tasteProfile.persona {
+            score += personaScore(persona, recipe: recipe, haystack: haystack, tasteProfile: tasteProfile)
+        }
+
+        if tasteProfile.cooksForOthers || tasteProfile.householdSize >= 3 {
+            score += matchesAny(haystack, ["family", "tray", "bake", "one pot", "pasta", "chicken", "rice", "dinner"]) ? 1.3 : 0
+        }
+
+        if tasteProfile.budgetPerServing < 9 || tasteProfile.budgetFlexibility != .convenienceFirst {
+            score += matchesAny(haystack, ["beans", "rice", "potato", "chicken", "pasta", "pantry", "budget"]) ? 1.2 : 0
+        }
+
+        if tasteProfile.purchasingBehavior == .healthier {
+            score += matchesAny(haystack, ["healthy", "lighter", "salad", "vegetable", "protein", "grilled", "baked"]) ? 1.0 : 0
+        }
+
+        return score
+    }
+
+    private static func qualityScore(for recipe: DiscoverRecipeCardData) -> Double {
+        var score = 0.0
+        score += recipe.imageURL == nil ? 0 : 2.0
+        score += recipe.description?.isEmpty == false ? 1.0 : 0
+        score += recipe.cookTimeMinutes == nil ? 0 : 0.8
+        score += recipe.source?.isEmpty == false ? 0.5 : 0
+        score += recipe.filterChipLabel == nil ? 0 : 0.5
+
+        if let minutes = recipe.cookTimeMinutes {
+            switch minutes {
+            case 1...35:
+                score += 1.2
+            case 36...60:
+                score += 0.7
+            default:
+                score += 0.2
+            }
+        }
+
+        return score
+    }
+
+    private static func diversityScore(for recipe: DiscoverRecipeCardData, tasteProfile: TasteProfile) -> Double {
+        let haystack = recipe.searchableText
+        var score = 1.0
+
+        if matchesAny(haystack, ["nigerian", "west african", "thai", "korean", "mexican", "indian", "caribbean", "mediterranean"]) {
+            score += 1.4
+        }
+        if tasteProfile.explorationBias > 0 {
+            score += tasteProfile.explorationBias
+        }
+        if recipe.filterChipLabel != nil {
+            score += 0.6
+        }
+
+        return score
+    }
+
+    private static func activationScore(for recipe: DiscoverRecipeCardData) -> Double {
+        let haystack = recipe.searchableText
+        var score = 0.0
+        score += quickRecipeScore(recipe)
+        score += matchesAny(haystack, ["easy", "beginner", "one pot", "sheet pan", "bowl", "meal prep", "make ahead"]) ? 2.0 : 0
+        score += recipe.imageURL == nil ? 0 : 1.0
+        score += matchesAny(haystack, ["breakfast", "lunch", "dinner", "dessert", "nigerian", "pasta", "chicken"]) ? 0.8 : 0
+        return score
+    }
+
+    private static func hardPenalty(for recipe: DiscoverRecipeCardData, tasteProfile: TasteProfile) -> Double {
+        let haystack = recipe.searchableText
+        var penalty = 0.0
+
+        for restriction in tasteProfile.restrictions {
+            let terms = restrictionTerms(for: restriction)
+            if !terms.isEmpty, matchesAny(haystack, terms) {
+                penalty += 120
+            }
+        }
+
+        for pattern in tasteProfile.dietaryPatterns {
+            let normalized = normalizedToken(pattern)
+            if normalized.contains("vegan"), !dietMatches(pattern, haystack: haystack), matchesAny(haystack, meatAndAnimalTerms) {
+                penalty += 120
+            }
+            if normalized.contains("vegetarian"), !dietMatches(pattern, haystack: haystack), matchesAny(haystack, meatTerms) {
+                penalty += 120
+            }
+            if normalized.contains("dairyfree") || normalized.contains("dairy free"), matchesAny(haystack, dairyTerms) {
+                penalty += 120
+            }
+            if normalized.contains("glutenfree") || normalized.contains("gluten free"), matchesAny(haystack, glutenTerms) {
+                penalty += 80
+            }
+            if normalized.contains("keto"), !dietMatches(pattern, haystack: haystack), matchesAny(haystack, ["pasta", "rice", "bread", "potato", "noodle", "toast", "bar", "cake"]) {
+                penalty += 28
+            }
+        }
+
+        return penalty
+    }
+
+    private static func takeTop(
+        _ recipes: [ScoredRecipe],
+        count: Int,
+        selectedIDs: inout Set<String>,
+        score: (ScoredRecipe) -> Double
+    ) -> [ScoredRecipe] {
+        guard count > 0 else { return [] }
+        let chosen = recipes
+            .filter { !selectedIDs.contains($0.recipe.id) }
+            .sorted { lhs, rhs in
+                let lhsScore = score(lhs)
+                let rhsScore = score(rhs)
+                if lhsScore == rhsScore {
+                    return lhs.originalIndex < rhs.originalIndex
+                }
+                return lhsScore > rhsScore
+            }
+            .prefix(count)
+        chosen.forEach { selectedIDs.insert($0.recipe.id) }
+        return Array(chosen)
+    }
+
+    private static func takeDiverse(
+        _ recipes: [ScoredRecipe],
+        count: Int,
+        selectedIDs: inout Set<String>
+    ) -> [ScoredRecipe] {
+        guard count > 0 else { return [] }
+        var usedBuckets = Set<String>()
+        var selected: [ScoredRecipe] = []
+        let sorted = recipes
+            .filter { !selectedIDs.contains($0.recipe.id) }
+            .sorted {
+                weightedScore($0, onboarding: 0.14, quality: 0.18, diversity: 1.0, activation: 0.12)
+                    > weightedScore($1, onboarding: 0.14, quality: 0.18, diversity: 1.0, activation: 0.12)
+            }
+
+        for recipe in sorted {
+            let bucket = diversityBucket(for: recipe.recipe)
+            guard !usedBuckets.contains(bucket) || selected.count >= max(1, count / 2) else {
+                continue
+            }
+            selected.append(recipe)
+            selectedIDs.insert(recipe.recipe.id)
+            usedBuckets.insert(bucket)
+            if selected.count == count { return selected }
+        }
+
+        for recipe in sorted where !selectedIDs.contains(recipe.recipe.id) {
+            selected.append(recipe)
+            selectedIDs.insert(recipe.recipe.id)
+            if selected.count == count { return selected }
+        }
+
+        return selected
+    }
+
+    private static func interleave(_ sections: [[ScoredRecipe]]) -> [ScoredRecipe] {
+        var result: [ScoredRecipe] = []
+        let maxCount = sections.map(\.count).max() ?? 0
+        guard maxCount > 0 else { return [] }
+
+        for index in 0..<maxCount {
+            for section in sections where index < section.count {
+                result.append(section[index])
+            }
+        }
+        return result
+    }
+
+    private static func weightedScore(
+        _ recipe: ScoredRecipe,
+        onboarding: Double,
+        quality: Double,
+        diversity: Double,
+        activation: Double
+    ) -> Double {
+        (recipe.onboardingScore * onboarding)
+            + (recipe.qualityScore * quality)
+            + (recipe.diversityScore * diversity)
+            + (recipe.activationScore * activation)
+            + recipe.deterministicNoise
+            - recipe.hardPenalty
+    }
+
+    private static func personaScore(
+        _ persona: String,
+        recipe: DiscoverRecipeCardData,
+        haystack: String,
+        tasteProfile: TasteProfile
+    ) -> Double {
+        let normalized = persona.lowercased()
+        if normalized.contains("student") {
+            return (quickRecipeScore(recipe) * 0.8)
+                + (matchesAny(haystack, ["budget", "cheap", "rice", "pasta", "bowl", "sandwich", "beans"]) ? 2.0 : 0)
+        }
+        if normalized.contains("professional") {
+            return (quickRecipeScore(recipe) * 0.9)
+                + (matchesAny(haystack, ["meal prep", "make ahead", "lunch", "bowl", "one pot"]) ? 2.0 : 0)
+        }
+        if normalized.contains("parent") {
+            return matchesAny(haystack, ["family", "kid", "chicken", "pasta", "rice", "bake", "one pot", "dinner"]) ? 2.4 : 0
+        }
+        if normalized.contains("home cook") {
+            return matchesAny(haystack, ["classic", "from scratch", "stew", "curry", "roast", "bake"]) ? 1.8 : 0
+        }
+        if normalized.contains("fitness") {
+            return matchesAny(haystack, ["protein", "salmon", "chicken", "turkey", "salad", "healthy", "grilled"]) ? 2.2 : 0
+        }
+        return tasteProfile.cooksForOthers ? 0.4 : 0
+    }
+
+    private static func quickRecipeScore(_ recipe: DiscoverRecipeCardData) -> Double {
+        guard let minutes = recipe.cookTimeMinutes, minutes > 0 else {
+            return recipe.searchableText.contains("quick") || recipe.searchableText.contains("easy") ? 1.0 : 0
+        }
+
+        switch minutes {
+        case 1...20:
+            return 2.2
+        case 21...35:
+            return 1.4
+        case 36...50:
+            return 0.5
+        default:
+            return 0
+        }
+    }
+
+    private static func dietMatches(_ pattern: String, haystack: String) -> Bool {
+        let normalized = normalizedToken(pattern)
+        if normalized.contains("omnivore") { return true }
+        if normalized.contains("vegetarian") { return haystack.contains("vegetarian") || haystack.contains("veggie") }
+        if normalized.contains("vegan") { return haystack.contains("vegan") }
+        if normalized.contains("keto") { return haystack.contains("keto") || haystack.contains("low carb") || haystack.contains("low-carb") }
+        if normalized.contains("dairyfree") || normalized.contains("dairy free") { return haystack.contains("dairy free") || haystack.contains("dairy-free") }
+        if normalized.contains("glutenfree") || normalized.contains("gluten free") { return haystack.contains("gluten free") || haystack.contains("gluten-free") }
+        if normalized.contains("protein") { return haystack.contains("protein") || haystack.contains("chicken") || haystack.contains("salmon") }
+        return haystack.contains(normalized)
+    }
+
+    private static func restrictionTerms(for rawValue: String) -> [String] {
+        let normalized = normalizedToken(rawValue)
+        switch normalized {
+        case let value where value.contains("peanut"):
+            return ["peanut", "peanuts", "groundnut", "groundnuts"]
+        case let value where value.contains("dairy") || value.contains("milk") || value.contains("lactose"):
+            return dairyTerms
+        case let value where value.contains("shellfish") || value.contains("shrimp") || value.contains("prawn") || value.contains("crab"):
+            return ["shellfish", "shrimp", "prawn", "crab", "lobster", "scallop", "oyster", "clam"]
+        case let value where value.contains("gluten") || value.contains("wheat"):
+            return glutenTerms
+        case let value where value.contains("egg"):
+            return ["egg", "eggs", "omelet", "omelette", "frittata"]
+        case let value where value.contains("soy"):
+            return ["soy", "tofu", "tempeh", "edamame", "soy sauce"]
+        default:
+            return normalized.isEmpty ? [] : [normalized]
+        }
+    }
+
+    private static func diversityBucket(for recipe: DiscoverRecipeCardData) -> String {
+        [recipe.filterChipLabel, recipe.category, recipe.recipeType, recipe.discoverBrackets?.first, recipe.source]
+            .compactMap { $0 }
+            .map(normalizedToken)
+            .first { !$0.isEmpty } ?? "general"
+    }
+
+    private static func matchesAny(_ haystack: String, _ needles: [String]) -> Bool {
+        needles.contains { haystack.contains($0) }
+    }
+
+    private static func normalizedToken(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private static func deterministicNoise(for id: String, seed: String) -> Double {
+        let hash = "\(seed)|\(id)".utf8.reduce(UInt64(1469598103934665603)) { partial, byte in
+            (partial ^ UInt64(byte)) &* 1099511628211
+        }
+        return Double(hash % 10_000) / 1_000_000
+    }
+
+    private static let meatTerms = [
+        "chicken", "beef", "steak", "pork", "bacon", "ham", "turkey", "lamb", "goat", "fish", "salmon", "tuna", "cod", "shrimp"
+    ]
+
+    private static let meatAndAnimalTerms = meatTerms + [
+        "egg", "eggs", "cheese", "milk", "cream", "butter", "yogurt", "honey"
+    ]
+
+    private static let dairyTerms = [
+        "milk", "cheese", "cream", "butter", "yogurt", "yoghurt", "parmesan", "cheddar", "mozzarella", "feta", "ricotta"
+    ]
+
+    private static let glutenTerms = [
+        "wheat", "flour", "bread", "pasta", "noodle", "noodles", "toast", "cake", "bar", "bars", "cookie", "cookies"
+    ]
+}
+
+private extension DiscoverOnboardingFeedMixer.TasteProfile {
+    init(profile: UserProfile?, behaviorSeeds: [DiscoverRecipeCardData]) {
+        let goalSignals = profile?.mealPrepGoals ?? []
+        persona = Self.prefixedSignal(in: goalSignals, prefix: "Describes me:")
+        goals = Self.splitGoals(Self.prefixedSignal(in: goalSignals, prefix: "Food goals:") ?? "")
+            + goalSignals.map { $0.lowercased() }
+        dietaryPatterns = profile?.dietaryPatterns.map { $0.lowercased() } ?? []
+        restrictions = profile?.absoluteRestrictions.map { $0.lowercased() } ?? []
+        favoriteTerms = [
+            profile?.favoriteFoods ?? [],
+            profile?.favoriteFlavors ?? [],
+            profile?.pantryStaples ?? []
+        ].flatMap { $0 }.map(Self.normalizedTerm).filter { !$0.isEmpty }
+        cuisineTerms = [
+            profile?.preferredCuisines.map(\.title) ?? [],
+            profile?.cuisineCountries ?? []
+        ].flatMap { $0 }.map(Self.normalizedTerm).filter { !$0.isEmpty }
+        behaviorTerms = behaviorSeeds
+            .prefix(6)
+            .flatMap { recipe in
+                [recipe.title, recipe.filterLabel, recipe.category, recipe.recipeType, recipe.description]
+                    .compactMap { $0 }
+            }
+            .flatMap(Self.keyTerms)
+        cooksForOthers = profile?.cooksForOthers ?? false
+        householdSize = max(1, (profile?.consumption.adults ?? 1) + (profile?.consumption.kids ?? 0))
+        let mealsPerWeek = max(1, profile?.consumption.mealsPerWeek ?? 4)
+        let servings = max(1, householdSize)
+        budgetPerServing = (profile?.budgetPerCycle ?? UserProfile.starter.budgetPerCycle) / Double(max(1, mealsPerWeek * servings))
+        budgetFlexibility = profile?.budgetFlexibility ?? .slightlyFlexible
+        purchasingBehavior = profile?.purchasingBehavior ?? .healthier
+    }
+
+    var explorationBias: Double {
+        if favoriteTerms.isEmpty && cuisineTerms.isEmpty && behaviorTerms.isEmpty {
+            return 0.8
+        }
+        return 0.25
+    }
+
+    private static func prefixedSignal(in values: [String], prefix: String) -> String? {
+        values.first { $0.localizedCaseInsensitiveContains(prefix) }?
+            .replacingOccurrences(of: prefix, with: "", options: [.caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func splitGoals(_ rawValue: String) -> [String] {
+        rawValue
+            .split(separator: ";")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func normalizedTerm(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+    }
+
+    private static func keyTerms(from rawValue: String) -> [String] {
+        let normalized = normalizedTerm(rawValue)
+        let stopwords: Set<String> = [
+            "the", "and", "with", "for", "recipe", "recipes", "easy", "simple", "fresh",
+            "best", "homemade", "style", "style:", "food", "foods"
+        ]
+
+        return normalized
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count > 2 && !stopwords.contains($0) }
+    }
+}
+
+private extension DiscoverRecipeCardData {
+    var searchableText: String {
+        [
+            title,
+            description,
+            authorName,
+            authorHandle,
+            category,
+            recipeType,
+            filterLabel,
+            source,
+            cookTimeText
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .appending(" ")
+        .appending((discoverBrackets ?? []).joined(separator: " "))
+        .lowercased()
+    }
+}
+
 struct DiscoverRankedRecipesRequest: Encodable {
     let profile: UserProfile?
     let filter: String

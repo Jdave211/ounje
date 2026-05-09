@@ -2068,26 +2068,27 @@ struct MealsSummaryCard: View {
 struct PrepTrackerCard: View {
     @ObservedObject var store: MealPlanningAppStore
     @Environment(\.openURL) private var openURL
-    @State private var isTimeEditorPresented = false
     @State private var isScheduleEditorPresented = false
-    @State private var selectedDeliveryTime = Date()
+    @State private var isAutoshopLeadEditorPresented = false
+    @State private var isFirstPrepSetupPresented = false
     @State private var selectedCadence: MealCadence = .weekly
     @State private var selectedAnchorDate = Date()
+    @State private var selectedAutoshopLeadDays = 1
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Next delivery")
+                Text("Next prep")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(OunjePalette.secondaryText)
 
                 BiroScriptDisplayText(
-                    nextDeliveryTitle,
+                    nextPrepTitle,
                     size: 38,
                     color: OunjePalette.primaryText
                 )
                 .overlay(alignment: .topLeading) {
-                    Text(nextDeliveryTitle)
+                    Text(nextPrepTitle)
                         .helveticaNowDisplayFont(38)
                         .foregroundStyle(OunjePalette.primaryText.opacity(0.22))
                         .offset(x: 0.9, y: 0.55)
@@ -2096,16 +2097,14 @@ struct PrepTrackerCard: View {
                 if let profile = store.profile {
                     HStack(spacing: 10) {
                         cadenceControl(profile: profile)
-                        deliveryTimeControl
+                        autoshopLeadControl(profile: profile)
                     }
                     .padding(.top, 10)
 
-                    if !canEditDeliveryTime {
-                        Text("Delivery time locks 24 hours before drop.")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.88))
-                            .padding(.top, 4)
-                    }
+                    Text("Ounje builds your cart before prep day. You stay in control of checkout.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.88))
+                        .padding(.top, 4)
                 }
             }
 
@@ -2141,6 +2140,12 @@ struct PrepTrackerCard: View {
             .padding(.top, 4)
         }
         .padding(.bottom, 4)
+        .onAppear {
+            presentFirstPrepSetupPromptIfNeeded()
+        }
+        .onChange(of: store.profile) { _ in
+            presentFirstPrepSetupPromptIfNeeded()
+        }
         .sheet(isPresented: $isScheduleEditorPresented) {
             DeliveryScheduleSheet(
                 selectedCadence: $selectedCadence,
@@ -2155,20 +2160,33 @@ struct PrepTrackerCard: View {
             .presentationDetents([.height(640)])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $isTimeEditorPresented) {
-            DeliveryTimeSheet(
-                provider: activeProvider,
-                scheduledDeliveryDate: scheduledDeliveryDate,
-                selectedTime: $selectedDeliveryTime,
-                canEdit: canEditDeliveryTime,
+        .sheet(isPresented: $isAutoshopLeadEditorPresented) {
+            AutoshopLeadSheet(
+                selectedLeadDays: $selectedAutoshopLeadDays,
                 onCancel: {
-                    isTimeEditorPresented = false
+                    isAutoshopLeadEditorPresented = false
                 },
                 onSave: {
-                    saveDeliveryTime()
+                    saveAutoshopLeadDays()
                 }
             )
-            .presentationDetents([.height(510)])
+            .presentationDetents([.height(430)])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isFirstPrepSetupPresented) {
+            FirstPrepSetupSheet(
+                selectedCadence: $selectedCadence,
+                selectedAnchorDate: $selectedAnchorDate,
+                selectedLeadDays: $selectedAutoshopLeadDays,
+                onCancel: {
+                    markFirstPrepSetupPromptSeen()
+                    isFirstPrepSetupPresented = false
+                },
+                onSave: {
+                    saveFirstPrepSetup()
+                }
+            )
+            .presentationDetents([.height(720)])
             .presentationDragIndicator(.visible)
         }
     }
@@ -2181,7 +2199,7 @@ struct PrepTrackerCard: View {
             )
             isScheduleEditorPresented = true
         } label: {
-            PrepMetaPill(title: profile.cadenceScheduleSummary, accent: OunjePalette.softCream)
+            PrepMetaPill(title: prepCadenceTitle(for: profile), accent: OunjePalette.softCream)
         }
         .buttonStyle(.plain)
     }
@@ -2197,7 +2215,7 @@ struct PrepTrackerCard: View {
         )
     }
 
-    private var nextDeliveryTitle: String {
+    private var nextPrepTitle: String {
         guard let nextRun = scheduledDeliveryDate else {
             return "Set once your first plan runs"
         }
@@ -2256,61 +2274,24 @@ struct PrepTrackerCard: View {
         return store.latestInstacartRun?.trackingURL
     }
 
-    private var canEditDeliveryTime: Bool {
-        guard let scheduledDeliveryDate else { return false }
-        return scheduledDeliveryDate.timeIntervalSinceNow >= 24 * 60 * 60
+    private func prepCadenceTitle(for profile: UserProfile) -> String {
+        "\(profile.cadenceScheduleSummary) • \(profile.deliveryAnchorDay.pluralTitle)"
     }
 
-    private var activeProvider: ShoppingProvider {
-        store.latestPlan?.bestQuote?.provider ?? store.profile?.preferredProviders.first ?? .walmart
-    }
-
-    private var currentDeliveryWindow: DeliveryWindowOption {
-        let windows = activeProvider.deliveryWindowOptions
-        let currentMinutes = store.profile?.deliveryTimeMinutes ?? (18 * 60)
-        return windows.first(where: { currentMinutes >= $0.startMinutes && currentMinutes < $0.endMinutes }) ?? windows[0]
-    }
-
-    @ViewBuilder
-    private var deliveryTimeControl: some View {
-        if canEditDeliveryTime {
-            Button {
-                let baseDate = scheduledDeliveryDate ?? .now
-                selectedDeliveryTime = activeProvider.closestAvailableDeliveryTime(
-                    from: store.profile?.dateForDeliveryTime(on: baseDate) ?? baseDate,
-                    on: baseDate
-                )
-                isTimeEditorPresented = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 12, weight: .bold))
-                    Text(currentDeliveryWindow.shortTitle)
-                        .biroHeaderFont(12)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                }
-                .foregroundStyle(OunjePalette.primaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(OunjePalette.surface)
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(OunjePalette.accent.opacity(0.34), lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(.plain)
-        } else {
+    private func autoshopLeadControl(profile: UserProfile) -> some View {
+        Button {
+            selectedAutoshopLeadDays = profile.autoshopLeadDays
+            isAutoshopLeadEditorPresented = true
+        } label: {
             HStack(spacing: 6) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 11, weight: .bold))
-                Text(currentDeliveryWindow.shortTitle)
+                Image(systemName: "cart.badge.clock")
+                    .font(.system(size: 12, weight: .bold))
+                Text(profile.autoshopLeadDaysText)
                     .biroHeaderFont(12)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
             }
-            .foregroundStyle(OunjePalette.secondaryText)
+            .foregroundStyle(OunjePalette.primaryText)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
@@ -2318,23 +2299,11 @@ struct PrepTrackerCard: View {
                     .fill(OunjePalette.surface)
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(OunjePalette.secondaryText.opacity(0.18), lineWidth: 1)
+                            .stroke(OunjePalette.accent.opacity(0.34), lineWidth: 1)
                     )
             )
         }
-    }
-
-    private func saveDeliveryTime() {
-        guard var updatedProfile = store.profile else {
-            isTimeEditorPresented = false
-            return
-        }
-
-        let minutes = (Calendar.current.component(.hour, from: selectedDeliveryTime) * 60) + Calendar.current.component(.minute, from: selectedDeliveryTime)
-        let selectedWindow = activeProvider.closestDeliveryWindow(to: minutes)
-        updatedProfile.deliveryTimeMinutes = selectedWindow.startMinutes
-        store.updateProfile(updatedProfile)
-        isTimeEditorPresented = false
+        .buttonStyle(.plain)
     }
 
     private func saveDeliverySchedule() {
@@ -2349,6 +2318,60 @@ struct PrepTrackerCard: View {
         updatedProfile.deliveryAnchorDay = DeliveryAnchorDay.from(date: resolvedAnchor)
         store.updateProfile(updatedProfile)
         isScheduleEditorPresented = false
+    }
+
+    private func saveAutoshopLeadDays() {
+        guard var updatedProfile = store.profile else {
+            isAutoshopLeadEditorPresented = false
+            return
+        }
+
+        updatedProfile.autoshopLeadDays = max(0, min(selectedAutoshopLeadDays, 7))
+        store.updateProfile(updatedProfile)
+        isAutoshopLeadEditorPresented = false
+    }
+
+    private func saveFirstPrepSetup() {
+        guard var updatedProfile = store.profile else {
+            markFirstPrepSetupPromptSeen()
+            isFirstPrepSetupPresented = false
+            return
+        }
+
+        let resolvedAnchor = DeliveryScheduleSelectionBounds.clamped(selectedAnchorDate)
+        updatedProfile.cadence = selectedCadence
+        updatedProfile.deliveryAnchorDate = resolvedAnchor
+        updatedProfile.deliveryAnchorDay = DeliveryAnchorDay.from(date: resolvedAnchor)
+        updatedProfile.autoshopLeadDays = max(0, min(selectedAutoshopLeadDays, 7))
+        store.updateProfile(updatedProfile)
+        markFirstPrepSetupPromptSeen()
+        isFirstPrepSetupPresented = false
+    }
+
+    private func presentFirstPrepSetupPromptIfNeeded() {
+        guard !isFirstPrepSetupPresented,
+              let profile = store.profile,
+              !UserDefaults.standard.bool(forKey: firstPrepSetupPromptKey)
+        else {
+            return
+        }
+
+        selectedCadence = profile.cadence
+        selectedAnchorDate = DeliveryScheduleSelectionBounds.clamped(profile.deliveryAnchorDate ?? profile.scheduledDeliveryDate())
+        selectedAutoshopLeadDays = profile.autoshopLeadDays
+        DispatchQueue.main.async {
+            guard !UserDefaults.standard.bool(forKey: firstPrepSetupPromptKey) else { return }
+            isFirstPrepSetupPresented = true
+        }
+    }
+
+    private func markFirstPrepSetupPromptSeen() {
+        UserDefaults.standard.set(true, forKey: firstPrepSetupPromptKey)
+    }
+
+    private var firstPrepSetupPromptKey: String {
+        let userID = store.authSession?.userID.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return "ounje-first-prep-setup-prompt-v1-\(userID.isEmpty ? "local" : userID)"
     }
 }
 
@@ -3426,11 +3449,11 @@ struct DeliveryScheduleSheet: View {
                 .padding(.top, 4)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Delivery schedule")
+                Text("Prep cadence")
                     .font(.system(size: 30, weight: .semibold, design: .rounded))
                     .foregroundStyle(OunjePalette.primaryText)
 
-                Text("Pick frequency, then choose the next delivery date.")
+                Text("Pick your usual prep rhythm, then choose your prime prep day.")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
             }
@@ -3481,7 +3504,7 @@ struct DeliveryScheduleSheet: View {
             }
 
             DatePicker(
-                "Start date",
+                "Prime prep day",
                 selection: clampedAnchorDateBinding,
                 in: DeliveryScheduleSelectionBounds.range,
                 displayedComponents: .date
@@ -3565,16 +3588,220 @@ struct DeliveryScheduleSheet: View {
     }
 }
 
-struct DeliveryTimeSheet: View {
-    let provider: ShoppingProvider
-    let scheduledDeliveryDate: Date?
-    @Binding var selectedTime: Date
-    let canEdit: Bool
+private struct AutoshopLeadChoice: Identifiable {
+    let days: Int
+    let title: String
+    let detail: String
+
+    var id: Int { days }
+
+    static let all: [AutoshopLeadChoice] = [
+        AutoshopLeadChoice(days: 0, title: "Same day", detail: "Build the cart on prep day."),
+        AutoshopLeadChoice(days: 1, title: "1 day before", detail: "Recommended for regular prep."),
+        AutoshopLeadChoice(days: 2, title: "2 days before", detail: "More time to review swaps."),
+        AutoshopLeadChoice(days: 3, title: "3 days before", detail: "Best for bigger plans."),
+        AutoshopLeadChoice(days: 5, title: "5 days before", detail: "Early cart for long-range planning.")
+    ]
+}
+
+private struct AutoshopLeadChoiceList: View {
+    @Binding var selectedLeadDays: Int
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(AutoshopLeadChoice.all) { option in
+                Button {
+                    selectedLeadDays = option.days
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: selectedLeadDays == option.days ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(selectedLeadDays == option.days ? OunjePalette.accent : OunjePalette.secondaryText)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(option.title)
+                                .biroHeaderFont(16)
+                                .foregroundStyle(OunjePalette.primaryText)
+                            Text(option.detail)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(selectedLeadDays == option.days ? OunjePalette.accent.opacity(0.16) : OunjePalette.surface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(selectedLeadDays == option.days ? OunjePalette.accent.opacity(0.44) : OunjePalette.stroke, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+struct FirstPrepSetupSheet: View {
+    @Binding var selectedCadence: MealCadence
+    @Binding var selectedAnchorDate: Date
+    @Binding var selectedLeadDays: Int
     let onCancel: () -> Void
     let onSave: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 18) {
+                Capsule()
+                    .fill(OunjePalette.stroke.opacity(0.9))
+                    .frame(width: 56, height: 5)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Set your prep rhythm")
+                        .biroHeaderFont(32)
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Text("Choose when you usually prep and how early Ounje should build your cart.")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Cadence")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(MealCadence.allCases) { cadence in
+                                    Button {
+                                        selectedCadence = cadence
+                                    } label: {
+                                        Text(cadence.title)
+                                            .sleeDisplayFont(14)
+                                            .foregroundStyle(selectedCadence == cadence ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 9)
+                                            .background(
+                                                Capsule(style: .continuous)
+                                                    .fill(selectedCadence == cadence ? OunjePalette.accent.opacity(0.26) : OunjePalette.surface)
+                                            )
+                                            .overlay(
+                                                Capsule(style: .continuous)
+                                                    .stroke(selectedCadence == cadence ? OunjePalette.accent.opacity(0.48) : OunjePalette.stroke, lineWidth: 1)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .id(cadence.id)
+                                }
+                            }
+                        }
+                        .onAppear {
+                            DispatchQueue.main.async {
+                                proxy.scrollTo(selectedCadence.id, anchor: .center)
+                            }
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Prime prep day")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+
+                    DatePicker(
+                        "Prime prep day",
+                        selection: clampedAnchorDateBinding,
+                        in: DeliveryScheduleSelectionBounds.range,
+                        displayedComponents: .date
+                    )
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+                    .tint(Color(hex: "2FAF78"))
+                    .colorScheme(.dark)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .fill(OunjePalette.surface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                            )
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Autoshop lead time")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+
+                    AutoshopLeadChoiceList(selectedLeadDays: $selectedLeadDays)
+                }
+
+                HStack(spacing: 12) {
+                    Button(action: onCancel) {
+                        Text("Later")
+                            .sleeDisplayFont(16)
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                            .background(
+                                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                    .fill(OunjePalette.surface)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: onSave) {
+                        Text("Save")
+                            .sleeDisplayFont(16)
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                            .background(
+                                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                    .fill(OunjePalette.accent)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 4)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
+            .padding(.bottom, 18)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(OunjePalette.background.ignoresSafeArea())
+    }
+
+    private var clampedAnchorDateBinding: Binding<Date> {
+        Binding(
+            get: { DeliveryScheduleSelectionBounds.clamped(selectedAnchorDate) },
+            set: { selectedAnchorDate = DeliveryScheduleSelectionBounds.clamped($0) }
+        )
+    }
+}
+
+struct AutoshopLeadSheet: View {
+    @Binding var selectedLeadDays: Int
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
             Capsule()
                 .fill(OunjePalette.stroke.opacity(0.9))
                 .frame(width: 56, height: 5)
@@ -3591,105 +3818,29 @@ struct DeliveryTimeSheet: View {
                 Button("Save", action: onSave)
                     .biroHeaderFont(16)
                     .foregroundStyle(OunjePalette.primaryText)
-                    .disabled(!canEdit)
-                    .opacity(canEdit ? 1 : 0.45)
             }
             .padding(.bottom, 2)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Delivery time")
+                Text("Autoshop timing")
                     .biroHeaderFont(30)
                     .foregroundStyle(OunjePalette.primaryText)
 
-                Text(subtitle)
+                Text("How many days before prep should Ounje build your cart?")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if canEdit {
-                VStack(alignment: .leading, spacing: 10) {
-                    DatePicker(
-                        "",
-                        selection: deliveryTimeBinding,
-                        in: availableRange,
-                        displayedComponents: .hourAndMinute
-                    )
-                    .datePickerStyle(.wheel)
-                    .labelsHidden()
-                    .colorScheme(.dark)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 238)
-                    .clipped()
-                    .background(
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
-                            .fill(OunjePalette.surface)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                    .stroke(OunjePalette.stroke, lineWidth: 1)
-                            )
-                    )
+            AutoshopLeadChoiceList(selectedLeadDays: $selectedLeadDays)
 
-                    Spacer(minLength: 16)
-
-                    HStack(spacing: 10) {
-                        Text("Closest slot")
-                            .biroHeaderFont(12)
-                            .foregroundStyle(OunjePalette.secondaryText)
-                        PrepMetaPill(title: selectedWindow.shortTitle, accent: OunjePalette.accent)
-                        PrepMetaPill(title: selectedWindow.detail, accent: OunjePalette.softCream)
-                    }
-                }
-            } else {
-                ThemedCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(selectedWindow.shortTitle)
-                            .biroHeaderFont(22)
-                            .foregroundStyle(OunjePalette.primaryText)
-                        Text("This delivery is already within the locked change window.")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                    }
-                }
-            }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
         .padding(.top, 6)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(OunjePalette.background.ignoresSafeArea())
-    }
-
-    private var subtitle: String {
-        guard let scheduledDeliveryDate else {
-            return "Choose the delivery window for the next drop."
-        }
-        return "\(provider.marketingTitle) for \(scheduledDeliveryDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))"
-    }
-
-    private var availableRange: ClosedRange<Date> {
-        let baseDate = scheduledDeliveryDate ?? .now
-        let lowerMinutes = provider.availableDeliveryMinuteRange.lowerBound
-        let upperMinutes = provider.availableDeliveryMinuteRange.upperBound
-        let calendar = Calendar.current
-        let lowerDate = calendar.date(bySettingHour: lowerMinutes / 60, minute: lowerMinutes % 60, second: 0, of: baseDate) ?? baseDate
-        let upperDate = calendar.date(bySettingHour: upperMinutes / 60, minute: upperMinutes % 60, second: 0, of: baseDate) ?? baseDate
-        return lowerDate...upperDate
-    }
-
-    private var selectedWindow: DeliveryWindowOption {
-        let minutes = (Calendar.current.component(.hour, from: selectedTime) * 60) + Calendar.current.component(.minute, from: selectedTime)
-        return provider.closestDeliveryWindow(to: minutes)
-    }
-
-    private var deliveryTimeBinding: Binding<Date> {
-        Binding(
-            get: { selectedTime },
-            set: { newValue in
-                let baseDate = scheduledDeliveryDate ?? .now
-                selectedTime = provider.closestAvailableDeliveryTime(from: newValue, on: baseDate)
-            }
-        )
     }
 }
 
