@@ -84,7 +84,7 @@ enum DiscoverSearchPlaceholderPrompts {
         "Search rice bowls",
         "Search sheet pan meals",
         "Search pasta bakes",
-        "Search air fryer ideas",
+        "Search air fryer meals",
         "Search one-pot dinners",
         "Search family meals",
         "Search high protein",

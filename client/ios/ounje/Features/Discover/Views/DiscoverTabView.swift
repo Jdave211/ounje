@@ -15,6 +15,10 @@ struct DiscoverTabView: View {
     @State private var submittedSearchText = ""
     @State private var isSearchInputPending = false
     @State private var isManualRefreshing = false
+    @State private var isShowingPullRefreshCue = false
+    @State private var hasPresentedPullRefreshCue = false
+    @State private var discoverPullDistance: CGFloat = 0
+    @State private var discoverPullBaseline: CGFloat?
 
     private let recipeColumns = [
         GridItem(.flexible(), spacing: 16, alignment: .top),
@@ -65,13 +69,33 @@ struct DiscoverTabView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: PullStretchRefreshOffsetPreferenceKey.self,
+                                value: geometry.frame(in: .named("discover-feed-scroll")).minY
+                            )
+                        }
+                        .frame(height: 0)
+
+                        if shouldShowDiscoverPullIndicator {
+                            PullStretchRefreshIndicator(
+                                phase: discoverPullRefreshPhase,
+                                pullDistance: discoverPullDistance
+                            )
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+
                         discoverRecipeFeedContent
                     }
                     .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
                     .padding(.top, 2)
                     .padding(.bottom, 140)
                 }
+                .coordinateSpace(name: "discover-feed-scroll")
                 .scrollIndicators(.hidden)
+                .onPreferenceChange(PullStretchRefreshOffsetPreferenceKey.self) { value in
+                    updateDiscoverPullDistance(value)
+                }
                 .refreshable {
                     await refreshDiscoverFromPull()
                 }
@@ -107,6 +131,7 @@ struct DiscoverTabView: View {
         .onAppear {
             viewModel.clearTransientError()
             viewModel.updateFeedbackRevision(discoverFeedbackRevision)
+            presentPullRefreshCueIfNeeded()
             if normalizedSearchText.isEmpty, !filters.contains(viewModel.selectedFilter) {
                 viewModel.selectedFilter = DiscoverPreset.all.title
             }
@@ -164,6 +189,36 @@ struct DiscoverTabView: View {
 
     private var discoverFeedbackRevision: Int {
         savedStore.savedRecipes.count / 3
+    }
+
+    private var shouldShowDiscoverPullIndicator: Bool {
+        isShowingPullRefreshCue
+            || isManualRefreshing
+            || (!isSearching && viewModel.isTransitioningFeed && !visibleRecipes.isEmpty)
+            || discoverPullDistance > 6
+    }
+
+    private var discoverPullRefreshPhase: PullStretchRefreshPhase {
+        if isManualRefreshing || (viewModel.isTransitioningFeed && !visibleRecipes.isEmpty) {
+            return .refreshing
+        }
+        if discoverPullDistance >= 62 {
+            return .release
+        }
+        if discoverPullDistance > 6 {
+            return .pulling
+        }
+        return .hint
+    }
+
+    private func updateDiscoverPullDistance(_ offset: CGFloat) {
+        if discoverPullBaseline == nil {
+            discoverPullBaseline = offset
+        }
+
+        let baseline = discoverPullBaseline ?? offset
+        let distance = max(0, offset - baseline)
+        discoverPullDistance = distance > 1 ? distance : 0
     }
 
     private func refreshDiscoverFromPull() async {
@@ -228,5 +283,19 @@ struct DiscoverTabView: View {
             query: normalizedSearchText,
             feedContext: environmentModel.feedContext
         )
+    }
+
+    private func presentPullRefreshCueIfNeeded() {
+        guard !hasPresentedPullRefreshCue, normalizedSearchText.isEmpty else { return }
+        hasPresentedPullRefreshCue = true
+        Task { @MainActor in
+            withAnimation(.easeOut(duration: 0.22)) {
+                isShowingPullRefreshCue = true
+            }
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            withAnimation(.easeInOut(duration: 0.24)) {
+                isShowingPullRefreshCue = false
+            }
+        }
     }
 }
