@@ -85,6 +85,7 @@ struct RecipeDetailExperienceView: View {
     @State private var hasScrolledAdaptedOnboardingRecipe = false
     @State private var adaptedOnboardingCueTarget: OnboardingAdaptedRecipeCueTarget = .save
     @State private var adaptedOnboardingCueTask: Task<Void, Never>?
+    @State private var recipeDetailScrollOffset: CGFloat = 0
 
     private let detailBackground = OunjePalette.background
     private let sectionDivider = OunjePalette.stroke
@@ -179,6 +180,10 @@ struct RecipeDetailExperienceView: View {
         onboardingContext?.showsAskCue == true
     }
 
+    private var showsFloatingOnboardingAskReturnCue: Bool {
+        showsOnboardingAskCue && !showAskSheet && recipeDetailScrollOffset < -124
+    }
+
     private var onboardingContinueAction: (() -> Void)? {
         onboardingContext?.continueAction
     }
@@ -205,18 +210,6 @@ struct RecipeDetailExperienceView: View {
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
             hasScrolledAdaptedOnboardingRecipe = true
             adaptedOnboardingCueTarget = .continue
-        }
-    }
-
-    private func scheduleAdaptedOnboardingSaveCueTransition() {
-        guard isAdaptedOnboardingDemo, adaptedOnboardingCueTarget == .save else { return }
-        adaptedOnboardingCueTask?.cancel()
-        adaptedOnboardingCueTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_100_000_000)
-            guard !Task.isCancelled, isAdaptedOnboardingDemo, adaptedOnboardingCueTarget == .save else { return }
-            withAnimation(.spring(response: 0.62, dampingFraction: 0.86)) {
-                adaptedOnboardingCueTarget = .scroll
-            }
         }
     }
 
@@ -591,7 +584,7 @@ struct RecipeDetailExperienceView: View {
                                                     showAskSheet = true
                                                 }
                                                 .overlay(alignment: .topTrailing) {
-                                                    if showsOnboardingAskCue {
+                                                    if showsOnboardingAskCue && !showsFloatingOnboardingAskReturnCue {
                                                         OnboardingAskButtonCueView()
                                                     }
                                                 }
@@ -722,6 +715,7 @@ struct RecipeDetailExperienceView: View {
                             }
                     )
                     .onPreferenceChange(RecipeDetailScrollOffsetPreferenceKey.self) { minY in
+                        recipeDetailScrollOffset = minY
                         if minY < -16 {
                             markAdaptedOnboardingRecipeScrolled()
                         }
@@ -732,6 +726,16 @@ struct RecipeDetailExperienceView: View {
                             proxy.scrollTo("steps-anchor", anchor: .top)
                         }
                         shouldScrollToSteps = false
+                    }
+
+                    if showsFloatingOnboardingAskReturnCue {
+                        OnboardingAskReturnCueView()
+                            .padding(.top, topControlTop + 82)
+                            .padding(.trailing, 18)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
 
                     if !isOnboardingDemo {
@@ -921,7 +925,6 @@ struct RecipeDetailExperienceView: View {
         }
         .onAppear {
             triggerChromeReveal()
-            scheduleAdaptedOnboardingSaveCueTransition()
         }
         .onDisappear {
             adaptedOnboardingCueTask?.cancel()
@@ -4461,6 +4464,42 @@ struct OnboardingAskButtonCueView: View {
             x: start.x + (end.x - start.x) * eased,
             y: start.y + (end.y - start.y) * eased + bob
         )
+    }
+}
+
+struct OnboardingAskReturnCueView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            OnboardingCueLabel(text: "Edit Recipe")
+
+            Image(systemName: "hand.point.up.left.fill")
+                .font(.system(size: 30, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white, Color.white.opacity(0.78))
+                .shadow(color: .black.opacity(0.24), radius: 10, y: 7)
+                .rotationEffect(.degrees(isHovering ? -8 : 5))
+                .offset(x: reduceMotion ? 0 : (isHovering ? -5 : 2), y: reduceMotion ? 0 : (isHovering ? -8 : 5))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            Capsule(style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.92))
+                .shadow(color: .black.opacity(0.24), radius: 14, y: 8)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.92).repeatForever(autoreverses: true)) {
+                isHovering = true
+            }
+        }
     }
 }
 

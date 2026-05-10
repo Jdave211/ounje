@@ -2880,6 +2880,11 @@ struct GroceryProviderConnectSheet: View {
             .padding()
             .background(OunjePalette.panel, in: RoundedRectangle(cornerRadius: 12))
 
+            Text("* we don't store any log in details")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText.opacity(0.9))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
             Button {
                 phase = .login
             } label: {
@@ -3096,6 +3101,47 @@ struct GroceryProviderConnectSheet: View {
         guard let url = URL(string: "\(OunjeDevelopmentServer.workerBaseURL)/v1/connect/\(provider.id)/save-session") else {
             throw URLError(.badURL)
         }
+        do {
+            try await performSaveCookiesRequest(cookies, userID: userID, accessToken: accessToken, url: url)
+        } catch let error as ProviderConnectAPIError {
+            guard error.isExpiredJWT else {
+                throw error
+            }
+
+            let refreshedSession: AuthSession?
+            do {
+                refreshedSession = try await refreshProviderConnectSession()
+            } catch {
+                throw ProviderConnectAPIError(message: "Your Ounje session expired. Close this sheet and sign in again.")
+            }
+
+            guard let refreshedSession,
+                  let refreshedAccessToken = refreshedSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !refreshedAccessToken.isEmpty
+            else {
+                throw ProviderConnectAPIError(message: "Your Ounje session expired. Close this sheet and sign in again.")
+            }
+
+            let refreshedUserID = refreshedSession.userID.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !refreshedUserID.isEmpty else {
+                throw ProviderConnectAPIError(message: "Your Ounje session expired. Close this sheet and sign in again.")
+            }
+
+            try await performSaveCookiesRequest(
+                cookies,
+                userID: refreshedUserID,
+                accessToken: refreshedAccessToken,
+                url: url
+            )
+        }
+    }
+
+    private func performSaveCookiesRequest(
+        _ cookies: [[String: Any]],
+        userID: String,
+        accessToken: String,
+        url: URL
+    ) async throws {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -3111,6 +3157,33 @@ struct GroceryProviderConnectSheet: View {
             throw ProviderConnectAPIError(message: backendError ?? "Link session failed (\(httpResponse.statusCode)).")
         }
     }
+
+    @MainActor
+    private func refreshProviderConnectSession() async throws -> AuthSession? {
+        let fallbackSession = [store.authSession, store.resolvedTrackingSession]
+            .compactMap { $0 }
+            .first { session in
+                session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            }
+        guard let fallbackSession,
+              let refreshToken = fallbackSession.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !refreshToken.isEmpty else {
+            return nil
+        }
+
+        let tokenResponse = try await SupabaseAuthSessionRefreshService.shared.refreshSession(refreshToken: refreshToken)
+        let refreshedSession = AuthSession(
+            provider: fallbackSession.provider,
+            userID: tokenResponse.userID,
+            email: tokenResponse.email ?? fallbackSession.email,
+            displayName: tokenResponse.displayName ?? fallbackSession.displayName,
+            signedInAt: fallbackSession.signedInAt,
+            accessToken: tokenResponse.accessToken,
+            refreshToken: tokenResponse.refreshToken ?? fallbackSession.refreshToken
+        )
+        store.persistAuthSession(refreshedSession)
+        return refreshedSession
+    }
 }
 
 private struct ProviderConnectAPIErrorPayload: Decodable {
@@ -3121,6 +3194,13 @@ private struct ProviderConnectAPIError: LocalizedError {
     let message: String
 
     var errorDescription: String? { message }
+
+    var isExpiredJWT: Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("token is expired")
+            || lowered.contains("invalid jwt")
+            || lowered.contains("unable to parse or verify signature")
+    }
 }
 
 struct ProviderLoginWebView: UIViewRepresentable {

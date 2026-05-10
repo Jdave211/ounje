@@ -2267,11 +2267,11 @@ struct FirstLoginOnboardingView: View {
             guard !headline.isEmpty else { return }
             try? await Task.sleep(nanoseconds: 120_000_000)
             for characterCount in 1...headline.count {
-                try? await Task.sleep(nanoseconds: 28_000_000)
+                try? await Task.sleep(nanoseconds: 42_000_000)
                 guard !Task.isCancelled, currentStep == .solution else { return }
                 solutionTypedCharacterCount = characterCount
             }
-            try? await Task.sleep(nanoseconds: 1_450_000_000)
+            try? await Task.sleep(nanoseconds: 1_700_000_000)
             guard !Task.isCancelled, currentStep == .solution else { return }
             advanceFromAutoTransition()
         }
@@ -2288,7 +2288,7 @@ struct FirstLoginOnboardingView: View {
                 try? await Task.sleep(nanoseconds: 460_000_000)
                 guard !Task.isCancelled, currentStep == .solutionWays else { return }
             }
-            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            try? await Task.sleep(nanoseconds: 1_900_000_000)
             guard !Task.isCancelled, currentStep == .solutionWays else { return }
             advanceFromAutoTransition()
         }
