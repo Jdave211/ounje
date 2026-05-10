@@ -501,6 +501,13 @@ export async function prepareCheckout({ sessionId, provider, startUrl }) {
  * Login to a provider account.
  * Uses credentials from Lumbox vault or direct input.
  */
+function assertProviderCredentialAutomationAllowed() {
+  const explicitlyAllowed = String(process.env.ALLOW_PROVIDER_CREDENTIAL_AGENT_TASKS ?? "").trim().toLowerCase() === "true";
+  if (process.env.NODE_ENV === "production" && !explicitlyAllowed) {
+    throw new Error("Provider credential browser-agent tasks are disabled in production");
+  }
+}
+
 export async function loginToProvider({
   sessionId,
   provider,
@@ -508,15 +515,14 @@ export async function loginToProvider({
   password,
   phoneForOtp,
 }) {
+  assertProviderCredentialAutomationAllowed();
   const config = PROVIDER_CONFIGS[provider];
 
   const task = `
-    Log in to ${config.name} with:
-    - Email: ${email}
-    - Password: ${password}
+    Log in to ${config.name} using the provider secrets supplied out-of-band.
     
     If 2FA/OTP is required:
-    - The OTP will be sent to ${phoneForOtp ?? email}
+    - The OTP will be sent to the configured account contact.
     - Wait for the OTP and enter it when prompted
     
     After successful login, confirm you're on the main page.
@@ -553,18 +559,14 @@ export async function createProviderAccount({
   phone,
   address,
 }) {
+  assertProviderCredentialAutomationAllowed();
   const config = PROVIDER_CONFIGS[provider];
 
   const task = `
     Create a new ${config.name} account:
     
     1. Navigate to the sign-up page
-    2. Fill in the registration form:
-       - Email: ${email}
-       - Password: ${password}
-       - First Name: ${firstName}
-       - Last Name: ${lastName}
-       - Phone: ${phone}
+    2. Fill in the registration form using the provider secrets and profile data supplied out-of-band.
     
     3. Complete email verification if required
        - Check for verification email
@@ -579,7 +581,6 @@ export async function createProviderAccount({
     Return:
     {
       "accountCreated": true,
-      "email": "${email}",
       "verified": true,
       "addressSet": true
     }

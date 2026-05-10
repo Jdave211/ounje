@@ -18,7 +18,7 @@ import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const AUTOSHOP_MANUAL_BETA_ONLY = String(process.env.AUTOSHOP_MANUAL_BETA_ONLY ?? "true").trim().toLowerCase() !== "false";
+const AUTOSHOP_MANUAL_BETA_ONLY = String(process.env.AUTOSHOP_MANUAL_BETA_ONLY ?? "false").trim().toLowerCase() === "true";
 
 function extractBearerToken(authorizationHeader) {
   const value = String(authorizationHeader ?? "").trim();
@@ -1078,8 +1078,8 @@ router.post("/instacart/runs", async (req, res) => {
 
     if (AUTOSHOP_MANUAL_BETA_ONLY && !manualIntent) {
       return res.status(409).json({
-        error: "Autoshop beta requires manual start",
-        code: "autoshop_manual_beta_required",
+        error: "Autoshop requires manual start",
+        code: "autoshop_manual_start_required",
       });
     }
 
@@ -1122,8 +1122,8 @@ router.post("/instacart/runs", async (req, res) => {
         preferredStore,
         strictStore: Boolean(strictStore),
         retryContext,
-        source: manualIntent ? "manual_beta" : "automation",
-        trigger: normalizeText(req.body?.trigger) || (manualIntent ? "manual_beta" : "automatic"),
+        source: manualIntent ? "manual_start" : "automation",
+        trigger: normalizeText(req.body?.trigger) || (manualIntent ? "manual_start" : "automatic"),
       },
     });
 
@@ -1151,12 +1151,12 @@ router.post("/instacart/runs", async (req, res) => {
         jobID: job.id,
         runID,
         itemCount: resolvedItems.length,
-        source: manualIntent ? "manual_beta" : "automation",
+        source: manualIntent ? "manual_start" : "automation",
       },
       updates: {
         tracking_title: "Instacart run queued",
         tracking_detail: manualIntent
-          ? "Ounje queued this cart from your Autoshop beta tap."
+          ? "Ounje queued this cart from your Autoshop tap."
           : "Ounje queued this cart for the automation worker.",
         last_tracked_at: new Date().toISOString(),
       },

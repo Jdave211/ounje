@@ -2070,7 +2070,6 @@ struct PrepTrackerCard: View {
     @Environment(\.openURL) private var openURL
     @State private var isScheduleEditorPresented = false
     @State private var isAutoshopLeadEditorPresented = false
-    @State private var isFirstPrepSetupPresented = false
     @State private var selectedCadence: MealCadence = .weekly
     @State private var selectedAnchorDate = Date()
     @State private var selectedAutoshopLeadDays = 1
@@ -2097,54 +2096,60 @@ struct PrepTrackerCard: View {
                 if let profile = store.profile {
                     HStack(spacing: 10) {
                         cadenceControl(profile: profile)
-                        autoshopLeadControl(profile: profile)
+                        if isAutoshopEnabled(for: profile) {
+                            autoshopLeadControl(profile: profile)
+                        }
                     }
                     .padding(.top, 10)
 
-                    Text("Ounje builds your cart before prep day. You stay in control of checkout.")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.88))
-                        .padding(.top, 4)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 16) {
-                PrepDeliveryMapPanel(
-                    snapshot: snapshot,
-                    quote: store.latestPlan?.bestQuote,
-                    run: store.latestInstacartRun,
-                    address: store.profile?.deliveryAddress,
-                    isProfileHydrating: store.isHydratingRemoteState && store.profile == nil,
-                    autoshopOverlayPhase: autoshopOverlayPhase,
-                    onRunAutoshop: {
-                        Task { await store.startManualAutoshopRun(trigger: "prep_overlay") }
-                    },
-                    onOpenAutoshop: {
-                        if let url = autoshopReviewURL {
-                            openURL(url)
-                        } else {
-                            Task { await store.refreshLatestGroceryOrderTracking() }
-                        }
-                    },
-                    onRefreshTracking: {
-                        Task {
-                            await store.refreshLatestGroceryOrderTracking()
-                        }
+                    if isAutoshopEnabled(for: profile) {
+                        Text("Ounje builds your cart before prep day. You stay in control of checkout.")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.88))
+                            .padding(.top, 4)
                     }
-                )
-
-                if let quote = store.latestPlan?.bestQuote, !quote.reviewItems.isEmpty {
-                    ProviderCartReviewCard(quote: quote)
                 }
             }
-            .padding(.top, 4)
+
+            if store.profile.map({ isAutoshopEnabled(for: $0) }) == true {
+                VStack(alignment: .leading, spacing: 16) {
+                    PrepDeliveryMapPanel(
+                        snapshot: snapshot,
+                        quote: store.latestPlan?.bestQuote,
+                        run: store.latestInstacartRun,
+                        address: store.profile?.deliveryAddress,
+                        isProfileHydrating: store.isHydratingRemoteState && store.profile == nil,
+                        autoshopOverlayPhase: autoshopOverlayPhase,
+                        onRunAutoshop: {
+                            Task { await store.startManualAutoshopRun(trigger: "prep_overlay") }
+                        },
+                        onOpenAutoshop: {
+                            if let url = autoshopReviewURL {
+                                openURL(url)
+                            } else {
+                                Task { await store.refreshLatestGroceryOrderTracking() }
+                            }
+                        },
+                        onRefreshTracking: {
+                            Task {
+                                await store.refreshLatestGroceryOrderTracking()
+                            }
+                        }
+                    )
+
+                    if let quote = store.latestPlan?.bestQuote, !quote.reviewItems.isEmpty {
+                        ProviderCartReviewCard(quote: quote)
+                    }
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(.bottom, 4)
         .onAppear {
-            presentFirstPrepSetupPromptIfNeeded()
+            applyDefaultPrepScheduleIfNeeded()
         }
         .onChange(of: store.profile) { _ in
-            presentFirstPrepSetupPromptIfNeeded()
+            applyDefaultPrepScheduleIfNeeded()
         }
         .sheet(isPresented: $isScheduleEditorPresented) {
             DeliveryScheduleSheet(
@@ -2171,22 +2176,6 @@ struct PrepTrackerCard: View {
                 }
             )
             .presentationDetents([.height(430)])
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $isFirstPrepSetupPresented) {
-            FirstPrepSetupSheet(
-                selectedCadence: $selectedCadence,
-                selectedAnchorDate: $selectedAnchorDate,
-                selectedLeadDays: $selectedAutoshopLeadDays,
-                onCancel: {
-                    markFirstPrepSetupPromptSeen()
-                    isFirstPrepSetupPresented = false
-                },
-                onSave: {
-                    saveFirstPrepSetup()
-                }
-            )
-            .presentationDetents([.height(720)])
             .presentationDragIndicator(.visible)
         }
     }
@@ -2231,6 +2220,10 @@ struct PrepTrackerCard: View {
     }
 
     private var autoshopOverlayPhase: PrepAutoshopOverlayPhase {
+        guard store.profile.map({ isAutoshopEnabled(for: $0) }) == true else {
+            return .hidden
+        }
+
         let runStatus = store.latestInstacartRun?.normalizedStatusKind ?? ""
         let retryState = store.latestInstacartRun?.normalizedRetryState ?? ""
         let orderStatus = store.latestGroceryOrder?.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
@@ -2275,7 +2268,11 @@ struct PrepTrackerCard: View {
     }
 
     private func prepCadenceTitle(for profile: UserProfile) -> String {
-        "\(profile.cadenceScheduleSummary) • \(profile.deliveryAnchorDay.pluralTitle)"
+        profile.cadenceTitleOnly
+    }
+
+    private func isAutoshopEnabled(for profile: UserProfile) -> Bool {
+        profile.orderingAutonomy == .approvalRequired
     }
 
     private func autoshopLeadControl(profile: UserProfile) -> some View {
@@ -2331,38 +2328,45 @@ struct PrepTrackerCard: View {
         isAutoshopLeadEditorPresented = false
     }
 
-    private func saveFirstPrepSetup() {
-        guard var updatedProfile = store.profile else {
-            markFirstPrepSetupPromptSeen()
-            isFirstPrepSetupPresented = false
-            return
+    private func applyDefaultPrepScheduleIfNeeded() {
+        guard let profile = store.profile,
+              !UserDefaults.standard.bool(forKey: firstPrepSetupPromptKey)
+        else { return }
+
+        var updatedProfile = profile
+        let shouldSeedSunday = profile.deliveryAnchorDate == nil || isStarterScheduleAnchor(profile.deliveryAnchorDate)
+        if shouldSeedSunday {
+            updatedProfile.deliveryAnchorDay = .sunday
+            updatedProfile.deliveryAnchorDate = Self.nextSunday()
+        }
+        updatedProfile.autoshopLeadDays = 1
+
+        if updatedProfile != profile {
+            store.updateProfile(updatedProfile)
         }
 
-        let resolvedAnchor = DeliveryScheduleSelectionBounds.clamped(selectedAnchorDate)
-        updatedProfile.cadence = selectedCadence
-        updatedProfile.deliveryAnchorDate = resolvedAnchor
-        updatedProfile.deliveryAnchorDay = DeliveryAnchorDay.from(date: resolvedAnchor)
-        updatedProfile.autoshopLeadDays = max(0, min(selectedAutoshopLeadDays, 7))
-        store.updateProfile(updatedProfile)
+        selectedCadence = updatedProfile.cadence
+        selectedAnchorDate = DeliveryScheduleSelectionBounds.clamped(updatedProfile.deliveryAnchorDate ?? updatedProfile.scheduledDeliveryDate())
+        selectedAutoshopLeadDays = updatedProfile.autoshopLeadDays
         markFirstPrepSetupPromptSeen()
-        isFirstPrepSetupPresented = false
     }
 
-    private func presentFirstPrepSetupPromptIfNeeded() {
-        guard !isFirstPrepSetupPresented,
-              let profile = store.profile,
-              !UserDefaults.standard.bool(forKey: firstPrepSetupPromptKey)
-        else {
-            return
-        }
+    private func isStarterScheduleAnchor(_ date: Date?) -> Bool {
+        guard let date else { return true }
+        return Calendar.current.isDateInToday(date)
+    }
 
-        selectedCadence = profile.cadence
-        selectedAnchorDate = DeliveryScheduleSelectionBounds.clamped(profile.deliveryAnchorDate ?? profile.scheduledDeliveryDate())
-        selectedAutoshopLeadDays = profile.autoshopLeadDays
-        DispatchQueue.main.async {
-            guard !UserDefaults.standard.bool(forKey: firstPrepSetupPromptKey) else { return }
-            isFirstPrepSetupPresented = true
-        }
+    private static func nextSunday(after reference: Date = .now) -> Date {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: reference)
+        let components = DateComponents(hour: 18, minute: 0, weekday: DeliveryAnchorDay.sunday.weekdayIndex)
+        return calendar.nextDate(
+            after: start.addingTimeInterval(-60),
+            matching: components,
+            matchingPolicy: .nextTime,
+            repeatedTimePolicy: .first,
+            direction: .forward
+        ) ?? start
     }
 
     private func markFirstPrepSetupPromptSeen() {

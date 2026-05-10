@@ -114,6 +114,13 @@ async function resolveAuthorizedUserID(req) {
     throw error;
   }
 
+  const requestedUserID = normalizeText(req.headers["x-user-id"] ?? req.query.user_id ?? req.query.userID ?? req.body?.user_id ?? req.body?.userID);
+  if (requestedUserID && requestedUserID !== authenticatedUserID) {
+    const error = new Error("User mismatch");
+    error.statusCode = 403;
+    throw error;
+  }
+
   return { userID: authenticatedUserID, accessToken };
 }
 

@@ -975,6 +975,11 @@ actor RecipeDetailService {
             return cached
         }
 
+        if let onboardingDetail = await OnboardingRecipeEditDemoService.shared.adaptedDetail(for: id) {
+            cache[id] = onboardingDetail
+            return onboardingDetail
+        }
+
         let baseDetail: RecipeDetailData
         do {
             baseDetail = try await fetchRecipeDetailFromSupabase(id: id)

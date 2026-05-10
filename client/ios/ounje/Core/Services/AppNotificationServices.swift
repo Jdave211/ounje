@@ -202,6 +202,7 @@ final class SupabaseAppNotificationEventService {
         if let backendEvents = try? await fetchEventsViaBackend(
             path: "/v1/notifications/pending",
             userID: userID,
+            accessToken: accessToken,
             limit: limit
         ) {
             return backendEvents.filter { !$0.isHiddenFromNotifications }
@@ -222,6 +223,7 @@ final class SupabaseAppNotificationEventService {
         if let backendEvents = try? await fetchEventsViaBackend(
             path: "/v1/notifications/recent",
             userID: userID,
+            accessToken: accessToken,
             limit: limit
         ) {
             return backendEvents.filter { !$0.isHiddenFromNotifications }
@@ -235,7 +237,7 @@ final class SupabaseAppNotificationEventService {
     }
 
     func markDelivered(eventIDs: [UUID], userID: String, accessToken: String? = nil) async throws {
-        if (try? await updateEventsViaBackend(eventIDs: eventIDs, userID: userID, path: "/v1/notifications/mark-delivered", bodyKey: "event_ids")) == true {
+        if (try? await updateEventsViaBackend(eventIDs: eventIDs, userID: userID, accessToken: accessToken, path: "/v1/notifications/mark-delivered", bodyKey: "event_ids")) == true {
             return
         }
         try await updateViaSupabase(eventIDs: eventIDs, accessToken: accessToken, bodyKey: "delivered_at")
@@ -246,7 +248,7 @@ final class SupabaseAppNotificationEventService {
     }
 
     func markSeen(eventIDs: [UUID], userID: String, accessToken: String? = nil) async throws {
-        if (try? await updateEventsViaBackend(eventIDs: eventIDs, userID: userID, path: "/v1/notifications/mark-seen", bodyKey: "event_ids")) == true {
+        if (try? await updateEventsViaBackend(eventIDs: eventIDs, userID: userID, accessToken: accessToken, path: "/v1/notifications/mark-seen", bodyKey: "event_ids")) == true {
             return
         }
         try await updateViaSupabase(eventIDs: eventIDs, accessToken: accessToken, bodyKey: "seen_at")
@@ -271,6 +273,7 @@ final class SupabaseAppNotificationEventService {
     ) async throws {
         if (try? await createEventViaBackend(
             userID: userID,
+            accessToken: accessToken,
             kind: kind,
             dedupeKey: dedupeKey,
             title: title,
@@ -320,12 +323,21 @@ final class SupabaseAppNotificationEventService {
         return components.url
     }
 
-    private func fetchEventsViaBackend(path: String, userID: String, limit: Int) async throws -> [AppNotificationEvent] {
+    private func fetchEventsViaBackend(path: String, userID: String, accessToken: String?, limit: Int) async throws -> [AppNotificationEvent] {
         guard let url = backendURL(path: path, queryItems: [URLQueryItem(name: "user_id", value: userID), URLQueryItem(name: "limit", value: "\(limit)")]) else {
             throw AppNotificationEventServiceError.invalidRequest
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
+            throw AppNotificationEventServiceError.unauthorized
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "x-user-id")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AppNotificationEventServiceError.invalidResponse
         }
@@ -339,16 +351,21 @@ final class SupabaseAppNotificationEventService {
         return payload.items
     }
 
-    private func updateEventsViaBackend(eventIDs: [UUID], userID: String, path: String, bodyKey: String) async throws -> Bool {
+    private func updateEventsViaBackend(eventIDs: [UUID], userID: String, accessToken: String?, path: String, bodyKey: String) async throws -> Bool {
         let ids = eventIDs.map(\.uuidString)
         guard !ids.isEmpty else { return true }
         guard let url = backendURL(path: path) else {
             throw AppNotificationEventServiceError.invalidRequest
         }
+        guard let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
+            throw AppNotificationEventServiceError.unauthorized
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "x-user-id")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "user_id": userID,
             bodyKey: ids,
@@ -442,6 +459,7 @@ final class SupabaseAppNotificationEventService {
 
     private func createEventViaBackend(
         userID: String,
+        accessToken: String?,
         kind: String,
         dedupeKey: String,
         title: String,
@@ -459,10 +477,15 @@ final class SupabaseAppNotificationEventService {
         guard let url = backendURL(path: "/v1/notifications") else {
             throw AppNotificationEventServiceError.invalidRequest
         }
+        guard let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
+            throw AppNotificationEventServiceError.unauthorized
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "x-user-id")
         let formatter = ISO8601DateFormatter()
         let payload = AppNotificationEventWritePayload(
             userID: userID,

@@ -1,6 +1,7 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 
+import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import { createNotificationEvent } from "../../lib/notification-events.js";
 
 const router = express.Router();
@@ -14,10 +15,6 @@ function getSupabase() {
   }
 
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-}
-
-function resolveUserID(req) {
-  return String(req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? "").trim();
 }
 
 function resolveLimit(value, fallback) {
@@ -41,10 +38,7 @@ function shouldHideNotificationEvent(event) {
 
 router.get("/notifications/recent", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
 
     const supabase = getSupabase();
     const limit = resolveLimit(req.query.limit, 60);
@@ -62,6 +56,9 @@ router.get("/notifications/recent", async (req, res) => {
 
     return res.json({ items: (data ?? []).filter((event) => !shouldHideNotificationEvent(event)) });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "notifications/recent");
+    }
     console.error("[notifications/recent] error:", error.message);
     return res.status(500).json({ error: error.message });
   }
@@ -69,10 +66,7 @@ router.get("/notifications/recent", async (req, res) => {
 
 router.get("/notifications/pending", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
 
     const supabase = getSupabase();
     const limit = resolveLimit(req.query.limit, 40);
@@ -90,6 +84,9 @@ router.get("/notifications/pending", async (req, res) => {
 
     return res.json({ items: (data ?? []).filter((event) => !shouldHideNotificationEvent(event)) });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "notifications/pending");
+    }
     console.error("[notifications/pending] error:", error.message);
     return res.status(500).json({ error: error.message });
   }
@@ -98,8 +95,9 @@ router.get("/notifications/pending", async (req, res) => {
 router.post("/notifications", async (req, res) => {
   try {
     const payload = req.body?.event && typeof req.body.event === "object" ? req.body.event : req.body ?? {};
+    const { userID } = await resolveAuthorizedUserID(req);
     const created = await createNotificationEvent({
-      userId: payload.user_id ?? payload.userID ?? req.headers["x-user-id"] ?? req.query.user_id ?? req.query.userID,
+      userId: userID,
       kind: payload.kind,
       dedupeKey: payload.dedupe_key ?? payload.dedupeKey,
       title: payload.title,
@@ -117,6 +115,9 @@ router.post("/notifications", async (req, res) => {
 
     return res.status(201).json(created);
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "notifications/create");
+    }
     console.error("[notifications/create] error:", error.message);
     return res.status(500).json({ error: error.message });
   }
@@ -124,11 +125,8 @@ router.post("/notifications", async (req, res) => {
 
 router.post("/notifications/mark-delivered", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
+    const { userID } = await resolveAuthorizedUserID(req);
     const eventIDs = resolveEventIDs(req.body?.event_ids ?? req.body?.eventIDs);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
     if (!eventIDs.length) {
       return res.status(400).json({ error: "event_ids array required" });
     }
@@ -148,6 +146,9 @@ router.post("/notifications/mark-delivered", async (req, res) => {
 
     return res.json({ ok: true, updated: data?.length ?? 0 });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "notifications/mark-delivered");
+    }
     console.error("[notifications/mark-delivered] error:", error.message);
     return res.status(500).json({ error: error.message });
   }
@@ -155,11 +156,8 @@ router.post("/notifications/mark-delivered", async (req, res) => {
 
 router.post("/notifications/mark-seen", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
+    const { userID } = await resolveAuthorizedUserID(req);
     const eventIDs = resolveEventIDs(req.body?.event_ids ?? req.body?.eventIDs);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
     if (!eventIDs.length) {
       return res.status(400).json({ error: "event_ids array required" });
     }
@@ -179,6 +177,9 @@ router.post("/notifications/mark-seen", async (req, res) => {
 
     return res.json({ ok: true, updated: data?.length ?? 0 });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "notifications/mark-seen");
+    }
     console.error("[notifications/mark-seen] error:", error.message);
     return res.status(500).json({ error: error.message });
   }

@@ -69,7 +69,7 @@ final class StoreKitMembershipBillingService {
         return snapshots
     }
 
-    func purchase(plan: OunjeMembershipPlan) async throws -> AppUserEntitlement {
+    func purchase(plan: OunjeMembershipPlan, userID: String) async throws -> AppUserEntitlement {
         guard let productID = productIDsByPlan[plan] else {
             throw StoreBillingError.productUnavailable
         }
@@ -78,12 +78,17 @@ final class StoreKitMembershipBillingService {
             throw StoreBillingError.productUnavailable
         }
 
-        let result = try await product.purchase()
+        var options: Set<Product.PurchaseOption> = []
+        if let appAccountToken = UUID(uuidString: userID) {
+            options.insert(.appAccountToken(appAccountToken))
+        }
+
+        let result = try await product.purchase(options: options)
         switch result {
         case .success(let verificationResult):
             let transaction = try verifiedTransaction(from: verificationResult)
             await transaction.finish()
-            return entitlement(from: transaction, plan: plan, status: .active)
+            return entitlement(from: transaction, plan: plan, status: .active, userID: userID)
         case .pending:
             throw StoreBillingError.purchasePending
         case .userCancelled:
@@ -93,12 +98,12 @@ final class StoreKitMembershipBillingService {
         }
     }
 
-    func restorePurchases() async throws -> AppUserEntitlement? {
+    func restorePurchases(userID: String) async throws -> AppUserEntitlement? {
         try await AppStore.sync()
-        return try await currentEntitlementSnapshot()
+        return try await currentEntitlementSnapshot(userID: userID)
     }
 
-    func currentEntitlementSnapshot() async throws -> AppUserEntitlement? {
+    func currentEntitlementSnapshot(userID: String? = nil) async throws -> AppUserEntitlement? {
         var resolved: AppUserEntitlement?
 
         for await verificationResult in StoreKit.Transaction.currentEntitlements {
@@ -107,7 +112,8 @@ final class StoreKitMembershipBillingService {
             let candidate = entitlement(
                 from: transaction,
                 plan: plan,
-                status: transaction.revocationDate == nil ? .active : .revoked
+                status: transaction.revocationDate == nil ? .active : .revoked,
+                userID: userID
             )
             if shouldPrefer(candidate, over: resolved) {
                 resolved = candidate
@@ -130,9 +136,9 @@ final class StoreKitMembershipBillingService {
         }
     }
 
-    private func entitlement(from transaction: StoreKit.Transaction, plan: OunjeMembershipPlan, status: AppEntitlementStatus) -> AppUserEntitlement {
+    private func entitlement(from transaction: StoreKit.Transaction, plan: OunjeMembershipPlan, status: AppEntitlementStatus, userID: String?) -> AppUserEntitlement {
         AppUserEntitlement(
-            userID: String(transaction.appAccountToken?.uuidString ?? ""),
+            userID: userID ?? String(transaction.appAccountToken?.uuidString ?? ""),
             tier: plan.tier,
             status: status,
             source: .appStore,

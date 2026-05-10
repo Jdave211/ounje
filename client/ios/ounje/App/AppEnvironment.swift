@@ -258,7 +258,7 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         do {
-            let localSnapshot = try await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot()
+            let localSnapshot = try await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: session.userID)
             if let localSnapshot {
                 _ = try? await SupabaseEntitlementService.shared.syncCurrentEntitlement(
                     snapshot: localSnapshot,
@@ -275,7 +275,7 @@ final class MealPlanningAppStore: ObservableObject {
             billingStatusMessage = nil
         } catch {
             if membershipEntitlement == nil,
-               let localSnapshot = try? await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot() {
+               let localSnapshot = try? await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: session.userID) {
                 membershipEntitlement = localSnapshot
                 syncProfilePricingTierToEntitlement()
             }
@@ -301,7 +301,7 @@ final class MealPlanningAppStore: ObservableObject {
             guard let session = await freshTrackingSession() else {
                 throw StoreBillingError.authenticationRequired
             }
-            let snapshot = try await StoreKitMembershipBillingService.shared.purchase(plan: plan)
+            let snapshot = try await StoreKitMembershipBillingService.shared.purchase(plan: plan, userID: session.userID)
             _ = try await SupabaseEntitlementService.shared.syncCurrentEntitlement(
                 snapshot: snapshot,
                 userID: session.userID,
@@ -336,8 +336,11 @@ final class MealPlanningAppStore: ObservableObject {
         defer { isBillingBusy = false }
 
         do {
-            let localSnapshot = try await StoreKitMembershipBillingService.shared.restorePurchases()
-            if let session = await freshTrackingSession(), let localSnapshot {
+            guard let session = await freshTrackingSession() else {
+                throw StoreBillingError.authenticationRequired
+            }
+            let localSnapshot = try await StoreKitMembershipBillingService.shared.restorePurchases(userID: session.userID)
+            if let localSnapshot {
                 _ = try? await SupabaseEntitlementService.shared.syncCurrentEntitlement(
                     snapshot: localSnapshot,
                     userID: session.userID,
@@ -392,7 +395,8 @@ final class MealPlanningAppStore: ObservableObject {
                 authProvider: session.provider,
                 onboarded: isOnboarded,
                 lastOnboardingStep: lastOnboardingStep,
-                profile: updated
+                profile: updated,
+                accessToken: session.accessToken
                 )
         }
 
@@ -456,7 +460,8 @@ final class MealPlanningAppStore: ObservableObject {
                 userID: session.userID,
                 email: session.email,
                 displayName: session.displayName,
-                authProvider: session.provider
+                authProvider: session.provider,
+                accessToken: session.accessToken
             )
             guard authStateRevision == bootstrapRevision else { return }
             if remoteState.isDeactivated {
@@ -543,7 +548,8 @@ final class MealPlanningAppStore: ObservableObject {
                     authProvider: session.provider,
                     onboarded: persistedOnboarded,
                     lastOnboardingStep: recoveredStep,
-                    profile: recoveredProfile
+                    profile: recoveredProfile,
+                    accessToken: session.accessToken
                 )
             }
         } catch {
@@ -693,15 +699,15 @@ final class MealPlanningAppStore: ObservableObject {
     ) async {
         guard !isManualAutoshopRunning else { return }
         guard let session = await freshTrackingSession() ?? authSession else {
-            manualAutoshopErrorMessage = "Sign in again before running Autoshop beta."
+            manualAutoshopErrorMessage = "Sign in again before running Autoshop."
             return
         }
         guard let profile, profile.deliveryAddress.isComplete else {
-            manualAutoshopErrorMessage = "Add a delivery address before running Autoshop beta."
+            manualAutoshopErrorMessage = "Add a delivery address before running Autoshop."
             return
         }
         guard latestPlan != nil else {
-            manualAutoshopErrorMessage = "Generate a prep before running Autoshop beta."
+            manualAutoshopErrorMessage = "Generate a prep before running Autoshop."
             return
         }
         if hasBlockingInstacartActivity {
@@ -730,7 +736,7 @@ final class MealPlanningAppStore: ObservableObject {
               !latestPlan.groceryItems.isEmpty,
               latestPlan.mainShopSnapshot?.items.isEmpty == false
         else {
-            manualAutoshopErrorMessage = "Autoshop beta needs a synced Instacart cart first."
+            manualAutoshopErrorMessage = "Autoshop needs a synced Instacart cart first."
             return
         }
 
@@ -765,7 +771,7 @@ final class MealPlanningAppStore: ObservableObject {
                 $0.lastCartSignature = cartSignature
                 $0.lastInstacartRunID = response.runID
                 $0.lastInstacartRunStatus = response.normalizedStatus
-                $0.lastGeneratedReason = "manual_beta:\(trigger)"
+                $0.lastGeneratedReason = "manual_start:\(trigger)"
             }
             clearPendingCartSyncIntentIfMatched(
                 planID: latestPlan.id,
@@ -785,7 +791,7 @@ final class MealPlanningAppStore: ObservableObject {
             manualAutoshopErrorMessage = error.localizedDescription
             automationState = updatedAutomationState {
                 $0.lastInstacartRunStatus = "failed"
-                $0.lastGeneratedReason = "manual_beta_failed:\(trigger)"
+                $0.lastGeneratedReason = "manual_start_failed:\(trigger)"
             }
             saveAutomationStateCache()
             persistAutomationStateIfPossible()
@@ -1192,7 +1198,8 @@ final class MealPlanningAppStore: ObservableObject {
                     authProvider: session.provider,
                     onboarded: true,
                     lastOnboardingStep: lastStep,
-                    profile: profile
+                    profile: profile,
+                    accessToken: session.accessToken
                 )
                 return
             } catch {
@@ -3389,7 +3396,8 @@ final class MealPlanningAppStore: ObservableObject {
                     authProvider: session.provider,
                     onboarded: isOnboarded,
                     lastOnboardingStep: lastOnboardingStep,
-                    profile: updatedProfile
+                    profile: updatedProfile,
+                    accessToken: session.accessToken
                 )
             }
         }
@@ -3419,7 +3427,8 @@ final class MealPlanningAppStore: ObservableObject {
                     authProvider: session.provider,
                     onboarded: isOnboarded,
                     lastOnboardingStep: lastOnboardingStep,
-                    profile: updatedProfile
+                    profile: updatedProfile,
+                    accessToken: session.accessToken
                 )
             }
         }

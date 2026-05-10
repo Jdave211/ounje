@@ -991,7 +991,8 @@ private struct AuthenticationView: View {
                 userID: session.userID,
                 email: session.email,
                 displayName: session.displayName,
-                authProvider: session.provider
+                authProvider: session.provider,
+                accessToken: session.accessToken
             )
             if remoteState.isDeactivated {
                 store.signOutToWelcome()
@@ -1026,7 +1027,8 @@ private struct AuthenticationView: View {
                     authProvider: session.provider,
                     onboarded: persistedOnboarded,
                     lastOnboardingStep: resolvedStep,
-                    profile: resolvedProfile
+                    profile: resolvedProfile,
+                    accessToken: session.accessToken
                 )
             } else if !OunjeLaunchFlags.forceOnboardingIncomplete &&
                         !persistedOnboarded &&
@@ -1038,7 +1040,8 @@ private struct AuthenticationView: View {
                     authProvider: session.provider,
                     onboarded: false,
                     lastOnboardingStep: resolvedStep,
-                    profile: resolvedProfile
+                    profile: resolvedProfile,
+                    accessToken: session.accessToken
                 )
             }
 
@@ -1568,7 +1571,7 @@ private struct MealPlannerShellView: View {
         .task(id: store.authSession?.userID ?? "signed-out") {
             syncedCompletedImportIDs.removeAll()
             prewarmedCompletedImportIDs.removeAll()
-            await savedStore.bootstrap(authSession: store.authSession)
+            await savedStore.refreshFromRemote(authSession: store.authSession, force: true)
         }
         .task(id: "fresh-plan::\(store.authSession?.userID ?? "signed-out")") {
             await store.ensureFreshPlanIfNeeded()
@@ -9882,25 +9885,13 @@ final class SupabaseAgentBriefService {
     }
 
     private var candidateEndpoints: [AgentBriefEndpoint] {
-        var endpoints: [AgentBriefEndpoint] = [.supabaseFunction]
-#if targetEnvironment(simulator)
-        endpoints.append(.localDevelopment)
-#endif
-        return endpoints
+        [.backend]
     }
 
     private func requestBrief(from endpoint: AgentBriefEndpoint, payload: SupabaseAgentBriefRequestPayload) async throws -> InferredAgentBrief {
         var request = URLRequest(url: endpoint.url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        switch endpoint {
-        case .supabaseFunction:
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
-        case .localDevelopment:
-            break
-        }
 
         request.httpBody = try JSONEncoder().encode(payload)
 
@@ -9925,14 +9916,11 @@ final class SupabaseAgentBriefService {
 }
 
 private enum AgentBriefEndpoint {
-    case supabaseFunction
-    case localDevelopment
+    case backend
 
     var url: URL {
         switch self {
-        case .supabaseFunction:
-            return URL(string: "\(SupabaseConfig.url)/functions/v1/agent-brief")!
-        case .localDevelopment:
+        case .backend:
             return URL(string: "\(OunjeDevelopmentServer.baseURL)/agent-brief")!
         }
     }

@@ -6700,15 +6700,11 @@ function recipeNeedsSecondaryFill(recipe) {
   const hasAnyIngredientQuantity = missingIngredientQuantities < ingredients.length;
   const missingServings = !normalizeText(recipe?.servings_text) && !Number.isFinite(recipe?.servings_count);
   const missingCookTime = !normalizeText(recipe?.cook_time_text) && !Number.isFinite(recipe?.cook_time_minutes);
-  const missingMacros = !Number.isFinite(recipe?.calories_kcal)
-    || !Number.isFinite(recipe?.protein_g)
-    || !Number.isFinite(recipe?.carbs_g)
-    || !Number.isFinite(recipe?.fat_g);
   const criticallySparseQuantities = ingredients.length >= 3
     && missingIngredientQuantities >= Math.ceil(ingredients.length * 0.75)
     && !hasAnyIngredientQuantity;
 
-  return missingServings || missingCookTime || missingMacros || criticallySparseQuantities;
+  return missingServings || missingCookTime || criticallySparseQuantities;
 }
 
 async function enrichRecipeSecondaryFields(normalizedRecipe, source) {

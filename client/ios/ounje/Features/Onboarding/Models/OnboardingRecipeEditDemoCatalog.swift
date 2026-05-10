@@ -51,6 +51,10 @@ struct OnboardingRecipeEditDemoRecipe: Identifiable {
         return fixtures
     }
 
+    fileprivate var allDemoFixtures: [OnboardingRecipeEditDemoOptionFixture] {
+        defaultResolvedFixtures
+    }
+
     private static func normalizedDietName(_ value: String) -> String {
         value
             .lowercased()
@@ -631,6 +635,29 @@ actor OnboardingRecipeEditDemoService {
 
         cachedRecipes = resolvedRecipes
         return resolvedRecipes
+    }
+
+    func adaptedDetail(for recipeID: String) async -> RecipeDetailData? {
+        guard recipeID.hasPrefix("onboarding-demo-") else { return nil }
+        let recipes = await loadRecipes()
+
+        for recipe in recipes {
+            for fixture in recipe.optionFixtures {
+                let response = fixture.makeResponse(from: recipe)
+                if response.recipeID == recipeID {
+                    return response.recipeDetail
+                }
+            }
+
+            for fixture in recipe.allDemoFixtures {
+                let response = fixture.makeResponse(from: recipe)
+                if response.recipeID == recipeID {
+                    return response.recipeDetail
+                }
+            }
+        }
+
+        return nil
     }
 
     private func loadCatalog() -> OnboardingRecipeEditDemoCatalogResource? {

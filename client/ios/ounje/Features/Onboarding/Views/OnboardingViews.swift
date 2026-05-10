@@ -507,6 +507,9 @@ struct FirstLoginOnboardingView: View {
         .environmentObject(onboardingSavedStore)
         .tint(currentStepAccent)
         .preferredColorScheme(.dark)
+        .task(id: store.authSession?.userID ?? "signed-out") {
+            await onboardingSavedStore.bootstrap(authSession: store.authSession)
+        }
         .onChange(of: currentStep) { newStep in
             schedulePresetSelectionPulse()
             if newStep == .solution || newStep == .solutionWays {
@@ -630,7 +633,6 @@ struct FirstLoginOnboardingView: View {
             OunjePlusPaywallSheet(
                 initialTier: paywallInitialTier,
                 isDismissible: false,
-                usesDummyTrialFlow: true,
                 onUpgradeSuccess: {
                     completePendingOnboardingAfterPaywall()
                 }
@@ -2847,7 +2849,8 @@ struct FirstLoginOnboardingView: View {
                 authProvider: session.provider,
                 onboarded: false,
                 lastOnboardingStep: resolvedStep.rawValue,
-                profile: profile
+                profile: profile,
+                accessToken: session.accessToken
             )
         }
     }
@@ -2972,7 +2975,7 @@ struct FirstLoginOnboardingView: View {
             case .budget:
                 return "Cart budget"
             case .ordering:
-                return "Autoshop beta"
+                return "Autoshop"
             case .address:
                 return "Instacart"
             }

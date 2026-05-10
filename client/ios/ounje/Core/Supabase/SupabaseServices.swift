@@ -209,13 +209,19 @@ final class SupabaseProfileStateService {
 
     private init() {}
 
+    private func profileAccessToken(_ accessToken: String?) -> String {
+        let trimmed = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? SupabaseConfig.anonKey : trimmed
+    }
+
     func fetchOrCreateProfileState(
         userID: String,
         email: String?,
         displayName: String?,
-        authProvider: AuthProvider?
+        authProvider: AuthProvider?,
+        accessToken: String? = nil
     ) async throws -> SupabaseProfileStateSnapshot {
-        if let row = try await fetchProfile(userID: userID) {
+        if let row = try await fetchProfile(userID: userID, accessToken: accessToken) {
             let hasPersistedProfile = row.decodedProfile != nil
             let resolvedOnboarded = (row.onboarded ?? false) && hasPersistedProfile
 
@@ -227,7 +233,8 @@ final class SupabaseProfileStateService {
                     authProvider: authProvider,
                     onboarded: false,
                     lastOnboardingStep: row.lastOnboardingStep ?? 0,
-                    profile: nil
+                    profile: nil,
+                    accessToken: accessToken
                 )
             }
 
@@ -243,7 +250,7 @@ final class SupabaseProfileStateService {
             )
         }
 
-        if let email, let row = try await fetchProfile(email: email) {
+        if let email, let row = try await fetchProfile(email: email, accessToken: accessToken) {
             let recoveredProfile = row.decodedProfile
             let resolvedOnboarded = (row.onboarded ?? false) && recoveredProfile != nil
             let resolvedStep = row.lastOnboardingStep ?? 0
@@ -255,7 +262,8 @@ final class SupabaseProfileStateService {
                 authProvider: authProvider ?? row.authProvider.flatMap(AuthProvider.init(rawValue:)),
                 onboarded: resolvedOnboarded,
                 lastOnboardingStep: resolvedStep,
-                profile: recoveredProfile
+                profile: recoveredProfile,
+                accessToken: accessToken
             )
 
             return SupabaseProfileStateSnapshot(
@@ -277,7 +285,8 @@ final class SupabaseProfileStateService {
             authProvider: authProvider,
             onboarded: false,
             lastOnboardingStep: 0,
-            profile: nil
+            profile: nil,
+            accessToken: accessToken
         )
         return SupabaseProfileStateSnapshot(
             onboarded: false,
@@ -298,7 +307,8 @@ final class SupabaseProfileStateService {
         authProvider: AuthProvider?,
         onboarded: Bool,
         lastOnboardingStep: Int,
-        profile: UserProfile?
+        profile: UserProfile?,
+        accessToken: String? = nil
     ) async throws {
         guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/profiles?on_conflict=id") else {
             throw SupabaseProfileStateError.invalidRequest
@@ -339,7 +349,7 @@ final class SupabaseProfileStateService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(profileAccessToken(accessToken))", forHTTPHeaderField: "Authorization")
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode([payload])
 
@@ -351,7 +361,7 @@ final class SupabaseProfileStateService {
         }
     }
 
-    private func fetchProfile(userID: String) async throws -> SupabaseProfileRow? {
+    private func fetchProfile(userID: String, accessToken: String?) async throws -> SupabaseProfileRow? {
         guard let encodedID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(SupabaseConfig.url)/rest/v1/profiles?select=*&id=eq.\(encodedID)&limit=1") else {
             throw SupabaseProfileStateError.invalidRequest
@@ -360,7 +370,7 @@ final class SupabaseProfileStateService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(profileAccessToken(accessToken))", forHTTPHeaderField: "Authorization")
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
@@ -373,7 +383,7 @@ final class SupabaseProfileStateService {
         return rows.first
     }
 
-    private func fetchProfile(email: String) async throws -> SupabaseProfileRow? {
+    private func fetchProfile(email: String, accessToken: String?) async throws -> SupabaseProfileRow? {
         guard let encodedEmail = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(SupabaseConfig.url)/rest/v1/profiles?select=*&email=eq.\(encodedEmail)&limit=1") else {
             throw SupabaseProfileStateError.invalidRequest
@@ -382,7 +392,7 @@ final class SupabaseProfileStateService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(profileAccessToken(accessToken))", forHTTPHeaderField: "Authorization")
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {

@@ -25,6 +25,7 @@ struct DiscoverTabView: View {
     @State private var discoverPullBaseline: CGFloat?
     @State private var hasTriggeredCurrentPullRefresh = false
     @State private var filterRailResetToken = UUID()
+    @State private var lastAppliedDiscoverFeedKey: String?
 
     private static let feedTopAnchorID = "discover-feed-top-anchor"
 
@@ -133,9 +134,30 @@ struct DiscoverTabView: View {
         }
         .task(id: discoverFeedKey) {
             guard !isSearching else { return }
+            let taskFeedKey = discoverFeedKey
+            let shouldForcePersonalizedReload = lastAppliedDiscoverFeedKey != nil
+                && lastAppliedDiscoverFeedKey != taskFeedKey
+                && !viewModel.recipes.isEmpty
+            lastAppliedDiscoverFeedKey = taskFeedKey
+
             let initialContext = environmentModel.feedContext
             viewModel.updateFeedbackRevision(discoverFeedbackRevision)
             async let environmentRefresh: Void = environmentModel.refresh(profile: store.profile)
+
+            if shouldForcePersonalizedReload {
+                viewModel.prepareForQueryRefresh()
+                await environmentRefresh
+                await viewModel.forceReload(
+                    profile: store.profile,
+                    query: normalizedSearchText,
+                    feedContext: environmentModel.feedContext,
+                    behaviorSeeds: savedStore.savedRecipes,
+                    rotateBaseFeed: normalizedSearchText.isEmpty,
+                    forceNetwork: true
+                )
+                return
+            }
+
             await viewModel.loadIfNeeded(
                 profile: store.profile,
                 query: normalizedSearchText,

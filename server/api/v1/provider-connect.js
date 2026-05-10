@@ -15,12 +15,15 @@ import express from "express";
 import { chromium } from "playwright";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import { buildPlaywrightLaunchOptions } from "../../lib/playwright-runtime.js";
 
 const router = express.Router();
 
-// In-memory session store (replace with Redis in production)
+// Live Playwright state stays in memory. Durable owner/status/expiry is persisted
+// in Supabase so restarts fail cleanly instead of hanging client flows.
 const activeSessions = new Map();
+const CONNECT_SESSION_TTL_MS = 5 * 60 * 1000;
 
 const PROVIDERS = {
   instacart: {
@@ -40,13 +43,89 @@ const PROVIDERS = {
 };
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 function getSupabase() {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
-    throw new Error("Supabase not configured - need SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY");
+    throw new Error("Provider connect requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
   }
   return createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+
+function normalizeText(value) {
+  return String(value ?? "").trim();
+}
+
+function connectSessionExpiresAt() {
+  return new Date(Date.now() + CONNECT_SESSION_TTL_MS).toISOString();
+}
+
+function resolveServerBaseURL() {
+  const configured = normalizeText(process.env.SERVER_URL).replace(/\/+$/, "");
+  if (configured) return configured;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("SERVER_URL is required for provider connect in production");
+  }
+  return `http://localhost:${process.env.PORT || 8080}`;
+}
+
+async function upsertProviderConnectSession({
+  sessionId,
+  userId,
+  provider,
+  status,
+  expiresAt,
+  lastError = null,
+}) {
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from("provider_connect_sessions")
+    .upsert({
+      session_id: sessionId,
+      user_id: userId,
+      provider,
+      status,
+      expires_at: expiresAt ?? connectSessionExpiresAt(),
+      last_error: lastError,
+    }, {
+      onConflict: "session_id",
+    });
+
+  if (error) throw error;
+}
+
+async function fetchProviderConnectSession(sessionId) {
+  if (!sessionId) return null;
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from("provider_connect_sessions")
+    .select("*")
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
+async function markProviderConnectSession(sessionId, status, lastError = null) {
+  if (!sessionId) return;
+  const supabase = getSupabase();
+  await supabase
+    .from("provider_connect_sessions")
+    .update({
+      status,
+      last_error: lastError,
+    })
+    .eq("session_id", sessionId);
+}
+
+function providerSessionResponse(row) {
+  const status = normalizeText(row?.status) || "expired";
+  return {
+    status,
+    connected: status === "connected",
+    expiresAt: row?.expires_at ?? null,
+    lastError: row?.last_error ?? null,
+  };
 }
 
 function parseSessionCookies(rawCookies) {
@@ -74,10 +153,12 @@ function isProviderAccountConnected(row = {}) {
  */
 router.post("/connect/:provider", async (req, res) => {
   const { provider } = req.params;
-  const userId = req.headers["x-user-id"];
 
-  if (!userId) {
-    return res.status(401).json({ error: "User ID required" });
+  let auth;
+  try {
+    auth = await resolveAuthorizedUserID(req);
+  } catch (error) {
+    return sendAuthError(res, error, `connect/${provider}`);
   }
 
   const config = PROVIDERS[provider];
@@ -88,8 +169,17 @@ router.post("/connect/:provider", async (req, res) => {
     });
   }
 
+  const sessionId = randomUUID();
+  const expiresAt = connectSessionExpiresAt();
   try {
-    const sessionId = randomUUID();
+    const baseUrl = resolveServerBaseURL();
+    await upsertProviderConnectSession({
+      sessionId,
+      userId: auth.userID,
+      provider,
+      status: "pending",
+      expiresAt,
+    });
     
     // Launch browser
     const browser = await chromium.launch(buildPlaywrightLaunchOptions({
@@ -111,20 +201,19 @@ router.post("/connect/:provider", async (req, res) => {
 
     // Store session
     activeSessions.set(sessionId, {
-      userId,
+      userId: auth.userID,
       provider,
       browser,
       context,
       page,
       status: 'pending',
       createdAt: Date.now(),
+      expiresAt,
     });
 
     // Start monitoring for login completion
     monitorLogin(sessionId, config);
 
-    // Build the connect URL
-    const baseUrl = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 8080}`;
     const connectUrl = `${baseUrl}/v1/connect/${provider}/browser/${sessionId}`;
 
     return res.json({
@@ -135,6 +224,7 @@ router.post("/connect/:provider", async (req, res) => {
     });
 
   } catch (err) {
+    await markProviderConnectSession(sessionId, "failed", err.message).catch(() => {});
     console.error(`[connect/${provider}] error:`, err.message);
     return res.status(500).json({ error: err.message });
   }
@@ -146,23 +236,58 @@ router.post("/connect/:provider", async (req, res) => {
  */
 router.get("/connect/:provider/status", async (req, res) => {
   const { provider } = req.params;
-  const userId = req.headers["x-user-id"];
   const { sessionId } = req.query;
+  let auth = null;
+
+  if (req.headers.authorization || req.headers["x-user-id"] || req.query.user_id || req.query.userID) {
+    try {
+      auth = await resolveAuthorizedUserID(req);
+    } catch (error) {
+      return sendAuthError(res, error, `connect/${provider}/status`);
+    }
+  }
 
   // Check active session first
   if (sessionId && activeSessions.has(sessionId)) {
     const session = activeSessions.get(sessionId);
-    if (userId && session.userId !== userId) {
+    if (auth?.userID && session.userId !== auth.userID) {
       return res.status(403).json({ error: "Session does not belong to this user" });
     }
     return res.json({
       status: session.status,
       connected: session.status === 'connected',
+      expiresAt: session.expiresAt ?? null,
     });
   }
 
-  if (!userId) {
-    return res.status(401).json({ error: "User ID required" });
+  if (sessionId) {
+    try {
+      const row = await fetchProviderConnectSession(String(sessionId));
+      if (!row) {
+        return res.json({ status: "expired", connected: false });
+      }
+      if (auth?.userID && row.user_id !== auth.userID) {
+        return res.status(403).json({ error: "Session does not belong to this user" });
+      }
+      const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
+      const shouldExpire = row.status === "pending" && (!expiresAt || expiresAt <= new Date());
+      if (shouldExpire) {
+        await markProviderConnectSession(String(sessionId), "expired", "Provider login session expired");
+        return res.json({ status: "expired", connected: false, expiresAt: row.expires_at });
+      }
+      if (row.status === "pending") {
+        await markProviderConnectSession(String(sessionId), "expired", "Provider login browser is no longer active");
+        return res.json({ status: "expired", connected: false, expiresAt: row.expires_at });
+      }
+      return res.json(providerSessionResponse(row));
+    } catch (err) {
+      console.error(`[connect/${provider}/status] session error:`, err.message);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (!auth?.userID) {
+    return res.status(401).json({ error: "Authorization required" });
   }
 
   // Check database for existing connection
@@ -171,7 +296,7 @@ router.get("/connect/:provider/status", async (req, res) => {
     const { data } = await supabase
       .from("user_provider_accounts")
       .select("id, provider, login_status, last_used_at, is_active, session_cookies")
-      .eq("user_id", userId)
+      .eq("user_id", auth.userID)
       .eq("provider", provider)
       .maybeSingle();
 
@@ -206,6 +331,7 @@ router.get("/connect/:provider/browser/:sessionId", async (req, res) => {
   const session = activeSessions.get(sessionId);
 
   if (!session) {
+    await markProviderConnectSession(sessionId, "expired", "Provider login browser is no longer active").catch(() => {});
     return res.status(404).send(`
       <html>
         <body style="font-family: -apple-system, sans-serif; padding: 40px; text-align: center;">
@@ -377,6 +503,7 @@ router.get("/connect/:provider/frame/:sessionId", async (req, res) => {
   const session = activeSessions.get(sessionId);
 
   if (!session || !session.page) {
+    await markProviderConnectSession(sessionId, "expired", "Provider login browser is no longer active").catch(() => {});
     return res.status(404).send("Session not found");
   }
 
@@ -513,11 +640,13 @@ router.post("/connect/key/:sessionId", async (req, res) => {
  */
 router.post("/connect/:provider/save-session", async (req, res) => {
   const { provider } = req.params;
-  const userId = req.headers["x-user-id"];
   const { cookies } = req.body;
 
-  if (!userId) {
-    return res.status(401).json({ error: "User ID required" });
+  let auth;
+  try {
+    auth = await resolveAuthorizedUserID(req);
+  } catch (error) {
+    return sendAuthError(res, error, `save-session/${provider}`);
   }
 
   if (!cookies || !Array.isArray(cookies) || cookies.length === 0) {
@@ -536,7 +665,7 @@ router.post("/connect/:provider/save-session", async (req, res) => {
     const { error } = await supabase
       .from("user_provider_accounts")
       .upsert({
-        user_id: userId,
+        user_id: auth.userID,
         provider: provider,
         session_cookies: JSON.stringify(cookies),
         login_status: 'logged_in',
@@ -551,7 +680,7 @@ router.post("/connect/:provider/save-session", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    console.log(`[save-session/${provider}] Saved ${cookies.length} cookies for user ${userId}`);
+    console.log(`[save-session/${provider}] Saved ${cookies.length} cookies for user ${auth.userID}`);
     return res.json({ success: true, cookieCount: cookies.length });
   } catch (err) {
     console.error(`[save-session/${provider}] error:`, err);
@@ -565,10 +694,12 @@ router.post("/connect/:provider/save-session", async (req, res) => {
  */
 router.delete("/connect/:provider", async (req, res) => {
   const { provider } = req.params;
-  const userId = req.headers["x-user-id"];
 
-  if (!userId) {
-    return res.status(401).json({ error: "User ID required" });
+  let auth;
+  try {
+    auth = await resolveAuthorizedUserID(req);
+  } catch (error) {
+    return sendAuthError(res, error, `disconnect/${provider}`);
   }
 
   try {
@@ -576,7 +707,7 @@ router.delete("/connect/:provider", async (req, res) => {
     await supabase
       .from("user_provider_accounts")
       .delete()
-      .eq("user_id", userId)
+      .eq("user_id", auth.userID)
       .eq("provider", provider);
 
     return res.json({ success: true });
@@ -590,7 +721,12 @@ router.delete("/connect/:provider", async (req, res) => {
  * List available providers and their connection status for a user.
  */
 router.get("/connect/providers", async (req, res) => {
-  const userId = req.headers["x-user-id"];
+  let auth;
+  try {
+    auth = await resolveAuthorizedUserID(req);
+  } catch (error) {
+    return sendAuthError(res, error, "connect/providers");
+  }
 
   const providers = Object.entries(PROVIDERS).map(([id, config]) => ({
     id,
@@ -598,26 +734,24 @@ router.get("/connect/providers", async (req, res) => {
     connected: false,
   }));
 
-  if (userId) {
-    try {
-      const supabase = getSupabase();
-      const { data } = await supabase
-        .from("user_provider_accounts")
-        .select("provider,is_active,login_status,session_cookies")
-        .eq("user_id", userId);
+  try {
+    const supabase = getSupabase();
+    const { data } = await supabase
+      .from("user_provider_accounts")
+      .select("provider,is_active,login_status,session_cookies")
+      .eq("user_id", auth.userID);
 
-      if (data) {
-        const connectedProviders = new Set(
-          data
-            .filter((row) => isProviderAccountConnected(row))
-            .map((row) => row.provider)
-        );
-        providers.forEach(p => {
-          p.connected = connectedProviders.has(p.id);
-        });
-      }
-    } catch {}
-  }
+    if (data) {
+      const connectedProviders = new Set(
+        data
+          .filter((row) => isProviderAccountConnected(row))
+          .map((row) => row.provider)
+      );
+      providers.forEach(p => {
+        p.connected = connectedProviders.has(p.id);
+      });
+    }
+  } catch {}
 
   return res.json({ providers });
 });
@@ -627,6 +761,7 @@ async function monitorLogin(sessionId, config) {
   const session = activeSessions.get(sessionId);
   if (!session) return;
 
+  let timeoutHandle = null;
   const checkInterval = setInterval(async () => {
     try {
       if (!activeSessions.has(sessionId)) {
@@ -660,10 +795,12 @@ async function monitorLogin(sessionId, config) {
 
         currentSession.status = 'connected';
         activeSessions.set(sessionId, currentSession);
+        await markProviderConnectSession(sessionId, "connected");
 
         // Clean up after a delay
         setTimeout(() => cleanupSession(sessionId), 30000);
         clearInterval(checkInterval);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
       }
     } catch (err) {
       console.error(`[connect] Monitor error:`, err.message);
@@ -671,8 +808,9 @@ async function monitorLogin(sessionId, config) {
   }, 2000);
 
   // Timeout after 5 minutes
-  setTimeout(() => {
+  timeoutHandle = setTimeout(() => {
     clearInterval(checkInterval);
+    markProviderConnectSession(sessionId, "expired", "Provider login session expired").catch(() => {});
     cleanupSession(sessionId);
   }, 300000);
 }
