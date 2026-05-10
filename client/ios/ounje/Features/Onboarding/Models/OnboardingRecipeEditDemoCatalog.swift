@@ -374,16 +374,31 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
         return tokens.intersection(candidateTokens).count
     }
 
-    private static func commonIngredientImageURLString(for displayName: String) -> String? {
+    fileprivate static func commonIngredientImageURLString(for displayName: String) -> String? {
         let normalized = normalizedName(displayName)
         let mappings: [(keywords: [String], url: String)] = [
+            (["chicken thigh", "chicken thighs"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchicken_thigh.jpg?alt=media&token=c66a2a2c-33cd-4d6d-9d99-58475be7c85a?t=1774248428264"),
+            (["tomato", "tomatoes"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Ftomato.jpg?alt=media&token=526e27f3-043c-472b-9220-2929f93bb4e5?t=1774234594733"),
+            (["red bell pepper", "bell pepper"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fred_bell_pepper.jpg?alt=media&token=01e19356-1a36-49bb-b34f-5b68777f05bf?t=1774244049104"),
+            (["habanero", "habanero pepper"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fpeppers.jpg?alt=media&token=961e8efd-b228-4fa2-9606-272265b43eb3?t=1774257567466"),
+            (["chicken stock", "chicken broth", "bouillon"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchicken_broth.jpg?alt=media&token=25dd3691-0b85-44a9-98b9-8aa562f6162b?t=1774249822040"),
+            (["onion", "onions"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fonion.jpg?alt=media&token=4d27c4bf-c973-4d6a-9b52-5f0a53fbd388?t=1774248318388"),
+            (["thyme"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fthyme.jpg?alt=media&token=8a29f820-749a-4420-87e8-ff90dbf01403?t=1774330873604"),
+            (["black pepper"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fblack_pepper.jpg?alt=media&token=965f8bc2-ada6-465f-a0fc-6b81bdc692a7?t=1774299971368"),
+            (["curry powder"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fyellow_curry.jpg?alt=media&token=6a659c8e-6375-4a7e-8d75-126c565a5cec?t=1774249108854"),
+            (["salt"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsalt.jpg?alt=media&token=0140d2fd-6e8a-4b50-8a82-19b316ccc8d7?t=1774330872713"),
+            (["white rice", "rice"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Frice.jpg?alt=media&token=5aa0fdcd-c942-4e76-9eed-c7e2dacc6ad7?t=1774248318327"),
+            (["water"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fwater.jpg?alt=media&token=ef1b81ea-f561-46ee-af79-dea3714ca564?t=1774234689901"),
+            (["plantain", "plantains"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fplantain.jpg?alt=media&token=2b145f14-d438-43e9-a9c2-c87237a8b44f?t=1774337486500"),
+            (["black beans"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fblack_beans.jpg?alt=media&token=b7be5a94-a7bd-4c20-8fee-989aee96f567?t=1774247130413"),
+            (["lime juice", "lime"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Flime.jpg?alt=media&token=8baf258f-277b-4976-afdc-99229c41b136?t=1774250162863"),
             (["yogurt", "coconut milk", "almond milk"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fmilk.jpg?alt=media&token=0dd8a299-f10b-4842-9999-ced50ef93c21?t=1774248091433"),
             (["almond flour", "gluten free flour", "oat flour"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fflour.jpg?alt=media&token=0c58143c-815d-40bb-80cc-9a3b3c34b681?t=1774256493345"),
-            (["coconut oil", "avocado oil"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Folive_oil.jpg?alt=media&token=c2d859ad-887e-422a-af1a-6d1c2b642fcb?t=1774330870925"),
+            (["coconut oil", "avocado oil", "olive oil", "frying oil", "neutral oil"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Folive_oil.jpg?alt=media&token=c2d859ad-887e-422a-af1a-6d1c2b642fcb?t=1774330870925"),
             (["plant butter"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fbutter.jpg?alt=media&token=0d3b0fec-a623-457d-80a8-3da7db42fdb3?t=1774256492999"),
             (["mozzarella", "ricotta", "cheese"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fparmesan_cheese.jpg?alt=media&token=41595f2d-19cc-4781-ba5b-92c2e1e9a732?t=1774330872651"),
-            (["cauliflower rice", "rice"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fpasta.jpg?alt=media&token=909bf7b4-6857-4f70-8ed8-5c6fe087c6c0?t=1774330871011"),
-            (["chile", "chili", "pepper", "habanero", "cayenne"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchili_flakes.jpg?alt=media&token=5e372122-e466-4fac-a826-56f4156b2ec4?t=1774331841546")
+            (["cauliflower rice"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Frice.jpg?alt=media&token=5aa0fdcd-c942-4e76-9eed-c7e2dacc6ad7?t=1774248318327"),
+            (["chile", "chili", "pepper", "cayenne"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchili_flakes.jpg?alt=media&token=5e372122-e466-4fac-a826-56f4156b2ec4?t=1774331841546")
         ]
         return mappings.first { entry in
             entry.keywords.contains { normalized.contains($0) }
@@ -786,7 +801,7 @@ private struct OnboardingRecipeEditDemoBaseRecipePayload: Decodable {
                 ingredientID: nil,
                 displayName: ingredient.displayName,
                 quantityText: ingredient.quantityText,
-                imageURLString: ingredient.imageURLString,
+                imageURLString: ingredient.imageURLString ?? OnboardingRecipeEditDemoOptionFixture.commonIngredientImageURLString(for: ingredient.displayName),
                 sortOrder: index
             )
         }
@@ -898,10 +913,41 @@ private struct OnboardingRecipeEditDemoBaseRecipePayload: Decodable {
             occasionTags: liveDetail.occasionTags,
             mainProtein: liveDetail.mainProtein,
             cookMethod: liveDetail.cookMethod,
-            ingredients: liveDetail.ingredients,
+            ingredients: demoEnrichedIngredients(from: liveDetail.ingredients),
             steps: liveDetail.steps,
             servingsCount: liveDetail.servingsCount
         )
+    }
+
+    private func demoEnrichedIngredients(from liveIngredients: [RecipeDetailIngredient]) -> [RecipeDetailIngredient] {
+        let fallbackImageByName = Dictionary(uniqueKeysWithValues: ingredients.compactMap { ingredient -> (String, String)? in
+            let imageURLString = ingredient.imageURLString
+                ?? OnboardingRecipeEditDemoOptionFixture.commonIngredientImageURLString(for: ingredient.displayName)
+            guard let imageURLString, !imageURLString.isEmpty else { return nil }
+            return (ingredient.displayName.lowercased(), imageURLString)
+        })
+
+        return liveIngredients.map { ingredient in
+            let fallbackImageURLString = fallbackImageByName[ingredient.displayTitle.lowercased()]
+                ?? fallbackImageByName[ingredient.displayName.lowercased()]
+                ?? OnboardingRecipeEditDemoOptionFixture.commonIngredientImageURLString(for: ingredient.displayTitle)
+                ?? OnboardingRecipeEditDemoOptionFixture.commonIngredientImageURLString(for: ingredient.displayName)
+
+            guard (ingredient.imageURLString ?? "").isEmpty,
+                  let fallbackImageURLString
+            else {
+                return ingredient
+            }
+
+            return RecipeDetailIngredient(
+                id: ingredient.id,
+                ingredientID: ingredient.ingredientID,
+                displayName: ingredient.displayName,
+                quantityText: ingredient.quantityText,
+                imageURLString: fallbackImageURLString,
+                sortOrder: ingredient.sortOrder
+            )
+        }
     }
 }
 

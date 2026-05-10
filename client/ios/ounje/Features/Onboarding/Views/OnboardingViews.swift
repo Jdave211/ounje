@@ -66,9 +66,15 @@ struct FirstLoginOnboardingView: View {
     @State private var stepTransitionDirection = 1
     @State private var hasHydratedStoredDraft = false
     @State private var solutionAnimationVisible = false
+    @State private var solutionAnimationExiting = false
+    @State private var solutionTypedCharacterCount = 0
     @State private var solutionHelpVisibleCount = 0
     @State private var completedSolutionAnimationSteps = Set<Int>()
     @State private var solutionRevealTask: Task<Void, Never>?
+    @State private var introAutoAdvanceTask: Task<Void, Never>?
+    @State private var onboardingAutoAdvanceTask: Task<Void, Never>?
+    @State private var recipeUpgradeIntroTextVisible = false
+    @State private var recipeUpgradeIntroTextExiting = false
     @State private var recipeStylePreviewRecipe: DiscoverRecipeCardData?
     @State private var isRecipeStylePreviewLoading = false
     @State private var recipeEditDemoRecipes: [OnboardingRecipeEditDemoRecipe] = []
@@ -80,6 +86,7 @@ struct FirstLoginOnboardingView: View {
     @FocusState private var isBudgetFieldFocused: Bool
 
     private let recipeStylePreviewRecipeID = "8c02aaff-33cd-4927-8c81-aae45e015c0d"
+    private let foodGoalSelectionLimit = 3
 
     private let dietaryPatternOptions = [
         "Vegetarian",
@@ -511,16 +518,27 @@ struct FirstLoginOnboardingView: View {
             await onboardingSavedStore.bootstrap(authSession: store.authSession)
         }
         .onChange(of: currentStep) { newStep in
+            introAutoAdvanceTask?.cancel()
+            onboardingAutoAdvanceTask?.cancel()
             schedulePresetSelectionPulse()
-            if newStep == .solution || newStep == .solutionWays {
-                revealSolutionPage()
+            if newStep == .solution {
+                scheduleSolutionTypewriterTransition()
+            }
+            if newStep == .solutionWays {
+                scheduleSolutionWaysTransition()
+            }
+            if newStep == .recipeEditIntro {
+                scheduleRecipeUpgradeIntroAdvance()
             }
             if newStep == .recipeEditDemo {
                 Task {
                     await loadRecipeEditDemoIfNeeded()
                 }
             }
-            persistDraft(step: newStep)
+            if newStep == .paywallIntro {
+                schedulePaywallIntroPresentation()
+            }
+            persistDraftForResume(step: newStep)
         }
         .onChange(of: budgetWindow) { newValue in
             guard previousBudgetWindow != newValue else { return }
@@ -558,15 +576,29 @@ struct FirstLoginOnboardingView: View {
             }
             loadOnboardingProviders()
             schedulePresetSelectionPulse()
+            if currentStep == .solution {
+                scheduleSolutionTypewriterTransition()
+            }
+            if currentStep == .solutionWays {
+                scheduleSolutionWaysTransition()
+            }
+            if currentStep == .recipeEditIntro {
+                scheduleRecipeUpgradeIntroAdvance()
+            }
             if currentStep == .recipeEditDemo {
                 Task {
                     await loadRecipeEditDemoIfNeeded()
                 }
             }
+            if currentStep == .paywallIntro {
+                schedulePaywallIntroPresentation()
+            }
         }
         .onDisappear {
             presetSelectionPulseTask?.cancel()
             solutionRevealTask?.cancel()
+            introAutoAdvanceTask?.cancel()
+            onboardingAutoAdvanceTask?.cancel()
             briefPrefetchTask?.cancel()
             persistDraftLocally()
         }
@@ -729,6 +761,8 @@ struct FirstLoginOnboardingView: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(OunjePalette.primaryText.opacity(currentStep.previous == nil ? 0.2 : 0.9))
                     .frame(width: 30, height: 30)
+                    .frame(width: 56, height: 56)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(currentStep.previous == nil)
@@ -781,8 +815,12 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var introHeaderActionTitle: String {
+        if currentStep == .recipeEditIntro || currentStep == .paywallIntro {
+            return ""
+        }
+
         if currentStep == .address {
-            return isOnboardingInstacartConnected ? "Continue" : "Connect Later"
+            return isOnboardingInstacartConnected ? "Continue" : "Do later"
         }
 
         if currentStep == .recipeEditDemo {
@@ -897,7 +935,9 @@ struct FirstLoginOnboardingView: View {
         currentStep == .recipeStyle ||
         currentStep == .allergies ||
         currentStep == .diets ||
+        currentStep == .recipeEditIntro ||
         currentStep == .recipeEditDemo ||
+        currentStep == .paywallIntro ||
         currentStep == .budget ||
         currentStep == .ordering ||
         currentStep == .address
@@ -941,6 +981,8 @@ struct FirstLoginOnboardingView: View {
             allergyStepContent
         case .diets:
             dietStepContent
+        case .recipeEditIntro:
+            recipeUpgradeIntroStepContent
         case .recipeEditDemo:
             recipeEditDemoStepContent
         case .cuisines:
@@ -955,6 +997,8 @@ struct FirstLoginOnboardingView: View {
             orderingStepContent
         case .address:
             addressStepContent
+        case .paywallIntro:
+            paywallIntroStepContent
         }
     }
 
@@ -983,7 +1027,7 @@ struct FirstLoginOnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 324)
 
-            Text("\(selectedFoodChallenges.count)/2")
+            Text("\(selectedFoodChallenges.count)/\(foodGoalSelectionLimit)")
                 .font(.system(size: 12, weight: .black, design: .rounded))
                 .foregroundStyle(selectedFoodChallenges.isEmpty ? OunjePalette.secondaryText : currentStepAccent)
 
@@ -1023,6 +1067,28 @@ struct FirstLoginOnboardingView: View {
             }
             .frame(maxWidth: 352)
         }
+    }
+
+    private var recipeUpgradeIntroStepContent: some View {
+        VStack {
+            Spacer(minLength: 0)
+
+            Text("Upgrade any recipe to fit you")
+                .font(.system(size: 35, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 340)
+                .opacity(recipeUpgradeIntroTextVisible ? 1 : 0)
+                .offset(x: recipeUpgradeIntroTextExiting ? 110 : (recipeUpgradeIntroTextVisible ? 0 : -40))
+                .scaleEffect(recipeUpgradeIntroTextVisible && !recipeUpgradeIntroTextExiting ? 1 : 0.96)
+                .animation(.spring(response: 0.34, dampingFraction: 0.84), value: recipeUpgradeIntroTextVisible)
+                .animation(.easeInOut(duration: 0.28), value: recipeUpgradeIntroTextExiting)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var recipeEditDemoStepContent: some View {
@@ -1088,6 +1154,18 @@ struct FirstLoginOnboardingView: View {
         }
         .padding(.top, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var paywallIntroStepContent: some View {
+        OnboardingAutoTransitionPage(
+            eyebrow: "All set",
+            title: "One last thing",
+            subtitle: "Your setup is ready. Start your trial to unlock recipe upgrades, personalized prep, and smart carts.",
+            chips: ["Style saved", "Profile ready", "Trial next"],
+            accent: currentStepAccent,
+            showsConfetti: true
+        )
+        .onAppear(perform: schedulePaywallIntroPresentation)
     }
 
     private struct OnboardingRecipeEditDemoPickerGrid: View {
@@ -1184,7 +1262,7 @@ struct FirstLoginOnboardingView: View {
         return VStack {
             Spacer(minLength: 0)
 
-            Text(profile.headline)
+            Text(solutionTypedHeadline(for: profile.headline))
                 .font(.system(size: 34, weight: .black, design: .rounded))
                 .foregroundStyle(OunjePalette.primaryText)
                 .multilineTextAlignment(.center)
@@ -1193,15 +1271,12 @@ struct FirstLoginOnboardingView: View {
                 .minimumScaleFactor(0.88)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 356)
-            .opacity(solutionAnimationVisible ? 1 : 0)
-            .offset(x: solutionAnimationVisible ? 0 : -70, y: solutionAnimationVisible ? 0 : 10)
-            .scaleEffect(solutionAnimationVisible ? 1 : 0.96)
-            .animation(.spring(response: 0.48, dampingFraction: 0.84), value: solutionAnimationVisible)
+                .opacity(solutionTypedCharacterCount > 0 ? 1 : 0)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .onAppear(perform: revealSolutionPage)
+        .onAppear(perform: scheduleSolutionTypewriterTransition)
     }
 
     private var solutionWaysStepContent: some View {
@@ -1210,19 +1285,10 @@ struct FirstLoginOnboardingView: View {
         return VStack(spacing: 42) {
             Spacer(minLength: 0)
 
-            VStack(spacing: 10) {
-                Text("Here's how we help you")
-                    .font(.system(size: 33, weight: .black, design: .rounded))
-                    .foregroundStyle(OunjePalette.primaryText)
-                    .multilineTextAlignment(.center)
-
-                Text("Personalized from what you picked.")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .multilineTextAlignment(.center)
-            }
-            .opacity(solutionAnimationVisible ? 1 : 0)
-            .offset(y: solutionAnimationVisible ? 0 : 18)
+            Text("Here's how Ounje helps you")
+                .font(.system(size: 33, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
 
             VStack(alignment: .leading, spacing: 30) {
                 ForEach(items.indices, id: \.self) { index in
@@ -1245,7 +1311,7 @@ struct FirstLoginOnboardingView: View {
                         }
                     }
                     .opacity(solutionHelpVisibleCount > index ? 1 : 0)
-                    .offset(x: solutionHelpVisibleCount > index ? 0 : 32)
+                    .offset(x: solutionHelpVisibleCount > index ? 0 : 26)
                     .animation(.spring(response: 0.42, dampingFraction: 0.82), value: solutionHelpVisibleCount)
                 }
             }
@@ -1254,7 +1320,7 @@ struct FirstLoginOnboardingView: View {
             Spacer(minLength: 48)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .onAppear(perform: revealSolutionPage)
+        .onAppear(perform: scheduleSolutionWaysTransition)
     }
 
     private var allergyStepContent: some View {
@@ -2026,6 +2092,8 @@ struct FirstLoginOnboardingView: View {
             return true
         case .diets:
             return true
+        case .recipeEditIntro:
+            return true
         case .recipeEditDemo:
             return hasCompletedRecipeEditDemo
         case .cuisines:
@@ -2039,6 +2107,8 @@ struct FirstLoginOnboardingView: View {
         case .ordering:
             return true
         case .address:
+            return true
+        case .paywallIntro:
             return true
         }
     }
@@ -2129,6 +2199,15 @@ struct FirstLoginOnboardingView: View {
         }
 
         guard canAdvanceCurrentStep, let next = currentStep.next else { return }
+        persistDraftForResume(step: next)
+        stepTransitionDirection = 1
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            currentStep = next
+        }
+    }
+
+    private func advanceFromAutoTransition() {
+        guard let next = currentStep.next else { return }
         persistDraft(step: next)
         stepTransitionDirection = 1
         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
@@ -2137,10 +2216,81 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func advanceIntroChoice(after delay: TimeInterval) {
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard usesIntroChoiceLayout, canAdvanceCurrentStep else { return }
+        let scheduledStep = currentStep
+        let effectiveDelay = max(delay, 0.42)
+        introAutoAdvanceTask?.cancel()
+        introAutoAdvanceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(effectiveDelay * 1_000_000_000))
+            guard !Task.isCancelled,
+                  currentStep == scheduledStep,
+                  usesIntroChoiceLayout,
+                  canAdvanceCurrentStep
+            else { return }
             advance()
+        }
+    }
+
+    private func scheduleRecipeUpgradeIntroAdvance() {
+        onboardingAutoAdvanceTask?.cancel()
+        recipeUpgradeIntroTextVisible = false
+        recipeUpgradeIntroTextExiting = false
+        onboardingAutoAdvanceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled, currentStep == .recipeEditIntro else { return }
+            recipeUpgradeIntroTextVisible = true
+            try? await Task.sleep(nanoseconds: 1_350_000_000)
+            guard !Task.isCancelled, currentStep == .recipeEditIntro else { return }
+            recipeUpgradeIntroTextExiting = true
+            try? await Task.sleep(nanoseconds: 360_000_000)
+            guard !Task.isCancelled, currentStep == .recipeEditIntro else { return }
+            advanceFromAutoTransition()
+        }
+    }
+
+    private func schedulePaywallIntroPresentation() {
+        onboardingAutoAdvanceTask?.cancel()
+        onboardingAutoAdvanceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_750_000_000)
+            guard !Task.isCancelled, currentStep == .paywallIntro else { return }
+            finishOnboardingOrPresentPaywall()
+        }
+    }
+
+    private func scheduleSolutionTypewriterTransition() {
+        onboardingAutoAdvanceTask?.cancel()
+        solutionAnimationVisible = false
+        solutionAnimationExiting = false
+        solutionTypedCharacterCount = 0
+        solutionHelpVisibleCount = 0
+        onboardingAutoAdvanceTask = Task { @MainActor in
+            let headline = solutionProfile.headline
+            guard !headline.isEmpty else { return }
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            for characterCount in 1...headline.count {
+                try? await Task.sleep(nanoseconds: 28_000_000)
+                guard !Task.isCancelled, currentStep == .solution else { return }
+                solutionTypedCharacterCount = characterCount
+            }
+            try? await Task.sleep(nanoseconds: 1_450_000_000)
+            guard !Task.isCancelled, currentStep == .solution else { return }
+            advanceFromAutoTransition()
+        }
+    }
+
+    private func scheduleSolutionWaysTransition() {
+        onboardingAutoAdvanceTask?.cancel()
+        solutionHelpVisibleCount = 0
+        onboardingAutoAdvanceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 160_000_000)
+            guard !Task.isCancelled, currentStep == .solutionWays else { return }
+            for index in 1...solutionHelpItems.count {
+                solutionHelpVisibleCount = index
+                try? await Task.sleep(nanoseconds: 460_000_000)
+                guard !Task.isCancelled, currentStep == .solutionWays else { return }
+            }
+            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            guard !Task.isCancelled, currentStep == .solutionWays else { return }
+            advanceFromAutoTransition()
         }
     }
 
@@ -2201,7 +2351,7 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func moveForward(to step: SetupStep) {
-        persistDraft(step: step)
+        persistDraftForResume(step: step)
         stepTransitionDirection = 1
         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
             currentStep = step
@@ -2218,7 +2368,7 @@ struct FirstLoginOnboardingView: View {
 
     private func goBack() {
         guard let previousStep = currentStep.previous else { return }
-        persistDraft(step: previousStep)
+        persistDraftForResume(step: previousStep)
         stepTransitionDirection = -1
         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
             currentStep = previousStep
@@ -2251,14 +2401,14 @@ struct FirstLoginOnboardingView: View {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
             if selectedFoodChallenges.contains(option) {
                 selectedFoodChallenges.remove(option)
-            } else if selectedFoodChallenges.count < 2 {
+            } else if selectedFoodChallenges.count < foodGoalSelectionLimit {
                 selectedFoodChallenges.insert(option)
             }
         }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         persistDraft()
 
-        if selectedFoodChallenges.count == 2 {
+        if selectedFoodChallenges.count == foodGoalSelectionLimit {
             advanceIntroChoice(after: 0.16)
         }
     }
@@ -2275,6 +2425,12 @@ struct FirstLoginOnboardingView: View {
         persistDraft()
     }
 
+    private func solutionTypedHeadline(for headline: String) -> String {
+        guard currentStep == .solution else { return headline }
+        let visibleCount = min(max(0, solutionTypedCharacterCount), headline.count)
+        return String(headline.prefix(visibleCount))
+    }
+
     private func revealSolutionPage() {
         let stepRawValue = currentStep.rawValue
         let shouldAutoAdvance = stepTransitionDirection >= 0
@@ -2282,11 +2438,29 @@ struct FirstLoginOnboardingView: View {
 
         if completedSolutionAnimationSteps.contains(stepRawValue) {
             solutionAnimationVisible = true
+            solutionAnimationExiting = false
+            solutionTypedCharacterCount = currentStep == .solution ? solutionProfile.headline.count : 0
             solutionHelpVisibleCount = solutionHelpItems.count
+            if shouldAutoAdvance {
+                solutionRevealTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 1_150_000_000)
+                    guard !Task.isCancelled,
+                          currentStep == .solution || currentStep == .solutionWays
+                    else { return }
+                    solutionAnimationExiting = true
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard !Task.isCancelled,
+                          currentStep == .solution || currentStep == .solutionWays
+                    else { return }
+                    advanceFromAutoTransition()
+                }
+            }
             return
         }
 
         solutionAnimationVisible = false
+        solutionAnimationExiting = false
+        solutionTypedCharacterCount = 0
         solutionHelpVisibleCount = 0
         solutionRevealTask = Task { @MainActor in
             guard currentStep == .solution || currentStep == .solutionWays else { return }
@@ -2297,26 +2471,39 @@ struct FirstLoginOnboardingView: View {
             }
 
             if currentStep == .solution {
-                try? await Task.sleep(nanoseconds: 600_000_000)
+                let headline = solutionProfile.headline
+                for characterCount in 1...headline.count {
+                    try? await Task.sleep(nanoseconds: 28_000_000)
+                    guard currentStep == .solution else { return }
+                    solutionTypedCharacterCount = characterCount
+                }
+
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard currentStep == .solution else { return }
                 completedSolutionAnimationSteps.insert(stepRawValue)
                 if shouldAutoAdvance {
-                    advance()
+                    solutionAnimationExiting = true
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard currentStep == .solution else { return }
+                    advanceFromAutoTransition()
                 }
                 return
             }
 
             for index in 1...solutionHelpItems.count {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 440_000_000)
                 guard currentStep == .solutionWays else { return }
                 solutionHelpVisibleCount = index
             }
 
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard currentStep == .solutionWays else { return }
             completedSolutionAnimationSteps.insert(stepRawValue)
             if shouldAutoAdvance {
-                advance()
+                solutionAnimationExiting = true
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard currentStep == .solutionWays else { return }
+                advanceFromAutoTransition()
             }
         }
     }
@@ -2652,10 +2839,14 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func submit() {
+        finishOnboardingOrPresentPaywall()
+    }
+
+    private func finishOnboardingOrPresentPaywall() {
         guard canSubmit else { return }
 
         let completedProfile = draftProfile
-        let completedStep = SetupStep.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue
+        let completedStep = SetupStep.completedRawValue
         Task(priority: .utility) {
             _ = try? await SupabaseAgentBriefService.shared.generateBrief(for: completedProfile)
         }
@@ -2673,7 +2864,7 @@ struct FirstLoginOnboardingView: View {
 
     private func completePendingOnboardingAfterPaywall() {
         guard let pendingProfile = pendingCompletedOnboardingProfile else { return }
-        let pendingStep = pendingCompletedOnboardingStep ?? (SetupStep.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue)
+        let pendingStep = pendingCompletedOnboardingStep ?? SetupStep.completedRawValue
         pendingCompletedOnboardingProfile = nil
         pendingCompletedOnboardingStep = nil
         hasCompletedOnboardingBeforePaywall = true
@@ -2699,6 +2890,11 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func hydrateDraftFromStore() {
+        if OunjeLaunchFlags.forceOnboardingIncomplete {
+            hydrateFreshForcedOnboardingDraft()
+            return
+        }
+
         let sourceProfile = store.profile ?? .starter
 
         if !store.isOnboarded {
@@ -2762,7 +2958,7 @@ struct FirstLoginOnboardingView: View {
         budgetWindow = sourceProfile.budgetWindow
         previousBudgetWindow = sourceProfile.budgetWindow
         budgetFlexibilityScore = UserProfile.starter.budgetFlexibility.calibrationScore
-        allergiesText = store.lastOnboardingStep >= SetupStep.allergies.rawValue
+        allergiesText = SetupStep.hasReached(.allergies, storedRawValue: store.lastOnboardingStep)
             ? sourceProfile.absoluteRestrictions.joined(separator: ", ")
             : ""
         extraFavoriteFoodsText = additionalDraftEntryText(
@@ -2780,9 +2976,56 @@ struct FirstLoginOnboardingView: View {
         postalCode = sourceProfile.deliveryAddress.postalCode
         deliveryNotes = sourceProfile.deliveryAddress.deliveryNotes
         purchasingBehavior = sourceProfile.purchasingBehavior
-        orderingAutonomy = store.lastOnboardingStep >= SetupStep.ordering.rawValue
+        orderingAutonomy = SetupStep.hasReached(.ordering, storedRawValue: store.lastOnboardingStep)
             ? sourceProfile.orderingAutonomy
             : .suggestOnly
+        selectedTierRawValue = sourceProfile.pricingTier.rawValue
+    }
+
+    private func hydrateFreshForcedOnboardingDraft() {
+        let sourceProfile = UserProfile.starter
+
+        currentStep = .identity
+        hasCompletedRecipeEditDemo = false
+        preferredName = ""
+        selectedFoodPersona = ""
+        selectedFoodChallenges.removeAll()
+        selectedDietaryPatterns.removeAll()
+        selectedCuisines = Set(sourceProfile.preferredCuisines)
+        selectedCuisineCountries = Set(sourceProfile.cuisineCountries)
+        selectedFavoriteFoods = Set(sourceProfile.favoriteFoods)
+        selectedNeverIncludeFoods = Set(sourceProfile.neverIncludeFoods)
+        selectedGoals.removeAll()
+        missingEquipment.removeAll()
+        recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+        didChooseRecipeTypographyStyle = false
+        shouldUseBudgetGuardrail = false
+        cadence = sourceProfile.cadence
+        deliveryAnchorDay = sourceProfile.deliveryAnchorDay
+        deliveryTimeMinutes = sourceProfile.deliveryTimeMinutes
+        adults = sourceProfile.consumption.adults
+        kids = sourceProfile.consumption.kids
+        cooksForOthers = sourceProfile.cooksForOthers
+        mealsPerWeek = sourceProfile.consumption.mealsPerWeek
+        includeLeftovers = sourceProfile.consumption.includeLeftovers
+        budgetPerCycle = sourceProfile.budgetPerCycle
+        syncBudgetInput()
+        budgetWindow = sourceProfile.budgetWindow
+        previousBudgetWindow = sourceProfile.budgetWindow
+        budgetFlexibilityScore = sourceProfile.budgetFlexibility.calibrationScore
+        allergiesText = ""
+        otherAllergyInput = ""
+        extraFavoriteFoodsText = ""
+        neverIncludeText = ""
+        addressLine1 = ""
+        addressLine2 = ""
+        city = ""
+        region = ""
+        postalCode = ""
+        deliveryNotes = ""
+        addressAutocomplete.query = ""
+        purchasingBehavior = sourceProfile.purchasingBehavior
+        orderingAutonomy = .suggestOnly
         selectedTierRawValue = sourceProfile.pricingTier.rawValue
     }
 
@@ -2832,7 +3075,13 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func persistDraftLocally() {
+        guard !currentStep.isAutoTransition else { return }
         store.saveOnboardingDraft(draftProfile, step: currentStep.rawValue)
+    }
+
+    private func persistDraftForResume(step: SetupStep) {
+        guard !step.isAutoTransition else { return }
+        persistDraft(step: step)
     }
 
     private func persistDraft(step: SetupStep? = nil) {
@@ -2920,7 +3169,9 @@ struct FirstLoginOnboardingView: View {
         case recipeStyle = 12
         case allergies = 5
         case diets = 13
+        case recipeEditIntro = 15
         case recipeEditDemo = 14
+        case paywallIntro = 16
         case cuisines = 6
         case household = 7
         case kitchen = 8
@@ -2936,12 +3187,18 @@ struct FirstLoginOnboardingView: View {
                 .solutionWays,
                 .allergies,
                 .diets,
+                .recipeEditIntro,
                 .recipeEditDemo,
                 .ordering,
                 .address,
                 .budget,
-                .recipeStyle
+                .recipeStyle,
+                .paywallIntro
             ]
+        }
+
+        static var completedRawValue: Int {
+            Self.allCases.last?.rawValue ?? SetupStep.address.rawValue
         }
 
         var index: Int {
@@ -2964,8 +3221,12 @@ struct FirstLoginOnboardingView: View {
                 return "Food rules"
             case .diets:
                 return "Diet"
+            case .recipeEditIntro:
+                return "Recipe upgrades"
             case .recipeEditDemo:
                 return "Recipe edit"
+            case .paywallIntro:
+                return "Trial"
             case .cuisines:
                 return "Taste"
             case .household:
@@ -2997,8 +3258,12 @@ struct FirstLoginOnboardingView: View {
                 return "Allergies and hard stops beat every recipe suggestion."
             case .diets:
                 return "Choose any eating styles Ounje should keep in mind."
+            case .recipeEditIntro:
+                return "Ounje can adapt recipes to your taste, diet, and routine."
             case .recipeEditDemo:
                 return "See how recipe edits work before Ounje starts planning for you."
+            case .paywallIntro:
+                return "Your setup is ready before the trial starts."
             case .cuisines:
                 return "These are the plates Ounje should reach for first."
             case .household:
@@ -3030,8 +3295,12 @@ struct FirstLoginOnboardingView: View {
                 return "Set the rules Ounje cannot break."
             case .diets:
                 return "Set the eating styles Ounje should understand."
+            case .recipeEditIntro:
+                return "See how Ounje upgrades recipes."
             case .recipeEditDemo:
                 return "Pick a recipe and try a guided edit."
+            case .paywallIntro:
+                return "Get ready to start your trial."
             case .cuisines:
                 return "Point Ounje toward the food you actually want."
             case .household:
@@ -3063,8 +3332,12 @@ struct FirstLoginOnboardingView: View {
                 return ["✅", "🥗", "🛡️"]
             case .diets:
                 return ["🥗", "✓", "AI"]
+            case .recipeEditIntro:
+                return ["✨", "🍽️", "✓"]
             case .recipeEditDemo:
                 return ["✍️", "🍽️", "✨"]
+            case .paywallIntro:
+                return ["🎉", "✓", "→"]
             case .cuisines:
                 return ["🍛", "🌮", "🍜"]
             case .household:
@@ -3096,8 +3369,12 @@ struct FirstLoginOnboardingView: View {
                 return "checklist"
             case .diets:
                 return "leaf.fill"
+            case .recipeEditIntro:
+                return "sparkles"
             case .recipeEditDemo:
                 return "wand.and.stars"
+            case .paywallIntro:
+                return "party.popper.fill"
             case .cuisines:
                 return "globe.americas.fill"
             case .household:
@@ -3125,6 +3402,13 @@ struct FirstLoginOnboardingView: View {
             return Self.allCases[index - 1]
         }
 
+        var isAutoTransition: Bool {
+            self == .solution ||
+            self == .solutionWays ||
+            self == .recipeEditIntro ||
+            self == .paywallIntro
+        }
+
         static func resumeStep(from rawValue: Int) -> SetupStep {
             guard rawValue >= SetupStep.identity.rawValue else { return .identity }
             let maxActiveRawValue = Self.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue
@@ -3135,6 +3419,172 @@ struct FirstLoginOnboardingView: View {
             }
             return Self.allCases.first(where: { $0.rawValue > clampedValue }) ?? .identity
         }
+
+        static func hasReached(_ step: SetupStep, storedRawValue: Int) -> Bool {
+            orderedIndex(for: storedRawValue) >= step.index
+        }
+
+        static func latestStoredRawValue(_ lhs: Int, _ rhs: Int) -> Int {
+            let lhsIndex = orderedIndex(for: lhs)
+            let rhsIndex = orderedIndex(for: rhs)
+
+            if lhsIndex == rhsIndex {
+                return max(lhs, rhs)
+            }
+
+            return lhsIndex > rhsIndex ? lhs : rhs
+        }
+
+        private static func orderedIndex(for rawValue: Int) -> Int {
+            guard rawValue >= SetupStep.identity.rawValue else { return -1 }
+
+            if let exactStep = SetupStep(rawValue: rawValue),
+               let exactIndex = Self.allCases.firstIndex(of: exactStep) {
+                return exactIndex
+            }
+
+            return resumeStep(from: rawValue).index
+        }
+    }
+}
+
+private struct OnboardingAutoTransitionPage: View {
+    let eyebrow: String
+    let title: String
+    let subtitle: String
+    let chips: [String]
+    let accent: Color
+    let showsConfetti: Bool
+
+    var body: some View {
+        ZStack {
+            if showsConfetti {
+                OnboardingConfettiRain()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+
+            VStack(spacing: 18) {
+                Spacer(minLength: 0)
+
+                VStack(spacing: 12) {
+                    Text(eyebrow.uppercased())
+                        .font(.system(size: 12, weight: .black, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundStyle(accent)
+
+                    Text(title)
+                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(-1)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 340)
+
+                    Text(subtitle)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 332)
+                }
+
+                HStack(spacing: 8) {
+                    ForEach(chips, id: \.self) { chip in
+                        Text(chip)
+                            .font(.system(size: 12, weight: .black, design: .rounded))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                            .padding(.horizontal, 11)
+                            .frame(height: 34)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(OunjePalette.panel)
+                                    .overlay(
+                                        Capsule(style: .continuous)
+                                            .stroke(accent.opacity(0.34), lineWidth: 1)
+                                    )
+                            )
+                    }
+                }
+                .frame(maxWidth: 350)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct OnboardingConfettiRain: View {
+    @State private var isFalling = false
+
+    private let pieces = Array(0..<42)
+    private let colors: [Color] = [
+        Color(hex: "63D471"),
+        Color(hex: "F6E7B0"),
+        Color(hex: "FFFFFF"),
+        Color(hex: "9BE7B0"),
+        Color(hex: "F8B36A")
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                ForEach(pieces, id: \.self) { index in
+                    let startX = xPosition(for: index, width: proxy.size.width)
+                    let drift = CGFloat((index % 7) - 3) * 14
+                    let targetY = proxy.size.height * CGFloat(0.30 + Double(index % 8) * 0.045)
+                    let color = colors[index % colors.count]
+
+                    OnboardingConfettiPiece(color: color, isCapsule: index % 3 == 0)
+                        .frame(width: index % 3 == 0 ? 7 : 8, height: index % 3 == 0 ? 15 : 8)
+                        .rotationEffect(.degrees(isFalling ? Double(index * 31 + 120) : Double(index * 9)))
+                        .position(x: startX, y: -30)
+                        .offset(x: isFalling ? drift : 0, y: isFalling ? targetY + 30 : 0)
+                        .opacity(isFalling ? 0.95 : 0)
+                        .animation(
+                            .easeOut(duration: 1.05).delay(Double(index % 10) * 0.025),
+                            value: isFalling
+                        )
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .onAppear {
+                isFalling = false
+                DispatchQueue.main.async {
+                    isFalling = true
+                }
+            }
+        }
+    }
+
+    private func xPosition(for index: Int, width: CGFloat) -> CGFloat {
+        let slots = max(1, pieces.count - 1)
+        let base = CGFloat(index) / CGFloat(slots)
+        let wave = sin(Double(index) * 1.7) * 0.045
+        return width * min(max(base + wave, 0.04), 0.96)
+    }
+}
+
+private struct OnboardingConfettiPiece: View {
+    let color: Color
+    let isCapsule: Bool
+
+    var body: some View {
+        Group {
+            if isCapsule {
+                Capsule(style: .continuous)
+                    .fill(color)
+            } else {
+                Circle()
+                    .fill(color)
+            }
+        }
+        .shadow(color: color.opacity(0.24), radius: 5, y: 3)
     }
 }
 

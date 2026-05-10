@@ -972,7 +972,7 @@ private struct AuthenticationView: View {
         let cachedProfile = isSameCachedUser ? store.profile : nil
         let cachedCompleted = isSameCachedUser && store.isOnboarded && cachedProfile != nil
         let initialStep = cachedCompleted
-            ? FirstLoginOnboardingView.SetupStep.address.rawValue
+            ? FirstLoginOnboardingView.SetupStep.completedRawValue
             : (isSameCachedUser ? store.lastOnboardingStep : 0)
 
         store.signIn(
@@ -1003,9 +1003,19 @@ private struct AuthenticationView: View {
             let persistedOnboarded = remoteState.onboarded || cachedCompleted
             let resolvedOnboarded = OunjeLaunchFlags.forceOnboardingIncomplete ? false : persistedOnboarded
             let resolvedProfile = remoteState.profile ?? cachedProfile
-            let resolvedStep = persistedOnboarded
-                ? max(remoteState.lastOnboardingStep, FirstLoginOnboardingView.SetupStep.address.rawValue)
-                : max(remoteState.lastOnboardingStep, isSameCachedUser ? store.lastOnboardingStep : 0)
+            let resolvedStep = OunjeLaunchFlags.forceOnboardingIncomplete
+                ? 0
+                : (
+                    persistedOnboarded
+                        ? FirstLoginOnboardingView.SetupStep.latestStoredRawValue(
+                            remoteState.lastOnboardingStep,
+                            FirstLoginOnboardingView.SetupStep.completedRawValue
+                        )
+                        : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(
+                            remoteState.lastOnboardingStep,
+                            isSameCachedUser ? store.lastOnboardingStep : 0
+                        )
+                )
 
             store.signIn(
                 with: session,
@@ -8637,7 +8647,11 @@ private struct OnboardingPromptCard: View {
             return OunjePalette.accent
         case .diets:
             return OunjePalette.accent
+        case .recipeEditIntro:
+            return OunjePalette.accent
         case .recipeEditDemo:
+            return OunjePalette.accent
+        case .paywallIntro:
             return OunjePalette.accent
         case .cuisines:
             return Color(hex: "6AD6FF")

@@ -280,7 +280,7 @@ struct OunjePaywallHostView: View {
     }
 
     private var paywallSubtitle: String {
-        "Unlimited recipe imports, fully customizable prep, and an Instacart agent that finds better groceries for less."
+        "Unlimited recipe imports and AI recipe edits, personalized prep, and an Instacart agent that finds better groceries for less."
     }
 
     private var ctaTitle: String {

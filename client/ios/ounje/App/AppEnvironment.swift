@@ -205,7 +205,10 @@ final class MealPlanningAppStore: ObservableObject {
             loadRecurringPrepRecipesCache(for: session.userID)
         }
         remoteMealPrepCycleLoadState = .notRequested
-        if let remoteProfile {
+        if shouldForceOnboardingIncomplete {
+            profile = .starter
+            saveProfile()
+        } else if let remoteProfile {
             profile = remoteProfile
             saveProfile()
         } else if profile == nil {
@@ -215,8 +218,9 @@ final class MealPlanningAppStore: ObservableObject {
         authSession = session
         cachedLiveUserID = session.userID
         let effectiveOnboarded = shouldForceOnboardingIncomplete ? false : onboarded
+        let effectiveOnboardingStep = shouldForceOnboardingIncomplete ? 0 : remoteStep
         isOnboarded = effectiveOnboarded
-        lastOnboardingStep = remoteStep
+        lastOnboardingStep = effectiveOnboardingStep
         hasResolvedInitialState = true
         cacheAuthenticatedEntryRoute(effectiveOnboarded ? .planner : .onboarding)
         saveAuthSession(session)
@@ -473,9 +477,13 @@ final class MealPlanningAppStore: ObservableObject {
             let persistedOnboarded = remoteState.onboarded || cachedCompleted
             let resolvedOnboarded = shouldForceOnboardingIncomplete ? false : persistedOnboarded
             let recoveredProfile = remoteState.profile ?? profile
-            let recoveredStep = persistedOnboarded
-                ? remoteState.lastOnboardingStep
-                : max(remoteState.lastOnboardingStep, lastOnboardingStep)
+            let recoveredStep = shouldForceOnboardingIncomplete
+                ? 0
+                : (
+                    persistedOnboarded
+                        ? remoteState.lastOnboardingStep
+                        : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(remoteState.lastOnboardingStep, lastOnboardingStep)
+                )
 
             authSession = AuthSession(
                 provider: remoteState.authProvider ?? session.provider,
@@ -487,7 +495,7 @@ final class MealPlanningAppStore: ObservableObject {
                 refreshToken: session.refreshToken
             )
             isOnboarded = resolvedOnboarded
-            profile = recoveredProfile ?? (resolvedOnboarded ? nil : .starter)
+            profile = shouldForceOnboardingIncomplete ? .starter : (recoveredProfile ?? (resolvedOnboarded ? nil : .starter))
             lastOnboardingStep = max(0, recoveredStep)
             cacheAuthenticatedEntryRoute(resolvedOnboarded ? .planner : .onboarding)
 
@@ -1354,7 +1362,7 @@ final class MealPlanningAppStore: ObservableObject {
         hasPersistedOnboardingState = UserDefaults.standard.object(forKey: onboardedKey) != nil
         let persistedOnboardingState = UserDefaults.standard.bool(forKey: onboardedKey)
         isOnboarded = shouldForceOnboardingIncomplete ? false : persistedOnboardingState
-        lastOnboardingStep = UserDefaults.standard.integer(forKey: onboardingStepKey)
+        lastOnboardingStep = shouldForceOnboardingIncomplete ? 0 : UserDefaults.standard.integer(forKey: onboardingStepKey)
         if let rawRoute = UserDefaults.standard.string(forKey: cachedEntryRouteKey) {
             cachedAuthenticatedEntryRoute = CachedAuthenticatedEntryRoute(rawValue: rawRoute)
         }

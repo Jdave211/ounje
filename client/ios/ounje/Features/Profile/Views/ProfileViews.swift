@@ -2779,6 +2779,7 @@ class GroceryProvidersViewModel: ObservableObject {
 }
 
 struct GroceryProviderConnectSheet: View {
+    @EnvironmentObject private var store: MealPlanningAppStore
     let provider: GroceryProviderInfo
     let userId: String
     let accessToken: String?
@@ -3033,12 +3034,30 @@ struct GroceryProviderConnectSheet: View {
         defer { isSaving = false }
 
         do {
+            let liveSession = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+            let resolvedUserID = liveSession?.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? liveSession!.userID
+                : userId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedAccessToken = liveSession?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? liveSession?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
+                : accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !resolvedUserID.isEmpty else {
+                phase = .error("Your Ounje session is missing. Close this sheet and sign in again.")
+                return
+            }
+
+            guard let resolvedAccessToken, !resolvedAccessToken.isEmpty else {
+                phase = .error("Your login session expired. Close this sheet and sign in again.")
+                return
+            }
+
             let cookies = await readProviderCookiesFromWebLogin()
             guard !cookies.isEmpty else {
                 phase = .error("No session found yet. Finish logging in, then tap Link session again.")
                 return
             }
-            try await saveCookies(cookies, accessToken: accessToken)
+            try await saveCookies(cookies, userID: resolvedUserID, accessToken: resolvedAccessToken)
             phase = .connected
             onConnected()
         } catch {
@@ -3073,23 +3092,35 @@ struct GroceryProviderConnectSheet: View {
         }
     }
 
-    private func saveCookies(_ cookies: [[String: Any]], accessToken: String?) async throws {
+    private func saveCookies(_ cookies: [[String: Any]], userID: String, accessToken: String) async throws {
         guard let url = URL(string: "\(OunjeDevelopmentServer.workerBaseURL)/v1/connect/\(provider.id)/save-session") else {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(userId, forHTTPHeaderField: "x-user-id")
-        if let accessToken, !accessToken.isEmpty {
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        }
+        request.setValue(userID, forHTTPHeaderField: "x-user-id")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["cookies": cookies])
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let backendError = (try? JSONDecoder().decode(ProviderConnectAPIErrorPayload.self, from: data))?.error
+            throw ProviderConnectAPIError(message: backendError ?? "Link session failed (\(httpResponse.statusCode)).")
+        }
     }
+}
+
+private struct ProviderConnectAPIErrorPayload: Decodable {
+    let error: String?
+}
+
+private struct ProviderConnectAPIError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
 }
 
 struct ProviderLoginWebView: UIViewRepresentable {

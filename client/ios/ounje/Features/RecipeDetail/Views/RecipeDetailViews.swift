@@ -83,6 +83,8 @@ struct RecipeDetailExperienceView: View {
     @State private var webVideoAction: RecipeWebVideoAction = .none
     @State private var detailChromeVisible = false
     @State private var hasScrolledAdaptedOnboardingRecipe = false
+    @State private var adaptedOnboardingCueTarget: OnboardingAdaptedRecipeCueTarget = .save
+    @State private var adaptedOnboardingCueTask: Task<Void, Never>?
 
     private let detailBackground = OunjePalette.background
     private let sectionDivider = OunjePalette.stroke
@@ -181,11 +183,57 @@ struct RecipeDetailExperienceView: View {
         onboardingContext?.continueAction
     }
 
+    private var isAdaptedOnboardingDemo: Bool {
+        onboardingContinueAction != nil
+    }
+
+    private var showsRecipeSaveAction: Bool {
+        !isOnboardingDemo || isAdaptedOnboardingDemo
+    }
+
+    private var showsRecipeAskAction: Bool {
+        !isOnboardingDemo || showsOnboardingAskCue
+    }
+
+    private var showsRecipeSecondaryActions: Bool {
+        !isOnboardingDemo
+    }
+
     private func markAdaptedOnboardingRecipeScrolled() {
         guard onboardingContinueAction != nil, !hasScrolledAdaptedOnboardingRecipe else { return }
+        adaptedOnboardingCueTask?.cancel()
         withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
             hasScrolledAdaptedOnboardingRecipe = true
+            adaptedOnboardingCueTarget = .continue
         }
+    }
+
+    private func scheduleAdaptedOnboardingSaveCueTransition() {
+        guard isAdaptedOnboardingDemo, adaptedOnboardingCueTarget == .save else { return }
+        adaptedOnboardingCueTask?.cancel()
+        adaptedOnboardingCueTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_100_000_000)
+            guard !Task.isCancelled, isAdaptedOnboardingDemo, adaptedOnboardingCueTarget == .save else { return }
+            withAnimation(.spring(response: 0.62, dampingFraction: 0.86)) {
+                adaptedOnboardingCueTarget = .scroll
+            }
+        }
+    }
+
+    private func advanceAdaptedOnboardingCueToScroll() {
+        guard isAdaptedOnboardingDemo, !hasScrolledAdaptedOnboardingRecipe else { return }
+        adaptedOnboardingCueTask?.cancel()
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.84)) {
+            adaptedOnboardingCueTarget = .scroll
+        }
+    }
+
+    private func handleRecipeSaveTap() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+            savedStore.toggle(presentedRecipe.recipeCard)
+        }
+
+        advanceAdaptedOnboardingCueToScroll()
     }
 
     private var descriptionText: String? {
@@ -518,38 +566,45 @@ struct RecipeDetailExperienceView: View {
                                         }
                                     }
 
-                                    if !isOnboardingDemo || onboardingContinueAction == nil {
+                                    if showsRecipeSaveAction || showsRecipeAskAction || showsRecipeSecondaryActions {
                                         HStack(spacing: 8) {
-                                            if !isOnboardingDemo {
+                                            if showsRecipeSaveAction {
                                                 RecipeDetailCompactActionButton(
                                                     title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Save",
                                                     systemImage: savedStore.isSaved(presentedRecipe.recipeCard) ? "bookmark.fill" : "bookmark",
                                                     compact: true
                                                 ) {
-                                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
-                                                        savedStore.toggle(presentedRecipe.recipeCard)
+                                                    handleRecipeSaveTap()
+                                                }
+                                                .overlay(alignment: .topTrailing) {
+                                                    if isAdaptedOnboardingDemo, adaptedOnboardingCueTarget == .save {
+                                                        OnboardingSaveRecipeCueView()
+                                                            .allowsHitTesting(false)
+                                                            .accessibilityHidden(true)
                                                     }
                                                 }
                                             }
 
-                                            RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
-                                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                                showAskSheet = true
-                                            }
-                                            .overlay(alignment: .topTrailing) {
-                                                if showsOnboardingAskCue {
-                                                    OnboardingAskButtonCueView()
+                                            if showsRecipeAskAction {
+                                                RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
+                                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                                    showAskSheet = true
+                                                }
+                                                .overlay(alignment: .topTrailing) {
+                                                    if showsOnboardingAskCue {
+                                                        OnboardingAskButtonCueView()
+                                                    }
                                                 }
                                             }
 
-                                            if !isOnboardingDemo {
+                                            if showsRecipeSecondaryActions {
                                                 RecipeDetailCompactActionButton(title: "Story", showsInstagramGlyph: true, compact: true) {
                                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                                     showStorySheet = true
                                                 }
                                             }
 
-                                            if hasVideoSource && !isOnboardingDemo {
+                                            if hasVideoSource && showsRecipeSecondaryActions {
                                                 RecipeDetailCompactActionButton(title: "Watch", systemImage: "play.fill", compact: true) {
                                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                                     toggleInlineVideo()
@@ -706,9 +761,10 @@ struct RecipeDetailExperienceView: View {
                     .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: -8, delay: 0.02))
                 }
                 .overlay(alignment: .center) {
-                    if onboardingContinueAction != nil {
+                    if onboardingContinueAction != nil, adaptedOnboardingCueTarget != .save {
                         OnboardingAdaptedRecipeNavigationCueView(
-                            isTargetingContinue: hasScrolledAdaptedOnboardingRecipe,
+                            target: adaptedOnboardingCueTarget,
+                            availableWidth: geometry.size.width,
                             availableHeight: geometry.size.height
                         )
                             .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -865,6 +921,11 @@ struct RecipeDetailExperienceView: View {
         }
         .onAppear {
             triggerChromeReveal()
+            scheduleAdaptedOnboardingSaveCueTransition()
+        }
+        .onDisappear {
+            adaptedOnboardingCueTask?.cancel()
+            adaptedOnboardingCueTask = nil
         }
         .onChange(of: servingsCount) { newValue in
             guard isInCurrentPrep else { return }
@@ -3182,7 +3243,7 @@ struct RecipeAskSheet: View {
                             .underline(true, color: OunjePalette.primaryText.opacity(0.86))
                         + Text(isLiveMode
                             ? " recipe? I can modify it based on your dietary restrictions, taste preferences and more. Just ask!"
-                            : " recipe. I already planned the exact changes so you can preview the experience."
+                            : " recipe? Choose a direction and Ounje will show you how it changes."
                         )
                     )
                     .font(.system(size: 16, weight: .medium))
@@ -3195,7 +3256,7 @@ struct RecipeAskSheet: View {
                     RecipeAskGeneratingPanel(
                         message: isLiveMode
                             ? "Great! Give me a few seconds while I prepare a different recipe for you."
-                            : "Great. Give me a couple seconds while I apply the planned edit.",
+                            : "Great. Give me a couple seconds while I upgrade the recipe.",
                         supportingText: nil
                     )
                         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
@@ -4477,30 +4538,127 @@ struct OnboardingInspirationCueView: View {
     }
 }
 
-struct OnboardingAdaptedRecipeNavigationCueView: View {
-    let isTargetingContinue: Bool
+private enum OnboardingAdaptedRecipeCueTarget {
+    case save
+    case scroll
+    case `continue`
+}
+
+private struct OnboardingSaveRecipeCueView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var startDate: Date?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+            let offset = reduceMotion ? CGPoint(x: 10, y: 20) : cueOffset(at: timeline.date)
+
+            OnboardingTapCueView(label: "Save recipe", labelOffset: CGSize(width: -28, height: -34))
+                .scaleEffect(0.9)
+                .offset(x: offset.x, y: offset.y)
+        }
+        .onAppear {
+            if startDate == nil {
+                startDate = Date()
+            }
+        }
+    }
+
+    private func cueOffset(at date: Date) -> CGPoint {
+        let introDuration: TimeInterval = 1.05
+        let elapsed = max(0, date.timeIntervalSince(startDate ?? date))
+        let settledPoint = CGPoint(x: 10, y: 20)
+
+        if elapsed < introDuration {
+            let progress = CGFloat(elapsed / introDuration)
+            let eased = progress * progress * (3 - 2 * progress)
+            return CGPoint(
+                x: 132 + (settledPoint.x - 132) * eased,
+                y: 238 + (settledPoint.y - 238) * eased
+            )
+        }
+
+        let hoverElapsed = elapsed - introDuration
+        let cycle: TimeInterval = 3.2
+        let progress = hoverElapsed.truncatingRemainder(dividingBy: cycle) / cycle
+        let points = [
+            settledPoint,
+            CGPoint(x: 18, y: 8),
+            CGPoint(x: 0, y: 2),
+            CGPoint(x: 14, y: 24),
+            settledPoint
+        ]
+
+        return OnboardingCuePath.point(points: points, progress: progress, bobPhase: hoverElapsed)
+    }
+}
+
+private struct OnboardingAdaptedRecipeNavigationCueView: View {
+    let target: OnboardingAdaptedRecipeCueTarget
+    let availableWidth: CGFloat
     let availableHeight: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isDragging = false
 
+    private var labelText: String {
+        switch target {
+        case .scroll:
+            return "Scroll to review"
+        case .continue:
+            return "Finish onboarding"
+        case .save:
+            return ""
+        }
+    }
+
+    private var iconRotation: Double {
+        switch target {
+        case .scroll:
+            return 0
+        case .continue:
+            return -28
+        case .save:
+            return 10
+        }
+    }
+
+    private var cueOffset: CGSize {
+        switch target {
+        case .scroll:
+            return .zero
+        case .continue:
+            return CGSize(width: 14, height: max(96, availableHeight * 0.36))
+        case .save:
+            return .zero
+        }
+    }
+
+    private var hoverOffset: CGFloat {
+        guard !reduceMotion else { return 0 }
+        switch target {
+        case .scroll:
+            return isDragging ? 18 : -4
+        case .continue:
+            return isDragging ? 9 : -5
+        case .save:
+            return 0
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            OnboardingCueLabel(text: isTargetingContinue ? "Finish onboarding" : "Scroll to review")
+            OnboardingCueLabel(text: labelText)
 
             Image(systemName: "hand.point.down.fill")
                 .font(.system(size: 30, weight: .bold))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Color.white, Color.white.opacity(0.76))
                 .shadow(color: .black.opacity(0.24), radius: 10, y: 7)
-                .rotationEffect(.degrees(isTargetingContinue ? -28 : 0))
-                .offset(y: reduceMotion ? 0 : (isDragging ? (isTargetingContinue ? 9 : 18) : (isTargetingContinue ? -5 : -4)))
+                .rotationEffect(.degrees(iconRotation))
+                .offset(y: hoverOffset)
         }
-        .offset(
-            x: isTargetingContinue ? 14 : 0,
-            y: isTargetingContinue ? max(96, availableHeight * 0.36) : 0
-        )
-        .animation(.spring(response: 0.82, dampingFraction: 0.84), value: isTargetingContinue)
+        .offset(cueOffset)
+        .animation(.spring(response: 0.82, dampingFraction: 0.84), value: target)
         .onAppear {
             guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.96).repeatForever(autoreverses: true)) {

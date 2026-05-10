@@ -1,13 +1,6 @@
-alter table storage.objects enable row level security;
-
-drop policy if exists "Anon insert recipe_images" on storage.objects;
-
-do $$
-begin
-  create policy "recipe-images-public-read"
-    on storage.objects
-    for select
-    using (bucket_id = 'recipe-images');
-exception
-  when duplicate_object then null;
-end $$;
+-- Intentionally no-op.
+--
+-- User media writes now go through the Render backend with bearer auth and the
+-- Supabase service role. Clients should not receive direct Storage write
+-- policies; backend code must force paths under users/{auth_user_id}/...
+SELECT 1;
