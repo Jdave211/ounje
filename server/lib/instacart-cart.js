@@ -5801,7 +5801,28 @@ export async function addItemsToInstacartCart({
     logger.log?.(`[instacart] clearing selected-store cart before population`);
     runTrace.storeCartReset = await clearInstacartCart(page, logger, { preferCurrentPage: true });
     logger.log?.(`[instacart] selected-store cart reset result: before=${runTrace.storeCartReset?.beforeCount ?? "?"}, after=${runTrace.storeCartReset?.afterCount ?? "?"}, cleared=${runTrace.storeCartReset?.cleared ? "yes" : "no"}`);
-    if (!runTrace.storeCartReset?.cleared) {
+    const residualSingleItemCanProceed = (
+      !runTrace.storeCartReset?.cleared
+      && runTrace.storeCartReset?.afterCount === 1
+      && Number(runTrace.storeCartReset?.rounds ?? 0) >= 2
+    );
+    if (residualSingleItemCanProceed) {
+      runTrace.storeCartReset.acceptedDespiteResidualSingleItem = true;
+      runTrace.storeCartReset.acceptedAt = nowISO();
+      logger.warn?.("[instacart] selected-store cart still has 1 stubborn item after repeated clear attempts; proceeding with shopping");
+      await emitRunEvent(
+        "cart_reset_soft_pass",
+        "Proceeding with one stubborn cart item",
+        "The selected store cart still shows one remaining item after repeated clear attempts, so shopping will continue.",
+        {
+          importance: "low",
+          beforeCount: runTrace.storeCartReset?.beforeCount ?? null,
+          afterCount: runTrace.storeCartReset?.afterCount ?? null,
+          rounds: runTrace.storeCartReset?.rounds ?? null,
+          acceptedDespiteResidualSingleItem: true,
+        }
+      );
+    } else if (!runTrace.storeCartReset?.cleared) {
       const queuedAt = nowISO();
       runTrace.retryState = "queued";
       runTrace.retryQueuedAt = queuedAt;
