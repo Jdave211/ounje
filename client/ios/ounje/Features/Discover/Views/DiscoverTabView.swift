@@ -248,7 +248,7 @@ struct DiscoverTabView: View {
             address?.region ?? "",
             address?.postalCode ?? ""
         ].joined(separator: "|")
-        return "\(cuisines)|\(foods)|\(flavors)|\(dietary)|\(viewModel.selectedFilter)|\(environmentKey)|feedback:\(discoverFeedbackRevision)"
+        return "\(cuisines)|\(foods)|\(flavors)|\(dietary)|\(viewModel.selectedFilter)|\(environmentKey)"
     }
 
     private var discoverFeedbackRevision: Int {
@@ -314,6 +314,9 @@ struct DiscoverTabView: View {
 
         let refreshQuery = normalizedDraftSearchText.isEmpty ? "" : normalizedSearchText
         viewModel.updateFeedbackRevision(discoverFeedbackRevision)
+        viewModel.beginManualRefreshPresentation()
+        let refreshStartedAt = Date()
+        try? await Task.sleep(nanoseconds: 180_000_000)
         await environmentModel.refresh(profile: store.profile)
         await viewModel.forceReload(
             profile: store.profile,
@@ -323,6 +326,10 @@ struct DiscoverTabView: View {
             rotateBaseFeed: refreshQuery.isEmpty,
             forceNetwork: true
         )
+        let elapsed = Date().timeIntervalSince(refreshStartedAt)
+        if elapsed < 0.45 {
+            try? await Task.sleep(nanoseconds: UInt64((0.45 - elapsed) * 1_000_000_000))
+        }
     }
 
     private func resetDiscoverToFeedIfNeeded(_ proxy: ScrollViewProxy) {

@@ -517,18 +517,20 @@ final class SupabaseSavedRecipesService {
     static let shared = SupabaseSavedRecipesService()
     private let legacyKey = "ounje-saved-recipes-v1"
     private let keyPrefix = "ounje-saved-recipes-v2"
+    private let deletedKeyPrefix = "ounje-saved-recipes-deleted-v1"
 
     private init() {}
 
     func resolvedSavedRecipeIDs(userID: String?, accessToken: String? = nil) async -> [String] {
         let localIDs = locallyCachedSavedRecipeIDs(userID: userID)
-        guard let userID else { return localIDs }
+        let locallyDeletedIDs = locallyDeletedSavedRecipeIDs(userID: userID)
+        guard let userID else { return Array(Set(localIDs).subtracting(locallyDeletedIDs)) }
 
         do {
             let remoteIDs = try await fetchSavedRecipeIDs(userID: userID, accessToken: accessToken)
-            return Array(Set(localIDs + remoteIDs))
+            return Array(Set(localIDs + remoteIDs).subtracting(locallyDeletedIDs))
         } catch {
-            return localIDs
+            return Array(Set(localIDs).subtracting(locallyDeletedIDs))
         }
     }
 
@@ -742,7 +744,29 @@ final class SupabaseSavedRecipesService {
             return []
         }
 
-        return decoded.map(\.id)
+        return decoded
+            .map(\.id)
+            .filter { !locallyDeletedSavedRecipeIDs(userID: userID).contains($0) }
+    }
+
+    private func locallyDeletedSavedRecipeIDs(userID: String?) -> Set<String> {
+        let defaults = UserDefaults.standard
+        let primaryKey = "\(deletedKeyPrefix)-\(userID ?? "guest")"
+        let guestKey = userID == nil ? nil : "\(deletedKeyPrefix)-guest"
+        let primaryData = defaults.data(forKey: primaryKey)
+        let guestData = guestKey.flatMap { defaults.data(forKey: $0) }
+
+        let primaryIDs = decodeDeletedSavedRecipeIDs(from: primaryData)
+        let guestIDs = decodeDeletedSavedRecipeIDs(from: guestData)
+        return primaryIDs.union(guestIDs)
+    }
+
+    private func decodeDeletedSavedRecipeIDs(from data: Data?) -> Set<String> {
+        guard let data,
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(decoded)
     }
 }
 

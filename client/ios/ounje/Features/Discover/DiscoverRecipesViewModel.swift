@@ -386,6 +386,12 @@ final class DiscoverRecipesViewModel: ObservableObject {
         currentFeedOffset = 0
     }
 
+    func beginManualRefreshPresentation() {
+        isTransitioningFeed = true
+        hasResolvedInitialLoad = false
+        errorMessage = nil
+    }
+
     func clearTransientError() {
         errorMessage = nil
     }

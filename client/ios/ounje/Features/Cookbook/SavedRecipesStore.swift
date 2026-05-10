@@ -17,6 +17,7 @@ final class SavedRecipesStore: ObservableObject {
     private var lastRemoteSyncUserID: String?
     private var lastRemoteSyncAt: Date?
     private let remoteSyncTTL: TimeInterval = 45
+    private var authSessionProvider: (() async -> AuthSession?)?
 
     init(toastCenter: AppToastCenter) {
         self.toastCenter = toastCenter
@@ -25,6 +26,10 @@ final class SavedRecipesStore: ObservableObject {
 
     func isSaved(_ recipe: DiscoverRecipeCardData) -> Bool {
         savedRecipes.contains { $0.id == recipe.id }
+    }
+
+    func configureAuthSessionProvider(_ provider: @escaping () async -> AuthSession?) {
+        authSessionProvider = provider
     }
 
     func bootstrap(authSession: AuthSession?) async {
@@ -42,6 +47,10 @@ final class SavedRecipesStore: ObservableObject {
         }
 
         do {
+            if !deletedSavedRecipeIDs.isEmpty {
+                await reconcilePendingDeletes(userID: authSession.userID)
+            }
+
             let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
@@ -51,10 +60,6 @@ final class SavedRecipesStore: ObservableObject {
             if mergedRecipes != savedRecipes {
                 savedRecipes = mergedRecipes
                 persist()
-            }
-
-            if !deletedSavedRecipeIDs.isEmpty {
-                await reconcilePendingDeletes(userID: authSession.userID)
             }
 
             let remoteIDs = Set(remoteRecipes.map(\.id)).subtracting(deletedSavedRecipeIDs)
@@ -86,13 +91,17 @@ final class SavedRecipesStore: ObservableObject {
         }
 
         do {
+            if !deletedSavedRecipeIDs.isEmpty {
+                await reconcilePendingDeletes(userID: authSession.userID)
+            }
+
             let remoteRecipes = try await SupabaseSavedRecipesService.shared.fetchSavedRecipes(
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
             )
-            let localRecipes = savedRecipes
-            deletedSavedRecipeIDs.removeAll()
-            savedRecipes = deduplicated(remoteRecipes + localRecipes)
+            let localRecipes = savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
+            let filteredRemoteRecipes = remoteRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
+            savedRecipes = deduplicated(filteredRemoteRecipes + localRecipes)
             persist()
             markRemoteSyncComplete(for: authSession.userID)
         } catch {
@@ -129,21 +138,22 @@ final class SavedRecipesStore: ObservableObject {
 
         Task(priority: .utility) {
             do {
+                guard let remoteSession = await self.resolvedRemoteSession(fallbackUserID: userID) else { return }
                 if shouldSave {
                     try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                        userID: userID,
+                        userID: remoteSession.userID,
                         recipes: [recipe],
-                        accessToken: accessToken
+                        accessToken: remoteSession.accessToken ?? accessToken
                     )
                     await MainActor.run {
                         self.hasPendingRemoteSaveRetry = false
-                        self.markRemoteSyncComplete(for: userID)
+                        self.markRemoteSyncComplete(for: remoteSession.userID)
                     }
                 } else {
                     try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
-                        userID: userID,
+                        userID: remoteSession.userID,
                         recipeID: recipe.id,
-                        accessToken: accessToken
+                        accessToken: remoteSession.accessToken ?? accessToken
                     )
                     await MainActor.run {
                         self.deletedSavedRecipeIDs.remove(recipe.id)
@@ -152,12 +162,8 @@ final class SavedRecipesStore: ObservableObject {
                 }
             } catch {
                 if shouldSave {
+                    print("[SavedRecipesStore] Remote save failed; will retry:", error.localizedDescription)
                     await MainActor.run {
-                        self.toastCenter.show(
-                            title: "Save will retry",
-                            subtitle: recipe.title,
-                            systemImage: "arrow.clockwise"
-                        )
                         self.hasPendingRemoteSaveRetry = true
                     }
                 } else {
@@ -183,22 +189,19 @@ final class SavedRecipesStore: ObservableObject {
         let accessToken = activeAccessToken
         Task(priority: .utility) {
             do {
+                guard let remoteSession = await self.resolvedRemoteSession(fallbackUserID: userID) else { return }
                 try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                    userID: userID,
+                    userID: remoteSession.userID,
                     recipes: [resolved],
-                    accessToken: accessToken
+                    accessToken: remoteSession.accessToken ?? accessToken
                 )
                 await MainActor.run {
                     self.hasPendingRemoteSaveRetry = false
-                    self.markRemoteSyncComplete(for: userID)
+                    self.markRemoteSyncComplete(for: remoteSession.userID)
                 }
             } catch {
+                print("[SavedRecipesStore] Remote imported recipe save failed; will retry:", error.localizedDescription)
                 await MainActor.run {
-                    self.toastCenter.show(
-                        title: "Save will retry",
-                        subtitle: resolved.title,
-                        systemImage: "arrow.clockwise"
-                    )
                     self.hasPendingRemoteSaveRetry = true
                 }
             }
@@ -216,22 +219,19 @@ final class SavedRecipesStore: ObservableObject {
         let accessToken = activeAccessToken
         Task(priority: .utility) {
             do {
+                guard let remoteSession = await self.resolvedRemoteSession(fallbackUserID: userID) else { return }
                 try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                    userID: userID,
+                    userID: remoteSession.userID,
                     recipes: [recipe],
-                    accessToken: accessToken
+                    accessToken: remoteSession.accessToken ?? accessToken
                 )
                 await MainActor.run {
                     self.hasPendingRemoteSaveRetry = false
-                    self.markRemoteSyncComplete(for: userID)
+                    self.markRemoteSyncComplete(for: remoteSession.userID)
                 }
             } catch {
+                print("[SavedRecipesStore] Remote save restore failed; will retry:", error.localizedDescription)
                 await MainActor.run {
-                    self.toastCenter.show(
-                        title: "Save will retry",
-                        subtitle: recipe.title,
-                        systemImage: "arrow.clockwise"
-                    )
                     self.hasPendingRemoteSaveRetry = true
                 }
             }
@@ -258,6 +258,7 @@ final class SavedRecipesStore: ObservableObject {
             ?? fallbackKey.flatMap { defaults.data(forKey: $0) }
         let guestData = guestKey.flatMap { defaults.data(forKey: $0) }
         let deletedData = defaults.data(forKey: deletedKey)
+        let guestDeletedData = userID == nil ? nil : defaults.data(forKey: deletedStorageKey(for: nil))
 
         let primaryRecipes = data
             .flatMap { try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: $0) } ?? []
@@ -268,10 +269,12 @@ final class SavedRecipesStore: ObservableObject {
         guard !decoded.isEmpty else {
             savedRecipes = []
             deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
+                .union(loadDeletedRecipeIDs(from: guestDeletedData))
             return
         }
 
         deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
+            .union(loadDeletedRecipeIDs(from: guestDeletedData))
         savedRecipes = deduplicated(decoded.filter { !deletedSavedRecipeIDs.contains($0.id) })
 
         if let mergedData = try? JSONEncoder().encode(savedRecipes),
@@ -299,7 +302,8 @@ final class SavedRecipesStore: ObservableObject {
     private func merge(local: [DiscoverRecipeCardData], remote: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
         // Prefer the server's newest ordering first, then keep any local-only saves.
         let filteredRemote = remote.filter { !deletedSavedRecipeIDs.contains($0.id) }
-        return deduplicated(filteredRemote + local)
+        let filteredLocal = local.filter { !deletedSavedRecipeIDs.contains($0.id) }
+        return deduplicated(filteredRemote + filteredLocal)
     }
 
     private func deduplicated(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
@@ -359,14 +363,14 @@ final class SavedRecipesStore: ObservableObject {
     private func reconcilePendingDeletes(userID: String) async {
         let pending = deletedSavedRecipeIDs
         guard !pending.isEmpty else { return }
-        let accessToken = activeAccessToken
 
         for recipeID in pending {
             do {
+                guard let remoteSession = await resolvedRemoteSession(fallbackUserID: userID) else { return }
                 try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
-                    userID: userID,
+                    userID: remoteSession.userID,
                     recipeID: recipeID,
-                    accessToken: accessToken
+                    accessToken: remoteSession.accessToken
                 )
                 deletedSavedRecipeIDs.remove(recipeID)
             } catch {
@@ -375,5 +379,16 @@ final class SavedRecipesStore: ObservableObject {
         }
 
         persist()
+    }
+
+    private func resolvedRemoteSession(fallbackUserID: String) async -> (userID: String, accessToken: String?)? {
+        if let session = await authSessionProvider?(),
+           session.userID == fallbackUserID {
+            activeUserID = session.userID
+            activeAccessToken = session.accessToken
+            return (session.userID, session.accessToken)
+        }
+
+        return (fallbackUserID, activeAccessToken)
     }
 }

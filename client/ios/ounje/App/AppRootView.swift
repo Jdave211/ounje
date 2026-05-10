@@ -1623,10 +1623,18 @@ private struct MealPlannerShellView: View {
             }
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onAppear {
+            savedStore.configureAuthSessionProvider {
+                await store.refreshAuthSessionIfNeeded()
+            }
+        }
         .task(id: store.authSession?.userID ?? "signed-out") {
             syncedCompletedImportIDs.removeAll()
             prewarmedCompletedImportIDs.removeAll()
             await savedStore.refreshFromRemote(authSession: store.authSession, force: true)
+        }
+        .task(id: savedStoreAuthKey) {
+            await savedStore.bootstrap(authSession: store.authSession)
         }
         .task(id: "fresh-plan::\(store.authSession?.userID ?? "signed-out")") {
             await store.ensureFreshPlanIfNeeded()
@@ -2203,6 +2211,12 @@ private struct MealPlannerShellView: View {
         let planKey = store.latestPlan?.id.uuidString ?? "no-plan"
         let activeKey = scenePhase == .active ? "active" : "inactive"
         return "cart-support-warmup::\(userKey)::\(planKey)::\(store.latestPlanRevision)::\(activeKey)"
+    }
+
+    private var savedStoreAuthKey: String {
+        let userKey = store.authSession?.userID ?? "signed-out"
+        let tokenKey = store.authSession?.accessToken?.suffix(18) ?? "no-token"
+        return "saved-store-auth::\(userKey)::\(tokenKey)"
     }
 
     private var discoverPrewarmKey: String {
