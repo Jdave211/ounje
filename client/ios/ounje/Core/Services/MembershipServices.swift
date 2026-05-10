@@ -204,6 +204,31 @@ final class SupabaseEntitlementService {
 
     private init() {}
 
+    private static let fractionalDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let standardDateFormatter = ISO8601DateFormatter()
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let rawValue = try container.decode(String.self)
+            if let date = fractionalDateFormatter.date(from: rawValue)
+                ?? standardDateFormatter.date(from: rawValue) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO-8601 date: \(rawValue)"
+            )
+        }
+        return decoder
+    }
+
     func fetchCurrentEntitlement(userID: String, accessToken: String?) async throws -> AppUserEntitlement? {
         guard let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
               !accessToken.isEmpty
@@ -231,9 +256,7 @@ final class SupabaseEntitlementService {
                     let fallback = "Membership refresh failed (\(httpResponse.statusCode))."
                     throw SupabaseEntitlementServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
                 }
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let payload = try decoder.decode(EntitlementEnvelopeResponse.self, from: data)
+                let payload = try Self.makeDecoder().decode(EntitlementEnvelopeResponse.self, from: data)
                 return payload.entitlement
             } catch {
                 lastError = error
@@ -306,9 +329,7 @@ final class SupabaseEntitlementService {
                     let fallback = "Membership sync failed (\(httpResponse.statusCode))."
                     throw SupabaseEntitlementServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
                 }
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let payload = try decoder.decode(EntitlementEnvelopeResponse.self, from: data)
+                let payload = try Self.makeDecoder().decode(EntitlementEnvelopeResponse.self, from: data)
                 return payload.entitlement
             } catch {
                 lastError = error

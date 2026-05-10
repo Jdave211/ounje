@@ -2,7 +2,7 @@ import Foundation
 
 enum OunjeLaunchFlags {
     static let paywallsEnabled = true
-    static let forceOnboardingIncomplete = true
+    static let forceOnboardingIncomplete = false
 }
 
 enum OunjeDevelopmentServer {

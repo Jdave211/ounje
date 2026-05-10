@@ -1281,54 +1281,37 @@ final class InstacartRunLogAPIService {
         }
 
         let decoder = JSONDecoder()
-        var authTokens: [String] = []
-        for token in [accessToken, SupabaseConfig.anonKey] {
-            let trimmed = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !trimmed.isEmpty, !authTokens.contains(trimmed) else { continue }
-            authTokens.append(trimmed)
+        var request = try SupabaseUserDataRequest.request(url: url, method: "GET", accessToken: accessToken)
+        if includeCount {
+            request.setValue("exact", forHTTPHeaderField: "Prefer")
         }
 
-        var lastError: RecipeImportServiceError?
-        for token in authTokens {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            if includeCount {
-                request.setValue("exact", forHTTPHeaderField: "Prefer")
-            }
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw RecipeImportServiceError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Instacart runs failed (\(httpResponse.statusCode))."
-                lastError = RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            let rows = try decoder.decode([InstacartRunLogStorageRow].self, from: data)
-            let items = rows.map(\.resolvedSummary)
-            let parsedTotal = httpResponse.value(forHTTPHeaderField: "Content-Range")
-                .flatMap(Self.parseSupabaseTotalCount(from:))
-            let inferredHasMore = items.count >= max(limit, 1)
-            let total = parsedTotal ?? (max(offset, 0) + items.count + (inferredHasMore ? 1 : 0))
-
-            return InstacartRunLogsListResponse(
-                items: items,
-                total: total,
-                offset: max(offset, 0),
-                limit: max(limit, 1),
-                hasMore: parsedTotal.map { max(offset, 0) + items.count < $0 } ?? inferredHasMore,
-                query: query,
-                status: status,
-                userID: trimmedUserID
-            )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let fallback = "Instacart runs failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        throw lastError ?? RecipeImportServiceError.requestFailed("Instacart runs could not be loaded.")
+        let rows = try decoder.decode([InstacartRunLogStorageRow].self, from: data)
+        let items = rows.map(\.resolvedSummary)
+        let parsedTotal = httpResponse.value(forHTTPHeaderField: "Content-Range")
+            .flatMap(Self.parseSupabaseTotalCount(from:))
+        let inferredHasMore = items.count >= max(limit, 1)
+        let total = parsedTotal ?? (max(offset, 0) + items.count + (inferredHasMore ? 1 : 0))
+
+        return InstacartRunLogsListResponse(
+            items: items,
+            total: total,
+            offset: max(offset, 0),
+            limit: max(limit, 1),
+            hasMore: parsedTotal.map { max(offset, 0) + items.count < $0 } ?? inferredHasMore,
+            query: query,
+            status: status,
+            userID: trimmedUserID
+        )
     }
 
     private func fetchCurrentRunSummaryViaSupabase(
@@ -1359,36 +1342,25 @@ final class InstacartRunLogAPIService {
             throw RecipeImportServiceError.invalidRequest
         }
 
-        var lastError: RecipeImportServiceError?
-        for token in supabaseAuthTokens(accessToken: accessToken) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw RecipeImportServiceError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Instacart current run failed (\(httpResponse.statusCode))."
-                lastError = RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            let rows = try JSONDecoder().decode([InstacartRunLogStorageRow].self, from: data)
-            let summaries = rows.map(\.resolvedSummary)
-            if !normalizedPlanID.isEmpty,
-               let planMatch = summaries.first(where: {
-                   ($0.mealPlanID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedPlanID
-               }) {
-                return planMatch
-            }
-            return summaries.first
+        let request = try SupabaseUserDataRequest.request(url: url, method: "GET", accessToken: accessToken)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let fallback = "Instacart current run failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        throw lastError ?? RecipeImportServiceError.requestFailed("Instacart current run could not be loaded.")
+        let rows = try JSONDecoder().decode([InstacartRunLogStorageRow].self, from: data)
+        let summaries = rows.map(\.resolvedSummary)
+        if !normalizedPlanID.isEmpty,
+           let planMatch = summaries.first(where: {
+               ($0.mealPlanID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedPlanID
+           }) {
+            return planMatch
+        }
+        return summaries.first
     }
 
     private static func parseSupabaseTotalCount(from contentRange: String) -> Int? {
@@ -1477,35 +1449,27 @@ final class InstacartRunLogAPIService {
             throw RecipeImportServiceError.invalidRequest
         }
 
-        var lastError: Error?
-        for token in supabaseAuthTokens(accessToken: accessToken) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            if let userID = userID?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !userID.isEmpty {
-                request.setValue(userID, forHTTPHeaderField: "x-user-id")
-            }
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw RecipeImportServiceError.invalidResponse
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                lastError = RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? "Instacart run summary failed (\(httpResponse.statusCode)).")
-                continue
-            }
-
-            let rows = try JSONDecoder().decode([InstacartRunLogStorageRow].self, from: data)
-            if let row = rows.first {
-                return row.resolvedSummary
-            }
-            lastError = RecipeImportServiceError.requestFailed("Instacart run summary not found.")
+        var request = try SupabaseUserDataRequest.request(url: url, method: "GET", accessToken: accessToken)
+        if let userID = userID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !userID.isEmpty {
+            request.setValue(userID, forHTTPHeaderField: "x-user-id")
         }
 
-        throw lastError ?? RecipeImportServiceError.requestFailed("Instacart run summary not found.")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let fallback = "Instacart run summary failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
+        }
+
+        let rows = try JSONDecoder().decode([InstacartRunLogStorageRow].self, from: data)
+        if let row = rows.first {
+            return row.resolvedSummary
+        }
+
+        throw RecipeImportServiceError.requestFailed("Instacart run summary not found.")
     }
 
     private func fetchRunTraceViaSupabase(
@@ -1528,45 +1492,30 @@ final class InstacartRunLogAPIService {
                 continue
             }
 
-            for token in supabaseAuthTokens(accessToken: accessToken) {
-                var request = URLRequest(url: url)
-                request.httpMethod = "GET"
-                request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                if let userID = userID?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !userID.isEmpty {
-                    request.setValue(userID, forHTTPHeaderField: "x-user-id")
-                }
-
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    throw RecipeImportServiceError.invalidResponse
-                }
-                guard (200 ... 299).contains(httpResponse.statusCode) else {
-                    let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                    lastError = RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? "Instacart run trace failed (\(httpResponse.statusCode)).")
-                    continue
-                }
-
-                let rows = try JSONDecoder().decode([InstacartRunTraceStorageRow].self, from: data)
-                if let row = rows.first, let trace = row.traceJSON {
-                    return trace
-                }
-                lastError = RecipeImportServiceError.requestFailed("Instacart run trace not found.")
+            var request = try SupabaseUserDataRequest.request(url: url, method: "GET", accessToken: accessToken)
+            if let userID = userID?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !userID.isEmpty {
+                request.setValue(userID, forHTTPHeaderField: "x-user-id")
             }
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RecipeImportServiceError.invalidResponse
+            }
+            guard (200 ... 299).contains(httpResponse.statusCode) else {
+                let fallback = "Instacart run trace failed (\(httpResponse.statusCode))."
+                lastError = RecipeImportServiceError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
+                continue
+            }
+
+            let rows = try JSONDecoder().decode([InstacartRunTraceStorageRow].self, from: data)
+            if let row = rows.first, let trace = row.traceJSON {
+                return trace
+            }
+            lastError = RecipeImportServiceError.requestFailed("Instacart run trace not found.")
         }
 
         throw lastError ?? RecipeImportServiceError.requestFailed("Instacart run trace not found.")
-    }
-
-    private func supabaseAuthTokens(accessToken: String?) -> [String] {
-        var tokens: [String] = []
-        for token in [accessToken, SupabaseConfig.anonKey] {
-            let trimmed = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !trimmed.isEmpty, !tokens.contains(trimmed) else { continue }
-            tokens.append(trimmed)
-        }
-        return tokens
     }
 
     private func supabaseUserFilter(_ userID: String?) -> String {
@@ -1727,37 +1676,19 @@ final class GroceryOrderAPIService {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
-        var authTokens: [String] = []
-        for token in [accessToken, SupabaseConfig.anonKey] {
-            let trimmed = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !trimmed.isEmpty, !authTokens.contains(trimmed) else { continue }
-            authTokens.append(trimmed)
+        let request = try SupabaseUserDataRequest.request(url: url, method: "GET", accessToken: accessToken, timeout: 20)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let fallback = "Latest grocery order failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        var lastError: RecipeImportServiceError?
-        for token in authTokens {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.timeoutInterval = 20
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let orders = try decoder.decode([GroceryOrderSummaryRecord].self, from: data)
+        return orders.first
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw URLError(.badServerResponse)
-            }
-            guard (200 ... 299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Latest grocery order failed (\(httpResponse.statusCode))."
-                lastError = RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            let orders = try decoder.decode([GroceryOrderSummaryRecord].self, from: data)
-            return orders.first
-        }
-
-        throw lastError ?? RecipeImportServiceError.requestFailed("Latest grocery order could not be loaded.")
     }
 
     private func fetchOrder(baseURL: String, orderID: UUID, userID: String?, accessToken: String?) async throws -> GroceryOrderSummaryRecord {

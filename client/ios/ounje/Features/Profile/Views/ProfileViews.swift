@@ -6,40 +6,31 @@ import WebKit
 import SafariServices
 import PhotosUI
 import StoreKit
+import AuthenticationServices
+import CryptoKit
+import Security
 
 struct ProfileTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
-    @State private var isAddressSheetPresented = false
-    @State private var isFoodProfilePresented = false
+    @EnvironmentObject private var savedStore: SavedRecipesStore
     @State private var isRecurringRecipesPresented = false
     @State private var isCadencePickerPresented = false
     @State private var selectedCadence: MealCadence = .weekly
     @State private var selectedAnchorDate = Date()
     @State private var isSettingsPresented = false
     @State private var isNameEditorPresented = false
-    @State private var isPaywallPresented = false
     @State private var isFeedbackPresented = false
     @State private var isBudgetSheetPresented = false
-    @State private var paywallInitialTier: OunjePricingTier? = nil
-    @StateObject private var addressAutocomplete = AddressAutocompleteViewModel()
+    let importedRecipeCount: Int
+    let aiEditCount: Int
 
-    @State private var addressLine1 = ""
-    @State private var addressLine2 = ""
-    @State private var city = ""
-    @State private var region = ""
-    @State private var postalCode = ""
-    @State private var deliveryNotes = ""
+    init(importedRecipeCount: Int = 0, aiEditCount: Int = 0) {
+        self.importedRecipeCount = importedRecipeCount
+        self.aiEditCount = aiEditCount
+    }
 
     private var profile: UserProfile? {
         store.profile
-    }
-
-    private var addressSummary: String {
-        let address = profile?.deliveryAddress ?? .empty
-        return [address.line1, address.city, address.region, address.postalCode]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
     }
 
     private var accountDisplayName: String {
@@ -75,23 +66,6 @@ struct ProfileTabView: View {
         return email
     }
 
-    private var profileMembershipTier: OunjePricingTier {
-        store.effectivePricingTier
-    }
-
-    private var profileMembershipSummary: String {
-        switch profileMembershipTier {
-        case .free:
-            return "Planning access"
-        case .plus:
-            return "Imports + prep planning"
-        case .autopilot:
-            return "Legacy Plus access"
-        case .foundingLifetime:
-            return "Lifetime Plus"
-        }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -105,6 +79,12 @@ struct ProfileTabView: View {
                     )
 
                     ProfileMinimalActionGrid(actions: profileGridActions)
+
+                    ProfileUsageBlock(
+                        importedRecipeCount: importedRecipeCount,
+                        savedRecipeCount: savedStore.savedRecipes.count,
+                        aiEditCount: aiEditCount
+                    )
 
                     ProfileMinimalSection(rows: primaryProfileRows)
                 } else {
@@ -121,33 +101,6 @@ struct ProfileTabView: View {
         }
         .scrollIndicators(.hidden)
         .background(OunjePalette.background.ignoresSafeArea())
-        .onAppear {
-            syncAddressFieldsFromProfile()
-        }
-        .onChange(of: store.profile?.deliveryAddress) { _ in
-            syncAddressFieldsFromProfile()
-        }
-        .sheet(isPresented: $isAddressSheetPresented, onDismiss: saveAddressChanges) {
-            AddressSetupSheet(
-                title: "Address details",
-                detail: "Start with street address. Picking a suggestion will fill the rest.",
-                primaryButtonTitle: "Save address",
-                addressLine1: $addressLine1,
-                addressLine2: $addressLine2,
-                city: $city,
-                region: $region,
-                postalCode: $postalCode,
-                deliveryNotes: $deliveryNotes,
-                autocomplete: addressAutocomplete,
-                onSuggestionSelected: selectAddressSuggestion(_:),
-                onClear: clearAddress
-            )
-        }
-        .sheet(isPresented: $isFoodProfilePresented) {
-            if let profile {
-                FoodProfileSheet(profile: profile)
-            }
-        }
         .sheet(isPresented: $isNameEditorPresented) {
             ProfileNameEditSheet(
                 initialName: profile?.trimmedPreferredName ?? accountDisplayName,
@@ -158,9 +111,6 @@ struct ProfileTabView: View {
         }
         .sheet(isPresented: $isBudgetSheetPresented) {
             ProfileBudgetSheet()
-        }
-        .fullScreenCover(isPresented: paywallPresentationBinding) {
-            OunjePlusPaywallSheet(initialTier: paywallInitialTier)
         }
         .sheet(isPresented: $isFeedbackPresented) {
             FeedbackSheet()
@@ -203,31 +153,10 @@ struct ProfileTabView: View {
         accountDisplayName.isEmpty ? "Ounje" : accountDisplayName
     }
 
-    private var paywallPresentationBinding: Binding<Bool> {
-        Binding(
-            get: { OunjeLaunchFlags.paywallsEnabled && isPaywallPresented },
-            set: { isPaywallPresented = $0 }
-        )
-    }
-
     private var profileGridActions: [ProfileGridActionModel] {
         guard let profile else { return [] }
 
-        return [
-            .init(
-                title: "Food",
-                detail: foodProfileSummary,
-                symbolName: "fork.knife",
-                tint: OunjePalette.accent,
-                action: { isFoodProfilePresented = true }
-            ),
-            .init(
-                title: "Home",
-                detail: addressSummary.isEmpty ? "Add address" : addressSummary,
-                symbolName: "house",
-                tint: Color(hex: "D98F45"),
-                action: { isAddressSheetPresented = true }
-            ),
+        var actions: [ProfileGridActionModel] = [
             .init(
                 title: "Schedule",
                 detail: "\(profile.cadenceScheduleSummary) · \(profile.deliveryTimeText)",
@@ -240,33 +169,26 @@ struct ProfileTabView: View {
                     )
                     isCadencePickerPresented = true
                 }
-            ),
-            .init(
+            )
+        ]
+
+        if shouldShowBudgetTile(for: profile) {
+            actions.append(.init(
                 title: "Budget",
                 detail: profile.budgetSummary,
                 symbolName: "creditcard",
                 tint: OunjePalette.softCream,
                 action: { isBudgetSheetPresented = true }
-            )
-        ]
+            ))
+        }
+
+        return actions
     }
 
     private var primaryProfileRows: [ProfileMinimalRowModel] {
         guard let profile else { return [] }
 
         var rows: [ProfileMinimalRowModel] = []
-
-        if OunjeLaunchFlags.paywallsEnabled {
-            rows.append(.init(
-                title: "Plan",
-                detail: "\(profileMembershipTier.title) · \(profileMembershipSummary)",
-                value: "Open",
-                action: {
-                    paywallInitialTier = profileMembershipTier
-                    isPaywallPresented = true
-                }
-            ))
-        }
 
         rows.append(contentsOf: [
             .init(
@@ -292,34 +214,6 @@ struct ProfileTabView: View {
         return rows
     }
 
-    private var secondaryProfileRows: [ProfileMinimalRowModel] {
-        [
-            .init(
-                title: "Feedback",
-                detail: "Tell us what to fix or keep.",
-                value: "Send",
-                action: { isFeedbackPresented = true }
-            ),
-            .init(
-                title: "Settings",
-                detail: accountEmail ?? "Manage preferences and account details",
-                value: "Open",
-                action: { isSettingsPresented = true }
-            )
-        ]
-    }
-
-    private var foodProfileSummary: String {
-        guard let profile else { return "Diet and cuisines" }
-
-        let highlights = normalizedHighlights(
-            profile.dietaryPatterns
-            + profile.userFacingCuisineTitles
-        )
-        let summary = highlights.prefix(3).joined(separator: " · ")
-        return summary.isEmpty ? "Diet and cuisines" : summary
-    }
-
     private var profileBackground: some View {
         ZStack {
             OunjePalette.background.ignoresSafeArea()
@@ -339,69 +233,24 @@ struct ProfileTabView: View {
                 .fill(OunjePalette.accent.opacity(0.12))
                 .frame(width: 220, height: 220)
                 .blur(radius: 90)
-                .offset(x: 120, y: -340)
+            .offset(x: 120, y: -340)
         }
     }
 
-    private func normalizedHighlights(_ values: [String]) -> [String] {
-        var seen = Set<String>()
-        return values.compactMap { raw in
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            let key = trimmed.lowercased()
-            guard seen.insert(key).inserted else { return nil }
-            return trimmed
+    private func shouldShowBudgetTile(for profile: UserProfile) -> Bool {
+        let budgetGoalKeywords = [
+            "budget",
+            "save money",
+            "spend less",
+            "groceries",
+            "cheap",
+            "cost"
+        ]
+
+        return profile.mealPrepGoals.contains { goal in
+            let normalized = goal.lowercased()
+            return budgetGoalKeywords.contains { normalized.contains($0) }
         }
-    }
-
-    private func saveAddressChanges() {
-        guard var updated = store.profile else { return }
-
-        updated.deliveryAddress = DeliveryAddress(
-            line1: addressLine1.trimmingCharacters(in: .whitespacesAndNewlines),
-            line2: addressLine2.trimmingCharacters(in: .whitespacesAndNewlines),
-            city: city.trimmingCharacters(in: .whitespacesAndNewlines),
-            region: region.trimmingCharacters(in: .whitespacesAndNewlines),
-            postalCode: postalCode.trimmingCharacters(in: .whitespacesAndNewlines),
-            deliveryNotes: deliveryNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-        store.updateProfile(updated)
-    }
-
-    private func syncAddressFieldsFromProfile() {
-        let address = store.profile?.deliveryAddress ?? .empty
-        addressLine1 = address.line1
-        addressLine2 = address.line2
-        city = address.city
-        region = address.region
-        postalCode = address.postalCode
-        deliveryNotes = address.deliveryNotes
-    }
-
-    private func selectAddressSuggestion(_ suggestion: AddressSuggestion) async {
-        guard let address = await addressAutocomplete.resolve(suggestion) else { return }
-
-        await MainActor.run {
-            addressLine1 = address.line1
-            addressLine2 = address.line2
-            city = address.city
-            region = address.region
-            postalCode = address.postalCode
-            if !address.line2.isEmpty {
-                addressLine2 = address.line2
-            }
-            addressAutocomplete.query = ""
-        }
-    }
-
-    private func clearAddress() {
-        addressLine1 = ""
-        addressLine2 = ""
-        city = ""
-        region = ""
-        postalCode = ""
-        deliveryNotes = ""
-        addressAutocomplete.query = ""
     }
 
     private func saveCadenceScheduleChanges() {
@@ -576,46 +425,6 @@ struct ProfileNameEditSheet: View {
     }
 }
 
-struct ProfileMinimalMembershipRow: View {
-    let membershipTier: OunjePricingTier
-    let membershipSummary: String
-    let onOpenMembership: () -> Void
-
-    var body: some View {
-        Button(action: onOpenMembership) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(membershipTier.title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(OunjePalette.primaryText)
-
-                    Text(membershipSummary)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(2)
-                }
-
-                Spacer(minLength: 10)
-
-                Text("Plan")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(membershipTier.accentColor)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.55))
-            }
-            .padding(.vertical, 14)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
-            Divider()
-                .overlay(OunjePalette.stroke.opacity(0.55))
-        }
-    }
-}
-
 struct ProfileMinimalActionGrid: View {
     let actions: [ProfileGridActionModel]
 
@@ -628,12 +437,12 @@ struct ProfileMinimalActionGrid: View {
         LazyVGrid(columns: columns, spacing: 12) {
             ForEach(actions) { action in
                 Button(action: action.action) {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .center, spacing: 0) {
                             Image(systemName: action.symbolName)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(OunjePalette.primaryText)
-                                .frame(width: 30, height: 30)
+                                .frame(width: 28, height: 28)
 
                             Spacer(minLength: 0)
 
@@ -657,8 +466,8 @@ struct ProfileMinimalActionGrid: View {
 
                         Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
-                    .padding(14)
+                    .frame(maxWidth: .infinity, minHeight: 108, alignment: .topLeading)
+                    .padding(12)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(OunjePalette.panel.opacity(0.96))
@@ -673,6 +482,66 @@ struct ProfileMinimalActionGrid: View {
             }
         }
     }
+}
+
+struct ProfileUsageBlock: View {
+    let importedRecipeCount: Int
+    let savedRecipeCount: Int
+    let aiEditCount: Int
+
+    private var stats: [ProfileUsageStat] {
+        [
+            .init(title: "Imported", value: importedRecipeCount, symbolName: "square.and.arrow.down"),
+            .init(title: "Saved", value: savedRecipeCount, symbolName: "bookmark.fill"),
+            .init(title: "AI edits", value: aiEditCount, symbolName: "sparkles")
+        ]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Usage")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            HStack(spacing: 10) {
+                ForEach(stats) { stat in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: stat.symbolName)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(OunjePalette.primaryText.opacity(0.9))
+
+                        Text("\(stat.value)")
+                            .font(.system(size: 24, weight: .heavy))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .monospacedDigit()
+
+                        Text(stat.title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(OunjePalette.panel.opacity(0.92))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct ProfileUsageStat: Identifiable {
+    let title: String
+    let value: Int
+    let symbolName: String
+
+    var id: String { title }
 }
 
 struct ProfileMinimalSection: View {
@@ -707,7 +576,7 @@ struct ProfileMinimalSection: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
                     }
-                    .padding(.vertical, 15)
+                    .padding(.vertical, 12)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1372,7 +1241,7 @@ struct MembershipSettingsSheet: View {
         } ?? "Apple subscription settings"
 
         return [
-            ("Plan", currentPlanTitle),
+            ("Membership", currentPlanTitle),
             ("Access", currentTier.subtitle),
             ("Billing", cadence),
             ("Renews", renewalText)
@@ -2789,6 +2658,8 @@ struct GroceryProviderConnectSheet: View {
     @State private var phase: Phase = .instructions
     @State private var isLoading = false
     @State private var isSaving = false
+    @State private var appleReauthNonce = ""
+    @State private var isRefreshingOunjeLogin = false
 
     enum Phase { case instructions, login, saving, connected, error(String) }
 
@@ -3015,8 +2886,28 @@ struct GroceryProviderConnectSheet: View {
                 .font(.system(size: 14))
                 .foregroundStyle(OunjePalette.secondaryText)
                 .multilineTextAlignment(.center)
-            Button("Try Again") { phase = .instructions }
-                .buttonStyle(.borderedProminent)
+
+            if isOunjeSessionRefreshRequired(message) {
+                SignInWithAppleButton(.continue) { request in
+                    prepareAppleReauthRequest(request)
+                } onCompletion: { result in
+                    handleAppleReauthCompletion(result)
+                }
+                .signInWithAppleButtonStyle(.white)
+                .frame(maxWidth: 320)
+                .frame(height: 48)
+                .clipShape(Capsule(style: .continuous))
+                .disabled(isRefreshingOunjeLogin)
+
+                Text("This only refreshes your Ounje login token so Instacart can link securely.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.9))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
+            } else {
+                Button("Try Again") { phase = .instructions }
+                    .buttonStyle(.borderedProminent)
+            }
         }
     }
 
@@ -3053,7 +2944,7 @@ struct GroceryProviderConnectSheet: View {
             }
 
             guard let resolvedAccessToken, !resolvedAccessToken.isEmpty else {
-                phase = .error("Your login session expired. Close this sheet and sign in again.")
+                phase = .error(sessionRefreshRequiredMessage)
                 return
             }
 
@@ -3112,19 +3003,19 @@ struct GroceryProviderConnectSheet: View {
             do {
                 refreshedSession = try await refreshProviderConnectSession()
             } catch {
-                throw ProviderConnectAPIError(message: "Your Ounje session expired. Close this sheet and sign in again.")
+                throw ProviderConnectAPIError(message: sessionRefreshRequiredMessage)
             }
 
             guard let refreshedSession,
                   let refreshedAccessToken = refreshedSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !refreshedAccessToken.isEmpty
             else {
-                throw ProviderConnectAPIError(message: "Your Ounje session expired. Close this sheet and sign in again.")
+                throw ProviderConnectAPIError(message: sessionRefreshRequiredMessage)
             }
 
             let refreshedUserID = refreshedSession.userID.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !refreshedUserID.isEmpty else {
-                throw ProviderConnectAPIError(message: "Your Ounje session expired. Close this sheet and sign in again.")
+                throw ProviderConnectAPIError(message: sessionRefreshRequiredMessage)
             }
 
             try await performSaveCookiesRequest(
@@ -3183,6 +3074,125 @@ struct GroceryProviderConnectSheet: View {
         )
         store.persistAuthSession(refreshedSession)
         return refreshedSession
+    }
+
+    private var sessionRefreshRequiredMessage: String {
+        "Your Ounje login needs to be refreshed before linking \(provider.name)."
+    }
+
+    private func isOunjeSessionRefreshRequired(_ message: String) -> Bool {
+        message.localizedCaseInsensitiveContains("Ounje login needs to be refreshed") ||
+            message.localizedCaseInsensitiveContains("Ounje session expired") ||
+            message.localizedCaseInsensitiveContains("Authorization expired or invalid") ||
+            message.localizedCaseInsensitiveContains("Could not resolve authenticated user")
+    }
+
+    private func prepareAppleReauthRequest(_ request: ASAuthorizationAppleIDRequest) {
+        request.requestedScopes = [.fullName, .email]
+        let nonce = randomNonceString()
+        appleReauthNonce = nonce
+        request.nonce = sha256(nonce)
+    }
+
+    private func handleAppleReauthCompletion(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                phase = .error("Could not read Apple account credentials.")
+                return
+            }
+            guard let identityTokenData = credential.identityToken,
+                  let identityToken = String(data: identityTokenData, encoding: .utf8),
+                  !identityToken.isEmpty else {
+                phase = .error("Apple sign-in did not return a valid identity token.")
+                return
+            }
+            guard !appleReauthNonce.isEmpty else {
+                phase = .error("Apple sign-in nonce was missing. Please try again.")
+                return
+            }
+
+            isRefreshingOunjeLogin = true
+            Task { @MainActor in
+                defer { isRefreshingOunjeLogin = false }
+                do {
+                    let formatter = PersonNameComponentsFormatter()
+                    let fallbackName = credential.fullName
+                        .map { formatter.string(from: $0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .flatMap { $0.isEmpty ? nil : $0 }
+                    let authResult = try await SupabaseAppleAuthService.shared.signInWithApple(
+                        idToken: identityToken,
+                        rawNonce: appleReauthNonce
+                    )
+                    let expectedUserID = (store.authSession?.userID ?? userId)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let appleSubject = appleSubject(fromIdentityToken: identityToken)
+                    let isSameCachedAppleUser = appleSubject?.isEmpty == false && appleSubject == expectedUserID
+                    guard expectedUserID.isEmpty || authResult.userID == expectedUserID || isSameCachedAppleUser else {
+                        phase = .error("Use the same Ounje account you started with before linking \(provider.name).")
+                        return
+                    }
+
+                    let refreshedSession = AuthSession(
+                        provider: .apple,
+                        userID: authResult.userID,
+                        email: authResult.email ?? credential.email ?? store.authSession?.email,
+                        displayName: authResult.displayName ?? fallbackName ?? store.authSession?.displayName,
+                        signedInAt: store.authSession?.signedInAt ?? Date(),
+                        accessToken: authResult.accessToken,
+                        refreshToken: authResult.refreshToken
+                    )
+                    store.persistAuthSession(refreshedSession)
+                    await saveSessionFromWebLogin()
+                } catch {
+                    phase = .error(error.localizedDescription)
+                }
+            }
+        case .failure(let error):
+            if let authError = error as? ASAuthorizationError, authError.code == .canceled {
+                return
+            }
+            phase = .error(error.localizedDescription)
+        }
+    }
+
+    private func randomNonceString(length: Int = 32) -> String {
+        precondition(length > 0)
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = ""
+        result.reserveCapacity(length)
+
+        while result.count < length {
+            var random: UInt8 = 0
+            let status = SecRandomCopyBytes(kSecRandomDefault, 1, &random)
+            if status == errSecSuccess, random < charset.count {
+                result.append(charset[Int(random)])
+            }
+        }
+
+        return result
+    }
+
+    private func sha256(_ input: String) -> String {
+        let digest = SHA256.hash(data: Data(input.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func appleSubject(fromIdentityToken identityToken: String) -> String? {
+        let segments = identityToken.split(separator: ".")
+        guard segments.count >= 2 else { return nil }
+        var payload = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = payload.count % 4
+        if padding > 0 {
+            payload += String(repeating: "=", count: 4 - padding)
+        }
+        guard let data = Data(base64Encoded: payload),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return (object["sub"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -3772,58 +3782,5 @@ struct OunjePlusPaywallSheet: View {
             onClose: { dismiss() },
             onUpgradeSuccess: onUpgradeSuccess
         )
-    }
-}
-
-struct FoodProfileSheet: View {
-    let profile: UserProfile
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    BubblySurfaceCard(accent: profile.agentSummaryAesthetic.primary) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Food profile")
-                                .biroHeaderFont(28)
-                                .foregroundStyle(.white)
-                            Text(profile.profileNarrative)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.72))
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(Array(profile.structuredSummarySections.enumerated()), id: \.element.id) { index, section in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(section.title)
-                                    .biroHeaderFont(16)
-                                    .foregroundStyle(OunjePalette.primaryText)
-                                Text(section.detail)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            if index < profile.structuredSummarySections.count - 1 {
-                                Divider()
-                                    .background(OunjePalette.stroke.opacity(0.72))
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.top, 18)
-                .padding(.bottom, 24)
-            }
-            .background(OunjePalette.background.ignoresSafeArea())
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .preferredColorScheme(.dark)
-        }
     }
 }

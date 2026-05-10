@@ -411,13 +411,6 @@ struct FirstLoginOnboardingView: View {
         ]
     }
 
-    private var paywallPresentationBinding: Binding<Bool> {
-        Binding(
-            get: { OunjeLaunchFlags.paywallsEnabled && isPaywallPresented },
-            set: { isPaywallPresented = $0 }
-        )
-    }
-
     private var favoriteFoodOptions: [String] {
         let cuisineSuggestions = selectedCuisines.flatMap { cuisineFavoriteFoodSuggestions[$0] ?? [] }
         let countrySignals = selectedCuisineCountries.flatMap { cuisineCountryFavoriteSuggestions[$0] ?? [] }
@@ -508,6 +501,15 @@ struct FirstLoginOnboardingView: View {
                     topSafeArea: proxy.safeAreaInsets.top,
                     bottomSafeArea: proxy.safeAreaInsets.bottom
                 )
+
+                if OunjeLaunchFlags.paywallsEnabled && isPaywallPresented {
+                    onboardingPaywallPage
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .opacity
+                        ))
+                        .zIndex(10)
+                }
             }
         }
         .ignoresSafeArea(.container, edges: .all)
@@ -661,15 +663,23 @@ struct FirstLoginOnboardingView: View {
             .environmentObject(onboardingSavedStore)
             .environmentObject(store)
         }
-        .fullScreenCover(isPresented: paywallPresentationBinding) {
-            OunjePlusPaywallSheet(
-                initialTier: paywallInitialTier,
-                isDismissible: false,
-                onUpgradeSuccess: {
-                    completePendingOnboardingAfterPaywall()
+    }
+
+    private var onboardingPaywallPage: some View {
+        OunjePaywallHostView(
+            initialTier: paywallInitialTier,
+            isDismissible: false,
+            onClose: {
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                    isPaywallPresented = false
                 }
-            )
-        }
+            },
+            onUpgradeSuccess: {
+                completePendingOnboardingAfterPaywall()
+            }
+        )
+        .environmentObject(store)
+        .ignoresSafeArea()
     }
 
     private func onboardingStepContentLayer(topSafeArea: CGFloat, bottomSafeArea: CGFloat) -> some View {
@@ -1157,14 +1167,7 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var paywallIntroStepContent: some View {
-        OnboardingAutoTransitionPage(
-            eyebrow: "All set",
-            title: "One last thing",
-            subtitle: "Your setup is ready. Start your trial to unlock recipe upgrades, personalized prep, and smart carts.",
-            chips: ["Style saved", "Profile ready", "Trial next"],
-            accent: currentStepAccent,
-            showsConfetti: true
-        )
+        OnboardingMinimalTransitionPage(title: "One last thing")
         .onAppear(perform: schedulePaywallIntroPresentation)
     }
 
@@ -2855,7 +2858,10 @@ struct FirstLoginOnboardingView: View {
             pendingCompletedOnboardingProfile = completedProfile
             pendingCompletedOnboardingStep = completedStep
             paywallInitialTier = .plus
-            isPaywallPresented = true
+            stepTransitionDirection = 1
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                isPaywallPresented = true
+            }
             return
         }
 
@@ -3516,6 +3522,40 @@ private struct OnboardingAutoTransitionPage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct OnboardingMinimalTransitionPage: View {
+    let title: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isVisible = false
+
+    var body: some View {
+        VStack {
+            Spacer(minLength: 0)
+
+            Text(title)
+                .font(.system(size: 35, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 340)
+                .opacity(isVisible ? 1 : 0)
+                .offset(x: reduceMotion ? 0 : (isVisible ? 0 : -40))
+                .scaleEffect(reduceMotion || isVisible ? 1 : 0.96)
+                .animation(.spring(response: 0.34, dampingFraction: 0.84), value: isVisible)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .onAppear {
+            isVisible = false
+            DispatchQueue.main.async {
+                isVisible = true
+            }
+        }
     }
 }
 

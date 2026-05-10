@@ -278,6 +278,11 @@ struct MealPrepAutomationState: Codable, Hashable {
     var userID: String
     var lastEvaluatedAt: String?
     var nextPlanningWindowAt: String?
+    var autoshopEnabled: Bool?
+    var autoshopLeadDays: Int?
+    var nextPrepAt: String?
+    var nextCartSyncAt: String?
+    var lastCartSyncTrigger: String?
     var lastGeneratedForDeliveryAt: String?
     var lastGeneratedPlanID: UUID?
     var lastGeneratedReason: String?

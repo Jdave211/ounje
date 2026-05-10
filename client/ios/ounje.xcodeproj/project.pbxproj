@@ -52,6 +52,7 @@
 		F10000000000000000000010 /* retro_coffee_character_bag.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000000D /* retro_coffee_character_bag.lottie */; };
 		F10000000000000000000011 /* wumpus_hi.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000000E /* wumpus_hi.lottie */; };
 		F10000000000000000000012 /* driving_car.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000013 /* driving_car.lottie */; };
+		DAD00000000000000000015 /* run_forrest_run_white.lottie in Resources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000015 /* run_forrest_run_white.lottie */; };
 		F10000000000000000000003 /* rbutton.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000004 /* rbutton.riv */; };
 		F10000000000000000000005 /* liquid.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000006 /* liquid.riv */; };
 		F10000000000000000000007 /* skills.riv in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000008 /* skills.riv */; };
@@ -121,6 +122,7 @@
 		F1000000000000000000000D /* retro_coffee_character_bag.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = retro_coffee_character_bag.lottie; path = ounje/retro_coffee_character_bag.lottie; sourceTree = "<group>"; };
 		F1000000000000000000000E /* wumpus_hi.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = wumpus_hi.lottie; path = ounje/wumpus_hi.lottie; sourceTree = "<group>"; };
 		F10000000000000000000013 /* driving_car.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = driving_car.lottie; path = ounje/driving_car.lottie; sourceTree = "<group>"; };
+		DAE00000000000000000015 /* run_forrest_run_white.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = run_forrest_run_white.lottie; path = ounje/run_forrest_run_white.lottie; sourceTree = "<group>"; };
 		F10000000000000000000004 /* rbutton.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = rbutton.riv; path = ounje/rbutton.riv; sourceTree = "<group>"; };
 		F10000000000000000000006 /* liquid.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = liquid.riv; path = ounje/liquid.riv; sourceTree = "<group>"; };
 		F10000000000000000000008 /* skills.riv */ = {isa = PBXFileReference; lastKnownFileType = file; name = skills.riv; path = ounje/skills.riv; sourceTree = "<group>"; };
@@ -212,6 +214,7 @@
 				F1000000000000000000000D /* retro_coffee_character_bag.lottie */,
 				F1000000000000000000000E /* wumpus_hi.lottie */,
 				F10000000000000000000013 /* driving_car.lottie */,
+				DAE00000000000000000015 /* run_forrest_run_white.lottie */,
 				F10000000000000000000004 /* rbutton.riv */,
 				F10000000000000000000006 /* liquid.riv */,
 				F10000000000000000000008 /* skills.riv */,
@@ -652,6 +655,7 @@
 				F10000000000000000000010 /* retro_coffee_character_bag.lottie in Resources */,
 				F10000000000000000000011 /* wumpus_hi.lottie in Resources */,
 				F10000000000000000000012 /* driving_car.lottie in Resources */,
+				DAD00000000000000000015 /* run_forrest_run_white.lottie in Resources */,
 				F10000000000000000000003 /* rbutton.riv in Resources */,
 				F10000000000000000000005 /* liquid.riv in Resources */,
 				F10000000000000000000007 /* skills.riv in Resources */,

@@ -1225,6 +1225,10 @@ struct UserProfile: Codable, Hashable {
         isPlanningReady && deliveryAddress.isComplete
     }
 
+    var isAutoshopOptedIn: Bool {
+        orderingAutonomy == .approvalRequired
+    }
+
     var absoluteRestrictions: [String] {
         normalizedUnique(allergies + hardRestrictions + neverIncludeFoods)
     }
@@ -1394,8 +1398,6 @@ struct UserProfile: Codable, Hashable {
     var profileNarrative: String {
         var fragments: [String] = []
         fragments.append("Built around \(joinedOrFallback(userFacingCuisineTitles, fallback: "flexible comfort meals"))")
-        fragments.append("for \(householdSummary)")
-        fragments.append("at \(budgetSummary.lowercased())")
 
         if !absoluteRestrictions.isEmpty {
             fragments.append("while locking out \(joinedOrFallback(Array(absoluteRestrictions.prefix(3)), fallback: "hard restrictions").lowercased())")
@@ -1424,30 +1426,26 @@ struct UserProfile: Codable, Hashable {
             notes.append("Hard guardrails are active for \(joinedOrFallback(Array(absoluteRestrictions.prefix(3)), fallback: "restricted ingredients").lowercased()).")
         }
 
-        if !favoriteFoods.isEmpty {
-            notes.append("The planner will lean into \(joinedOrFallback(Array(favoriteFoods.prefix(3)), fallback: "your go-to meals").lowercased()) first.")
-        }
-
         notes.append("Meal cadence is set to \(cadenceScheduleSummary.lowercased()) with \(consumption.mealsPerWeek) planned meals per week.")
-        notes.append("Budget guardrails are set to \(budgetSummary.lowercased()).")
+
+        if mealPrepGoals.contains(where: { goal in
+            let normalized = goal.lowercased()
+            return normalized.contains("budget")
+                || normalized.contains("spend less")
+                || normalized.contains("save money")
+                || normalized.contains("groceries")
+                || normalized.contains("cost")
+        }) {
+            notes.append("Budget guardrails are set to \(budgetSummary.lowercased()).")
+        }
 
         return notes
     }
 
     var structuredSummarySections: [MealPrepSummarySection] {
-        var tasteLines: [String] = [
-            "Cuisines: \(joinedOrFallback(userFacingCuisineTitles, fallback: "Open"))",
-            "Country cuisines: \(joinedOrFallback(cuisineCountries, fallback: "None added"))",
-            "Likes: \(joinedOrFallback(favoriteFoods, fallback: "Not specified"))"
-        ]
-
-        if !neverIncludeFoods.isEmpty {
-            tasteLines.append("Never include: \(joinedOrFallback(neverIncludeFoods, fallback: "None listed"))")
-        }
-
         return [
             MealPrepSummarySection(
-                title: "Dietary identity",
+                title: "Diets and allergies",
                 detail: joinedOrFallback(dietaryPatterns, fallback: "No dietary pattern set")
             ),
             MealPrepSummarySection(
@@ -1455,28 +1453,14 @@ struct UserProfile: Codable, Hashable {
                 detail: joinedOrFallback(absoluteRestrictions, fallback: "No hard restrictions recorded")
             ),
             MealPrepSummarySection(
-                title: "Taste profile",
-                detail: tasteLines.joined(separator: "\n")
+                title: "Goals",
+                detail: joinedOrFallback(mealPrepGoals, fallback: "No food goals set")
             ),
             MealPrepSummarySection(
-                title: "Household",
+                title: "Prep rhythm",
                 detail: [
-                    householdSummary,
-                    "\(consumption.adults) adult(s), \(consumption.kids) kid(s)",
-                    "\(consumption.mealsPerWeek) planned meals per week",
-                    consumption.includeLeftovers ? "Leftovers encouraged" : "Minimal leftovers"
+                    cadenceScheduleSummary
                 ].joined(separator: "\n")
-            ),
-            MealPrepSummarySection(
-                title: "Cadence and budget",
-                detail: [
-                    cadenceScheduleSummary,
-                    budgetSummary
-                ].joined(separator: "\n")
-            ),
-            MealPrepSummarySection(
-                title: "Ordering",
-                detail: "Autonomy: \(orderingAutonomy.title)"
             )
         ]
     }
@@ -1497,7 +1481,7 @@ struct UserProfile: Codable, Hashable {
             return "Macro-minded"
         }
         if loweredGoals.contains(where: { $0.contains("family") }) {
-            return "Household-ready"
+            return "Family-ready"
         }
         if loweredGoals.contains(where: { $0.contains("cleanup") }) {
             return "Low-mess"

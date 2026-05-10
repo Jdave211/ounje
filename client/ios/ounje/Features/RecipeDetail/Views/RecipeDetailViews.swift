@@ -622,7 +622,10 @@ struct RecipeDetailExperienceView: View {
                                         RecipeDetailLoadingSections()
                                     } else if detailLoadFailed {
                                         RecipeDetailLoadFailedState(message: viewModel.errorMessage ?? "We couldn't load the full recipe.") {
-                                            Task { await viewModel.load(for: presentedRecipe.id) }
+                                            Task {
+                                                let session = await store.refreshAuthSessionIfNeeded()
+                                                await viewModel.load(for: presentedRecipe.id, accessToken: session?.accessToken)
+                                            }
                                         }
                                     } else {
                                         if !detailMetrics.isEmpty {
@@ -848,7 +851,12 @@ struct RecipeDetailExperienceView: View {
                 baseServingsCount = max(1, loadedCount)
                 servingsCount = max(1, loadedCount)
                 guard !isOnboardingDemo else { return }
-                await viewModel.load(for: presentedRecipe.id, similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID)
+                let session = await store.refreshAuthSessionIfNeeded()
+                await viewModel.load(
+                    for: presentedRecipe.id,
+                    similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
+                    accessToken: session?.accessToken
+                )
             }
         }
         .background(detailBackground.ignoresSafeArea())

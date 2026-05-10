@@ -43,9 +43,18 @@ export async function resolveAuthorizedUserID(req, { extraUserIDValues = [] } = 
     throw error;
   }
 
-  const authenticatedUserID = await resolveAuthenticatedUserID(accessToken);
+  let authenticatedUserID = null;
+  try {
+    authenticatedUserID = await resolveAuthenticatedUserID(accessToken);
+  } catch (cause) {
+    const error = new Error("Authorization expired or invalid");
+    error.statusCode = 401;
+    error.cause = cause;
+    throw error;
+  }
+
   if (!authenticatedUserID) {
-    const error = new Error("Could not resolve authenticated user");
+    const error = new Error("Authorization expired or invalid");
     error.statusCode = 401;
     throw error;
   }

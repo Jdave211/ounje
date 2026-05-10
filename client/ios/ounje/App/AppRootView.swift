@@ -12,6 +12,7 @@ import WebKit
 import SafariServices
 import UserNotifications
 import StoreKit
+import DotLottie
 
 typealias Color = SwiftUI.Color
 typealias Alignment = SwiftUI.Alignment
@@ -51,12 +52,7 @@ struct RootView: View {
                 AuthenticationView()
                     .id("auth-entry")
             } else if store.shouldHoldPlannerSplash || store.shouldShowBootstrapLoadingView {
-                OunjeSplashLoaderView(
-                    title: store.isCompletingOnboarding ? "Setting up Ounje" : "Opening Ounje",
-                    subtitle: store.isCompletingOnboarding
-                        ? "Building your first prep and loading your cart lane."
-                        : "Syncing your prep, cart, and account."
-                )
+                OunjeSplashLoaderView()
                 .id(store.isCompletingOnboarding ? "onboarding-preparation" : "bootstrap-loading")
             } else if store.requiresProfileOnboarding {
                 FirstLoginOnboardingView()
@@ -152,43 +148,54 @@ struct RootView: View {
 }
 
 private struct OunjeSplashLoaderView: View {
-    let title: String
-    let subtitle: String
+    private let animation = DotLottieAnimation(
+        fileName: "run_forrest_run_white",
+        config: AnimationConfig(
+            autoplay: true,
+            loop: true,
+            speed: 1.0,
+            useFrameInterpolation: true
+        )
+    )
 
     var body: some View {
         ZStack {
             OunjePalette.background
                 .ignoresSafeArea()
 
-            VStack(spacing: 28) {
+            VStack(spacing: 20) {
                 Spacer(minLength: 0)
 
-                Image("OunjeLaunchWordmark")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: min(UIScreen.main.bounds.width * 0.68, 280))
+                DotLottiePlayerView(animation: animation)
+                    .looping()
+                    .frame(width: 190, height: 190)
                     .accessibilityHidden(true)
 
-                VStack(spacing: 8) {
-                    Text(title)
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-
-                    Text(subtitle)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 16)
-                }
-
-                ProgressView()
-                    .tint(Color(hex: "63D471"))
-                    .scaleEffect(1.04)
+                Text("Getting Things Ready.")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .multilineTextAlignment(.center)
+                    .tracking(0.2)
 
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 40)
+        }
+    }
+}
+
+private struct OunjeSplashLoaderFallbackView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .tint(Color.white)
+                .scaleEffect(1.08)
+                .accessibilityHidden(true)
+
+            Text("Getting Things Ready.")
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
         }
     }
 }
@@ -533,6 +540,42 @@ private final class RecipeImportHistoryStore: ObservableObject {
         completedItems = (try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID)) ?? []
         lastRefreshUserID = userID
         lastRefreshAt = .now
+    }
+}
+
+private extension RecipeImportCompletedItem {
+    var looksLikeAIEdit: Bool {
+        [
+            sourceType,
+            source,
+            Optional(title),
+            sourceText
+        ]
+        .compactMap { $0?.lowercased() }
+        .contains { value in
+            value.contains("adaptation")
+                || value.contains("ai edit")
+                || value.contains("ask ounje")
+                || value.contains("onboarding-demo")
+        }
+    }
+}
+
+private extension DiscoverRecipeCardData {
+    var looksLikeAIEdit: Bool {
+        [
+            source,
+            category,
+            recipeType,
+            Optional(title)
+        ]
+        .compactMap { $0?.lowercased() }
+        .contains { value in
+            value.contains("adaptation")
+                || value.contains("ai edit")
+                || value.contains("ask ounje")
+                || value.contains("onboarding-demo")
+        }
     }
 }
 
@@ -1767,7 +1810,10 @@ private struct MealPlannerShellView: View {
         case .cart:
             CartTabView(selectedTab: $selectedTab, focusedRecipeID: $focusedCartRecipeID)
         case .profile:
-            ProfileTabView()
+            ProfileTabView(
+                importedRecipeCount: recipeImportHistory.completedCount,
+                aiEditCount: profileAIEditsCount
+            )
         }
     }
 
@@ -1947,6 +1993,18 @@ private struct MealPlannerShellView: View {
 
     private var discoverFeedbackRevision: Int {
         savedStore.savedRecipes.count
+    }
+
+    private var profileAIEditsCount: Int {
+        var ids = Set<String>()
+        for item in recipeImportHistory.completedItems where item.looksLikeAIEdit {
+            let recipeID = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            ids.insert(recipeID.isEmpty ? item.id : recipeID)
+        }
+        for recipe in savedStore.savedRecipes where recipe.looksLikeAIEdit {
+            ids.insert(recipe.id)
+        }
+        return ids.count
     }
 
     private var hasLiveSharedImportWork: Bool {
@@ -2451,14 +2509,12 @@ struct PurchasingCTAButton: View {
         .accessibilityLabel(title)
     }
 
-    private func fillProgress(at date: Date) -> CGFloat {
+    private func fillProgress(at _: Date) -> CGFloat {
         switch state {
         case .idle:
             return 0
         case .processing:
-            guard !reduceMotion else { return 0.52 }
-            let wave = (sin(date.timeIntervalSinceReferenceDate * 2.3) + 1) / 2
-            return 0.22 + CGFloat(wave) * 0.64
+            return 0
         case .success:
             return 1
         case .failed:

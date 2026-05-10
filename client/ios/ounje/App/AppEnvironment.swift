@@ -109,7 +109,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     var isAutoshopManualBetaOnly: Bool {
-        true
+        false
     }
 
     var nextRunDate: Date? {
@@ -230,6 +230,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     func persistAuthSession(_ session: AuthSession) {
         authStateRevision += 1
+        authSession = session
         cachedLiveUserID = session.userID
         saveAuthSession(session)
     }
@@ -238,6 +239,13 @@ final class MealPlanningAppStore: ObservableObject {
     func freshTrackingSession() async -> AuthSession? {
         let refreshed = await refreshAuthSessionIfNeeded()
         return refreshed ?? resolvedTrackingSession
+    }
+
+    @discardableResult
+    private func freshUserDataSession() async -> AuthSession? {
+        guard let session = await refreshAuthSessionIfNeeded() else { return nil }
+        let token = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return token.isEmpty ? nil : session
     }
 
     func refreshMembershipEntitlement(trigger: String) async {
@@ -306,18 +314,26 @@ final class MealPlanningAppStore: ObservableObject {
                 throw StoreBillingError.authenticationRequired
             }
             let snapshot = try await StoreKitMembershipBillingService.shared.purchase(plan: plan, userID: session.userID)
-            _ = try await SupabaseEntitlementService.shared.syncCurrentEntitlement(
-                snapshot: snapshot,
-                userID: session.userID,
-                accessToken: session.accessToken
-            )
-            let remoteEntitlement = try await SupabaseEntitlementService.shared.fetchCurrentEntitlement(
-                userID: session.userID,
-                accessToken: session.accessToken
-            )
-            membershipEntitlement = remoteEntitlement
+            membershipEntitlement = snapshot
             syncProfilePricingTierToEntitlement()
             billingStatusMessage = nil
+
+            do {
+                _ = try await SupabaseEntitlementService.shared.syncCurrentEntitlement(
+                    snapshot: snapshot,
+                    userID: session.userID,
+                    accessToken: session.accessToken
+                )
+                let remoteEntitlement = try await SupabaseEntitlementService.shared.fetchCurrentEntitlement(
+                    userID: session.userID,
+                    accessToken: session.accessToken
+                )
+                membershipEntitlement = remoteEntitlement ?? snapshot
+                syncProfilePricingTierToEntitlement()
+            } catch {
+                print("[Membership] Post-purchase entitlement sync failed:", error.localizedDescription)
+            }
+
             return true
         } catch {
             billingStatusMessage = error.localizedDescription
@@ -392,15 +408,16 @@ final class MealPlanningAppStore: ObservableObject {
 
         guard let session = authSession else { return }
         Task(priority: .utility) {
+            let writeSession = await self.freshUserDataSession() ?? session
             try? await SupabaseProfileStateService.shared.upsertProfile(
-                userID: session.userID,
-                email: session.email,
-                displayName: updated.trimmedPreferredName ?? session.displayName,
-                authProvider: session.provider,
+                userID: writeSession.userID,
+                email: writeSession.email,
+                displayName: updated.trimmedPreferredName ?? writeSession.displayName,
+                authProvider: writeSession.provider,
                 onboarded: isOnboarded,
                 lastOnboardingStep: lastOnboardingStep,
                 profile: updated,
-                accessToken: session.accessToken
+                accessToken: writeSession.accessToken
                 )
         }
 
@@ -420,7 +437,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     func bootstrapFromSupabaseIfNeeded() async {
         let bootstrapRevision = authStateRevision
-        guard let bootstrapUserID = resolvedLiveUserID else {
+        guard resolvedLiveUserID != nil else {
             hasResolvedInitialState = true
             isHydratingRemoteState = false
             return
@@ -437,26 +454,8 @@ final class MealPlanningAppStore: ObservableObject {
             }
         }
 
-        let session: AuthSession
-        if let currentSession = authSession {
-            let refreshedSession = await refreshAuthSessionIfPossible(currentSession)
-            guard authStateRevision == bootstrapRevision else { return }
-            if refreshedSession != currentSession {
-                authSession = refreshedSession
-                saveAuthSession(refreshedSession)
-            }
-            session = authSession ?? refreshedSession
-        } else {
-            session = liveTrackingSession ?? AuthSession(
-                provider: .apple,
-                userID: bootstrapUserID,
-                email: nil,
-                displayName: nil,
-                signedInAt: .now,
-                accessToken: nil,
-                refreshToken: nil
-            )
-        }
+        guard let session = await freshUserDataSession() else { return }
+        guard authStateRevision == bootstrapRevision else { return }
         cachedLiveUserID = authSession?.userID ?? cachedLiveUserID
 
         do {
@@ -615,6 +614,7 @@ final class MealPlanningAppStore: ObservableObject {
         let previousPlan = latestPlan
         let savedRecipeIDs = await resolvedSavedRecipeIDs()
         let savedRecipeTitles = await resolvedSavedRecipeTitles()
+        let generationSession = await freshUserDataSession()
         let generatedPlan = await planner.generatePlan(
             profile: profile,
             history: planHistory,
@@ -623,8 +623,8 @@ final class MealPlanningAppStore: ObservableObject {
             savedRecipeTitles: savedRecipeTitles,
             options: options,
             regenerationContext: regenerationContext,
-            userID: authSession?.userID,
-            accessToken: authSession?.accessToken,
+            userID: generationSession?.userID ?? authSession?.userID,
+            accessToken: generationSession?.accessToken,
             includeRemoteQuotes: !deferSlowArtifacts
         )
         guard activeGenerationToken == generationToken, self.profile == profile else { return nil }
@@ -706,7 +706,7 @@ final class MealPlanningAppStore: ObservableObject {
         quantityOverridesByMainShopKey: [String: Int] = [:]
     ) async {
         guard !isManualAutoshopRunning else { return }
-        guard let session = await freshTrackingSession() ?? authSession else {
+        guard let session = await freshUserDataSession() else {
             manualAutoshopErrorMessage = "Sign in again before running Autoshop."
             return
         }
@@ -747,6 +747,7 @@ final class MealPlanningAppStore: ObservableObject {
             manualAutoshopErrorMessage = "Autoshop needs a synced Instacart cart first."
             return
         }
+        latestPlan = planCappedForAutoshop(latestPlan)
 
         if let allowedMainShopItemKeys {
             latestPlan = filterPlanForManualAutoshopRun(
@@ -761,7 +762,8 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         let cartSignature = automationCartSignature(for: latestPlan.groceryItems)
-        let deliveryAnchor = automationAnchorString(for: profile.scheduledDeliveryDate())
+        let nextDelivery = profile.scheduledDeliveryDate()
+        let deliveryAnchor = automationAnchorString(for: nextDelivery)
 
         do {
             let response = try await InstacartAutomationAPIService.shared.startRun(
@@ -774,6 +776,11 @@ final class MealPlanningAppStore: ObservableObject {
                 trigger: trigger
             )
             automationState = updatedAutomationState {
+                $0.autoshopEnabled = profile.isAutoshopOptedIn
+                $0.autoshopLeadDays = profile.autoshopLeadDays
+                $0.nextPrepAt = ISO8601DateFormatter().string(from: nextDelivery)
+                $0.nextCartSyncAt = ISO8601DateFormatter().string(from: cartSetupWindowOpenDate(for: profile, nextDelivery: nextDelivery))
+                $0.lastCartSyncTrigger = trigger
                 $0.lastCartSyncForDeliveryAt = deliveryAnchor
                 $0.lastCartSyncPlanID = latestPlan.id
                 $0.lastCartSignature = cartSignature
@@ -798,6 +805,11 @@ final class MealPlanningAppStore: ObservableObject {
         } catch {
             manualAutoshopErrorMessage = error.localizedDescription
             automationState = updatedAutomationState {
+                $0.autoshopEnabled = profile.isAutoshopOptedIn
+                $0.autoshopLeadDays = profile.autoshopLeadDays
+                $0.nextPrepAt = ISO8601DateFormatter().string(from: nextDelivery)
+                $0.nextCartSyncAt = ISO8601DateFormatter().string(from: cartSetupWindowOpenDate(for: profile, nextDelivery: nextDelivery))
+                $0.lastCartSyncTrigger = trigger
                 $0.lastInstacartRunStatus = "failed"
                 $0.lastGeneratedReason = "manual_start_failed:\(trigger)"
             }
@@ -848,6 +860,38 @@ final class MealPlanningAppStore: ObservableObject {
         var filteredPlan = plan
         filteredPlan.mainShopSnapshot = snapshot
         return filteredPlan
+    }
+
+    private func planCappedForAutoshop(_ plan: MealPlan, maxRecipes: Int = 10) -> MealPlan {
+        guard plan.recipes.count > maxRecipes else { return plan }
+
+        var cappedPlan = plan
+        let cappedRecipes = Array(plan.recipes.prefix(maxRecipes))
+        let allowedRecipeIDs = Set(cappedRecipes.map { Self.normalizedCartKey($0.recipe.id) })
+        cappedPlan.recipes = cappedRecipes
+        cappedPlan.groceryItems = plan.groceryItems.compactMap { item in
+            guard !item.sourceIngredients.isEmpty else { return item }
+            let filteredSources = item.sourceIngredients.filter {
+                allowedRecipeIDs.contains(Self.normalizedCartKey($0.recipeID))
+            }
+            guard !filteredSources.isEmpty else { return nil }
+            var copy = item
+            copy.sourceIngredients = filteredSources
+            return copy
+        }
+
+        if var snapshot = plan.mainShopSnapshot {
+            snapshot.signature = MainShopSnapshotBuilder.signature(for: cappedPlan.groceryItems)
+            snapshot.items = snapshot.items.filter { item in
+                guard let sourceIngredients = item.sourceIngredients, !sourceIngredients.isEmpty else { return true }
+                return sourceIngredients.contains {
+                    allowedRecipeIDs.contains(Self.normalizedCartKey($0.recipeID))
+                }
+            }
+            cappedPlan.mainShopSnapshot = snapshot
+        }
+
+        return cappedPlan
     }
 
     private func mainShopKeys(for item: MainShopSnapshotItem) -> [String] {
@@ -952,7 +996,7 @@ final class MealPlanningAppStore: ObservableObject {
         prepRecipeOverrides = []
         savePrepRecipeOverridesCache()
 
-        let sessionForOverrideCleanup = authSession
+        let sessionForOverrideCleanup = await freshUserDataSession()
 
         for attempt in 0..<2 {
             let rerollNonce = UUID().uuidString
@@ -1022,7 +1066,7 @@ final class MealPlanningAppStore: ObservableObject {
 
         prepRecipeOverrides = originalOverrides
         savePrepRecipeOverridesCache()
-        if let session = authSession {
+        if let session = await freshUserDataSession() {
             for override in originalOverrides {
                 try? await SupabasePrepRecipeOverridesService.shared.upsertPrepRecipeOverride(
                     userID: session.userID,
@@ -1168,7 +1212,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func finalizeCompletedOnboarding(with profile: UserProfile, lastStep: Int) async {
-        if let session = await freshTrackingSession() ?? authSession {
+        if let session = await freshUserDataSession() {
             await persistCompletedOnboardingState(
                 profile: profile,
                 lastStep: lastStep,
@@ -1181,7 +1225,7 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         await refreshMembershipEntitlement(trigger: "post-onboarding")
-        if let session = await freshTrackingSession() ?? authSession {
+        if let session = await freshUserDataSession() {
             _ = await loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
             await loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
             await loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
@@ -1334,7 +1378,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     func deactivateAccount() async throws {
         guard !isDeactivatingAccount else { return }
-        guard let session = await freshTrackingSession() ?? authSession else {
+        guard let session = await freshUserDataSession() else {
             throw OunjeAccountServiceError.requestFailed("Sign in again before deleting your account.")
         }
 
@@ -1584,7 +1628,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func resolvedSavedRecipeIDs() async -> Set<String> {
-        guard let session = authSession else { return [] }
+        guard let session = await freshUserDataSession() else { return [] }
         let ids = await SupabaseSavedRecipesService.shared.resolvedSavedRecipeIDs(
             userID: session.userID,
             accessToken: session.accessToken
@@ -1593,7 +1637,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func resolvedSavedRecipeTitles() async -> [String] {
-        guard let session = authSession else { return [] }
+        guard let session = await freshUserDataSession() else { return [] }
         return (try? await SupabaseSavedRecipesService.shared.fetchSavedRecipeTitles(
             userID: session.userID,
             accessToken: session.accessToken
@@ -1610,7 +1654,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     func toggleRecurringPrepRecipe(_ recipe: Recipe) async -> Bool {
         guard !recurringPrepToggleRecipeIDs.contains(recipe.id) else { return true }
-        guard let fallbackSession = resolvedTrackingSession ?? authSession else { return false }
+        guard let fallbackSession = await freshUserDataSession() else { return false }
 
         recurringPrepToggleRecipeIDs.insert(recipe.id)
         defer { recurringPrepToggleRecipeIDs.remove(recipe.id) }
@@ -1627,7 +1671,7 @@ final class MealPlanningAppStore: ObservableObject {
             saveRecurringPrepRecipesCache()
 
             do {
-                let session = await refreshAuthSessionIfNeeded() ?? fallbackSession
+                let session = await freshUserDataSession() ?? fallbackSession
                 try await SupabaseRecurringPrepRecipesService.shared.upsertRecurringPrepRecipe(
                     existing,
                     accessToken: session.accessToken
@@ -1979,18 +2023,17 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func loadLatestInstacartRun() async {
-        guard let userID = resolvedLiveUserID else {
+        guard let session = await freshUserDataSession() else {
             latestInstacartRun = nil
             latestBlockingInstacartRun = nil
             return
         }
 
         do {
-            let trackingAccessToken = await freshTrackingSession()?.accessToken ?? resolvedTrackingSession?.accessToken
             let normalizedCurrentPlanID = latestPlan?.id.uuidString.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
             let selectedRun = try await InstacartRunLogAPIService.shared.fetchCurrentRunSummary(
-                userID: userID,
-                accessToken: trackingAccessToken,
+                userID: session.userID,
+                accessToken: session.accessToken,
                 mealPlanID: normalizedCurrentPlanID.isEmpty ? nil : normalizedCurrentPlanID
             )
             let isRetryActive: (InstacartRunLogSummary) -> Bool = { run in
@@ -2070,17 +2113,16 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func loadLatestGroceryOrder() async {
-        guard let userID = resolvedLiveUserID else {
+        guard let session = await freshUserDataSession() else {
             latestGroceryOrder = nil
             return
         }
 
-        let trackingAccessToken = await freshTrackingSession()?.accessToken ?? resolvedTrackingSession?.accessToken
         if let linkedOrderID = latestInstacartRun?.linkedGroceryOrderID,
            let linkedOrder = try? await GroceryOrderAPIService.shared.fetchOrder(
                 orderID: linkedOrderID,
-                userID: userID,
-                accessToken: trackingAccessToken
+                userID: session.userID,
+                accessToken: session.accessToken
            ) {
             latestGroceryOrder = linkedOrder
         } else {
@@ -2103,7 +2145,7 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         do {
-            if let session = await freshTrackingSession(),
+            if let session = await freshUserDataSession(),
                let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
                !accessToken.isEmpty {
                 try await GroceryOrderAPIService.shared.trackOrder(
@@ -2120,7 +2162,7 @@ final class MealPlanningAppStore: ObservableObject {
                 recordTrackingAuthFailure(for: userID)
             }
             if isAuthorizationFailure(error),
-               let retriedSession = await freshTrackingSession(),
+               let retriedSession = await freshUserDataSession(),
                let refreshedToken = retriedSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
                !refreshedToken.isEmpty {
                 do {
@@ -2162,7 +2204,7 @@ final class MealPlanningAppStore: ObservableObject {
             return
         }
 
-        if let session = await freshTrackingSession() ?? resolvedTrackingSession {
+        if let session = await freshUserDataSession() {
             await hydrateInstacartArtifacts(
                 runID: runID,
                 groceryOrderID: groceryOrderID,
@@ -2177,7 +2219,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func refreshRealtimeMealPrepState(trigger: String = "realtime") async {
-        guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return }
+        guard let session = await freshUserDataSession() else { return }
         isRefreshingPrepRecipes = true
         defer { isRefreshingPrepRecipes = false }
 
@@ -2199,7 +2241,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func refreshRealtimeRecurringPrepRecipes(trigger: String = "realtime") async {
-        guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return }
+        guard let session = await freshUserDataSession() else { return }
         await loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
     }
 
@@ -2339,7 +2381,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     @discardableResult
     private func persistLatestPlanRemotelyIfPossible(_ plan: MealPlan, syncCart: Bool = false) async -> Bool {
-        guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return false }
+        guard let session = await freshUserDataSession() else { return false }
         guard isUsablePersistedPlan(plan) else {
             print("[MealPlanningAppStore] Skipping remote meal prep cycle persistence for unsupported plan \(plan.id) with \(plan.recipes.count) recipes")
             return false
@@ -2361,7 +2403,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func persistPrepRecipeOverrideIfPossible(_ override: PrepRecipeOverride) async {
         guard !override.recipe.isLegacySeedRecipe else { return }
-        guard let session = await freshTrackingSession() ?? resolvedTrackingSession else { return }
+        guard let session = await freshUserDataSession() else { return }
 
         try? await SupabasePrepRecipeOverridesService.shared.upsertPrepRecipeOverride(
             userID: session.userID,
@@ -2373,8 +2415,7 @@ final class MealPlanningAppStore: ObservableObject {
     private func persistAutomationStateIfPossible() {
         guard let state = automationState else { return }
         Task(priority: .utility) {
-            let session = await self.freshTrackingSession() ?? self.resolvedTrackingSession
-            guard let session else { return }
+            guard let session = await self.freshUserDataSession() else { return }
             var stateToPersist = state
             if stateToPersist.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 stateToPersist.userID = session.userID
@@ -2444,8 +2485,13 @@ final class MealPlanningAppStore: ObservableObject {
         await loadLatestGroceryOrder()
         await maybeRefreshLatestGroceryOrderTrackingIfNeeded(trigger: trigger)
         automationState = updatedAutomationState {
-            $0.lastEvaluatedAt = ISO8601DateFormatter().string(from: .now)
-            $0.nextPlanningWindowAt = ISO8601DateFormatter().string(from: planningWindowOpenDate(for: profile, nextDelivery: nextDelivery))
+            let formatter = ISO8601DateFormatter()
+            $0.lastEvaluatedAt = formatter.string(from: .now)
+            $0.nextPlanningWindowAt = formatter.string(from: planningWindowOpenDate(for: profile, nextDelivery: nextDelivery))
+            $0.autoshopEnabled = profile.isAutoshopOptedIn
+            $0.autoshopLeadDays = profile.autoshopLeadDays
+            $0.nextPrepAt = formatter.string(from: nextDelivery)
+            $0.nextCartSyncAt = formatter.string(from: cartSetupWindowOpenDate(for: profile, nextDelivery: nextDelivery))
         }
         saveAutomationStateCache()
         persistAutomationStateIfPossible()
@@ -2509,10 +2555,10 @@ final class MealPlanningAppStore: ObservableObject {
             await latestPlanArtifactRefreshTask.value
         }
 
-        guard let session = authSession,
+        guard let session = await freshUserDataSession(),
               let profile,
               profile.deliveryAddress.isComplete,
-              profile.orderingAutonomy != .suggestOnly
+              profile.isAutoshopOptedIn
         else {
             return
         }
@@ -2531,23 +2577,24 @@ final class MealPlanningAppStore: ObservableObject {
         else {
             return
         }
+        let autoshopPlan = planCappedForAutoshop(latestPlan)
 
         let nextDelivery = profile.scheduledDeliveryDate()
         let initialSetupWindowOpen = cartSetupWindowOpenDate(for: profile, nextDelivery: nextDelivery)
         let confirmationWindowOpen = cartConfirmationWindowOpenDate(for: profile, nextDelivery: nextDelivery)
         let now = Date()
 
-        let normalizedItems = latestPlan.groceryItems
+        let normalizedItems = autoshopPlan.groceryItems
 
         guard !normalizedItems.isEmpty else { return }
         let cartSignature = automationCartSignature(for: normalizedItems)
         let deliveryAnchor = automationAnchorString(for: nextDelivery)
         if let intent = pendingCartSyncIntent,
-           intent.planID != latestPlan.id || intent.cartSignature != cartSignature || intent.deliveryAnchor != deliveryAnchor {
+           intent.planID != autoshopPlan.id || intent.cartSignature != cartSignature || intent.deliveryAnchor != deliveryAnchor {
             pendingCartSyncIntent = nil
             savePendingCartSyncIntentCache()
         }
-        let hasPendingCartSyncIntent = pendingCartSyncIntent?.planID == latestPlan.id
+        let hasPendingCartSyncIntent = pendingCartSyncIntent?.planID == autoshopPlan.id
             && pendingCartSyncIntent?.cartSignature == cartSignature
             && pendingCartSyncIntent?.deliveryAnchor == deliveryAnchor
         let shouldForceRun = force || hasPendingCartSyncIntent
@@ -2578,7 +2625,7 @@ final class MealPlanningAppStore: ObservableObject {
 
             await queuePartialInstacartRetryIfNeeded(
                 rootRunID: partialRun.runId,
-                latestPlan: latestPlan,
+                latestPlan: autoshopPlan,
                 session: session,
                 deliveryAddress: profile.deliveryAddress,
                 trigger: trigger
@@ -2594,21 +2641,26 @@ final class MealPlanningAppStore: ObservableObject {
         do {
             let response = try await InstacartAutomationAPIService.shared.startRun(
                 items: normalizedItems,
-                mealPlan: latestPlan,
+                mealPlan: autoshopPlan,
                 userID: session.userID,
                 accessToken: session.accessToken,
                 deliveryAddress: profile.deliveryAddress
             )
             automationState = updatedAutomationState {
+                $0.autoshopEnabled = profile.isAutoshopOptedIn
+                $0.autoshopLeadDays = profile.autoshopLeadDays
+                $0.nextPrepAt = ISO8601DateFormatter().string(from: nextDelivery)
+                $0.nextCartSyncAt = ISO8601DateFormatter().string(from: initialSetupWindowOpen)
+                $0.lastCartSyncTrigger = needsConfirmationPass ? "confirm:\(trigger)" : trigger
                 $0.lastCartSyncForDeliveryAt = deliveryAnchor
-                $0.lastCartSyncPlanID = latestPlan.id
+                $0.lastCartSyncPlanID = autoshopPlan.id
                 $0.lastCartSignature = cartSignature
                 $0.lastInstacartRunID = response.runID
                 $0.lastInstacartRunStatus = response.normalizedStatus
                 $0.lastGeneratedReason = needsConfirmationPass ? "confirm:\(trigger)" : trigger
             }
             clearPendingCartSyncIntentIfMatched(
-                planID: latestPlan.id,
+                planID: autoshopPlan.id,
                 cartSignature: cartSignature,
                 deliveryAnchor: deliveryAnchor
             )
@@ -2623,6 +2675,11 @@ final class MealPlanningAppStore: ObservableObject {
             await emitLifecycleNotificationsIfNeeded(trigger: needsConfirmationPass ? "confirmation_run_started" : (force ? "manual_rerun_started" : "instacart_run_started"))
         } catch {
             automationState = updatedAutomationState {
+                $0.autoshopEnabled = profile.isAutoshopOptedIn
+                $0.autoshopLeadDays = profile.autoshopLeadDays
+                $0.nextPrepAt = ISO8601DateFormatter().string(from: nextDelivery)
+                $0.nextCartSyncAt = ISO8601DateFormatter().string(from: initialSetupWindowOpen)
+                $0.lastCartSyncTrigger = needsConfirmationPass ? "confirm:\(trigger)" : trigger
                 $0.lastCartSyncForDeliveryAt = nil
                 $0.lastCartSyncPlanID = nil
                 $0.lastCartSignature = nil
@@ -3030,7 +3087,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func emitEngagementNudgesIfNeeded() async {
         guard let profile,
-              let session = authSession
+              let session = await freshUserDataSession()
         else {
             return
         }
@@ -3083,7 +3140,7 @@ final class MealPlanningAppStore: ObservableObject {
         metadata: [String: String] = [:],
         scheduledFor: Date = .now
     ) async {
-        guard let session = authSession else {
+        guard let session = await freshUserDataSession() else {
             return
         }
         do {
@@ -3126,6 +3183,11 @@ final class MealPlanningAppStore: ObservableObject {
             userID: authSession?.userID ?? "",
             lastEvaluatedAt: nil,
             nextPlanningWindowAt: nil,
+            autoshopEnabled: nil,
+            autoshopLeadDays: nil,
+            nextPrepAt: nil,
+            nextCartSyncAt: nil,
+            lastCartSyncTrigger: nil,
             lastGeneratedForDeliveryAt: nil,
             lastGeneratedPlanID: nil,
             lastGeneratedReason: nil,
@@ -3351,8 +3413,8 @@ final class MealPlanningAppStore: ObservableObject {
         hiddenMainShopItemKeys.insert(normalizedKey)
         saveHiddenMainShopItems(for: currentPlanID)
 
-        guard let session = authSession else { return }
         Task(priority: .utility) {
+            guard let session = await self.freshUserDataSession() else { return }
             try? await SupabaseMealPrepCycleService.shared.deleteMainShopItem(
                 userID: session.userID,
                 planID: currentPlanID,
@@ -3395,8 +3457,8 @@ final class MealPlanningAppStore: ObservableObject {
             profile = updatedProfile
             saveProfile()
 
-            guard let session = authSession else { return }
             Task(priority: .utility) {
+                guard let session = await self.freshUserDataSession() else { return }
                 try? await SupabaseProfileStateService.shared.upsertProfile(
                     userID: session.userID,
                     email: session.email,
@@ -3426,19 +3488,18 @@ final class MealPlanningAppStore: ObservableObject {
         profile = updatedProfile
         saveProfile()
 
-        if let session = authSession {
-            Task(priority: .utility) {
-                try? await SupabaseProfileStateService.shared.upsertProfile(
-                    userID: session.userID,
-                    email: session.email,
-                    displayName: updatedProfile.trimmedPreferredName ?? session.displayName,
-                    authProvider: session.provider,
-                    onboarded: isOnboarded,
-                    lastOnboardingStep: lastOnboardingStep,
-                    profile: updatedProfile,
-                    accessToken: session.accessToken
-                )
-            }
+        Task(priority: .utility) {
+            guard let session = await self.freshUserDataSession() else { return }
+            try? await SupabaseProfileStateService.shared.upsertProfile(
+                userID: session.userID,
+                email: session.email,
+                displayName: updatedProfile.trimmedPreferredName ?? session.displayName,
+                authProvider: session.provider,
+                onboarded: isOnboarded,
+                lastOnboardingStep: lastOnboardingStep,
+                profile: updatedProfile,
+                accessToken: session.accessToken
+            )
         }
 
         unhideMainShopItem(removalKey: normalizedKey, for: planID)
@@ -3811,7 +3872,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func recordCompletedMealPrepCycleIfNeeded(for plan: MealPlan) async {
-        guard let session = authSession else { return }
+        guard let session = await freshUserDataSession() else { return }
         guard !completedMealPrepCycles.contains(where: { $0.planID == plan.id }) else { return }
 
         let completedCycle = MealPrepCompletedCycle(

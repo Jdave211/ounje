@@ -398,14 +398,13 @@ final class SupabaseAppNotificationEventService {
             throw AppNotificationEventServiceError.invalidRequest
         }
 
-        guard let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
-            throw AppNotificationEventServiceError.unauthorized
-        }
-
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        do {
+            try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
+        } catch {
+            throw AppNotificationEventServiceError.unauthorized
+        }
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -417,9 +416,10 @@ final class SupabaseAppNotificationEventService {
             throw AppNotificationEventServiceError.unauthorized
         }
         guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = deliveredOnly ? "Failed to load app notifications (\(httpResponse.statusCode))." : "Failed to load recent app notifications (\(httpResponse.statusCode))."
-            throw AppNotificationEventServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw AppNotificationEventServiceError.requestFailed(
+                SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback)
+            )
         }
         return try decoder.decode([AppNotificationEvent].self, from: data)
     }
@@ -427,9 +427,6 @@ final class SupabaseAppNotificationEventService {
     private func updateViaSupabase(eventIDs: [UUID], accessToken: String?, bodyKey: String) async throws {
         let ids = eventIDs.map(\.uuidString)
         guard !ids.isEmpty else { return }
-        guard let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
-            throw AppNotificationEventServiceError.unauthorized
-        }
         let joined = ids.map { "\"\($0)\"" }.joined(separator: ",")
         let clause = "(\(joined))"
         let encodedClause = clause.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? clause
@@ -440,8 +437,11 @@ final class SupabaseAppNotificationEventService {
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        do {
+            try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
+        } catch {
+            throw AppNotificationEventServiceError.unauthorized
+        }
         let now = ISO8601DateFormatter().string(from: .now)
         request.httpBody = try JSONEncoder().encode([bodyKey: now])
 
@@ -451,9 +451,10 @@ final class SupabaseAppNotificationEventService {
         }
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to update app notifications (\(httpResponse.statusCode))."
-            throw AppNotificationEventServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw AppNotificationEventServiceError.requestFailed(
+                SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback)
+            )
         }
     }
 
@@ -541,8 +542,7 @@ final class SupabaseAppNotificationEventService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let formatter = ISO8601DateFormatter()
         request.httpBody = try JSONEncoder().encode([

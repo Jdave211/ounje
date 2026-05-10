@@ -96,12 +96,7 @@ struct OunjePaywallHostView: View {
                             .lineSpacing(1)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text(paywallSubtitle)
-                            .font(.system(size: compact ? 12 : 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color.white.opacity(0.62))
-                            .lineSpacing(2)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        paywallBulletList(compact: compact)
                     }
                     .frame(width: contentWidth, alignment: .leading)
                     .padding(.leading, max(16, (proxy.size.width - contentWidth) / 2))
@@ -225,6 +220,7 @@ struct OunjePaywallHostView: View {
                             .background(OunjePalette.panel.opacity(0.92))
                             .clipShape(Circle())
                     }
+                    .accessibilityLabel("Close")
                     .padding(.top, max(16, proxy.safeAreaInsets.top + 8))
                     .padding(.trailing, 22)
                 }
@@ -245,7 +241,7 @@ struct OunjePaywallHostView: View {
             }
         }
         .onChange(of: store.membershipEntitlement?.isActive == true) { isActive in
-            if isActive {
+            if isActive && purchaseVisualState != .processing {
                 handleUnlockSuccess()
             }
         }
@@ -279,8 +275,33 @@ struct OunjePaywallHostView: View {
         "Try Ounje"
     }
 
-    private var paywallSubtitle: String {
-        "Unlimited recipe imports and AI recipe edits, personalized prep, and an Instacart agent that finds better groceries for less."
+    private var paywallBullets: [String] {
+        [
+            "Unlimited Recipe Imports + AI Edits",
+            "Intelligent Shopping Agents",
+            "Fully Personalized Prep"
+        ]
+    }
+
+    private func paywallBulletList(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 5 : 6) {
+            ForEach(paywallBullets, id: \.self) { bullet in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle()
+                        .fill(OunjePalette.accent)
+                        .frame(width: 5, height: 5)
+                        .alignmentGuide(.firstTextBaseline) { dimensions in
+                            dimensions[VerticalAlignment.center]
+                        }
+
+                    Text(bullet)
+                        .font(.system(size: compact ? 12 : 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.72))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
+            }
+        }
     }
 
     private var ctaTitle: String {
@@ -352,7 +373,8 @@ struct OunjePaywallHostView: View {
 
         if await store.purchaseMembershipPlan(selectedPlan) {
             purchaseVisualState = .success
-            try? await Task.sleep(nanoseconds: 450_000_000)
+            confettiBurstID += 1
+            try? await Task.sleep(nanoseconds: 950_000_000)
             handleUnlockSuccess()
         } else {
             purchaseVisualState = .failed

@@ -859,7 +859,7 @@ final class RecipeDetailViewModel: ObservableObject {
         self.initialDetailID = initialDetail?.id
     }
 
-    func load(for recipeID: String, similarFallbackRecipeID: String? = nil) async {
+    func load(for recipeID: String, similarFallbackRecipeID: String? = nil, accessToken: String? = nil) async {
         if let detail,
            detail.id == recipeID || detail.id == initialDetailID {
             let fallbackID = similarFallbackRecipeID ?? (detail.id == recipeID ? nil : recipeID)
@@ -879,7 +879,7 @@ final class RecipeDetailViewModel: ObservableObject {
         }
 
         do {
-            let fetchedDetail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
+            let fetchedDetail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
             detail = fetchedDetail
             let fallbackID = similarFallbackRecipeID ?? (fetchedDetail.id == recipeID ? nil : recipeID)
             scheduleSimilarRecipesLoad(for: fetchedDetail.id, fallbackRecipeID: fallbackID)
@@ -970,7 +970,7 @@ actor RecipeDetailService {
     private var cache: [String: RecipeDetailData] = [:]
     private var similarCache: [String: [DiscoverRecipeCardData]] = [:]
 
-    func fetchRecipeDetail(id: String, forceRefresh: Bool = false) async throws -> RecipeDetailData {
+    func fetchRecipeDetail(id: String, forceRefresh: Bool = false, accessToken: String? = nil) async throws -> RecipeDetailData {
         if !forceRefresh, let cached = cache[id] {
             return cached
         }
@@ -982,9 +982,9 @@ actor RecipeDetailService {
 
         let baseDetail: RecipeDetailData
         do {
-            baseDetail = try await fetchRecipeDetailFromSupabase(id: id)
+            baseDetail = try await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)
         } catch {
-            baseDetail = try await fetchRecipeDetailFromBackend(id: id)
+            baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
         }
 
         let detail = await enrichCanonicalImages(in: baseDetail)
@@ -1172,11 +1172,11 @@ actor RecipeDetailService {
         return try JSONDecoder().decode(RecipeShareLinkResolveResponse.self, from: data)
     }
 
-    private func fetchRecipeDetailFromBackend(id: String) async throws -> RecipeDetailData {
+    private func fetchRecipeDetailFromBackend(id: String, accessToken: String?) async throws -> RecipeDetailData {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                return try await fetchRecipeDetailFromBackend(baseURL: baseURL, id: id)
+                return try await fetchRecipeDetailFromBackend(baseURL: baseURL, id: id, accessToken: accessToken)
             } catch {
                 lastError = error
             }
@@ -1185,7 +1185,7 @@ actor RecipeDetailService {
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 
-    private func fetchRecipeDetailFromBackend(baseURL: String, id: String) async throws -> RecipeDetailData {
+    private func fetchRecipeDetailFromBackend(baseURL: String, id: String, accessToken: String?) async throws -> RecipeDetailData {
         guard let url = URL(string: "\(baseURL)/v1/recipe/detail/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)") else {
             throw SupabaseProfileStateError.invalidRequest
         }
@@ -1193,6 +1193,9 @@ actor RecipeDetailService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -1208,9 +1211,15 @@ actor RecipeDetailService {
         return decoded.recipe
     }
 
-    private func fetchRecipeDetailFromSupabase(id: String) async throws -> RecipeDetailData {
+    private func fetchRecipeDetailFromSupabase(id: String, accessToken: String?) async throws -> RecipeDetailData {
         let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
         let isUserImported = id.hasPrefix("uir_")
+        let userDataAccessToken: String?
+        if isUserImported {
+            userDataAccessToken = try SupabaseUserDataRequest.requireAccessToken(accessToken)
+        } else {
+            userDataAccessToken = nil
+        }
         let recipeTable = isUserImported ? "user_import_recipes" : "recipes"
         let ingredientTable = isUserImported ? "user_import_recipe_ingredients" : "recipe_ingredients"
         let stepTable = isUserImported ? "user_import_recipe_steps" : "recipe_steps"
@@ -1262,7 +1271,7 @@ actor RecipeDetailService {
             throw SupabaseProfileStateError.invalidRequest
         }
 
-        let recipes: [SupabaseRecipeDetailRow] = try await performSupabaseGET(url: recipeURL, as: [SupabaseRecipeDetailRow].self)
+        let recipes: [SupabaseRecipeDetailRow] = try await performSupabaseGET(url: recipeURL, as: [SupabaseRecipeDetailRow].self, accessToken: userDataAccessToken)
         guard let recipe = recipes.first else {
             throw SupabaseProfileStateError.requestFailed("Recipe detail could not be found.")
         }
@@ -1270,13 +1279,13 @@ actor RecipeDetailService {
         guard let ingredientURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(ingredientTable)?select=id,ingredient_id,display_name,quantity_text,image_url,sort_order&recipe_id=eq.\(encodedID)&order=sort_order.asc") else {
             throw SupabaseProfileStateError.invalidRequest
         }
-        let ingredients: [RecipeDetailIngredient] = try await performSupabaseGET(url: ingredientURL, as: [RecipeDetailIngredient].self)
+        let ingredients: [RecipeDetailIngredient] = try await performSupabaseGET(url: ingredientURL, as: [RecipeDetailIngredient].self, accessToken: userDataAccessToken)
             .map { $0.normalizedForDisplay() }
 
         guard let stepsURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(stepTable)?select=id,step_number,instruction_text,tip_text&recipe_id=eq.\(encodedID)&order=step_number.asc") else {
             throw SupabaseProfileStateError.invalidRequest
         }
-        let stepRows: [SupabaseRecipeStepRow] = try await performSupabaseGET(url: stepsURL, as: [SupabaseRecipeStepRow].self)
+        let stepRows: [SupabaseRecipeStepRow] = try await performSupabaseGET(url: stepsURL, as: [SupabaseRecipeStepRow].self, accessToken: userDataAccessToken)
 
         let stepIDs = stepRows.map(\.id)
         let stepIngredients: [SupabaseRecipeStepIngredientRow]
@@ -1287,7 +1296,7 @@ actor RecipeDetailService {
             guard let stepIngredientsURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(stepIngredientTable)?select=id,recipe_step_id,ingredient_id,display_name,quantity_text,sort_order&recipe_step_id=in.(\(joined.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? joined))&order=recipe_step_id.asc,sort_order.asc") else {
                 throw SupabaseProfileStateError.invalidRequest
             }
-            stepIngredients = try await performSupabaseGET(url: stepIngredientsURL, as: [SupabaseRecipeStepIngredientRow].self)
+            stepIngredients = try await performSupabaseGET(url: stepIngredientsURL, as: [SupabaseRecipeStepIngredientRow].self, accessToken: userDataAccessToken)
         }
 
         let ingredientByID: [String: RecipeDetailIngredient] = ingredients.reduce(into: [:]) { lookup, ingredient in
@@ -1508,21 +1517,27 @@ actor RecipeDetailService {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func performSupabaseGET<T: Decodable>(url: URL, as type: T.Type) async throws -> T {
+    private func performSupabaseGET<T: Decodable>(url: URL, as type: T.Type, accessToken: String? = nil) async throws -> T {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        } else {
+            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseProfileStateError.invalidResponse
         }
         guard (200 ... 299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to load recipe detail (\(httpResponse.statusCode))."
-            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseProfileStateError.requestFailed(
+                SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback)
+            )
         }
         return try JSONDecoder().decode(type, from: data)
     }

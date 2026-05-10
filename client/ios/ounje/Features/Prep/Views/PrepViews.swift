@@ -1,7 +1,6 @@
 import SwiftUI
 import Foundation
 import UIKit
-import MapKit
 
 struct PrepTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
@@ -2116,9 +2115,6 @@ struct PrepTrackerCard: View {
                     PrepDeliveryMapPanel(
                         snapshot: snapshot,
                         quote: store.latestPlan?.bestQuote,
-                        run: store.latestInstacartRun,
-                        address: store.profile?.deliveryAddress,
-                        isProfileHydrating: store.isHydratingRemoteState && store.profile == nil,
                         autoshopOverlayPhase: autoshopOverlayPhase,
                         onRunAutoshop: {
                             Task { await store.startManualAutoshopRun(trigger: "prep_overlay") }
@@ -2272,7 +2268,7 @@ struct PrepTrackerCard: View {
     }
 
     private func isAutoshopEnabled(for profile: UserProfile) -> Bool {
-        profile.orderingAutonomy == .approvalRequired
+        profile.isAutoshopOptedIn
     }
 
     private func autoshopLeadControl(profile: UserProfile) -> some View {
@@ -2762,142 +2758,6 @@ struct PrepDeliverySnapshot {
     }
 }
 
-@MainActor
-final class PrepDeliveryMapModel: ObservableObject {
-    @Published var homeCoordinate: CLLocationCoordinate2D?
-    @Published var storeCoordinate: CLLocationCoordinate2D?
-    @Published var region = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-        span: MKCoordinateSpan(latitudeDelta: 0.08, longitudeDelta: 0.08)
-    )
-    @Published private(set) var isLoading = false
-    @Published private(set) var hasResolvedAttempt = false
-    @Published private(set) var didFailResolution = false
-
-    private let geocoder = CLGeocoder()
-    private var lastAddressKey = ""
-
-    func load(address: DeliveryAddress?, provider: ShoppingProvider?, selectedStoreName: String?) async {
-        geocoder.cancelGeocode()
-
-        guard let address = address, address.isComplete else {
-            isLoading = false
-            hasResolvedAttempt = true
-            didFailResolution = false
-            homeCoordinate = nil
-            storeCoordinate = nil
-            lastAddressKey = ""
-            return
-        }
-
-        let addressKey = [address.line1, address.city, address.region, address.postalCode]
-            .joined(separator: ", ")
-        let storeKey = selectedStoreName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let cacheKey = "\(addressKey)::\(provider?.rawValue ?? "none")::\(storeKey.lowercased())"
-
-        if cacheKey == lastAddressKey, homeCoordinate != nil, storeCoordinate != nil {
-            isLoading = false
-            hasResolvedAttempt = true
-            didFailResolution = false
-            return
-        }
-
-        isLoading = true
-        hasResolvedAttempt = false
-        didFailResolution = false
-        defer {
-            isLoading = false
-            hasResolvedAttempt = true
-        }
-
-        do {
-            let placemarks = try await geocoder.geocodeAddressString(addressKey)
-            guard let coordinate = placemarks.first?.location?.coordinate else {
-                didFailResolution = true
-                homeCoordinate = nil
-                storeCoordinate = nil
-                return
-            }
-
-            let storePoint = await resolveStoreCoordinate(
-                from: coordinate,
-                provider: provider,
-                selectedStoreName: selectedStoreName,
-                address: address
-            )
-            homeCoordinate = coordinate
-            storeCoordinate = storePoint
-            region = regionFitting(from: storePoint, to: coordinate)
-            lastAddressKey = cacheKey
-        } catch {
-            didFailResolution = true
-            homeCoordinate = nil
-            storeCoordinate = nil
-        }
-    }
-
-    private func resolveStoreCoordinate(
-        from home: CLLocationCoordinate2D,
-        provider: ShoppingProvider?,
-        selectedStoreName: String?,
-        address: DeliveryAddress
-    ) async -> CLLocationCoordinate2D {
-        guard let selectedStoreName else {
-            return derivedStoreCoordinate(from: home, provider: provider)
-        }
-
-        let trimmedStore = selectedStoreName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedStore.isEmpty else {
-            return derivedStoreCoordinate(from: home, provider: provider)
-        }
-
-        let storeQuery = [trimmedStore, address.city, address.region, address.postalCode]
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .joined(separator: ", ")
-
-        do {
-            let placemarks = try await geocoder.geocodeAddressString(storeQuery)
-            if let coordinate = placemarks.first?.location?.coordinate {
-                return coordinate
-            }
-        } catch {}
-
-        return derivedStoreCoordinate(from: home, provider: provider)
-    }
-
-    private func derivedStoreCoordinate(from home: CLLocationCoordinate2D, provider: ShoppingProvider?) -> CLLocationCoordinate2D {
-        let delta: (Double, Double)
-        switch provider {
-        case .instacart:
-            delta = (0.018, -0.020)
-        case .amazonFresh:
-            delta = (0.014, 0.018)
-        case .kroger, .walmart, .none:
-            delta = (0.020, -0.012)
-        }
-
-        return CLLocationCoordinate2D(
-            latitude: home.latitude + delta.0,
-            longitude: home.longitude + delta.1
-        )
-    }
-
-    private func regionFitting(from start: CLLocationCoordinate2D, to end: CLLocationCoordinate2D) -> MKCoordinateRegion {
-        let center = CLLocationCoordinate2D(
-            latitude: (start.latitude + end.latitude) / 2,
-            longitude: (start.longitude + end.longitude) / 2
-        )
-
-        return MKCoordinateRegion(
-            center: center,
-            span: MKCoordinateSpan(
-                latitudeDelta: max(abs(start.latitude - end.latitude) * 1.8, 0.05),
-                longitudeDelta: max(abs(start.longitude - end.longitude) * 1.8, 0.05)
-            )
-        )
-    }
-}
-
 enum PrepAutoshopOverlayPhase: Equatable {
     case hidden
     case ready
@@ -2941,35 +2801,19 @@ enum PrepAutoshopOverlayPhase: Equatable {
 struct PrepDeliveryMapPanel: View {
     let snapshot: PrepDeliverySnapshot
     let quote: ProviderQuote?
-    let run: InstacartRunLogSummary?
-    let address: DeliveryAddress?
-    let isProfileHydrating: Bool
     let autoshopOverlayPhase: PrepAutoshopOverlayPhase
     let onRunAutoshop: (() -> Void)?
     let onOpenAutoshop: (() -> Void)?
     let onRefreshTracking: (() -> Void)?
 
-    @StateObject private var model = PrepDeliveryMapModel()
+    @State private var selectedPoster = PrepCityPoster.random()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ZStack(alignment: .center) {
-                if let home = model.homeCoordinate, let store = model.storeCoordinate {
-                    let _ = (home, store)
-                    Map(coordinateRegion: $model.region, interactionModes: [])
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                } else {
-                    PrepDeliveryMapPlaceholderCard(
-                        title: mapPlaceholderTitle,
-                        detail: mapPlaceholderDetail,
-                        accent: mapPlaceholderAccent,
-                        visualState: mapVisualState
-                    )
+                PrepCityPosterCard(poster: selectedPoster)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity)
-                }
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
 
                 if autoshopOverlayPhase.isVisible {
                     PrepAutoshopOverlayCue(
@@ -2994,14 +2838,10 @@ struct PrepDeliveryMapPanel: View {
                 onRefreshTracking: onRefreshTracking
             )
         }
-        .task(id: mapTaskID) {
-            await model.load(
-                address: address,
-                provider: quote?.provider,
-                selectedStoreName: snapshot.displayStoreTitle
-            )
+        .onAppear {
+            selectedPoster = PrepCityPoster.random(excluding: selectedPoster)
         }
-        .animation(OunjeMotion.screenSpring, value: mapVisualState)
+        .animation(OunjeMotion.screenSpring, value: selectedPoster.assetName)
         .animation(.spring(response: 0.34, dampingFraction: 0.78), value: autoshopOverlayPhase)
     }
 
@@ -3015,71 +2855,86 @@ struct PrepDeliveryMapPanel: View {
             return {}
         }
     }
+}
 
-    private var mapVisualState: PrepDeliveryMapVisualState {
-        if model.homeCoordinate != nil && model.storeCoordinate != nil {
-            return .resolved
-        }
-        if isProfileHydrating {
-            return .loadingProfile
-        }
-        if model.isLoading || (address?.isComplete == true && !model.hasResolvedAttempt) {
-            return .resolvingAddress
-        }
-        if address?.isComplete == true, model.didFailResolution {
-            return .addressLookupFailed
-        }
-        return .missingAddress
+struct PrepCityPoster {
+    let assetName: String
+    let cityName: String
+    let alignment: Alignment
+
+    static let all: [PrepCityPoster] = [
+        PrepCityPoster(assetName: "PrepCityPosterAbuja", cityName: "Abuja", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterBarcelona", cityName: "Barcelona", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterBuenosAires", cityName: "Buenos Aires", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterCancun", cityName: "Cancun", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterCapeTown", cityName: "Cape Town", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterGreaterLondon", cityName: "Greater London", alignment: .top),
+        PrepCityPoster(assetName: "PrepCityPosterHanover", cityName: "Hanover", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterLagos", cityName: "Lagos", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterMiami", cityName: "Miami", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterMilan", cityName: "Milan", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterMontegoBay", cityName: "Montego Bay", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterMontreal", cityName: "Montreal", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterNewYork", cityName: "New York", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterParis", cityName: "Paris", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterRioDeJaneiro", cityName: "Rio de Janeiro", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterSanFrancisco", cityName: "San Francisco", alignment: .center),
+        PrepCityPoster(assetName: "PrepCityPosterTokyo", cityName: "Tokyo", alignment: .center)
+    ]
+
+    static func random(excluding current: PrepCityPoster? = nil) -> PrepCityPoster {
+        let candidates = all.filter { $0.assetName != current?.assetName }
+        return (candidates.isEmpty ? all : candidates).randomElement() ?? all[0]
     }
+}
 
-    private var mapPlaceholderTitle: String {
-        switch mapVisualState {
-        case .loadingProfile:
-            return "Loading home base"
-        case .resolvingAddress:
-            return "Mapping your route"
-        case .missingAddress:
-            return "Add a delivery address"
-        case .addressLookupFailed:
-            return "Couldn't map this address"
-        case .resolved:
-            return ""
+struct PrepCityPosterCard: View {
+    let poster: PrepCityPoster
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Image(poster.assetName)
+                .resizable()
+                .scaledToFill()
+                .scaleEffect(1.08)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: poster.alignment)
+                .clipped()
+
+            LinearGradient(
+                colors: [
+                    OunjePalette.background.opacity(0.08),
+                    OunjePalette.background.opacity(0.48)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            HStack(spacing: 7) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 10, weight: .bold))
+
+                Text(poster.cityName)
+                    .font(.system(size: 11, weight: .bold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(OunjePalette.softCream.opacity(0.94))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(OunjePalette.background.opacity(0.76))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(OunjePalette.softCream.opacity(0.18), lineWidth: 1)
+                    )
+            )
+            .padding(12)
         }
-    }
-
-    private var mapPlaceholderDetail: String {
-        switch mapVisualState {
-        case .loadingProfile:
-            return "Pulling your saved delivery address into Prep."
-        case .resolvingAddress:
-            return "Resolving your home and grocery coordinates."
-        case .missingAddress:
-            return "Set home base in Profile and the live route will wake up here."
-        case .addressLookupFailed:
-            return "We couldn't place your saved address yet. Check it in Profile and we'll retry."
-        case .resolved:
-            return ""
-        }
-    }
-
-    private var mapPlaceholderAccent: Color {
-        switch mapVisualState {
-        case .loadingProfile, .resolvingAddress:
-            return OunjePalette.accent
-        case .missingAddress:
-            return OunjePalette.secondaryText.opacity(0.92)
-        case .addressLookupFailed:
-            return Color(red: 0.94, green: 0.68, blue: 0.28)
-        case .resolved:
-            return OunjePalette.accent
-        }
-    }
-
-    private var mapTaskID: String {
-        let addressKey = [address?.line1, address?.city, address?.region, address?.postalCode]
-            .compactMap { $0 }
-            .joined(separator: "|")
-        return "\(addressKey)::\(quote?.provider.rawValue ?? "none")::\(snapshot.displayStoreTitle ?? sanitizedInstacartStoreName(run?.selectedStore) ?? "none")"
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(OunjePalette.stroke.opacity(0.78), lineWidth: 1)
+        )
     }
 }
 
@@ -3168,82 +3023,6 @@ private struct PrepAutoshopOverlayCue: View {
         case .hidden:
             return OunjePalette.stroke.opacity(0.5)
         }
-    }
-}
-
-enum PrepDeliveryMapVisualState: Equatable {
-    case resolved
-    case loadingProfile
-    case resolvingAddress
-    case missingAddress
-    case addressLookupFailed
-
-    var isLoading: Bool {
-        self == .loadingProfile || self == .resolvingAddress
-    }
-}
-
-struct PrepDeliveryMapPlaceholderCard: View {
-    let title: String
-    let detail: String
-    var accent: Color = OunjePalette.accent
-    var visualState: PrepDeliveryMapVisualState = .loadingProfile
-
-    var body: some View {
-        ZStack {
-            Image("TorontoPrepMapPlaceholder")
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .saturation(0.08)
-                .contrast(0.82)
-                .brightness(-0.08)
-                .clipped()
-
-            OunjePalette.background.opacity(0.46)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(OunjePalette.stroke.opacity(0.8), lineWidth: 1)
-        )
-    }
-
-}
-
-struct PrepMapStateGlyph: View {
-    let visualState: PrepDeliveryMapVisualState
-    let accent: Color
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(OunjePalette.surface.opacity(0.84))
-                .overlay(
-                    Circle()
-                        .stroke(accent.opacity(0.22), lineWidth: 1)
-                )
-
-            switch visualState {
-            case .loadingProfile, .resolvingAddress:
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(accent)
-            case .missingAddress:
-                Image(systemName: "mappin.slash")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(OunjePalette.secondaryText)
-            case .addressLookupFailed:
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.orange)
-            case .resolved:
-                Image(systemName: "checkmark")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(accent)
-            }
-        }
-        .clipShape(Circle())
     }
 }
 

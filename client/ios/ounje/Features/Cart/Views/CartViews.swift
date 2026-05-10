@@ -210,6 +210,10 @@ struct CartTabView: View {
                         .padding(.top, -12)
                     }
 
+                    if let model = cartAutoshopStatusModel {
+                        CartAutoshopStatusBanner(model: model)
+                    }
+
                     if shouldShowEmptyCartState {
                         CartEmptyState(
                             onBrowseDiscover: { selectedTab = .discover }
@@ -860,6 +864,45 @@ struct CartTabView: View {
             return nil
         }
         return URL(string: raw)
+    }
+
+    private var cartAutoshopStatusModel: CartAutoshopStatusModel? {
+        guard let profile = store.profile,
+              profile.isAutoshopOptedIn else {
+            return nil
+        }
+
+        let prepDate = store.nextRunDate ?? profile.scheduledDeliveryDate()
+        let autoDate = Calendar.current.date(
+            byAdding: .day,
+            value: -profile.autoshopLeadDays,
+            to: Calendar.current.startOfDay(for: prepDate)
+        ) ?? prepDate
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "EEE, MMM d"
+        let prepText = dateFormatter.string(from: prepDate)
+        let autoText = dateFormatter.string(from: autoDate)
+        let latestStatus = store.latestInstacartRun?.statusKind
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let status: String
+        switch latestStatus {
+        case "running", "queued":
+            status = "Cart run in progress"
+        case "completed":
+            status = "Latest cart is ready"
+        case "partial":
+            status = "Needs a quick review"
+        case "failed":
+            status = "Retry from Buy now"
+        default:
+            status = "Auto run \(autoText)"
+        }
+
+        return CartAutoshopStatusModel(
+            status: status,
+            detail: "Buy now starts Instacart manually. Otherwise Ounje auto-builds this Prep cart for \(prepText), \(profile.autoshopLeadDaysText.lowercased())."
+        )
     }
 
     private var visibleMainShopKeysForAutoshop: Set<String> {
@@ -3774,6 +3817,51 @@ struct CartDisplayModeBar<TrailingContent: View>: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+}
+
+struct CartAutoshopStatusModel {
+    let status: String
+    let detail: String
+}
+
+struct CartAutoshopStatusBanner: View {
+    let model: CartAutoshopStatusModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "cart.badge.clock")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(OunjePalette.primaryText)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(OunjePalette.accent.opacity(0.94)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Autoshop is on")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                Text(model.status)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText.opacity(0.82))
+
+                Text(model.detail)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.96))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(OunjePalette.accent.opacity(0.46), lineWidth: 1)
+        )
     }
 }
 

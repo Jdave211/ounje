@@ -204,15 +204,57 @@ enum SupabaseSavedRecipesError: LocalizedError {
     }
 }
 
+enum SupabaseUserDataAccessError: LocalizedError {
+    case requiresSignIn
+
+    var errorDescription: String? {
+        "Your Ounje session expired. Please sign in again."
+    }
+}
+
+enum SupabaseUserDataRequest {
+    static func requireAccessToken(_ accessToken: String?) throws -> String {
+        let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !token.isEmpty else {
+            throw SupabaseUserDataAccessError.requiresSignIn
+        }
+        return token
+    }
+
+    static func applyHeaders(to request: inout URLRequest, accessToken: String?) throws {
+        let token = try requireAccessToken(accessToken)
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+
+    static func request(url: URL, method: String, accessToken: String?, timeout: TimeInterval? = nil) throws -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
+        try applyHeaders(to: &request, accessToken: accessToken)
+        return request
+    }
+
+    static func message(from data: Data, statusCode: Int, fallback: String) -> String {
+        let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+        let message = errorPayload?.message ?? errorPayload?.error ?? fallback
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if statusCode == 401 || statusCode == 403 ||
+            normalized.contains("permission denied") ||
+            normalized.contains("jwt") ||
+            normalized.contains("token is expired") {
+            return SupabaseUserDataAccessError.requiresSignIn.localizedDescription
+        }
+        return message
+    }
+}
+
 final class SupabaseProfileStateService {
     static let shared = SupabaseProfileStateService()
 
     private init() {}
-
-    private func profileAccessToken(_ accessToken: String?) -> String {
-        let trimmed = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? SupabaseConfig.anonKey : trimmed
-    }
 
     func fetchOrCreateProfileState(
         userID: String,
@@ -348,16 +390,14 @@ final class SupabaseProfileStateService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(profileAccessToken(accessToken))", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode([payload])
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to save onboarding state (\(httpResponse.statusCode))."
-            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseProfileStateError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
@@ -369,14 +409,12 @@ final class SupabaseProfileStateService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(profileAccessToken(accessToken))", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read onboarding state (\(httpResponse.statusCode))."
-            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseProfileStateError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         let rows = try JSONDecoder().decode([SupabaseProfileRow].self, from: data)
@@ -391,14 +429,12 @@ final class SupabaseProfileStateService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(profileAccessToken(accessToken))", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read onboarding state by email (\(httpResponse.statusCode))."
-            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseProfileStateError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         let rows = try JSONDecoder().decode([SupabaseProfileRow].self, from: data)
@@ -506,13 +542,12 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        applyAuthHeaders(to: &request, accessToken: accessToken)
+        try applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read saved recipe ids (\(httpResponse.statusCode))."
-            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         return try JSONDecoder().decode([SupabaseSavedRecipeIDRow].self, from: data).map(\.recipeID)
@@ -528,13 +563,12 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        applyAuthHeaders(to: &request, accessToken: accessToken)
+        try applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read saved recipe titles (\(httpResponse.statusCode))."
-            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         return try JSONDecoder().decode([SupabaseSavedRecipeTitleRow].self, from: data)
@@ -552,13 +586,12 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        applyAuthHeaders(to: &request, accessToken: accessToken)
+        try applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read saved recipes (\(httpResponse.statusCode))."
-            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         let rows = try JSONDecoder().decode([SupabaseSavedRecipeRow].self, from: data)
@@ -584,15 +617,14 @@ final class SupabaseSavedRecipesService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        applyAuthHeaders(to: &request, accessToken: accessToken)
+        try applyAuthHeaders(to: &request, accessToken: accessToken)
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode(payload)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to save recipe bookmark (\(httpResponse.statusCode))."
-            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
@@ -607,20 +639,17 @@ final class SupabaseSavedRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        applyAuthHeaders(to: &request, accessToken: accessToken)
+        try applyAuthHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to remove saved recipe (\(httpResponse.statusCode))."
-            throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
-    private func applyAuthHeaders(to request: inout URLRequest, accessToken: String?) {
-        let bearer = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \((bearer?.isEmpty == false ? bearer : nil) ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+    private func applyAuthHeaders(to request: inout URLRequest, accessToken: String?) throws {
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -687,13 +716,12 @@ final class SupabaseSavedRecipesService {
 
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
-            applyAuthHeaders(to: &request, accessToken: accessToken)
+            try applyAuthHeaders(to: &request, accessToken: accessToken)
 
             let (data, httpResponse) = try await perform(request)
             guard (200...299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
                 let fallback = "Failed to load canonical recipe images (\(httpResponse.statusCode))."
-                throw SupabaseSavedRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+                throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
             }
 
             aggregated.append(contentsOf: try JSONDecoder().decode([SupabaseRecipeCardImageRow].self, from: data))
@@ -796,14 +824,12 @@ final class SupabasePrepRecipeOverridesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read prep overrides (\(httpResponse.statusCode))."
-            throw SupabasePrepRecipeOverridesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabasePrepRecipeOverridesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         return try JSONDecoder().decode([SupabasePrepRecipeOverrideRow].self, from: data).map(\.override)
@@ -825,16 +851,14 @@ final class SupabasePrepRecipeOverridesService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode([payload])
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to save prep override (\(httpResponse.statusCode))."
-            throw SupabasePrepRecipeOverridesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabasePrepRecipeOverridesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
@@ -848,14 +872,12 @@ final class SupabasePrepRecipeOverridesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to clear prep overrides (\(httpResponse.statusCode))."
-            throw SupabasePrepRecipeOverridesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabasePrepRecipeOverridesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
@@ -1067,16 +1089,6 @@ final class SupabaseMealPrepCycleService {
 
     private init() {}
 
-    private func authorizationTokens(accessToken: String?) -> [String] {
-        var tokens: [String] = []
-        for token in [accessToken, SupabaseConfig.anonKey] {
-            let trimmed = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !trimmed.isEmpty, !tokens.contains(trimmed) else { continue }
-            tokens.append(trimmed)
-        }
-        return tokens
-    }
-
     func fetchMealPrepCycles(userID: String, accessToken: String?) async throws -> [MealPlan] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
@@ -1085,28 +1097,19 @@ final class SupabaseMealPrepCycleService {
             throw SupabaseMealPrepCyclesError.invalidRequest
         }
 
-        var lastError: SupabaseMealPrepCyclesError?
-        for token in authorizationTokens(accessToken: accessToken) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
-            let (data, httpResponse) = try await perform(request)
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Failed to read prep cycles (\(httpResponse.statusCode))."
-                let error = SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                lastError = error
-                continue
-            }
-
-            return try JSONDecoder().decode([SupabaseMealPrepCycleRow].self, from: data)
-                .map(\.plan)
-                .filter { !$0.recipes.isEmpty }
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to read prep cycles (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        throw lastError ?? SupabaseMealPrepCyclesError.requestFailed("Failed to read prep cycles.")
+        return try JSONDecoder().decode([SupabaseMealPrepCycleRow].self, from: data)
+            .map(\.plan)
+            .filter { !$0.recipes.isEmpty }
     }
 
     func upsertMealPrepCycle(
@@ -1130,32 +1133,23 @@ final class SupabaseMealPrepCycleService {
         )
 
         let body = try JSONEncoder().encode([payload])
-        var lastError: SupabaseMealPrepCyclesError?
 
-        for token in authorizationTokens(accessToken: accessToken) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
-            request.httpBody = body
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = body
 
-            let (data, httpResponse) = try await perform(request)
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Failed to save prep cycle (\(httpResponse.statusCode))."
-                lastError = SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            if syncCart {
-                try await syncMainShopAndBaseCart(userID: userID, plan: plan, accessToken: accessToken)
-            }
-            return
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to save prep cycle (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        throw lastError ?? SupabaseMealPrepCyclesError.requestFailed("Failed to save prep cycle.")
+        if syncCart {
+            try await syncMainShopAndBaseCart(userID: userID, plan: plan, accessToken: accessToken)
+        }
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -1453,29 +1447,21 @@ final class SupabaseMealPrepCycleService {
         }
 
         let body = try JSONEncoder().encode(payloads)
-        var lastError: SupabaseMealPrepCyclesError?
 
-        for token in authorizationTokens(accessToken: accessToken) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("return=representation", forHTTPHeaderField: "Prefer")
-            request.httpBody = body
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
+        request.setValue("return=representation", forHTTPHeaderField: "Prefer")
+        request.httpBody = body
 
-            let (data, httpResponse) = try await perform(request)
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Failed to write main shop items (\(httpResponse.statusCode))."
-                lastError = SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            return try JSONDecoder().decode([SupabaseMainShopItemRow].self, from: data)
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to write main shop items (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        throw lastError ?? SupabaseMealPrepCyclesError.requestFailed("Failed to write main shop items.")
+        return try JSONDecoder().decode([SupabaseMainShopItemRow].self, from: data)
     }
 
     private func insertBaseCartRows(_ payloads: [SupabaseBaseCartItemUpsertPayload], accessToken: String?) async throws {
@@ -1484,29 +1470,19 @@ final class SupabaseMealPrepCycleService {
         }
 
         let body = try JSONEncoder().encode(payloads)
-        var lastError: SupabaseMealPrepCyclesError?
 
-        for token in authorizationTokens(accessToken: accessToken) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
-            request.httpBody = body
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = body
 
-            let (data, httpResponse) = try await perform(request)
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Failed to write base cart items (\(httpResponse.statusCode))."
-                lastError = SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            return
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to write base cart items (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
-
-        throw lastError ?? SupabaseMealPrepCyclesError.requestFailed("Failed to write base cart items.")
     }
 
     private func deleteCartRows(userID: String, planID: UUID, tableName: String, accessToken: String?) async throws {
@@ -1516,25 +1492,15 @@ final class SupabaseMealPrepCycleService {
             throw SupabaseMealPrepCyclesError.invalidRequest
         }
 
-        var lastError: SupabaseMealPrepCyclesError?
-        for token in authorizationTokens(accessToken: accessToken) {
-            var request = URLRequest(url: url)
-            request.httpMethod = "DELETE"
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
-            let (data, httpResponse) = try await perform(request)
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Failed to clear \(tableName) rows (\(httpResponse.statusCode))."
-                lastError = SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            return
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to clear \(tableName) rows (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
-
-        throw lastError ?? SupabaseMealPrepCyclesError.requestFailed("Failed to clear \(tableName) rows.")
     }
 
     func deleteMainShopItem(userID: String, planID: UUID, removalKey: String, accessToken: String?) async throws {
@@ -1561,25 +1527,15 @@ final class SupabaseMealPrepCycleService {
             throw SupabaseMealPrepCyclesError.invalidRequest
         }
 
-        var lastError: SupabaseMealPrepCyclesError?
-        for token in authorizationTokens(accessToken: accessToken) {
-            var request = URLRequest(url: deleteURL)
-            request.httpMethod = "DELETE"
-            request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var request = URLRequest(url: deleteURL)
+        request.httpMethod = "DELETE"
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
-            let (data, httpResponse) = try await perform(request)
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
-                let fallback = "Failed to delete main shop item (\(httpResponse.statusCode))."
-                lastError = SupabaseMealPrepCyclesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
-                continue
-            }
-
-            return
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to delete main shop item (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
-
-        throw lastError ?? SupabaseMealPrepCyclesError.requestFailed("Failed to delete main shop item.")
     }
 
     private func normalizedCartKey(_ value: String) -> String {
@@ -1625,14 +1581,12 @@ final class SupabaseMealPrepCycleCompletionService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read completed prep cycles (\(httpResponse.statusCode))."
-            throw SupabaseMealPrepCycleCompletionsError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseMealPrepCycleCompletionsError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         let rows = try JSONDecoder().decode([SupabaseMealPrepCycleCompletionRow].self, from: data)
@@ -1666,16 +1620,14 @@ final class SupabaseMealPrepCycleCompletionService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode([payload])
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to save completed prep cycle (\(httpResponse.statusCode))."
-            throw SupabaseMealPrepCycleCompletionsError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseMealPrepCycleCompletionsError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
@@ -1777,14 +1729,12 @@ final class SupabaseRecurringPrepRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read recurring prep recipes (\(httpResponse.statusCode))."
-            throw SupabaseRecurringPrepRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseRecurringPrepRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         return try JSONDecoder().decode([SupabaseRecurringPrepRecipeRow].self, from: data)
@@ -1817,16 +1767,14 @@ final class SupabaseRecurringPrepRecipesService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
         request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode([payload])
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to save recurring prep recipe (\(httpResponse.statusCode))."
-            throw SupabaseRecurringPrepRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseRecurringPrepRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
@@ -1852,14 +1800,12 @@ final class SupabaseRecurringPrepRecipesService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to remove recurring prep recipe (\(httpResponse.statusCode))."
-            throw SupabaseRecurringPrepRecipesError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseRecurringPrepRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
@@ -2006,6 +1952,11 @@ struct SupabaseMealPrepAutomationStateRow: Decodable {
     let userID: String
     let lastEvaluatedAt: String?
     let nextPlanningWindowAt: String?
+    let autoshopEnabled: Bool?
+    let autoshopLeadDays: Int?
+    let nextPrepAt: String?
+    let nextCartSyncAt: String?
+    let lastCartSyncTrigger: String?
     let lastGeneratedForDeliveryAt: String?
     let lastGeneratedPlanID: UUID?
     let lastGeneratedReason: String?
@@ -2014,11 +1965,18 @@ struct SupabaseMealPrepAutomationStateRow: Decodable {
     let lastCartSignature: String?
     let lastInstacartRunID: String?
     let lastInstacartRunStatus: String?
+    let lastInstacartRetryQueuedForRunID: String?
+    let lastInstacartRetryQueuedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case userID = "user_id"
         case lastEvaluatedAt = "last_evaluated_at"
         case nextPlanningWindowAt = "next_planning_window_at"
+        case autoshopEnabled = "autoshop_enabled"
+        case autoshopLeadDays = "autoshop_lead_days"
+        case nextPrepAt = "next_prep_at"
+        case nextCartSyncAt = "next_cart_sync_at"
+        case lastCartSyncTrigger = "last_cart_sync_trigger"
         case lastGeneratedForDeliveryAt = "last_generated_for_delivery_at"
         case lastGeneratedPlanID = "last_generated_plan_id"
         case lastGeneratedReason = "last_generated_reason"
@@ -2027,6 +1985,8 @@ struct SupabaseMealPrepAutomationStateRow: Decodable {
         case lastCartSignature = "last_cart_signature"
         case lastInstacartRunID = "last_instacart_run_id"
         case lastInstacartRunStatus = "last_instacart_run_status"
+        case lastInstacartRetryQueuedForRunID = "last_instacart_retry_queued_for_run_id"
+        case lastInstacartRetryQueuedAt = "last_instacart_retry_queued_at"
     }
 
     var automationState: MealPrepAutomationState {
@@ -2034,6 +1994,11 @@ struct SupabaseMealPrepAutomationStateRow: Decodable {
             userID: userID,
             lastEvaluatedAt: lastEvaluatedAt,
             nextPlanningWindowAt: nextPlanningWindowAt,
+            autoshopEnabled: autoshopEnabled,
+            autoshopLeadDays: autoshopLeadDays,
+            nextPrepAt: nextPrepAt,
+            nextCartSyncAt: nextCartSyncAt,
+            lastCartSyncTrigger: lastCartSyncTrigger,
             lastGeneratedForDeliveryAt: lastGeneratedForDeliveryAt,
             lastGeneratedPlanID: lastGeneratedPlanID,
             lastGeneratedReason: lastGeneratedReason,
@@ -2041,7 +2006,9 @@ struct SupabaseMealPrepAutomationStateRow: Decodable {
             lastCartSyncPlanID: lastCartSyncPlanID,
             lastCartSignature: lastCartSignature,
             lastInstacartRunID: lastInstacartRunID,
-            lastInstacartRunStatus: lastInstacartRunStatus
+            lastInstacartRunStatus: lastInstacartRunStatus,
+            lastInstacartRetryQueuedForRunID: lastInstacartRetryQueuedForRunID,
+            lastInstacartRetryQueuedAt: lastInstacartRetryQueuedAt
         )
     }
 }
@@ -2050,6 +2017,11 @@ struct SupabaseMealPrepAutomationStateUpsertPayload: Encodable {
     let userID: String
     let lastEvaluatedAt: String?
     let nextPlanningWindowAt: String?
+    let autoshopEnabled: Bool?
+    let autoshopLeadDays: Int?
+    let nextPrepAt: String?
+    let nextCartSyncAt: String?
+    let lastCartSyncTrigger: String?
     let lastGeneratedForDeliveryAt: String?
     let lastGeneratedPlanID: UUID?
     let lastGeneratedReason: String?
@@ -2058,11 +2030,18 @@ struct SupabaseMealPrepAutomationStateUpsertPayload: Encodable {
     let lastCartSignature: String?
     let lastInstacartRunID: String?
     let lastInstacartRunStatus: String?
+    let lastInstacartRetryQueuedForRunID: String?
+    let lastInstacartRetryQueuedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case userID = "user_id"
         case lastEvaluatedAt = "last_evaluated_at"
         case nextPlanningWindowAt = "next_planning_window_at"
+        case autoshopEnabled = "autoshop_enabled"
+        case autoshopLeadDays = "autoshop_lead_days"
+        case nextPrepAt = "next_prep_at"
+        case nextCartSyncAt = "next_cart_sync_at"
+        case lastCartSyncTrigger = "last_cart_sync_trigger"
         case lastGeneratedForDeliveryAt = "last_generated_for_delivery_at"
         case lastGeneratedPlanID = "last_generated_plan_id"
         case lastGeneratedReason = "last_generated_reason"
@@ -2071,6 +2050,8 @@ struct SupabaseMealPrepAutomationStateUpsertPayload: Encodable {
         case lastCartSignature = "last_cart_signature"
         case lastInstacartRunID = "last_instacart_run_id"
         case lastInstacartRunStatus = "last_instacart_run_status"
+        case lastInstacartRetryQueuedForRunID = "last_instacart_retry_queued_for_run_id"
+        case lastInstacartRetryQueuedAt = "last_instacart_retry_queued_at"
     }
 }
 
@@ -2089,14 +2070,12 @@ final class SupabaseMealPrepAutomationStateService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to read automation state (\(httpResponse.statusCode))."
-            throw SupabaseMealPrepAutomationStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseMealPrepAutomationStateError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
         let rows = try JSONDecoder().decode([SupabaseMealPrepAutomationStateRow].self, from: data)
@@ -2112,6 +2091,11 @@ final class SupabaseMealPrepAutomationStateService {
             userID: state.userID,
             lastEvaluatedAt: state.lastEvaluatedAt,
             nextPlanningWindowAt: state.nextPlanningWindowAt,
+            autoshopEnabled: state.autoshopEnabled,
+            autoshopLeadDays: state.autoshopLeadDays,
+            nextPrepAt: state.nextPrepAt,
+            nextCartSyncAt: state.nextCartSyncAt,
+            lastCartSyncTrigger: state.lastCartSyncTrigger,
             lastGeneratedForDeliveryAt: state.lastGeneratedForDeliveryAt,
             lastGeneratedPlanID: state.lastGeneratedPlanID,
             lastGeneratedReason: state.lastGeneratedReason,
@@ -2119,22 +2103,22 @@ final class SupabaseMealPrepAutomationStateService {
             lastCartSyncPlanID: state.lastCartSyncPlanID,
             lastCartSignature: state.lastCartSignature,
             lastInstacartRunID: state.lastInstacartRunID,
-            lastInstacartRunStatus: state.lastInstacartRunStatus
+            lastInstacartRunStatus: state.lastInstacartRunStatus,
+            lastInstacartRetryQueuedForRunID: state.lastInstacartRetryQueuedForRunID,
+            lastInstacartRetryQueuedAt: state.lastInstacartRetryQueuedAt
         )
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode([payload])
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to save automation state (\(httpResponse.statusCode))."
-            throw SupabaseMealPrepAutomationStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            throw SupabaseMealPrepAutomationStateError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
     }
 
