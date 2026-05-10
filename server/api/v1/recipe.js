@@ -58,10 +58,10 @@ const ALLOW_RECIPE_IMPORT_PROCESS_ENDPOINT = ["1", "true", "yes", "on"].includes
 
 const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-api" }) : null;
 
-const SEARCH_RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000;
-const DISCOVER_FEED_CACHE_TTL_MS = 2 * 60 * 1000;
+const SEARCH_RESPONSE_CACHE_TTL_MS = 10 * 60 * 1000;
+const DISCOVER_FEED_CACHE_TTL_MS = 10 * 60 * 1000;
 const DISCOVER_BRACKET_IDS_CACHE_TTL_MS = 10 * 60 * 1000;
-const DISCOVER_BROAD_POOL_CACHE_TTL_MS = 2 * 60 * 1000;
+const DISCOVER_BROAD_POOL_CACHE_TTL_MS = 15 * 60 * 1000;
 const INTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREP_REGENERATION_INTENT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -1206,6 +1206,18 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       return res.json(fallbackPayload);
     }
 
+    // Start lexical anchor fetch immediately with a heuristic query context — it
+    // doesn't need the LLM intent and can run in parallel with the intent+embedding chain.
+    const heuristicContext = buildDiscoverQueryContext({ profile, filter, query: trimmedQuery, llmIntent: null });
+    const lexicalAnchorPromise = fetchLexicalAnchorRecipes({
+      query: trimmedQuery,
+      parsedQuery: heuristicContext.parsedQuery,
+      limit: Math.max(requestedWindowLimit, 24),
+    }).catch((error) => {
+      console.warn("[recipe/discover] lexical anchors failed:", error.message);
+      return [];
+    });
+
     const llmIntent = openai
       ? await withTimeout(
           inferDiscoverIntentWithLLM({ profile, filter, query: trimmedQuery }),
@@ -1242,15 +1254,6 @@ recipe_router.post("/recipe/discover", async (req, res) => {
           return null;
         })
       : null;
-
-    const lexicalAnchorPromise = fetchLexicalAnchorRecipes({
-      query: trimmedQuery,
-      parsedQuery,
-      limit: Math.max(requestedWindowLimit, 24),
-    }).catch((error) => {
-      console.warn("[recipe/discover] lexical anchors failed:", error.message);
-      return [];
-    });
 
     const basicMatchesPromise = Array.isArray(hybridEmbedding)
       ? withTimeout(callRecipeRpc("match_recipes_basic", {
@@ -7419,5 +7422,131 @@ function inferVideoProvider(sourceURL) {
 function toPgVector(values) {
   return `[${values.join(",")}]`;
 }
+
+async function patchRecipeRow(recipeID, payload) {
+  const isUserImport = String(recipeID ?? "").startsWith("uir_");
+  const table = isUserImport ? "user_import_recipes" : "recipes";
+  const url = `${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(recipeID)}`;
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Patch ${table} failed (${response.status}): ${body.slice(0, 200)}`);
+  }
+}
+
+recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
+  const recipeId = String(req.params.id ?? "").trim();
+  if (!recipeId) {
+    return res.status(400).json({ error: "Recipe ID is required." });
+  }
+
+  if (!openai) {
+    return res.status(503).json({ error: "AI enrichment is unavailable." });
+  }
+
+  try {
+    let accessToken = null;
+    try {
+      ({ accessToken } = await resolveAuthorizedUserID(req));
+    } catch {}
+
+    const recipe = await fetchRecipeById(recipeId, accessToken);
+    if (!recipe) {
+      return res.status(404).json({ error: "Recipe not found." });
+    }
+
+    const alreadyHasMacros =
+      recipe.calories_kcal != null ||
+      recipe.protein_g != null ||
+      recipe.carbs_g != null ||
+      recipe.fat_g != null;
+    if (alreadyHasMacros) {
+      return res.json({
+        calories_kcal: recipe.calories_kcal ?? null,
+        protein_g: recipe.protein_g ?? null,
+        carbs_g: recipe.carbs_g ?? null,
+        fat_g: recipe.fat_g ?? null,
+        est_calories_text: recipe.est_calories_text ?? null,
+        cached: true,
+      });
+    }
+
+    const recipeIngredients = await fetchRecipeIngredientRows(recipeId, accessToken);
+    const ingredientSummary = recipeIngredients
+      .map((i) => [i.quantity_text, i.display_name].filter(Boolean).join(" "))
+      .filter(Boolean)
+      .join(", ");
+
+    const context = [
+      `Title: ${recipe.title ?? "Unknown dish"}`,
+      recipe.servings_text ? `Servings: ${recipe.servings_text}` : null,
+      recipe.servings_count ? `Serving count: ${recipe.servings_count}` : null,
+      ingredientSummary ? `Ingredients: ${ingredientSummary}` : null,
+      recipe.recipe_type ? `Type: ${recipe.recipe_type}` : null,
+      recipe.category ? `Category: ${recipe.category}` : null,
+    ].filter(Boolean).join("\n");
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are a nutrition estimator. Estimate per-serving macros for a recipe based on its title and ingredient list.",
+            "Return conservative, realistic estimates — not lab-accurate, but reasonable for app display.",
+            "Return only valid JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (string like '420 kcal').",
+            "If you truly cannot estimate (e.g., too vague), return null for all fields.",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: context,
+        },
+      ],
+    });
+
+    const parsed = JSON.parse(completion.choices?.[0]?.message?.content ?? "{}");
+    const caloriesKcal = Number.isFinite(Number(parsed?.calories_kcal)) ? Number(parsed.calories_kcal) : null;
+    const proteinG = Number.isFinite(Number(parsed?.protein_g)) ? Number(parsed.protein_g) : null;
+    const carbsG = Number.isFinite(Number(parsed?.carbs_g)) ? Number(parsed.carbs_g) : null;
+    const fatG = Number.isFinite(Number(parsed?.fat_g)) ? Number(parsed.fat_g) : null;
+    const estCaloriesText = typeof parsed?.est_calories_text === "string" ? parsed.est_calories_text.trim() : null;
+
+    if (caloriesKcal != null || proteinG != null || carbsG != null || fatG != null) {
+      const patch = {};
+      if (caloriesKcal != null) patch.calories_kcal = caloriesKcal;
+      if (proteinG != null) patch.protein_g = proteinG;
+      if (carbsG != null) patch.carbs_g = carbsG;
+      if (fatG != null) patch.fat_g = fatG;
+      if (estCaloriesText) patch.est_calories_text = estCaloriesText;
+      await patchRecipeRow(recipeId, patch).catch((err) => {
+        console.warn("[recipe/enrich-macros] DB patch failed:", err.message);
+      });
+    }
+
+    return res.json({
+      calories_kcal: caloriesKcal,
+      protein_g: proteinG,
+      carbs_g: carbsG,
+      fat_g: fatG,
+      est_calories_text: estCaloriesText,
+      cached: false,
+    });
+  } catch (error) {
+    console.error("[recipe/enrich-macros] failed:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 export default recipe_router;

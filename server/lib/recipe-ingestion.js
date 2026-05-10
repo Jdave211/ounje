@@ -5087,9 +5087,11 @@ async function runPhotoMealGate(imageInput, photoContext = {}) {
       {
         role: "system",
         content: [
-          "Decide whether this image shows a prepared meal or edible dish that can reasonably become a recipe.",
-          "Reject groceries-only, packaged products, menus, receipts, screenshots, people, scenery, or unclear photos.",
-          "Return strict JSON. Do not invent a recipe.",
+          "Decide whether this image contains any food — a prepared meal, dish, raw ingredients, baked goods, snack, beverage, or any edible item that could form the basis of a recipe.",
+          "Accept: homemade food, restaurant meals, raw ingredients, baked goods, snacks, drinks, and any real food even if imperfectly plated, lit, or photographed.",
+          "Reject ONLY: images with absolutely no food present — pure scenery, text-only images, menus/receipts/screenshots, packaged products with no visible food, non-food objects, or completely unrecognizable images.",
+          "When in doubt, lean toward accepting — it is better to attempt a recipe extraction than to reject a real food photo.",
+          "Return strict JSON only. Do not invent or describe a recipe.",
         ].join("\n"),
       },
       {
@@ -5103,7 +5105,7 @@ async function runPhotoMealGate(imageInput, photoContext = {}) {
                 dish_hint: photoContext?.dish_hint ?? null,
                 coarse_place_context: photoContext?.coarse_place_context ?? null,
               }),
-              "Return JSON with is_meal, confidence, visible_food_components, likely_meal_type, reject_reason.",
+              "Return JSON with is_meal (boolean), confidence (0-1), visible_food_components (array of strings), likely_meal_type (string or null), reject_reason (string or null, only set if rejecting).",
             ].join("\n"),
           },
           imagePart,
@@ -5112,12 +5114,18 @@ async function runPhotoMealGate(imageInput, photoContext = {}) {
     ],
   }));
   const parsed = JSON.parse(response.choices?.[0]?.message?.content ?? "{}");
+  const isMeal = Boolean(parsed?.is_meal);
+  const confidence = Number.isFinite(Number(parsed?.confidence)) ? Number(parsed.confidence) : 0.5;
+  const visibleFoodComponents = uniqueStrings(Array.isArray(parsed?.visible_food_components) ? parsed.visible_food_components : []);
+  // If the LLM said is_meal=false but has decent confidence AND found food components, override the rejection.
+  // This handles cases where the model is overly conservative about imperfect food photos.
+  const confidenceOverride = !isMeal && confidence >= 0.35 && visibleFoodComponents.length > 0;
   return {
-    is_meal: Boolean(parsed?.is_meal),
-    confidence: Number.isFinite(Number(parsed?.confidence)) ? Number(parsed.confidence) : 0.5,
-    visible_food_components: uniqueStrings(Array.isArray(parsed?.visible_food_components) ? parsed.visible_food_components : []),
+    is_meal: isMeal || confidenceOverride,
+    confidence,
+    visible_food_components: visibleFoodComponents,
     likely_meal_type: normalizeText(parsed?.likely_meal_type ?? "") || null,
-    reject_reason: normalizeText(parsed?.reject_reason ?? "") || null,
+    reject_reason: (isMeal || confidenceOverride) ? null : (normalizeText(parsed?.reject_reason ?? "") || null),
   };
 }
 

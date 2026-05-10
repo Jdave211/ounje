@@ -167,8 +167,10 @@ struct DiscoverTabView: View {
             await environmentRefresh
             let refreshedContext = environmentModel.feedContext
             guard refreshedContext.cacheKey != initialContext.cacheKey else { return }
+            // Only reload if the feed is empty — if recipes already loaded, the context
+            // difference is cosmetic and not worth a second network round-trip.
             guard viewModel.recipes.isEmpty || viewModel.errorMessage != nil else { return }
-            await viewModel.forceReload(
+            await viewModel.loadIfNeeded(
                 profile: store.profile,
                 query: normalizedSearchText,
                 feedContext: refreshedContext,
@@ -316,7 +318,7 @@ struct DiscoverTabView: View {
         viewModel.updateFeedbackRevision(discoverFeedbackRevision)
         viewModel.beginManualRefreshPresentation()
         let refreshStartedAt = Date()
-        try? await Task.sleep(nanoseconds: 180_000_000)
+        try? await Task.sleep(nanoseconds: 50_000_000)
         await environmentModel.refresh(profile: store.profile)
         await viewModel.forceReload(
             profile: store.profile,
@@ -327,8 +329,8 @@ struct DiscoverTabView: View {
             forceNetwork: true
         )
         let elapsed = Date().timeIntervalSince(refreshStartedAt)
-        if elapsed < 0.45 {
-            try? await Task.sleep(nanoseconds: UInt64((0.45 - elapsed) * 1_000_000_000))
+        if elapsed < 0.20 {
+            try? await Task.sleep(nanoseconds: UInt64((0.20 - elapsed) * 1_000_000_000))
         }
     }
 

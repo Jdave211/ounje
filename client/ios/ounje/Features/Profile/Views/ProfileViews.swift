@@ -2071,6 +2071,7 @@ struct FeedbackSheet: View {
             feedbackErrorMessage = "Feedback is unavailable until your session is live."
             return
         }
+        let accessToken = store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
 
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         let draftBody = trimmedFeedbackDraft
@@ -2090,7 +2091,8 @@ struct FeedbackSheet: View {
             let response = try await OunjeFeedbackService.shared.submitFeedback(
                 userID: userID,
                 body: draftBody,
-                attachments: attachmentMetadata
+                attachments: attachmentMetadata,
+                accessToken: accessToken
             )
 
             feedbackErrorMessage = nil
@@ -2136,11 +2138,12 @@ struct FeedbackSheet: View {
 
     private func loadFeedbackThread() async {
         guard let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID else { return }
+        let accessToken = store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
         isLoadingMessages = true
         defer { isLoadingMessages = false }
 
         do {
-            let fetched = try await OunjeFeedbackService.shared.fetchMessages(userID: userID)
+            let fetched = try await OunjeFeedbackService.shared.fetchMessages(userID: userID, accessToken: accessToken)
             threadMessages = mergedThreadMessages(fetched)
             feedbackErrorMessage = nil
         } catch {

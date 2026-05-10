@@ -883,10 +883,70 @@ final class RecipeDetailViewModel: ObservableObject {
             detail = fetchedDetail
             let fallbackID = similarFallbackRecipeID ?? (fetchedDetail.id == recipeID ? nil : recipeID)
             scheduleSimilarRecipesLoad(for: fetchedDetail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
+            scheduleMacroEnrichmentIfNeeded(for: fetchedDetail, accessToken: accessToken)
         } catch {
             similarRecipes = []
             hasLoadedSimilarRecipes = false
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleMacroEnrichmentIfNeeded(for fetchedDetail: RecipeDetailData, accessToken: String?) {
+        let missingMacros = fetchedDetail.caloriesKcal == nil
+            && fetchedDetail.proteinG == nil
+            && fetchedDetail.carbsG == nil
+            && fetchedDetail.fatG == nil
+        guard missingMacros else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let enriched = await RecipeDetailService.shared.enrichMacros(for: fetchedDetail.id, accessToken: accessToken),
+                  enriched.caloriesKcal != nil || enriched.proteinG != nil || enriched.carbsG != nil || enriched.fatG != nil else { return }
+            guard let current = self.detail, current.id == fetchedDetail.id else { return }
+            self.detail = RecipeDetailData(
+                id: current.id,
+                title: current.title,
+                description: current.description,
+                authorName: current.authorName,
+                authorHandle: current.authorHandle,
+                authorURLString: current.authorURLString,
+                source: current.source,
+                sourcePlatform: current.sourcePlatform,
+                category: current.category,
+                subcategory: current.subcategory,
+                recipeType: current.recipeType,
+                skillLevel: current.skillLevel,
+                cookTimeText: current.cookTimeText,
+                servingsText: current.servingsText,
+                servingSizeText: current.servingSizeText,
+                dailyDietText: current.dailyDietText,
+                estCostText: current.estCostText,
+                estCaloriesText: enriched.estCaloriesText ?? current.estCaloriesText,
+                carbsText: current.carbsText,
+                proteinText: current.proteinText,
+                fatsText: current.fatsText,
+                caloriesKcal: enriched.caloriesKcal ?? current.caloriesKcal,
+                proteinG: enriched.proteinG ?? current.proteinG,
+                carbsG: enriched.carbsG ?? current.carbsG,
+                fatG: enriched.fatG ?? current.fatG,
+                prepTimeMinutes: current.prepTimeMinutes,
+                cookTimeMinutes: current.cookTimeMinutes,
+                heroImageURLString: current.heroImageURLString,
+                discoverCardImageURLString: current.discoverCardImageURLString,
+                recipeURLString: current.recipeURLString,
+                originalRecipeURLString: current.originalRecipeURLString,
+                attachedVideoURLString: current.attachedVideoURLString,
+                detailFootnote: current.detailFootnote,
+                imageCaption: current.imageCaption,
+                dietaryTags: current.dietaryTags,
+                flavorTags: current.flavorTags,
+                cuisineTags: current.cuisineTags,
+                occasionTags: current.occasionTags,
+                mainProtein: current.mainProtein,
+                cookMethod: current.cookMethod,
+                ingredients: current.ingredients,
+                steps: current.steps,
+                servingsCount: current.servingsCount
+            )
         }
     }
 
@@ -961,6 +1021,24 @@ final class RecipeDetailViewModel: ObservableObject {
             print("[RecipeDetail] latest-recipes similar fallback failed for \(recipeID): \(error.localizedDescription)")
             similarRecipes = []
         }
+    }
+}
+
+struct RecipeMacroEnrichmentResult: Decodable {
+    let caloriesKcal: Double?
+    let proteinG: Double?
+    let carbsG: Double?
+    let fatG: Double?
+    let estCaloriesText: String?
+    let cached: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case caloriesKcal = "calories_kcal"
+        case proteinG = "protein_g"
+        case carbsG = "carbs_g"
+        case fatG = "fat_g"
+        case estCaloriesText = "est_calories_text"
+        case cached
     }
 }
 
@@ -1176,6 +1254,23 @@ actor RecipeDetailService {
         }
 
         return try JSONDecoder().decode(RecipeShareLinkResolveResponse.self, from: data)
+    }
+
+    func enrichMacros(for recipeID: String, accessToken: String? = nil) async -> RecipeMacroEnrichmentResult? {
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            guard let url = URL(string: "\(baseURL)/v1/recipe/\(recipeID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? recipeID)/enrich-macros") else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 20
+            if let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode) else { continue }
+            return try? JSONDecoder().decode(RecipeMacroEnrichmentResult.self, from: data)
+        }
+        return nil
     }
 
     private func fetchRecipeDetailFromBackend(id: String, accessToken: String?) async throws -> RecipeDetailData {

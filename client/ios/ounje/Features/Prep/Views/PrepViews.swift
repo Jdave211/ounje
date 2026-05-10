@@ -2221,34 +2221,33 @@ struct PrepTrackerCard: View {
                 }
             }
 
-            if store.profile.map({ isAutoshopEnabled(for: $0) }) == true {
-                VStack(alignment: .leading, spacing: 16) {
-                    PrepDeliveryMapPanel(
-                        snapshot: snapshot,
-                        quote: store.latestPlan?.bestQuote,
-                        autoshopOverlayPhase: autoshopOverlayPhase,
-                        onRunAutoshop: {
-                            Task { await store.startManualAutoshopRun(trigger: "prep_overlay") }
-                        },
-                        onOpenAutoshop: {
-                            if let url = autoshopReviewURL {
-                                openURL(url)
-                            } else {
-                                Task { await store.refreshLatestGroceryOrderTracking() }
-                            }
-                        },
-                        onRefreshTracking: {
-                            Task {
-                                await store.refreshLatestGroceryOrderTracking()
-                            }
-                        }
-                    )
+            let autoshopEnabled = store.profile.map({ isAutoshopEnabled(for: $0) }) == true
 
-                    if let quote = store.latestPlan?.bestQuote, !quote.reviewItems.isEmpty {
-                        ProviderCartReviewCard(quote: quote)
+            PrepDeliveryMapPanel(
+                snapshot: snapshot,
+                quote: autoshopEnabled ? store.latestPlan?.bestQuote : nil,
+                autoshopOverlayPhase: autoshopEnabled ? autoshopOverlayPhase : .hidden,
+                onRunAutoshop: autoshopEnabled ? {
+                    Task { await store.startManualAutoshopRun(trigger: "prep_overlay") }
+                } : nil,
+                onOpenAutoshop: autoshopEnabled ? {
+                    if let url = autoshopReviewURL {
+                        openURL(url)
+                    } else {
+                        Task { await store.refreshLatestGroceryOrderTracking() }
                     }
-                }
-                .padding(.top, 4)
+                } : nil,
+                onRefreshTracking: autoshopEnabled ? {
+                    Task {
+                        await store.refreshLatestGroceryOrderTracking()
+                    }
+                } : nil
+            )
+            .padding(.top, 4)
+
+            if autoshopEnabled, let quote = store.latestPlan?.bestQuote, !quote.reviewItems.isEmpty {
+                ProviderCartReviewCard(quote: quote)
+                    .padding(.top, 4)
             }
         }
         .padding(.bottom, 4)

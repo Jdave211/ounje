@@ -165,7 +165,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
             }
         }
         if !normalizedQuery.isEmpty {
-            try? await Task.sleep(nanoseconds: 90_000_000)
+            try? await Task.sleep(nanoseconds: 20_000_000)
             guard !Task.isCancelled, activeRequestID == requestID else { return }
         }
 

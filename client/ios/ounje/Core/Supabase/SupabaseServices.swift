@@ -642,11 +642,20 @@ final class SupabaseSavedRecipesService {
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         try applyAuthHeaders(to: &request, accessToken: accessToken)
+        request.setValue("count=exact", forHTTPHeaderField: "Prefer")
 
         let (data, httpResponse) = try await perform(request)
         guard (200...299).contains(httpResponse.statusCode) else {
             let fallback = "Failed to remove saved recipe (\(httpResponse.statusCode))."
             throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
+        }
+
+        // Verify the row was actually deleted (RLS can silently filter without deleting)
+        if let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range") {
+            let deletedCount = contentRange.split(separator: "/").last.flatMap { Int($0) } ?? -1
+            if deletedCount == 0 {
+                throw SupabaseSavedRecipesError.requestFailed("Recipe bookmark was not found for this account.")
+            }
         }
     }
 

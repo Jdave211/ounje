@@ -101,7 +101,7 @@ final class OunjeFeedbackService {
 
     private init() {}
 
-    func fetchMessages(userID: String) async throws -> [AppFeedbackMessage] {
+    func fetchMessages(userID: String, accessToken: String? = nil) async throws -> [AppFeedbackMessage] {
         guard var components = URLComponents(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/feedback") else {
             throw FeedbackServiceError.invalidRequest
         }
@@ -110,7 +110,11 @@ final class OunjeFeedbackService {
             throw FeedbackServiceError.invalidRequest
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var urlRequest = URLRequest(url: url)
+        if let token = accessToken, !token.isEmpty {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw FeedbackServiceError.invalidResponse
         }
@@ -131,7 +135,8 @@ final class OunjeFeedbackService {
     func submitFeedback(
         userID: String,
         body: String,
-        attachments: [AppFeedbackMessageAttachment]
+        attachments: [AppFeedbackMessageAttachment],
+        accessToken: String? = nil
     ) async throws -> FeedbackSubmissionResponse {
         guard let url = URL(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/feedback") else {
             throw FeedbackServiceError.invalidRequest
@@ -152,6 +157,9 @@ final class OunjeFeedbackService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = accessToken, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONEncoder().encode(Payload(userID: userID, body: body, attachments: attachments))
 
         let (data, response) = try await URLSession.shared.data(for: request)
