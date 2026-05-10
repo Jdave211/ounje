@@ -19,7 +19,8 @@ struct DiscoverRecipeFeedContentView: View {
 
     var body: some View {
         if isSearchRefreshing || !hasResolvedInitialLoad
-            || (visibleRecipes.isEmpty && (isLoading || isTransitioningFeed)) {
+            || isLoading
+            || isTransitioningFeed {
             LazyVGrid(columns: recipeColumns, spacing: 14) {
                 ForEach(0..<6, id: \.self) { _ in
                     DiscoverRecipeCardLoadingPlaceholder()

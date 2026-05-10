@@ -151,7 +151,7 @@ struct DiscoverTabView: View {
                     profile: store.profile,
                     query: normalizedSearchText,
                     feedContext: environmentModel.feedContext,
-                    behaviorSeeds: savedStore.savedRecipes,
+                    behaviorSeeds: [],
                     rotateBaseFeed: normalizedSearchText.isEmpty,
                     forceNetwork: true
                 )
@@ -162,7 +162,7 @@ struct DiscoverTabView: View {
                 profile: store.profile,
                 query: normalizedSearchText,
                 feedContext: initialContext,
-                behaviorSeeds: savedStore.savedRecipes
+                behaviorSeeds: []
             )
             await environmentRefresh
             let refreshedContext = environmentModel.feedContext
@@ -172,7 +172,7 @@ struct DiscoverTabView: View {
                 profile: store.profile,
                 query: normalizedSearchText,
                 feedContext: refreshedContext,
-                behaviorSeeds: savedStore.savedRecipes
+                behaviorSeeds: []
             )
         }
         .onChange(of: searchText) { newValue in
@@ -205,7 +205,7 @@ struct DiscoverTabView: View {
                         profile: store.profile,
                         query: normalizedSearchText,
                         feedContext: environmentModel.feedContext,
-                        behaviorSeeds: savedStore.savedRecipes
+                        behaviorSeeds: []
                     )
                 }
             }
@@ -252,7 +252,7 @@ struct DiscoverTabView: View {
     }
 
     private var discoverFeedbackRevision: Int {
-        savedStore.savedRecipes.count
+        0
     }
 
     private var shouldShowDiscoverPullIndicator: Bool {
@@ -322,7 +322,7 @@ struct DiscoverTabView: View {
             profile: store.profile,
             query: refreshQuery,
             feedContext: environmentModel.feedContext,
-            behaviorSeeds: savedStore.savedRecipes,
+            behaviorSeeds: [],
             rotateBaseFeed: refreshQuery.isEmpty,
             forceNetwork: true
         )
@@ -362,7 +362,7 @@ struct DiscoverTabView: View {
                     profile: store.profile,
                     query: "",
                     feedContext: environmentModel.feedContext,
-                    behaviorSeeds: savedStore.savedRecipes
+                    behaviorSeeds: []
                 )
             }
         }
@@ -398,7 +398,7 @@ struct DiscoverTabView: View {
                 profile: store.profile,
                 query: normalized,
                 feedContext: environmentModel.feedContext,
-                behaviorSeeds: savedStore.savedRecipes,
+                behaviorSeeds: [],
                 offset: 0,
                 forceNetwork: false
             )
@@ -419,7 +419,7 @@ struct DiscoverTabView: View {
                 profile: store.profile,
                 query: "",
                 feedContext: environmentModel.feedContext,
-                behaviorSeeds: savedStore.savedRecipes
+                behaviorSeeds: []
             )
         }
     }
@@ -435,7 +435,7 @@ struct DiscoverTabView: View {
             profile: store.profile,
             query: normalizedSearchText,
             feedContext: environmentModel.feedContext,
-            behaviorSeeds: savedStore.savedRecipes
+            behaviorSeeds: []
         )
     }
 

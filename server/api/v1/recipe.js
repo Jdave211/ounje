@@ -70,6 +70,9 @@ const RECIPE_IMPORT_MEDIA_BUCKET = process.env.RECIPE_IMPORT_MEDIA_BUCKET ?? "re
 const RECIPE_IMPORT_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 const DISCOVER_BASE_SHELF_MAX = 360;
 const DISCOVER_PRESET_SHELF_MAX = 240;
+const DISCOVER_BASE_PAGE_BUFFER = 24;
+const DISCOVER_BASE_PAGE_MIN = 36;
+const DISCOVER_BASE_PAGE_MAX = 84;
 
 class CappedMap extends Map {
   constructor(maxEntries = 100) {
@@ -1141,11 +1144,15 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         return res.json(payload);
       }
 
+      const baseShelfLimit = Math.min(
+        DISCOVER_BASE_PAGE_MAX,
+        Math.max(requestedWindowLimit + DISCOVER_BASE_PAGE_BUFFER, DISCOVER_BASE_PAGE_MIN)
+      );
       const { recipes, rankingMode } = await buildFastBaseDiscoverRecipes({
         profile,
         filter,
         feedContext,
-        limit: DISCOVER_BASE_SHELF_MAX,
+        limit: baseShelfLimit,
       });
 
       const payload = pageDiscoverResults({
@@ -5018,6 +5025,12 @@ async function fetchDbBracketRecipeIds(filter = "All", { forceRefresh = false } 
   }
 
   const cacheKey = `bracket-ids:${preset.key}`;
+  if (!forceRefresh) {
+    const cachedIdsFromDisk = getCachedRecipeIdsForBracket(filter);
+    if (Array.isArray(cachedIdsFromDisk) && cachedIdsFromDisk.length) {
+      return cachedIdsFromDisk;
+    }
+  }
   if (!forceRefresh) {
     const cachedIds = readTimedCache(discoverBracketIdsCache, cacheKey, DISCOVER_BRACKET_IDS_CACHE_TTL_MS);
     if (Array.isArray(cachedIds)) {

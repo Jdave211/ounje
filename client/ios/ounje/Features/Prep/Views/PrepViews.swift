@@ -3013,46 +3013,36 @@ struct PrepCityPosterCard: View {
                 Image(poster.assetName)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: poster.alignment)
-                    .scaleEffect(poster.zoom, anchor: poster.anchor)
+                    .frame(
+                        width: proxy.size.width * 1.18,
+                        height: proxy.size.height * 1.18,
+                        alignment: poster.alignment
+                    )
+                    .scaleEffect(poster.zoom * 1.08, anchor: poster.anchor)
                     .offset(poster.offset)
                     .saturation(0.72)
-                    .contrast(1.08)
-                    .brightness(-0.08)
+                    .contrast(1.04)
+                    .brightness(-0.06)
                     .clipped()
-
-                OunjePalette.background
-                    .opacity(0.16)
-                    .blendMode(.multiply)
-
-                LinearGradient(
-                    colors: [
-                        Color(hex: "071312").opacity(0.42),
-                        OunjePalette.panel.opacity(0.22),
-                        OunjePalette.background.opacity(0.42)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-
-                LinearGradient(
-                    colors: [
-                        Color.clear,
-                        OunjePalette.background.opacity(0.28),
-                        OunjePalette.background.opacity(0.72)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
 
                 RadialGradient(
                     colors: [
                         Color.clear,
-                        OunjePalette.background.opacity(0.48)
+                        OunjePalette.background.opacity(0.22)
                     ],
                     center: .center,
                     startRadius: 40,
-                    endRadius: max(proxy.size.width, proxy.size.height) * 0.7
+                    endRadius: max(proxy.size.width, proxy.size.height) * 0.82
+                )
+
+                LinearGradient(
+                    colors: [
+                        Color(hex: "071312").opacity(0.14),
+                        Color.clear,
+                        OunjePalette.background.opacity(0.22)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
                 )
             }
         }

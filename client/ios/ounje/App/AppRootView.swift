@@ -2116,7 +2116,7 @@ private struct MealPlannerShellView: View {
             profile: store.profile,
             query: "",
             feedContext: discoverEnvironmentModel.feedContext,
-            behaviorSeeds: savedStore.savedRecipes
+            behaviorSeeds: []
         )
     }
 
@@ -2235,7 +2235,7 @@ private struct MealPlannerShellView: View {
     }
 
     private var discoverFeedbackRevision: Int {
-        savedStore.savedRecipes.count
+        0
     }
 
     private var profileAIEditsCount: Int {
