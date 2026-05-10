@@ -1049,10 +1049,6 @@ router.post("/instacart/runs", async (req, res) => {
     if (!Array.isArray(normalizedItems) || normalizedItems.length === 0) {
       return res.status(400).json({ error: "items array is required" });
     }
-    if (!isCompleteDeliveryAddress(deliveryAddress)) {
-      return res.status(400).json({ error: "deliveryAddress is required before starting Instacart" });
-    }
-
     const resolvedItems = await resolveRunItems({ normalizedItems, plan, accessToken });
 
     groceryOrderID = await createRunBackedGroceryOrder({

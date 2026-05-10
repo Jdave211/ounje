@@ -791,9 +791,6 @@ struct CartTabView: View {
                 ? "Shop list is syncing."
                 : "No visible shop items to send."
         }
-        guard store.profile?.deliveryAddress.isComplete == true else {
-            return "Add your delivery address first."
-        }
         guard latestPlan.bestQuote?.provider == .instacart else {
             return "Connect Instacart first."
         }

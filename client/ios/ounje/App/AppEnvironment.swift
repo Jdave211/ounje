@@ -714,12 +714,12 @@ final class MealPlanningAppStore: ObservableObject {
             manualAutoshopErrorMessage = "Sign in again before running Autoshop."
             return
         }
-        guard let profile, profile.deliveryAddress.isComplete else {
-            manualAutoshopErrorMessage = "Add a delivery address before running Autoshop."
-            return
-        }
         guard latestPlan != nil else {
             manualAutoshopErrorMessage = "Generate a prep before running Autoshop."
+            return
+        }
+        guard let profile else {
+            manualAutoshopErrorMessage = "Refresh your profile before running Autoshop."
             return
         }
         if hasBlockingInstacartActivity {
@@ -775,7 +775,7 @@ final class MealPlanningAppStore: ObservableObject {
                 mealPlan: latestPlan,
                 userID: session.userID,
                 accessToken: session.accessToken,
-                deliveryAddress: profile.deliveryAddress,
+                deliveryAddress: profile.deliveryAddress.isComplete == true ? profile.deliveryAddress : nil,
                 manualIntent: true,
                 trigger: trigger
             )
@@ -2632,7 +2632,7 @@ final class MealPlanningAppStore: ObservableObject {
                 rootRunID: partialRun.runId,
                 latestPlan: autoshopPlan,
                 session: session,
-                deliveryAddress: profile.deliveryAddress,
+                deliveryAddress: profile.deliveryAddress.isComplete == true ? profile.deliveryAddress : nil,
                 trigger: trigger
             )
             return
@@ -2707,7 +2707,7 @@ final class MealPlanningAppStore: ObservableObject {
         rootRunID: String,
         latestPlan: MealPlan,
         session: AuthSession,
-        deliveryAddress: DeliveryAddress,
+        deliveryAddress: DeliveryAddress?,
         trigger: String
     ) async {
         let trimmedRunID = rootRunID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2755,7 +2755,7 @@ final class MealPlanningAppStore: ObservableObject {
                 mealPlan: latestPlan,
                 userID: session.userID,
                 accessToken: session.accessToken,
-                deliveryAddress: deliveryAddress,
+                deliveryAddress: deliveryAddress?.isComplete == true ? deliveryAddress : nil,
                 retryContext: InstacartAutomationRetryContextPayload(
                     kind: "partial_retry",
                     rootRunID: trimmedRunID,
