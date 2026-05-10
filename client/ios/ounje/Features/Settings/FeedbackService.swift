@@ -101,7 +101,20 @@ final class OunjeFeedbackService {
 
     private init() {}
 
-    func fetchMessages(userID: String, accessToken: String? = nil) async throws -> [AppFeedbackMessage] {
+    private var threadCache: [String: (messages: [AppFeedbackMessage], fetchedAt: Date)] = [:]
+    private let threadCacheTTL: TimeInterval = 5 * 60
+
+    func invalidateThreadCache(for userID: String) {
+        threadCache.removeValue(forKey: userID)
+    }
+
+    func fetchMessages(userID: String, accessToken: String? = nil, forceRefresh: Bool = false) async throws -> [AppFeedbackMessage] {
+        if !forceRefresh,
+           let cached = threadCache[userID],
+           Date().timeIntervalSince(cached.fetchedAt) < threadCacheTTL {
+            return cached.messages
+        }
+
         guard var components = URLComponents(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/feedback") else {
             throw FeedbackServiceError.invalidRequest
         }
@@ -129,6 +142,7 @@ final class OunjeFeedbackService {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let payload = try decoder.decode(NotificationEventsResponse<AppFeedbackMessage>.self, from: data)
+        threadCache[userID] = (messages: payload.items, fetchedAt: Date())
         return payload.items
     }
 
@@ -177,7 +191,9 @@ final class OunjeFeedbackService {
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(FeedbackSubmissionResponse.self, from: data)
+        let result = try decoder.decode(FeedbackSubmissionResponse.self, from: data)
+        threadCache.removeValue(forKey: userID)
+        return result
     }
 
     private struct NotificationEventsResponse<Item: Decodable>: Decodable {

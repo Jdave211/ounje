@@ -102,6 +102,8 @@ const discoverIntentCache = new CappedMap(120);
 const prepRegenerationIntentCache = new CappedMap(80);
 const embeddingCache = new CappedMap(320);
 const recipeVideoResolveCache = new CappedMap(120);
+const recipeDetailCache = new CappedMap(400);
+const RECIPE_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
   searchResponse: searchResponseCache.size,
@@ -666,6 +668,13 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       }
     }
 
+    // Cache public recipes (not user-imported) — they're the same for every user.
+    const isPublic = !recipeId.startsWith("uir_");
+    if (isPublic) {
+      const cached = readTimedCache(recipeDetailCache, recipeId, RECIPE_DETAIL_CACHE_TTL_MS);
+      if (cached) return res.json(cached);
+    }
+
     const recipe = await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found." });
@@ -680,13 +689,19 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
       : [];
 
-    return res.json({
+    const payload = {
       recipe: normalizeRecipeDetail(recipe, {
         recipeIngredients,
         recipeSteps,
         stepIngredients,
       }),
-    });
+    };
+
+    if (isPublic) {
+      recipeDetailCache.set(recipeId, { value: payload, createdAt: Date.now() });
+    }
+
+    return res.json(payload);
   } catch (error) {
     console.error("[recipe/detail] detail fetch failed:", error.message);
     return res.status(500).json({ error: error.message });

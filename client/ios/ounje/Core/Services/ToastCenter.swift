@@ -118,6 +118,45 @@ final class AppToastCenter: ObservableObject {
         }
     }
 
+    /// Shows a toast that stays on screen indefinitely (no auto-dismiss).
+    /// Call `update(title:subtitle:systemImage:)` to change its content mid-flight,
+    /// or `dismiss()` / `show(...)` to remove it.
+    func showPersistent(
+        title: String,
+        subtitle: String? = nil,
+        systemImage: String = "arrow.triangle.2.circlepath"
+    ) {
+        dismissTask?.cancel()
+        dismissTask = nil
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) {
+            toast = AppToast(
+                title: title,
+                subtitle: subtitle,
+                systemImage: systemImage,
+                thumbnailURLString: nil,
+                destination: nil,
+                actionTitle: nil,
+                action: nil
+            )
+        }
+    }
+
+    /// Updates the content of the currently visible persistent toast without resetting the dismiss timer.
+    func update(title: String, subtitle: String? = nil, systemImage: String? = nil) {
+        guard let current = toast else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            toast = AppToast(
+                title: title,
+                subtitle: subtitle,
+                systemImage: systemImage ?? current.systemImage,
+                thumbnailURLString: current.thumbnailURLString,
+                destination: current.destination,
+                actionTitle: current.actionTitle,
+                action: current.action
+            )
+        }
+    }
+
     func dismiss() {
         dismissTask?.cancel()
         dismissTask = nil

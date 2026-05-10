@@ -1871,11 +1871,10 @@ private struct MealPlannerShellView: View {
         guard !selectedItems.isEmpty else { return }
 
         isProcessingPrepPhotoImport = true
-        toastCenter.show(
+        toastCenter.showPersistent(
             title: "Checking photo",
             subtitle: "Ounje is building a recipe from it.",
-            systemImage: "camera.viewfinder",
-            destination: nil
+            systemImage: "camera.viewfinder"
         )
         defer { isProcessingPrepPhotoImport = false }
 
@@ -1907,11 +1906,10 @@ private struct MealPlannerShellView: View {
         guard !isProcessingPrepPhotoImport else { return }
 
         isProcessingPrepPhotoImport = true
-        toastCenter.show(
+        toastCenter.showPersistent(
             title: "Checking photo",
             subtitle: "Ounje is building a recipe from it.",
-            systemImage: "camera.viewfinder",
-            destination: nil
+            systemImage: "camera.viewfinder"
         )
         defer { isProcessingPrepPhotoImport = false }
 
@@ -1964,6 +1962,21 @@ private struct MealPlannerShellView: View {
             try? SharedRecipeImportInbox.write(localEnvelope)
             await sharedImportInbox.refresh()
 
+            // Cycle through human-readable pipeline stages so the user sees progress
+            // instead of a stale "Checking photo" banner for 15–30 seconds.
+            let progressStages: [(title: String, subtitle: String, icon: String)] = [
+                ("Analyzing dish", "Looking at what's in your photo…", "fork.knife"),
+                ("Finding recipe", "Researching ingredients & steps…", "text.magnifyingglass"),
+                ("Building your recipe", "Almost there…", "sparkles"),
+            ]
+            let progressTask = Task { @MainActor [weak toastCenter] in
+                for stage in progressStages {
+                    try? await Task.sleep(nanoseconds: 7_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    toastCenter?.update(title: stage.title, subtitle: stage.subtitle, systemImage: stage.icon)
+                }
+            }
+
             let response = try await RecipeImportAPIService.shared.importRecipe(
                 userID: store.authSession?.userID,
                 accessToken: store.authSession?.accessToken,
@@ -1976,6 +1989,7 @@ private struct MealPlannerShellView: View {
                     coarsePlaceContext: nil
                 )
             )
+            progressTask.cancel()
 
             NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
 

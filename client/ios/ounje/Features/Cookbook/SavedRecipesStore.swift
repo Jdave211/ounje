@@ -16,7 +16,7 @@ final class SavedRecipesStore: ObservableObject {
     private var hasPendingRemoteSaveRetry = false
     private var lastRemoteSyncUserID: String?
     private var lastRemoteSyncAt: Date?
-    private let remoteSyncTTL: TimeInterval = 45
+    private let remoteSyncTTL: TimeInterval = 15 * 60
     private var authSessionProvider: (() async -> AuthSession?)?
 
     init(toastCenter: AppToastCenter) {

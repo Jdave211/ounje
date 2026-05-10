@@ -955,7 +955,7 @@ final class RecipeDetailViewModel: ObservableObject {
         similarLoadTask?.cancel()
         isLoadingSimilarRecipes = true
         similarLoadTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            try? await Task.sleep(nanoseconds: 80_000_000)
             guard !Task.isCancelled else { return }
             await self?.loadSimilarRecipes(for: recipeID, fallbackRecipeID: fallbackRecipeID, accessToken: accessToken)
         }
@@ -1058,11 +1058,24 @@ actor RecipeDetailService {
             return onboardingDetail
         }
 
+        // Race Supabase and backend — whichever responds first wins.
+        // For user-imported recipes the backend is required (auth-scoped), so
+        // fall back sequentially there to avoid sending the JWT to Supabase twice.
         let baseDetail: RecipeDetailData
-        do {
-            baseDetail = try await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)
-        } catch {
-            baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
+        if id.hasPrefix("uir_") {
+            do {
+                baseDetail = try await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)
+            } catch {
+                baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
+            }
+        } else {
+            baseDetail = try await withThrowingTaskGroup(of: RecipeDetailData.self) { group in
+                group.addTask { try await self.fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken) }
+                group.addTask { try await self.fetchRecipeDetailFromBackend(id: id, accessToken: accessToken) }
+                let first = try await group.next()!
+                group.cancelAll()
+                return first
+            }
         }
 
         let detail = await enrichCanonicalImages(in: baseDetail)

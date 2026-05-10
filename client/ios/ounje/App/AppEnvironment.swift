@@ -561,19 +561,23 @@ final class MealPlanningAppStore: ObservableObject {
             hasResolvedInitialState = true
 
             isRefreshingPrepRecipes = true
+
+            // Fire independent prep-data loads in parallel with the main plan load.
+            // Each writes to a distinct property, so concurrent writes are safe.
+            async let completedCyclesLoad: Void = loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            async let overridesLoad: Void = loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
+            async let recurringLoad: Void = loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
+            async let automationLoad: Void = loadAutomationState(userID: session.userID, accessToken: session.accessToken)
             let remotePlanLoadState = await loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            _ = await completedCyclesLoad
+            _ = await overridesLoad
+            _ = await recurringLoad
+            _ = await automationLoad
+
             guard authStateRevision == bootstrapRevision else { return }
             if latestPlan?.recipes.isEmpty == false {
                 isRefreshingPrepRecipes = false
             }
-            await loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
-            guard authStateRevision == bootstrapRevision else { return }
-            await loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
-            guard authStateRevision == bootstrapRevision else { return }
-            await loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
-            guard authStateRevision == bootstrapRevision else { return }
-            await loadAutomationState(userID: session.userID, accessToken: session.accessToken)
-            guard authStateRevision == bootstrapRevision else { return }
             await repairRemotePrepStateIfNeeded(session: session, remotePlanLoadState: remotePlanLoadState)
             guard authStateRevision == bootstrapRevision else { return }
             await reconcileLatestPlanWithPrepOverrides()
@@ -587,11 +591,15 @@ final class MealPlanningAppStore: ObservableObject {
             isHydratingRemoteState = false
             hasResolvedInitialState = true
             guard authStateRevision == bootstrapRevision else { return }
-            await loadLatestInstacartRun()
-            guard authStateRevision == bootstrapRevision else { return }
-            await loadLatestGroceryOrder()
-            guard authStateRevision == bootstrapRevision else { return }
-            await refreshProviderConnectionState()
+
+            // Fire trailing independent lookups in parallel.
+            async let instacartLoad: Void = loadLatestInstacartRun()
+            async let groceryLoad: Void = loadLatestGroceryOrder()
+            async let providerLoad: Void = refreshProviderConnectionState()
+            _ = await instacartLoad
+            _ = await groceryLoad
+            _ = await providerLoad
+
             guard authStateRevision == bootstrapRevision else { return }
             await emitLifecycleNotificationsIfNeeded(trigger: "bootstrap")
             await emitEngagementNudgesIfNeeded()
