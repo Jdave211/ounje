@@ -294,6 +294,23 @@ function summarizeTrace(trace, rawText, { query = "" } = {}) {
   const latestEventTitle = String(latestEvent?.title ?? "").trim() || null;
   const latestEventBody = String(latestEvent?.body ?? "").trim() || null;
   const latestEventAt = String(trace?.latestEventAt ?? latestEvent?.at ?? "").trim() || null;
+  const shoppingPreview = items
+    .map((item) => {
+      const label = String(item?.requested ?? item?.canonicalName ?? item?.normalizedQuery ?? "").trim();
+      if (!label) return null;
+
+      const status = String(item?.finalStatus?.status ?? item?.finalStatus?.decision ?? "").trim().toLowerCase();
+      if (!status) return label;
+      if (["exact", "substituted", "saved", "done", "completed"].includes(status)) {
+        return label;
+      }
+      if (["unresolved", "failed", "error", "cancelled", "missing"].includes(status)) {
+        return `${label} (needs attention)`;
+      }
+      return `${label} (shopping)`;
+    })
+    .filter(Boolean)
+    .slice(0, 3);
   const startedAt = safeDate(trace?.startedAt);
   const completedAt = safeDate(trace?.completedAt);
   const durationSeconds = startedAt && completedAt
@@ -317,6 +334,7 @@ function summarizeTrace(trace, rawText, { query = "" } = {}) {
     latestEventTitle,
     latestEventBody,
     latestEventAt,
+    shoppingPreview,
     preferredStore,
     strictStore,
     sessionSource: String(trace?.sessionSource ?? "").trim() || null,
@@ -356,6 +374,7 @@ function summarizeTrace(trace, rawText, { query = "" } = {}) {
     cartResetError: String(trace?.cartReset?.error ?? "").trim() || null,
     searchPreview: matches[0] ?? firstIssue ?? null,
     matches,
+    shoppingPreview,
     cartUrl: String(trace?.cartUrl ?? "").trim() || null,
   };
 }
@@ -500,6 +519,7 @@ function buildRunLogRecord(trace) {
     top_issue: summary.topIssue,
     search_preview: summary.searchPreview,
     matches: Array.isArray(summary.matches) ? summary.matches : [],
+    shopping_preview: Array.isArray(summary.shoppingPreview) ? summary.shoppingPreview : [],
     cart_url: summary.cartUrl,
     summary_json: {
       ...summary,

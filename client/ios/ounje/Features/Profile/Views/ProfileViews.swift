@@ -2576,15 +2576,22 @@ struct GroceryProvidersCard: View {
             }
         }
         .onAppear {
-            viewModel.loadProviders(userId: store.authSession?.userID, accessToken: store.authSession?.accessToken)
+            Task {
+                let session = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+                viewModel.loadProviders(userId: session?.userID, accessToken: session?.accessToken)
+            }
         }
         .sheet(item: $selectedProvider) { provider in
             GroceryProviderConnectSheet(
                 provider: provider,
-                userId: store.authSession?.userID ?? "",
-                accessToken: store.authSession?.accessToken,
+                userId: store.resolvedTrackingSession?.userID ?? store.authSession?.userID ?? "",
+                accessToken: store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken,
                 onConnected: {
-                    viewModel.loadProviders(userId: store.authSession?.userID, accessToken: store.authSession?.accessToken)
+                    Task {
+                        let session = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+                        viewModel.loadProviders(userId: session?.userID, accessToken: session?.accessToken)
+                        await store.refreshProviderConnectionState()
+                    }
                     selectedProvider = nil
                 }
             )
@@ -2924,13 +2931,18 @@ struct GroceryProviderConnectSheet: View {
     }
 
     @MainActor
-    private func saveSessionFromWebLogin() async {
+    private func saveSessionFromWebLogin(preferredSession: AuthSession? = nil) async {
         isSaving = true
         phase = .saving
         defer { isSaving = false }
 
         do {
-            let liveSession = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+            let liveSession: AuthSession?
+            if let preferredSession {
+                liveSession = preferredSession
+            } else {
+                liveSession = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+            }
             let resolvedUserID = liveSession?.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 ? liveSession!.userID
                 : userId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2954,6 +2966,7 @@ struct GroceryProviderConnectSheet: View {
                 return
             }
             try await saveCookies(cookies, userID: resolvedUserID, accessToken: resolvedAccessToken)
+            store.setInstacartProviderConnected(true, for: resolvedUserID)
             phase = .connected
             onConnected()
         } catch {
@@ -3143,7 +3156,7 @@ struct GroceryProviderConnectSheet: View {
                         refreshToken: authResult.refreshToken
                     )
                     store.persistAuthSession(refreshedSession)
-                    await saveSessionFromWebLogin()
+                    await saveSessionFromWebLogin(preferredSession: refreshedSession)
                 } catch {
                     phase = .error(error.localizedDescription)
                 }

@@ -199,15 +199,66 @@ struct CartTabView: View {
                     if shouldShowLiveCartContent {
                         CartDisplayModeBar(
                             selection: $displayMode,
-                            trailingAction: {
-                                handleCartModeTrailingAction()
-                            },
+                            trailingAction: cartModeTrailingAction,
                             trailingDisabled: isCartBuyNowModeBarDisabled,
                             trailingContent: {
                                 cartModeTrailingContent
                             }
                         )
                         .padding(.top, -12)
+                    }
+
+                    if let bannerMessage = liveInstacartRunBannerMessage {
+                        Button(action: openInstacartRunsSheet) {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(OunjePalette.surface.opacity(0.9))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1)
+                                        )
+                                        .frame(width: 36, height: 36)
+
+                                    CartCachedArtworkView(imageURL: activeInstacartRunSummary?.selectedStoreLogoURL) {
+                                        HoppingCartIcon(
+                                            isActive: true,
+                                            color: OunjePalette.primaryText,
+                                            size: 15
+                                        )
+                                    }
+                                    .frame(width: 22, height: 22)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(activeInstacartRunTitle)
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(OunjePalette.primaryText)
+                                    Text(bannerMessage)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(OunjePalette.secondaryText)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer(minLength: 0)
+
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(OunjePalette.surface.opacity(0.9))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                            .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
 
                     if shouldShowEmptyCartState {
@@ -298,11 +349,57 @@ struct CartTabView: View {
 
     @ViewBuilder
     private var cartModeTrailingContent: some View {
-        if shouldShowBuyNowInModeBar {
+        if hasActiveInstacartRun {
+            EmptyView()
+        } else if shouldShowBuyNowInModeBar {
             compactBuyNowButtonContent
         } else {
             runLogsButtonContent
         }
+    }
+
+    @ViewBuilder
+    private func activeRunButtonContent(_ activeRun: InstacartRunLogSummary) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.92))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1)
+                    )
+                    .frame(width: 38, height: 38)
+
+                CartCachedArtworkView(imageURL: activeRun.selectedStoreLogoURL) {
+                    HoppingCartIcon(
+                        isActive: true,
+                        color: OunjePalette.primaryText,
+                        size: 16
+                    )
+                }
+                .frame(width: 22, height: 22)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Open active run")
+                    .font(.system(size: 12, weight: .bold))
+                Text(cartBuyNowStatusMessage ?? "Building your Instacart cart...")
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(OunjePalette.primaryText)
+        .padding(.horizontal, 12)
+        .frame(height: 42)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
     }
 
     @ViewBuilder
@@ -348,14 +445,29 @@ struct CartTabView: View {
         displayMode == .reconciled
             && shouldShowLiveCartContent
             && currentInstacartCartURL == nil
+            && !hasActiveInstacartRun
+    }
+
+    private var cartModeTrailingAction: (() -> Void)? {
+        if hasActiveInstacartRun {
+            return nil
+        }
+        if shouldShowBuyNowInModeBar {
+            return { startCartBuyNowRun() }
+        }
+        return { openInstacartRunsSheet() }
     }
 
     private var isCartBuyNowModeBarDisabled: Bool {
-        shouldShowBuyNowInModeBar
-            && (cartBuyNowDisabledReason != nil || store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning)
+        shouldShowBuyNowInModeBar && cartBuyNowDisabledReason != nil
     }
 
     private func handleCartModeTrailingAction() {
+        if hasActiveInstacartRun {
+            openInstacartRunsSheet()
+            return
+        }
+
         if shouldShowBuyNowInModeBar {
             guard !isCartBuyNowModeBarDisabled else {
                 if let reason = cartBuyNowDisabledReason {
@@ -367,6 +479,10 @@ struct CartTabView: View {
             return
         }
 
+        openInstacartRunsSheet()
+    }
+
+    private func openInstacartRunsSheet() {
         isRunLogsPresented = true
         Task {
             await instacartRunLogsStore.refresh(
@@ -383,6 +499,10 @@ struct CartTabView: View {
     }
 
     private var isInstacartShoppingActivelyRunning: Bool {
+        if store.hasLiveInstacartActivity {
+            return true
+        }
+
         if let run = store.latestInstacartRun {
             if ["queued", "running"].contains(run.normalizedRetryState) {
                 return true
@@ -783,6 +903,9 @@ struct CartTabView: View {
     }
 
     private var cartBuyNowDisabledReason: String? {
+        if hasActiveInstacartRun {
+            return nil
+        }
         guard let latestPlan = store.latestPlan, !latestPlan.recipes.isEmpty else {
             return "Generate a prep first."
         }
@@ -791,11 +914,10 @@ struct CartTabView: View {
                 ? "Shop list is syncing."
                 : "No visible shop items to send."
         }
-        guard latestPlan.bestQuote?.provider == .instacart else {
+        guard latestPlan.bestQuote?.provider == .instacart
+                || store.latestGroceryOrder?.normalizedProvider == "instacart"
+                || store.isInstacartProviderConnected else {
             return "Connect Instacart first."
-        }
-        if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
-            return "Cart build already running."
         }
         return nil
     }
@@ -807,7 +929,7 @@ struct CartTabView: View {
         if let error = store.manualAutoshopErrorMessage, !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return error
         }
-        guard let run = store.latestInstacartRun else { return nil }
+        guard let run = activeInstacartRunSummary ?? store.latestInstacartRun else { return nil }
         switch run.normalizedStatusKind {
         case "queued", "running":
             return "Building your Instacart cart..."
@@ -832,7 +954,7 @@ struct CartTabView: View {
         if store.manualAutoshopErrorMessage != nil {
             return .failed
         }
-        switch store.latestInstacartRun?.normalizedStatusKind {
+        switch (activeInstacartRunSummary ?? store.latestInstacartRun)?.normalizedStatusKind {
         case "queued", "running":
             return .running
         case "completed":
@@ -852,6 +974,9 @@ struct CartTabView: View {
     }
 
     private var currentInstacartCartURL: URL? {
+        if let url = activeInstacartRunSummary?.trackingURL {
+            return url
+        }
         if let url = store.latestInstacartRun?.trackingURL {
             return url
         }
@@ -860,6 +985,41 @@ struct CartTabView: View {
             return nil
         }
         return URL(string: raw)
+    }
+
+    private var activeInstacartRunSummary: InstacartRunLogSummary? {
+        for run in [store.latestBlockingInstacartRun, store.latestInstacartRun].compactMap({ $0 }) {
+            if ["queued", "running"].contains(run.normalizedRetryState) {
+                return run
+            }
+            if ["queued", "running", "partial"].contains(run.normalizedStatusKind) {
+                return run
+            }
+        }
+
+        if store.hasLiveInstacartActivity {
+            return store.latestBlockingInstacartRun ?? store.latestInstacartRun
+        }
+
+        return nil
+    }
+
+    private var hasActiveInstacartRun: Bool {
+        activeInstacartRunSummary != nil
+            || store.hasLiveInstacartActivity
+            || store.isManualAutoshopRunning
+    }
+
+    private var activeInstacartRunTitle: String {
+        guard activeInstacartRunSummary != nil else { return "Open active run" }
+        return "Open active run"
+    }
+
+    private var liveInstacartRunBannerMessage: String? {
+        guard hasActiveInstacartRun || store.manualAutoshopErrorMessage != nil else {
+            return nil
+        }
+        return cartBuyNowStatusMessage ?? "Your Instacart run is live."
     }
 
     private var visibleMainShopKeysForAutoshop: Set<String> {
@@ -894,7 +1054,7 @@ struct CartTabView: View {
         let allowedKeys = visibleMainShopKeysForAutoshop
         let quantityOverrides = visibleMainShopQuantityOverridesForAutoshop
         Task {
-            await store.startManualAutoshopRun(
+            await store.rerunInstacartShopping(
                 trigger: trigger,
                 allowedMainShopItemKeys: allowedKeys,
                 quantityOverridesByMainShopKey: quantityOverrides

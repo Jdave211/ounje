@@ -289,8 +289,7 @@ final class AppNotificationCenterManager: ObservableObject {
             lastSyncedUserID = session.userID
             lastSyncedAt = Date()
         } catch {
-            lastSyncedUserID = session.userID
-            lastSyncedAt = Date()
+            // Keep retrying on the next active/scene sync instead of treating a failed sync as fresh.
         }
     }
 
@@ -309,7 +308,7 @@ final class AppNotificationCenterManager: ObservableObject {
                 limit: 60
             )
         } catch {
-            inboxEvents = []
+            // Preserve the currently rendered inbox when refresh fails.
         }
     }
 
@@ -2572,7 +2571,7 @@ private struct PulsingTrayIcon: View {
             if count > 0 {
                 Text("\(count)")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(OunjePalette.background)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
                     .background(
@@ -4131,7 +4130,7 @@ struct InstacartRunLogsSheet: View {
                                 Text(mealStore.isManualAutoshopRunning ? "Rerunning" : "Rerun")
                                     .font(.system(size: 12, weight: .bold))
                             }
-                            .foregroundStyle(OunjePalette.background)
+                            .foregroundStyle(.white)
                             .padding(.horizontal, 11)
                             .padding(.vertical, 7)
                             .background(
@@ -4557,6 +4556,23 @@ private struct InstacartRunLogRow: View {
         return "\(resolved) matched"
     }
 
+    private var shoppingPreviewText: String? {
+        let preview = (run.shoppingPreview ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if !preview.isEmpty {
+            return "Shopping: \(preview.prefix(3).joined(separator: " • "))"
+        }
+
+        let latestEventBody = run.latestEventBody?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !latestEventBody.isEmpty {
+            return latestEventBody
+        }
+
+        return nil
+    }
+
     private var displayedItemCount: Int {
         run.itemCount
     }
@@ -4620,7 +4636,7 @@ private struct InstacartRunLogRow: View {
 
                 Text(statusLabel)
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(OunjePalette.background)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(
@@ -4644,6 +4660,14 @@ private struct InstacartRunLogRow: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(OunjePalette.secondaryText)
                 .lineLimit(1)
+
+            if let shoppingPreviewText {
+                Text(shoppingPreviewText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OunjePalette.accent.opacity(0.92))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Text(statusSummary)
                 .font(.system(size: 12, weight: .semibold))
@@ -4731,6 +4755,7 @@ private struct InstacartRunLogDetailView: View {
     let accessToken: String?
 
     @State private var summary: InstacartRunLogSummary?
+    @State private var orderSummary: GroceryOrderSummaryRecord?
     @State private var trace: InstacartRunTracePayload?
     @State private var itemImageLookup: [String: String] = [:]
     @State private var isLoadingSummary = false
@@ -4781,7 +4806,15 @@ private struct InstacartRunLogDetailView: View {
     }
 
     private var displayedItemCount: Int {
-        summary?.itemCount ?? trace?.items.count ?? 0
+        summary?.itemCount ?? orderSummary?.orderItems?.count ?? trace?.items.count ?? 0
+    }
+
+    private var liveOrderItems: [GroceryOrderItemRecord] {
+        orderSummary?.orderItems ?? []
+    }
+
+    private var hasLiveOrderItems: Bool {
+        !liveOrderItems.isEmpty
     }
 
     private func dedupeTraceItems(_ items: [InstacartRunLogItemPayload]) -> [InstacartRunLogItemPayload] {
@@ -4957,6 +4990,9 @@ private struct InstacartRunLogDetailView: View {
                     }
 
                     summaryGrid(summary)
+                    if hasLiveOrderItems {
+                        liveOrderItemsSection
+                    }
                     traceSection
                 } else if isLoadingSummary {
                     loadingState
@@ -4999,16 +5035,16 @@ private struct InstacartRunLogDetailView: View {
 
     private var traceSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if trace != nil || isLoadingTrace || traceErrorMessage != nil {
+            if trace != nil || isLoadingTrace || traceErrorMessage != nil || hasLiveOrderItems {
                 traceControls
 
                 if let traceErrorMessage {
                     errorState(message: traceErrorMessage)
-                } else if isLoadingTrace && trace == nil {
+                } else if isLoadingTrace && trace == nil && !hasLiveOrderItems {
                     loadingTraceState
-                } else if displayedItems.isEmpty {
+                } else if displayedItems.isEmpty && !hasLiveOrderItems {
                     emptyState
-                } else {
+                } else if !displayedItems.isEmpty {
                     VStack(spacing: 0) {
                         ForEach(displayedItems) { item in
                             InstacartRunItemRow(
@@ -5039,6 +5075,8 @@ private struct InstacartRunLogDetailView: View {
                             .padding(.leading, 2)
                         }
                     }
+                } else if isLoadingTrace && trace == nil {
+                    loadingTraceState
                 }
             } else {
                 tracePlaceholder
@@ -5049,6 +5087,45 @@ private struct InstacartRunLogDetailView: View {
                     }
             }
         }
+    }
+
+    private var liveOrderItemsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Live cart items")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text("\(liveOrderItems.count) items from the current grocery order")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(spacing: 0) {
+                ForEach(Array(liveOrderItems.enumerated()), id: \.element.id) { index, item in
+                    GroceryOrderItemRow(item: item)
+
+                    if index < liveOrderItems.count - 1 {
+                        Divider()
+                            .overlay(OunjePalette.stroke.opacity(0.45))
+                            .padding(.leading, 52)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.94))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
     }
 
     private func summaryGrid(_ summary: InstacartRunLogSummary) -> some View {
@@ -5373,6 +5450,7 @@ private struct InstacartRunLogDetailView: View {
             isLoadingSummary = true
             summaryErrorMessage = nil
             summary = nil
+            orderSummary = nil
             trace = nil
             traceErrorMessage = nil
             itemImageLookup = [:]
@@ -5392,6 +5470,18 @@ private struct InstacartRunLogDetailView: View {
             )
             summary = loadedSummary
             summaryErrorMessage = nil
+
+            if let orderIDString = loadedSummary.groceryOrderIDString?.trimmingCharacters(in: .whitespacesAndNewlines),
+               let orderID = UUID(uuidString: orderIDString) {
+                orderSummary = try? await GroceryOrderAPIService.shared.fetchOrder(
+                    orderID: orderID,
+                    userID: userID,
+                    accessToken: accessToken
+                )
+            } else {
+                orderSummary = nil
+            }
+
             await loadTrace(forceRefresh: shouldRefreshTrace(for: loadedSummary))
         } catch {
             summaryErrorMessage = error.localizedDescription
@@ -5722,6 +5812,103 @@ private struct InstacartRunItemRow: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .padding(.vertical, 12)
+    }
+}
+
+private struct GroceryOrderItemRow: View {
+    let item: GroceryOrderItemRecord
+
+    private var titleText: String {
+        item.requestedName.isEmpty ? "Item" : item.requestedName
+    }
+
+    private var detailText: String? {
+        var parts: [String] = []
+        if let requestedAmount = item.requestedAmount {
+            let amountText = requestedAmount.rounded() == requestedAmount
+                ? String(Int(requestedAmount))
+                : String(format: "%.2f", requestedAmount)
+            if let requestedUnit = item.requestedUnit, !requestedUnit.isEmpty {
+                parts.append("\(amountText) \(requestedUnit)")
+            } else {
+                parts.append(amountText)
+            }
+        }
+        if let matchedName = item.matchedName, !matchedName.isEmpty, matchedName.caseInsensitiveCompare(titleText) != .orderedSame {
+            parts.append("Matched \(matchedName)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    private var statusText: String {
+        let normalized = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "found":
+            return "Found"
+        case "substituted":
+            return "Substituted"
+        case "missing":
+            return "Missing"
+        case "added":
+            return "Added"
+        case "retry_queued":
+            return "Retry queued"
+        default:
+            return normalized.isEmpty ? "Item" : normalized.capitalized
+        }
+    }
+
+    private var priceText: String? {
+        guard let totalPriceCents = item.totalPriceCents else { return nil }
+        return (Double(totalPriceCents) / 100).formatted(.currency(code: "USD"))
+    }
+
+    private var itemImageURL: URL? {
+        item.imageURL
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            CartCachedArtworkView(imageURL: itemImageURL) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(OunjePalette.surface)
+                    .overlay(
+                        Image(systemName: "cart.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                    )
+            }
+            .frame(width: 42, height: 42)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(titleText)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(2)
+
+                if let detailText {
+                    Text(detailText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(statusText)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                if let priceText {
+                    Text(priceText)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+            }
+        }
+        .padding(.vertical, 11)
     }
 }
 
@@ -6413,7 +6600,7 @@ private struct RecipeImportCompletedRow: View {
                 if let sourceKindLabel = item.sourceKindLabel {
                     Text(sourceKindLabel)
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(OunjePalette.background)
+                        .foregroundStyle(.white)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(
@@ -6440,7 +6627,7 @@ private struct RecipeImportCompletedRow: View {
 
             Text("Done")
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(OunjePalette.background)
+                .foregroundStyle(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
@@ -9194,7 +9381,7 @@ private struct AuthenticationPreviewDeck: View {
         HStack(alignment: .top, spacing: 10) {
             Text(step)
                 .font(.system(size: 12, weight: .black))
-                .foregroundStyle(.black)
+                .foregroundStyle(.white)
                 .frame(width: 24, height: 24)
                 .background(OunjePalette.accent, in: Circle())
 

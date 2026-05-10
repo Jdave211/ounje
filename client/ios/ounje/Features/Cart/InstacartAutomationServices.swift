@@ -100,6 +100,7 @@ struct InstacartRunLogStorageRow: Decodable {
             topIssue: nil,
             searchPreview: nil,
             matches: nil,
+            shoppingPreview: nil,
             cartUrl: nil
         )
     }
@@ -163,6 +164,7 @@ struct InstacartRunLogSummary: Identifiable, Codable {
     let topIssue: String?
     let searchPreview: String?
     let matches: [String]?
+    let shoppingPreview: [String]?
     let cartUrl: String?
 
     enum CodingKeys: String, CodingKey {
@@ -204,6 +206,7 @@ struct InstacartRunLogSummary: Identifiable, Codable {
         case topIssue
         case searchPreview
         case matches
+        case shoppingPreview
         case cartUrl
     }
 
@@ -246,6 +249,7 @@ struct InstacartRunLogSummary: Identifiable, Codable {
         topIssue: String?,
         searchPreview: String?,
         matches: [String]?,
+        shoppingPreview: [String]?,
         cartUrl: String?
     ) {
         self.runId = runId
@@ -286,6 +290,7 @@ struct InstacartRunLogSummary: Identifiable, Codable {
         self.topIssue = topIssue
         self.searchPreview = searchPreview
         self.matches = matches
+        self.shoppingPreview = shoppingPreview
         self.cartUrl = cartUrl
     }
 
@@ -343,6 +348,13 @@ struct InstacartRunLogSummary: Identifiable, Codable {
             matches = [single]
         } else {
             matches = nil
+        }
+        if let values = try? container.decodeIfPresent([String].self, forKey: .shoppingPreview) {
+            shoppingPreview = values
+        } else if let single = container.lossyString(forKey: .shoppingPreview) {
+            shoppingPreview = [single]
+        } else {
+            shoppingPreview = nil
         }
         cartUrl = container.lossyString(forKey: .cartUrl)
     }
@@ -428,6 +440,7 @@ struct InstacartRunLogSummary: Identifiable, Codable {
             topIssue: topIssue,
             searchPreview: searchPreview,
             matches: matches,
+            shoppingPreview: shoppingPreview,
             cartUrl: cartUrl
         )
     }
@@ -450,6 +463,7 @@ struct GroceryOrderSummaryRecord: Identifiable, Decodable {
     let lastTrackedAt: Date?
     let deliveredAt: Date?
     let stepLog: [GroceryOrderStepLogEntry]?
+    let orderItems: [GroceryOrderItemRecord]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -468,6 +482,7 @@ struct GroceryOrderSummaryRecord: Identifiable, Decodable {
         case lastTrackedAt = "last_tracked_at"
         case deliveredAt = "delivered_at"
         case stepLog = "step_log"
+        case orderItems = "order_items"
     }
 
     var normalizedProvider: String {
@@ -490,6 +505,66 @@ struct GroceryOrderSummaryRecord: Identifiable, Decodable {
 
     var latestStepLogEntry: GroceryOrderStepLogEntry? {
         stepLog?.last
+    }
+}
+
+struct GroceryOrderItemRecord: Identifiable, Decodable, Hashable {
+    let id: UUID
+    let orderID: UUID?
+    let requestedName: String
+    let requestedAmount: Double?
+    let requestedUnit: String?
+    let status: String
+    let matchedName: String?
+    let matchedProductID: String?
+    let matchedBrand: String?
+    let unitPriceCents: Int?
+    let quantity: Int?
+    let totalPriceCents: Int?
+    let imageURLString: String?
+    let matchConfidence: Double?
+    let createdAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case orderID = "order_id"
+        case requestedName = "requested_name"
+        case requestedAmount = "requested_amount"
+        case requestedUnit = "requested_unit"
+        case status
+        case matchedName = "matched_name"
+        case matchedProductID = "matched_product_id"
+        case matchedBrand = "matched_brand"
+        case unitPriceCents = "unit_price_cents"
+        case quantity
+        case totalPriceCents = "total_price_cents"
+        case imageURLString = "image_url"
+        case matchConfidence = "match_confidence"
+        case createdAt = "created_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        orderID = try container.decodeIfPresent(UUID.self, forKey: .orderID)
+        requestedName = (try container.decodeIfPresent(String.self, forKey: .requestedName) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        requestedAmount = try container.decodeIfPresent(Double.self, forKey: .requestedAmount)
+        requestedUnit = try container.decodeIfPresent(String.self, forKey: .requestedUnit)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        status = (try container.decodeIfPresent(String.self, forKey: .status) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        matchedName = try container.decodeIfPresent(String.self, forKey: .matchedName)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        matchedProductID = try container.decodeIfPresent(String.self, forKey: .matchedProductID)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        matchedBrand = try container.decodeIfPresent(String.self, forKey: .matchedBrand)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        unitPriceCents = try container.decodeIfPresent(Int.self, forKey: .unitPriceCents)
+        quantity = try container.decodeIfPresent(Int.self, forKey: .quantity)
+        totalPriceCents = try container.decodeIfPresent(Int.self, forKey: .totalPriceCents)
+        imageURLString = try container.decodeIfPresent(String.self, forKey: .imageURLString)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        matchConfidence = try container.decodeIfPresent(Double.self, forKey: .matchConfidence)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+    }
+
+    var imageURL: URL? {
+        guard let imageURLString, !imageURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return URL(string: imageURLString)
     }
 }
 
@@ -807,6 +882,16 @@ extension KeyedDecodingContainer {
         }
         if let value = try? decodeIfPresent(Int.self, forKey: key) {
             return value != 0
+        }
+        return nil
+    }
+
+    func lossyDate(forKey key: Key) -> Date? {
+        if let value = try? decodeIfPresent(Date.self, forKey: key) {
+            return value
+        }
+        if let value = try? decodeIfPresent(String.self, forKey: key) {
+            return ISO8601DateFormatter().date(from: value)
         }
         return nil
     }

@@ -2055,6 +2055,12 @@ struct FirstLoginOnboardingView: View {
                 )
             }
             .buttonStyle(OunjeCardPressButtonStyle())
+
+            Text("* we don't store login details")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText.opacity(0.9))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 304)
         }
     }
 
@@ -2714,10 +2720,13 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func loadOnboardingProviders() {
-        onboardingProvidersViewModel.loadProviders(
-            userId: store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
-            accessToken: store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
-        )
+        Task {
+            let session = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+            onboardingProvidersViewModel.loadProviders(
+                userId: session?.userID,
+                accessToken: session?.accessToken
+            )
+        }
     }
 
     private func openOnboardingInstacartConnection() {

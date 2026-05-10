@@ -736,6 +736,7 @@ export async function getOrderSummary(orderId) {
     
     liveUrl: order.browser_live_url,
     cartUrl: order.provider_cart_url,
+    order_items: Array.isArray(order.items) ? order.items : [],
     
     screenshots: order.screenshots,
     createdAt: order.created_at,

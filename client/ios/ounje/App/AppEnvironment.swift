@@ -26,6 +26,49 @@ private enum RemoteMealPrepCycleLoadState: Equatable {
     }
 }
 
+struct ProviderConnectionListResponse: Decodable {
+    let providers: [ProviderConnectionRecord]
+}
+
+struct ProviderConnectionRecord: Decodable {
+    let id: String
+    let name: String
+    let connected: Bool
+}
+
+final class ProviderConnectionAPIService {
+    static let shared = ProviderConnectionAPIService()
+
+    private init() {}
+
+    func fetchProviders(userID: String?, accessToken: String?) async throws -> [ProviderConnectionRecord] {
+        guard let url = URL(string: "\(OunjeDevelopmentServer.workerBaseURL)/v1/connect/providers") else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        if let userID = userID?.trimmingCharacters(in: .whitespacesAndNewlines), !userID.isEmpty {
+            request.setValue(userID, forHTTPHeaderField: "x-user-id")
+        }
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = (try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data))?.message
+                ?? "Provider connection lookup failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(message)
+        }
+
+        return try JSONDecoder().decode(ProviderConnectionListResponse.self, from: data).providers
+    }
+}
+
 @MainActor
 final class MealPlanningAppStore: ObservableObject {
     @Published var authSession: AuthSession?
@@ -39,6 +82,7 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var latestInstacartRun: InstacartRunLogSummary?
     @Published private(set) var latestBlockingInstacartRun: InstacartRunLogSummary?
     @Published var latestGroceryOrder: GroceryOrderSummaryRecord?
+    @Published private(set) var isInstacartProviderConnected = false
     @Published var membershipEntitlement: AppUserEntitlement?
     @Published var availableMembershipProducts: [OunjeMembershipPlan: StoreProductSnapshot] = [:]
     @Published var isBillingBusy = false
@@ -76,6 +120,7 @@ final class MealPlanningAppStore: ObservableObject {
     private let cachedEntryRouteKey = "agentic-cached-entry-route-v1"
     private let sharedAuthSessionKey = "agentic-share-auth-session-v1"
     private let liveUserIDKey = "agentic-live-user-id-v1"
+    private let instacartProviderConnectionKeyPrefix = "agentic-instacart-provider-connected-v1"
     private let hiddenMainShopItemsKeyPrefix = "agentic-hidden-main-shop-items-v1"
     private let authKeychainService = "net.ounje.auth"
     private let authKeychainAccount = "agentic-auth-session-v1"
@@ -224,6 +269,7 @@ final class MealPlanningAppStore: ObservableObject {
         hasResolvedInitialState = true
         cacheAuthenticatedEntryRoute(effectiveOnboarded ? .planner : .onboarding)
         saveAuthSession(session)
+        loadPersistedProviderConnectionState(for: session.userID)
         saveOnboardingState()
         saveOnboardingStep()
     }
@@ -233,6 +279,11 @@ final class MealPlanningAppStore: ObservableObject {
         authSession = session
         cachedLiveUserID = session.userID
         saveAuthSession(session)
+    }
+
+    func setInstacartProviderConnected(_ isConnected: Bool, for userID: String? = nil) {
+        isInstacartProviderConnected = isConnected
+        savePersistedProviderConnectionState(isConnected, for: userID ?? resolvedLiveUserID ?? authSession?.userID)
     }
 
     @discardableResult
@@ -540,6 +591,8 @@ final class MealPlanningAppStore: ObservableObject {
             guard authStateRevision == bootstrapRevision else { return }
             await loadLatestGroceryOrder()
             guard authStateRevision == bootstrapRevision else { return }
+            await refreshProviderConnectionState()
+            guard authStateRevision == bootstrapRevision else { return }
             await emitLifecycleNotificationsIfNeeded(trigger: "bootstrap")
             await emitEngagementNudgesIfNeeded()
 
@@ -824,8 +877,27 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    func rerunInstacartShopping() async {
-        await startManualAutoshopRun(trigger: "manual_instacart_rerun")
+    func rerunInstacartShopping(
+        trigger: String = "manual_instacart_rerun",
+        allowedMainShopItemKeys: Set<String>? = nil,
+        quantityOverridesByMainShopKey: [String: Int] = [:]
+    ) async {
+        let effectiveAllowedMainShopItemKeys: Set<String>
+        if let allowedMainShopItemKeys, !allowedMainShopItemKeys.isEmpty {
+            effectiveAllowedMainShopItemKeys = allowedMainShopItemKeys
+        } else {
+            effectiveAllowedMainShopItemKeys = Set(
+                latestPlan?.mainShopSnapshot?.items.flatMap { item in
+                    mainShopKeys(for: item)
+                }
+                .filter { !$0.isEmpty } ?? []
+            )
+        }
+        await startManualAutoshopRun(
+            trigger: trigger,
+            allowedMainShopItemKeys: effectiveAllowedMainShopItemKeys.isEmpty ? nil : effectiveAllowedMainShopItemKeys,
+            quantityOverridesByMainShopKey: quantityOverridesByMainShopKey
+        )
     }
 
     func requestInstacartShoppingRerun() async {
@@ -1320,6 +1392,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func resetAll() {
+        let previousUserID = resolvedLiveUserID ?? authSession?.userID ?? cachedLiveUserID
         authStateRevision += 1
         activeGenerationToken = UUID()
         authSession = nil
@@ -1353,6 +1426,7 @@ final class MealPlanningAppStore: ObservableObject {
         sharedDefaults?.removeObject(forKey: sharedAuthSessionKey)
         UserDefaults.standard.removeObject(forKey: liveUserIDKey)
         sharedDefaults?.removeObject(forKey: liveUserIDKey)
+        removePersistedProviderConnectionState(for: previousUserID)
         sharedDefaults?.synchronize()
         deleteAuthSessionFromKeychain()
         UserDefaults.standard.removeObject(forKey: onboardedKey)
@@ -1424,6 +1498,7 @@ final class MealPlanningAppStore: ObservableObject {
         loadPendingCartSyncIntentCache(for: resolvedUserID)
         loadPrepRecipeOverridesCache(for: resolvedUserID)
         loadRecurringPrepRecipesCache(for: resolvedUserID)
+        loadPersistedProviderConnectionState(for: resolvedUserID)
 
         if shouldPurgePersistedPlan(planHistory) {
             planHistory = usablePersistedPlans(from: planHistory)
@@ -2194,6 +2269,7 @@ final class MealPlanningAppStore: ObservableObject {
 
         await loadLatestInstacartRun()
         await loadLatestGroceryOrder()
+        await refreshProviderConnectionState()
         await clearStaleQueuedInstacartRerunIfNeeded(trigger: "live_refresh")
         await maybeRefreshLatestGroceryOrderTrackingIfNeeded(trigger: "live_refresh")
         await processQueuedInstacartRerunIfNeeded()
@@ -2215,11 +2291,31 @@ final class MealPlanningAppStore: ObservableObject {
                 groceryOrderID: groceryOrderID,
                 session: session
             )
+            await refreshProviderConnectionState()
             await clearStaleQueuedInstacartRerunIfNeeded(trigger: "realtime")
             await maybeRefreshLatestGroceryOrderTrackingIfNeeded(trigger: "realtime")
             await processQueuedInstacartRerunIfNeeded()
         } else {
             await refreshLiveTrackingState()
+        }
+    }
+
+    func refreshProviderConnectionState() async {
+        guard let session = await freshTrackingSession() else { return }
+
+        do {
+            let providers = try await ProviderConnectionAPIService.shared.fetchProviders(
+                userID: session.userID,
+                accessToken: session.accessToken
+            )
+            let instacartConnected = providers.contains { provider in
+                provider.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "instacart"
+                    && provider.connected
+            }
+            isInstacartProviderConnected = instacartConnected
+            savePersistedProviderConnectionState(instacartConnected, for: session.userID)
+        } catch {
+            // Keep the last known connection state when the lookup is unavailable.
         }
     }
 
@@ -3360,6 +3456,35 @@ final class MealPlanningAppStore: ObservableObject {
         }
         sharedDefaults?.synchronize()
         saveAuthSessionToKeychain(data)
+    }
+
+    private func providerConnectionStateKey(for userID: String?) -> String? {
+        let trimmed = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        return "\(instacartProviderConnectionKeyPrefix)::\(trimmed)"
+    }
+
+    private func loadPersistedProviderConnectionState(for userID: String?) {
+        guard let key = providerConnectionStateKey(for: userID) else { return }
+        if UserDefaults.standard.object(forKey: key) != nil {
+            isInstacartProviderConnected = UserDefaults.standard.bool(forKey: key)
+            return
+        }
+        if let sharedDefaults, sharedDefaults.object(forKey: key) != nil {
+            isInstacartProviderConnected = sharedDefaults.bool(forKey: key)
+        }
+    }
+
+    private func savePersistedProviderConnectionState(_ isConnected: Bool, for userID: String?) {
+        guard let key = providerConnectionStateKey(for: userID) else { return }
+        UserDefaults.standard.set(isConnected, forKey: key)
+        sharedDefaults?.set(isConnected, forKey: key)
+    }
+
+    private func removePersistedProviderConnectionState(for userID: String?) {
+        guard let key = providerConnectionStateKey(for: userID) else { return }
+        UserDefaults.standard.removeObject(forKey: key)
+        sharedDefaults?.removeObject(forKey: key)
     }
 
     private func saveLiveUserID(_ userID: String) {
