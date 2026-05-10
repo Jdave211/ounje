@@ -1,5 +1,6 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
+import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 
 const router = express.Router();
 
@@ -13,10 +14,6 @@ function getSupabase() {
   }
 
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-}
-
-function resolveUserID(req) {
-  return String(req.body?.user_id ?? req.body?.userID ?? req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? "").trim();
 }
 
 function normalizeAttachments(value) {
@@ -119,10 +116,7 @@ async function insertFeedbackShadowMessages(supabase, userID, rows) {
 
 router.get("/feedback", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
 
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -143,17 +137,17 @@ router.get("/feedback", async (req, res) => {
       storage: "feedback_table",
     });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "feedback/list");
+    }
     console.error("[feedback/list] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.post("/feedback", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
 
     const body = String(req.body?.body ?? "").trim();
     const attachments = normalizeAttachments(req.body?.attachments);
@@ -191,8 +185,11 @@ router.post("/feedback", async (req, res) => {
       storage: "feedback_table",
     });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "feedback/create");
+    }
     console.error("[feedback/create] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 

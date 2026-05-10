@@ -863,7 +863,7 @@ final class RecipeDetailViewModel: ObservableObject {
         if let detail,
            detail.id == recipeID || detail.id == initialDetailID {
             let fallbackID = similarFallbackRecipeID ?? (detail.id == recipeID ? nil : recipeID)
-            scheduleSimilarRecipesLoad(for: detail.id, fallbackRecipeID: fallbackID)
+            scheduleSimilarRecipesLoad(for: detail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
             return
         }
 
@@ -882,7 +882,7 @@ final class RecipeDetailViewModel: ObservableObject {
             let fetchedDetail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
             detail = fetchedDetail
             let fallbackID = similarFallbackRecipeID ?? (fetchedDetail.id == recipeID ? nil : recipeID)
-            scheduleSimilarRecipesLoad(for: fetchedDetail.id, fallbackRecipeID: fallbackID)
+            scheduleSimilarRecipesLoad(for: fetchedDetail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
         } catch {
             similarRecipes = []
             hasLoadedSimilarRecipes = false
@@ -890,18 +890,18 @@ final class RecipeDetailViewModel: ObservableObject {
         }
     }
 
-    private func scheduleSimilarRecipesLoad(for recipeID: String, fallbackRecipeID: String? = nil) {
+    private func scheduleSimilarRecipesLoad(for recipeID: String, fallbackRecipeID: String? = nil, accessToken: String? = nil) {
         guard detail?.id == recipeID, similarRecipes.isEmpty else { return }
         similarLoadTask?.cancel()
         isLoadingSimilarRecipes = true
         similarLoadTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
-            await self?.loadSimilarRecipes(for: recipeID, fallbackRecipeID: fallbackRecipeID)
+            await self?.loadSimilarRecipes(for: recipeID, fallbackRecipeID: fallbackRecipeID, accessToken: accessToken)
         }
     }
 
-    private func loadSimilarRecipes(for recipeID: String, fallbackRecipeID: String? = nil) async {
+    private func loadSimilarRecipes(for recipeID: String, fallbackRecipeID: String? = nil, accessToken: String? = nil) async {
         guard detail?.id == recipeID, similarRecipes.isEmpty else { return }
 
         isLoadingSimilarRecipes = true
@@ -911,7 +911,7 @@ final class RecipeDetailViewModel: ObservableObject {
         }
 
         do {
-            let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(id: recipeID)
+            let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(id: recipeID, accessToken: accessToken)
             guard detail?.id == recipeID else { return }
             if !recipes.isEmpty {
                 similarRecipes = recipes
@@ -926,7 +926,7 @@ final class RecipeDetailViewModel: ObservableObject {
            fallbackRecipeID != recipeID,
            !fallbackRecipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             do {
-                let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(id: fallbackRecipeID)
+                let recipes = try await RecipeDetailService.shared.fetchSimilarRecipes(id: fallbackRecipeID, accessToken: accessToken)
                 guard detail?.id == recipeID else { return }
                 if !recipes.isEmpty {
                     similarRecipes = recipes
@@ -992,7 +992,7 @@ actor RecipeDetailService {
         return detail
     }
 
-    func fetchSimilarRecipes(id: String) async throws -> [DiscoverRecipeCardData] {
+    func fetchSimilarRecipes(id: String, accessToken: String? = nil) async throws -> [DiscoverRecipeCardData] {
         if let cached = similarCache[id] {
             return cached
         }
@@ -1000,7 +1000,7 @@ actor RecipeDetailService {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                return try await fetchSimilarRecipes(baseURL: baseURL, id: id)
+                return try await fetchSimilarRecipes(baseURL: baseURL, id: id, accessToken: accessToken)
             } catch {
                 lastError = error
             }
@@ -1031,11 +1031,11 @@ actor RecipeDetailService {
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 
-    func createShareLink(recipeID: String, userID: String?) async throws -> RecipeShareLinkResponse {
+    func createShareLink(recipeID: String, userID: String?, accessToken: String? = nil) async throws -> RecipeShareLinkResponse {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                return try await createShareLink(baseURL: baseURL, recipeID: recipeID, userID: userID)
+                return try await createShareLink(baseURL: baseURL, recipeID: recipeID, userID: userID, accessToken: accessToken)
             } catch {
                 lastError = error
             }
@@ -1075,7 +1075,7 @@ actor RecipeDetailService {
         return url.pathComponents[2]
     }
 
-    private func fetchSimilarRecipes(baseURL: String, id: String) async throws -> [DiscoverRecipeCardData] {
+    private func fetchSimilarRecipes(baseURL: String, id: String, accessToken: String? = nil) async throws -> [DiscoverRecipeCardData] {
         guard let url = URL(string: "\(baseURL)/v1/recipe/detail/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/similar?limit=5") else {
             throw SupabaseProfileStateError.invalidRequest
         }
@@ -1083,6 +1083,9 @@ actor RecipeDetailService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -1126,7 +1129,7 @@ actor RecipeDetailService {
         return decoded.recipes
     }
 
-    private func createShareLink(baseURL: String, recipeID: String, userID: String?) async throws -> RecipeShareLinkResponse {
+    private func createShareLink(baseURL: String, recipeID: String, userID: String?, accessToken: String? = nil) async throws -> RecipeShareLinkResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/share-links") else {
             throw SupabaseProfileStateError.invalidRequest
         }
@@ -1135,6 +1138,9 @@ actor RecipeDetailService {
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONEncoder().encode(RecipeShareLinkCreateRequest(recipeID: recipeID, userID: userID))
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -1546,11 +1552,11 @@ actor RecipeDetailService {
 actor PlannedRecipeRefreshService {
     static let shared = PlannedRecipeRefreshService()
 
-    func refreshedPlannedRecipes(from plannedRecipes: [PlannedRecipe]) async -> [PlannedRecipe] {
+    func refreshedPlannedRecipes(from plannedRecipes: [PlannedRecipe], accessToken: String? = nil) async -> [PlannedRecipe] {
         await withTaskGroup(of: (Int, PlannedRecipe).self) { group in
             for (index, plannedRecipe) in plannedRecipes.enumerated() {
                 group.addTask {
-                    let refreshed = await self.refreshedPlannedRecipe(from: plannedRecipe)
+                    let refreshed = await self.refreshedPlannedRecipe(from: plannedRecipe, accessToken: accessToken)
                     return (index, refreshed)
                 }
             }
@@ -1566,9 +1572,9 @@ actor PlannedRecipeRefreshService {
         }
     }
 
-    private func refreshedPlannedRecipe(from plannedRecipe: PlannedRecipe) async -> PlannedRecipe {
+    private func refreshedPlannedRecipe(from plannedRecipe: PlannedRecipe, accessToken: String? = nil) async -> PlannedRecipe {
         do {
-            let detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: plannedRecipe.recipe.id, forceRefresh: true)
+            let detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: plannedRecipe.recipe.id, forceRefresh: true, accessToken: accessToken)
             let refreshedRecipe = recipePlanModel(
                 from: detail,
                 targetServings: plannedRecipe.servings,

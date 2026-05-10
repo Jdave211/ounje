@@ -27,7 +27,8 @@ enum MainShopSnapshotBuilder {
     static func buildSnapshot(
         for plan: MealPlan,
         profile: UserProfile? = nil,
-        refreshToken: String? = nil
+        refreshToken: String? = nil,
+        accessToken: String? = nil
     ) async throws -> MainShopSnapshot {
         guard !plan.groceryItems.isEmpty else {
             return MainShopSnapshot(
@@ -42,7 +43,8 @@ enum MainShopSnapshotBuilder {
         let shoppingSpec = try await GroceryService.shared.fetchShoppingSpec(
             items: plan.groceryItems,
             plan: plan,
-            refreshToken: refreshToken
+            refreshToken: refreshToken,
+            accessToken: accessToken
         )
         let normalizedNames = Array(
             Set(

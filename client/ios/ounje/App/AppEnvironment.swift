@@ -686,18 +686,22 @@ final class MealPlanningAppStore: ObservableObject {
     private func hydratedPlannedRecipeForCart(
         recipe: Recipe,
         servings: Int,
-        carriedFromPreviousPlan: Bool
+        carriedFromPreviousPlan: Bool,
+        accessToken: String? = nil
     ) async -> PlannedRecipe {
         let plannedRecipe = PlannedRecipe(
             recipe: recipe,
             servings: max(1, servings),
             carriedFromPreviousPlan: carriedFromPreviousPlan
         )
-        return await hydratedPlannedRecipesForCart([plannedRecipe]).first ?? plannedRecipe
+        return await hydratedPlannedRecipesForCart([plannedRecipe], accessToken: accessToken).first ?? plannedRecipe
     }
 
-    private func hydratedPlannedRecipesForCart(_ recipes: [PlannedRecipe]) async -> [PlannedRecipe] {
-        await PlannedRecipeRefreshService.shared.refreshedPlannedRecipes(from: recipes)
+    private func hydratedPlannedRecipesForCart(_ recipes: [PlannedRecipe], accessToken: String? = nil) async -> [PlannedRecipe] {
+        await PlannedRecipeRefreshService.shared.refreshedPlannedRecipes(
+            from: recipes,
+            accessToken: accessToken ?? authSession?.accessToken
+        )
     }
 
     func startManualAutoshopRun(
@@ -1796,7 +1800,8 @@ final class MealPlanningAppStore: ObservableObject {
             let snapshot = try await MainShopSnapshotBuilder.buildSnapshot(
                 for: latestPlan,
                 profile: profile,
-                refreshToken: forceRebuild ? UUID().uuidString : nil
+                refreshToken: forceRebuild ? UUID().uuidString : nil,
+                accessToken: resolvedTrackingSession?.accessToken ?? authSession?.accessToken
             )
             guard let currentPlan = self.latestPlan, currentPlan.id == latestPlan.id else { return false }
             updateLatestPlanMainShopSnapshot(snapshot, for: currentPlan.id)

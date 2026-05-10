@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { addItemsToInstacartCart } from "../../lib/instacart-cart.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
 import { createAutomationJob } from "../../lib/automation-jobs.js";
+import { resolveAuthorizedUserID } from "../../lib/auth.js";
 import {
   getCurrentInstacartRunLogSummary,
   getInstacartRunLog,
@@ -11,7 +12,6 @@ import {
   getInstacartRunLogTrace,
   listInstacartRunLogs,
   persistInstacartRunLog,
-  resolveAuthenticatedUserID
 } from "../../lib/instacart-run-logs.js";
 import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
 
@@ -19,13 +19,6 @@ const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const AUTOSHOP_MANUAL_BETA_ONLY = String(process.env.AUTOSHOP_MANUAL_BETA_ONLY ?? "false").trim().toLowerCase() === "true";
-
-function extractBearerToken(authorizationHeader) {
-  const value = String(authorizationHeader ?? "").trim();
-  if (!value) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(value);
-  return match?.[1]?.trim() || null;
-}
 
 function normalizeText(value) {
     return String(value ?? "").trim();
@@ -738,13 +731,14 @@ function buildQueuedRunTrace({
   };
 }
 
-async function resolveRunItems({ normalizedItems, plan }) {
+async function resolveRunItems({ normalizedItems, plan, accessToken = null }) {
   const snapshotItems = buildRunItemsFromMainShopSnapshot(plan, normalizedItems);
   if (snapshotItems.length > 0) return snapshotItems;
 
   const shoppingSpec = await buildShoppingSpecEntries({
     originalItems: normalizedItems,
     plan,
+    accessToken,
   });
   return Array.isArray(shoppingSpec?.items) && shoppingSpec.items.length > 0
     ? shoppingSpec.items
@@ -879,11 +873,7 @@ export async function executeInstacartAutomationJob(job, { logger = console } = 
 
 router.get("/instacart/runs", async (req, res) => {
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    const userID = req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? null;
-    if (!accessToken && !String(userID ?? "").trim()) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
     const query = req.query.query ?? req.query.q ?? "";
     const status = req.query.status ?? "all";
     const limit = req.query.limit ?? 24;
@@ -898,17 +888,13 @@ router.get("/instacart/runs", async (req, res) => {
     });
   } catch (error) {
     console.error("[instacart/runs] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.get("/instacart/runs/current", async (req, res) => {
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    const userID = req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? null;
-    if (!accessToken && !String(userID ?? "").trim()) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
     const mealPlanID = req.query.meal_plan_id ?? req.query.mealPlanID ?? null;
     const summary = await getCurrentInstacartRunLogSummary({ userID, accessToken, mealPlanID });
     return res.json({
@@ -917,17 +903,13 @@ router.get("/instacart/runs/current", async (req, res) => {
     });
   } catch (error) {
     console.error("[instacart/runs/current] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.get("/instacart/runs/:runId", async (req, res) => {
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    const userID = req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? null;
-    if (!accessToken && !String(userID ?? "").trim()) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
 
     const payload = await getInstacartRunLog(req.params.runId, {
       userID,
@@ -940,17 +922,13 @@ router.get("/instacart/runs/:runId", async (req, res) => {
     return res.json(payload);
   } catch (error) {
     console.error("[instacart/runs/:runId] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.get("/instacart/runs/:runId/summary", async (req, res) => {
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    const userID = req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? null;
-    if (!accessToken && !String(userID ?? "").trim()) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
 
     const summary = await getInstacartRunLogSummary(req.params.runId, {
       userID,
@@ -963,17 +941,13 @@ router.get("/instacart/runs/:runId/summary", async (req, res) => {
     return res.json({ summary });
   } catch (error) {
     console.error("[instacart/runs/:runId/summary] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.get("/instacart/runs/:runId/trace", async (req, res) => {
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    const userID = req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? null;
-    if (!accessToken && !String(userID ?? "").trim()) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
 
     const trace = await getInstacartRunLogTrace(req.params.runId, {
       userID,
@@ -986,17 +960,13 @@ router.get("/instacart/runs/:runId/trace", async (req, res) => {
     return res.json(trace);
   } catch (error) {
     console.error("[instacart/runs/:runId/trace] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.post("/instacart/runs/:runId/events", async (req, res) => {
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    const userID = req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"] ?? null;
-    if (!accessToken && !String(userID ?? "").trim()) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
 
     const tracePayload = await getInstacartRunLogTrace(req.params.runId, {
       userID,
@@ -1046,22 +1016,14 @@ router.post("/instacart/runs/:runId/events", async (req, res) => {
     return res.json({ ok: true, event });
   } catch (error) {
     console.error("[instacart/runs/:runId/events] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.post("/instacart/runs", async (req, res) => {
   let groceryOrderID = null;
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
-
-    const userID = await resolveAuthenticatedUserID(accessToken);
-    if (!userID) {
-      return res.status(401).json({ error: "Could not resolve authenticated user" });
-    }
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
 
     const {
       items = [],
@@ -1091,7 +1053,7 @@ router.post("/instacart/runs", async (req, res) => {
       return res.status(400).json({ error: "deliveryAddress is required before starting Instacart" });
     }
 
-    const resolvedItems = await resolveRunItems({ normalizedItems, plan });
+    const resolvedItems = await resolveRunItems({ normalizedItems, plan, accessToken });
 
     groceryOrderID = await createRunBackedGroceryOrder({
       userID,
@@ -1179,7 +1141,7 @@ router.post("/instacart/runs", async (req, res) => {
   } catch (error) {
     await failRunBackedGroceryOrder(groceryOrderID, error.message).catch(() => {});
     console.error("[instacart/runs] create error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 

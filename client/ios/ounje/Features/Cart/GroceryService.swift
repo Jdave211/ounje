@@ -188,13 +188,14 @@ final class GroceryService {
     private init() {}
 
     func fetchShoppingSpec(items: [GroceryItem], plan: MealPlan? = nil) async throws -> GroceryShoppingSpecResponse {
-        try await fetchShoppingSpec(items: items, plan: plan, refreshToken: nil)
+        try await fetchShoppingSpec(items: items, plan: plan, refreshToken: nil, accessToken: nil)
     }
 
     func fetchShoppingSpec(
         items: [GroceryItem],
         plan: MealPlan? = nil,
-        refreshToken: String?
+        refreshToken: String?,
+        accessToken: String? = nil
     ) async throws -> GroceryShoppingSpecResponse {
         if items.isEmpty {
             return GroceryShoppingSpecResponse(
@@ -252,7 +253,7 @@ final class GroceryService {
             refreshToken: refreshToken
         )
 
-        let data = try await post(path: "/v1/grocery/spec", body: payload, timeout: 45)
+        let data = try await post(path: "/v1/grocery/spec", body: payload, timeout: 45, accessToken: accessToken)
         return try decoder.decode(GroceryShoppingSpecResponse.self, from: data)
     }
 

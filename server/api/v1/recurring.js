@@ -1,5 +1,6 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
+import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 
 const router = express.Router();
 
@@ -12,10 +13,6 @@ function getSupabase() {
   }
 
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-}
-
-function resolveUserID(req) {
-  return stripPostgrestOperator(req.body?.user_id ?? req.body?.userID ?? req.query.user_id ?? req.query.userID ?? req.headers["x-user-id"]);
 }
 
 function stripPostgrestOperator(value) {
@@ -44,10 +41,7 @@ function normalizeRecipePayload(input = {}) {
 
 router.get("/recurring", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
 
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -59,8 +53,11 @@ router.get("/recurring", async (req, res) => {
     if (error) throw error;
     return res.json(data ?? []);
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recurring/list");
+    }
     console.error("[recurring/list] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
@@ -72,10 +69,7 @@ router.post("/recurring", async (req, res) => {
       return res.status(400).json({ error: "Recurring recipe payload required" });
     }
 
-    const userID = resolveUserID(req) || normalizedRows[0].user_id;
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
 
     const supabase = getSupabase();
     const rows = normalizedRows.map((row) => ({ ...row, user_id: userID }));
@@ -87,14 +81,17 @@ router.post("/recurring", async (req, res) => {
     if (error) throw error;
     return res.status(201).json(data ?? []);
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recurring/create");
+    }
     console.error("[recurring/create] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
 router.delete("/recurring", async (req, res) => {
   try {
-    const userID = resolveUserID(req);
+    const { userID } = await resolveAuthorizedUserID(req);
     const recipeID = stripPostgrestOperator(req.body?.recipe_id ?? req.body?.recipeID ?? req.query.recipe_id ?? req.query.recipeID);
 
     if (!userID || !recipeID) {
@@ -111,8 +108,11 @@ router.delete("/recurring", async (req, res) => {
     if (error) throw error;
     return res.json({ ok: true });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recurring/delete");
+    }
     console.error("[recurring/delete] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 

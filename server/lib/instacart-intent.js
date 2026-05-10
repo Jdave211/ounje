@@ -997,7 +997,7 @@ function recipeTableConfigForID(recipeID) {
       };
 }
 
-async function fetchSupabaseTableRows(tableName, select, filters = [], orderClauses = []) {
+async function fetchSupabaseTableRows(tableName, select, filters = [], orderClauses = [], accessToken = null) {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return [];
 
   let url = `${SUPABASE_URL}/rest/v1/${tableName}?select=${encodeURIComponent(select)}`;
@@ -1011,7 +1011,7 @@ async function fetchSupabaseTableRows(tableName, select, filters = [], orderClau
   const response = await fetch(url, {
     headers: {
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${String(accessToken ?? "").trim() || SUPABASE_ANON_KEY}`,
     },
   });
 
@@ -1024,7 +1024,7 @@ async function fetchSupabaseTableRows(tableName, select, filters = [], orderClau
   return Array.isArray(data) ? data : [];
 }
 
-async function fetchRecipeDetailRecord(recipeID, fallbackRecipe = {}) {
+async function fetchRecipeDetailRecord(recipeID, fallbackRecipe = {}, accessToken = null) {
   const normalizedID = String(recipeID ?? "").trim();
   if (!normalizedID) return null;
 
@@ -1039,19 +1039,22 @@ async function fetchRecipeDetailRecord(recipeID, fallbackRecipe = {}) {
       config.recipeTable,
       PUBLIC_RECIPE_SELECT,
       [`id=eq.${encodeURIComponent(normalizedID)}`],
-      []
+      [],
+      accessToken
     ).catch(() => []),
     fetchSupabaseTableRows(
       config.ingredientTable,
       "id,recipe_id,ingredient_id,display_name,quantity_text,image_url,sort_order",
       [`recipe_id=eq.${encodeURIComponent(normalizedID)}`],
-      ["sort_order.asc", "created_at.asc"]
+      ["sort_order.asc", "created_at.asc"],
+      accessToken
     ).catch(() => []),
     fetchSupabaseTableRows(
       config.stepTable,
       "id,recipe_id,step_number,instruction_text,tip_text",
       [`recipe_id=eq.${encodeURIComponent(normalizedID)}`],
-      ["step_number.asc", "created_at.asc"]
+      ["step_number.asc", "created_at.asc"],
+      accessToken
     ).catch(() => []),
   ]);
 
@@ -1061,7 +1064,8 @@ async function fetchRecipeDetailRecord(recipeID, fallbackRecipe = {}) {
         config.stepIngredientTable,
         "id,recipe_step_id,ingredient_id,display_name,quantity_text,sort_order",
         [`recipe_step_id=in.(${encodeURIComponent(stepIDs.join(","))})`],
-        ["recipe_step_id.asc", "sort_order.asc"]
+        ["recipe_step_id.asc", "sort_order.asc"],
+        accessToken
       ).catch(() => [])
     : [];
 
@@ -1097,7 +1101,7 @@ async function fetchRecipeDetailRecord(recipeID, fallbackRecipe = {}) {
   return record;
 }
 
-async function buildRecipeLookup(plan, originalItems = []) {
+async function buildRecipeLookup(plan, originalItems = [], accessToken = null) {
   const entries = Array.isArray(plan?.recipes) ? plan.recipes : [];
   const fallbackRecipesByID = new Map(
     entries
@@ -1145,7 +1149,7 @@ async function buildRecipeLookup(plan, originalItems = []) {
       mainProtein: "",
     };
 
-    const detailed = await fetchRecipeDetailRecord(recipeID, fallbackRecipe).catch(() => null);
+    const detailed = await fetchRecipeDetailRecord(recipeID, fallbackRecipe, accessToken).catch(() => null);
     const fallbackIngredients = (fallbackRecipe.ingredients ?? []).map((ingredient) => ({
       display_name: ingredient?.name ?? "",
       quantity_text: [ingredient?.amount, ingredient?.unit].filter(Boolean).join(" ").trim() || null,
@@ -1923,8 +1927,8 @@ async function resolveAmbiguousIntents(items) {
   return new Map((parsed.items ?? []).map((entry) => [entry.index, entry]));
 }
 
-export async function resolveShoppingIntents({ originalItems, normalizedEntries = null, plan }) {
-  const recipeLookup = await buildRecipeLookup(plan, originalItems);
+export async function resolveShoppingIntents({ originalItems, normalizedEntries = null, plan, accessToken = null }) {
+  const recipeLookup = await buildRecipeLookup(plan, originalItems, accessToken);
 
   const baseEntries = Array.isArray(normalizedEntries) && normalizedEntries.length === originalItems.length
     ? normalizedEntries
@@ -2102,14 +2106,15 @@ export async function resolveShoppingIntents({ originalItems, normalizedEntries 
   });
 }
 
-export async function buildShoppingSpecEntries({ originalItems, plan = null, clusterDecisionResolver = null }) {
-  const recipeLookup = await buildRecipeLookup(plan, originalItems);
+export async function buildShoppingSpecEntries({ originalItems, plan = null, clusterDecisionResolver = null, accessToken = null }) {
+  const recipeLookup = await buildRecipeLookup(plan, originalItems, accessToken);
   const expandedItems = (originalItems ?? []).flatMap((item) => {
     return deconstructCompositeItem(item);
   });
   const resolvedItems = await resolveShoppingIntents({
     originalItems: expandedItems,
     plan,
+    accessToken,
   });
 
   const resolvedEntries = [];

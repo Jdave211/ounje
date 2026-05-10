@@ -32,7 +32,7 @@ import {
 } from "../../lib/discover-brackets.js";
 import { createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
 import { createOrReuseRecipeShareLink, resolveRecipeShareLink } from "../../lib/recipe-share-links.js";
-import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
+import { extractBearerToken, resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import {
   getRecipeAdaptationContract,
   mergeEditSummaries,
@@ -657,18 +657,27 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       return res.status(500).json({ error: "Recipe detail requires Supabase configuration." });
     }
 
-    const recipe = await fetchRecipeById(recipeId);
+    let accessToken = null;
+    if (recipeId.startsWith("uir_")) {
+      try {
+        ({ accessToken } = await resolveAuthorizedUserID(req));
+      } catch (error) {
+        return sendAuthError(res, error, "recipe/detail");
+      }
+    }
+
+    const recipe = await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found." });
     }
 
     const [recipeIngredients, recipeSteps] = await Promise.all([
-      fetchRecipeIngredientRows(recipeId),
-      fetchRecipeStepRows(recipeId),
+      fetchRecipeIngredientRows(recipeId, accessToken),
+      fetchRecipeStepRows(recipeId, accessToken),
     ]);
 
     const stepIngredients = recipeSteps.length
-      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id))
+      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
       : [];
 
     return res.json({
@@ -686,7 +695,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
 
 recipe_router.post("/recipe/share-links", async (req, res) => {
   const recipeId = String(req.body?.recipe_id ?? req.body?.recipeID ?? "").trim();
-  const userID = String(req.body?.user_id ?? req.body?.userID ?? "").trim() || null;
+  let userID = String(req.body?.user_id ?? req.body?.userID ?? "").trim() || null;
 
   if (!recipeId) {
     return res.status(400).json({ error: "recipe_id is required." });
@@ -697,17 +706,28 @@ recipe_router.post("/recipe/share-links", async (req, res) => {
       return res.status(500).json({ error: "Recipe share links require Supabase configuration." });
     }
 
-    const recipe = await fetchRecipeById(recipeId);
+    let accessToken = null;
+    if (recipeId.startsWith("uir_")) {
+      try {
+        const auth = await resolveAuthorizedUserID(req, { extraUserIDValues: userID ? [userID] : [] });
+        accessToken = auth.accessToken;
+        userID = userID || auth.userID;
+      } catch (error) {
+        return sendAuthError(res, error, "recipe/share-links");
+      }
+    }
+
+    const recipe = await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found." });
     }
 
     const [recipeIngredients, recipeSteps] = await Promise.all([
-      fetchRecipeIngredientRows(recipeId),
-      fetchRecipeStepRows(recipeId),
+      fetchRecipeIngredientRows(recipeId, accessToken),
+      fetchRecipeStepRows(recipeId, accessToken),
     ]);
     const stepIngredients = recipeSteps.length
-      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id))
+      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
       : [];
     const recipeDetail = normalizeRecipeDetail(recipe, {
       recipeIngredients,
@@ -785,7 +805,16 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
       });
     }
 
-    const recipe = await fetchRecipeById(recipeId);
+    let accessToken = null;
+    if (recipeId.startsWith("uir_")) {
+      try {
+        ({ accessToken } = await resolveAuthorizedUserID(req));
+      } catch (error) {
+        return sendAuthError(res, error, "recipe/detail/similar");
+      }
+    }
+
+    const recipe = await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
       const latest = await fetchLatestRecipes(Math.max(limit + 1, 12));
       return res.json({
@@ -798,11 +827,11 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
     }
 
     const [recipeIngredients, recipeSteps] = await Promise.all([
-      fetchRecipeIngredientRows(recipeId),
-      fetchRecipeStepRows(recipeId),
+      fetchRecipeIngredientRows(recipeId, accessToken),
+      fetchRecipeStepRows(recipeId, accessToken),
     ]);
     const stepIngredients = recipeSteps.length
-      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id))
+      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
       : [];
     const detail = normalizeRecipeDetail(recipe, {
       recipeIngredients,
@@ -1389,6 +1418,7 @@ recipe_router.post("/recipe/prep-candidates", async (req, res) => {
   const normalizedSavedRecipeTitles = uniqueStrings(Array.isArray(savedRecipeTitles) ? savedRecipeTitles : []);
   const normalizedRecurringRecipeIDs = uniqueStrings(Array.isArray(recurringRecipeIds) ? recurringRecipeIds : []);
   const normalizedRecurringRecipeTitles = uniqueStrings(Array.isArray(recurringRecipeTitles) ? recurringRecipeTitles : []);
+  const accessToken = extractBearerToken(req.headers.authorization);
 
   try {
     const rankedPayload = await buildBaseDiscoverRecipes({
@@ -1414,7 +1444,7 @@ recipe_router.post("/recipe/prep-candidates", async (req, res) => {
         const [publicRecipes, importedRecipes] = await Promise.all([
           publicRecipeIDs.length ? fetchRecipesByIds(publicRecipeIDs) : Promise.resolve([]),
           importedRecipeIDs.length
-            ? Promise.all(importedRecipeIDs.map((recipeID) => fetchRecipeById(recipeID).catch(() => null)))
+            ? Promise.all(importedRecipeIDs.map((recipeID) => fetchRecipeById(recipeID, accessToken).catch(() => null)))
             : Promise.resolve([]),
         ]);
 
@@ -1449,7 +1479,7 @@ recipe_router.post("/recipe/prep-candidates", async (req, res) => {
         const [publicRecipes, importedRecipes] = await Promise.all([
           publicRecipeIDs.length ? fetchRecipesByIds(publicRecipeIDs) : Promise.resolve([]),
           importedRecipeIDs.length
-            ? Promise.all(importedRecipeIDs.map((recipeID) => fetchRecipeById(recipeID).catch(() => null)))
+            ? Promise.all(importedRecipeIDs.map((recipeID) => fetchRecipeById(recipeID, accessToken).catch(() => null)))
             : Promise.resolve([]),
         ]);
 
@@ -2781,19 +2811,19 @@ function applyPresetCategoryGate(recipes, filter = "All") {
   return (recipes ?? []).filter((recipe) => passesPresetCategoryGate(recipe, filter));
 }
 
-async function fetchRecipeDetailForAdaptation(recipeId, fallbackRecipe = null) {
-  const baseRecipe = fallbackRecipe ?? (recipeId ? await fetchRecipeById(recipeId) : null);
+async function fetchRecipeDetailForAdaptation(recipeId, fallbackRecipe = null, accessToken = null) {
+  const baseRecipe = fallbackRecipe ?? (recipeId ? await fetchRecipeById(recipeId, accessToken) : null);
   if (!baseRecipe) return null;
 
   const normalizedID = String(baseRecipe.id ?? recipeId ?? "").trim();
   const [recipeIngredients, recipeSteps] = normalizedID
     ? await Promise.all([
-        fetchRecipeIngredientRows(normalizedID),
-        fetchRecipeStepRows(normalizedID),
+        fetchRecipeIngredientRows(normalizedID, accessToken),
+        fetchRecipeStepRows(normalizedID, accessToken),
       ])
     : [[], []];
   const stepIngredients = recipeSteps.length
-    ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id))
+    ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
     : [];
 
   return canonicalizeRecipeDetail(baseRecipe, {
@@ -3103,6 +3133,12 @@ recipe_router.get("/recipe/adapt/history", async (req, res) => {
   }
 
   try {
+    let accessToken;
+    try {
+      ({ accessToken } = await resolveAuthorizedUserID(req, { extraUserIDValues: [userID] }));
+    } catch (error) {
+      return sendAuthError(res, error, "recipe/adapt/history");
+    }
     const rows = await fetchSupabaseTableRows(
       "user_import_recipes",
       "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count,source_provenance_json,created_at,updated_at",
@@ -3111,7 +3147,8 @@ recipe_router.get("/recipe/adapt/history", async (req, res) => {
         "source_platform=eq.Ounje",
       ],
       ["updated_at.desc", "created_at.desc"],
-      80
+      80,
+      accessToken
     );
 
     const matches = [];
@@ -3120,7 +3157,7 @@ recipe_router.get("/recipe/adapt/history", async (req, res) => {
       if (provenance.kind !== "recipe_adaptation") continue;
       if (String(provenance.adapted_from_recipe_id ?? "").trim() !== recipeID) continue;
 
-      const detail = await fetchRecipeDetailForAdaptation(row.id, row);
+      const detail = await fetchRecipeDetailForAdaptation(row.id, row, accessToken);
       if (!detail) continue;
       matches.push(adaptationResponseFromDetail({ detail, row, adaptedFromRecipeID: recipeID }));
       if (matches.length >= limit) break;
@@ -3155,7 +3192,13 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
   }
 
   try {
-    const baseDetail = await fetchRecipeDetailForAdaptation(recipeId, recipe);
+    let accessToken;
+    try {
+      ({ accessToken } = await resolveAuthorizedUserID(req, { extraUserIDValues: [normalizedUserID] }));
+    } catch (error) {
+      return sendAuthError(res, error, "recipe/adapt");
+    }
+    const baseDetail = await fetchRecipeDetailForAdaptation(recipeId, recipe, accessToken);
     if (!baseDetail) {
       return res.status(400).json({ error: "Provide a recipe or recipe_id." });
     }
@@ -5758,14 +5801,16 @@ function normalizeSearchTagTerms(values) {
     .filter(Boolean);
 }
 
-async function fetchRecipeById(id) {
+async function fetchRecipeById(id, accessToken = null) {
   const normalizedID = String(id ?? "").trim();
   if (normalizedID.startsWith("uir_")) {
     const rows = await fetchSupabaseTableRows(
       "user_import_recipes",
       "id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
       [`id=eq.${encodeURIComponent(normalizedID)}`],
-      []
+      [],
+      [],
+      accessToken
     );
     return rows[0] ?? null;
   }
@@ -5789,7 +5834,7 @@ function recipeTableConfigForID(recipeID) {
       };
 }
 
-async function fetchSupabaseTableRows(tableName, select, filters = [], orderClauses = [], limit = null) {
+async function fetchSupabaseTableRows(tableName, select, filters = [], orderClauses = [], limit = null, accessToken = null) {
   let url = `${SUPABASE_URL}/rest/v1/${tableName}?select=${encodeURIComponent(select)}`;
 
   for (const filter of filters) {
@@ -5806,7 +5851,7 @@ async function fetchSupabaseTableRows(tableName, select, filters = [], orderClau
   const response = await fetch(url, {
     headers: {
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${String(accessToken ?? "").trim() || SUPABASE_ANON_KEY}`,
     },
   });
 
@@ -5819,17 +5864,19 @@ async function fetchSupabaseTableRows(tableName, select, filters = [], orderClau
   return Array.isArray(data) ? data : [];
 }
 
-async function fetchRecipeIngredientRows(recipeId) {
+async function fetchRecipeIngredientRows(recipeId, accessToken = null) {
   const config = recipeTableConfigForID(recipeId);
   return fetchSupabaseTableRows(
     config.ingredientTable,
     "id,recipe_id,ingredient_id,display_name,quantity_text,image_url,sort_order",
     [`recipe_id=eq.${encodeURIComponent(recipeId)}`],
-    ["sort_order.asc", "created_at.asc"]
+    ["sort_order.asc", "created_at.asc"],
+    null,
+    accessToken
   );
 }
 
-async function fetchRecipeIngredientRowsByRecipeIds(recipeIds, tableName, batchSize = 80) {
+async function fetchRecipeIngredientRowsByRecipeIds(recipeIds, tableName, batchSize = 80, accessToken = null) {
   const orderedIds = normalizeOrderedRecipeIDs(recipeIds);
   if (!orderedIds.length) return [];
 
@@ -5844,14 +5891,16 @@ async function fetchRecipeIngredientRowsByRecipeIds(recipeIds, tableName, batchS
       tableName,
       "id,recipe_id,ingredient_id,display_name,quantity_text,image_url,sort_order",
       [`recipe_id=in.(${batch.map((id) => encodeURIComponent(id)).join(",")})`],
-      ["recipe_id.asc", "sort_order.asc", "created_at.asc"]
+      ["recipe_id.asc", "sort_order.asc", "created_at.asc"],
+      null,
+      accessToken
     ))
   );
 
   return chunks.flat();
 }
 
-async function hydrateRecipesWithIngredientRows(recipes) {
+async function hydrateRecipesWithIngredientRows(recipes, accessToken = null) {
   if (!Array.isArray(recipes) || !recipes.length) return [];
 
   const publicRecipeIds = [];
@@ -5869,10 +5918,10 @@ async function hydrateRecipesWithIngredientRows(recipes) {
 
   const [publicRows, importedRows] = await Promise.all([
     publicRecipeIds.length
-      ? fetchRecipeIngredientRowsByRecipeIds(publicRecipeIds, "recipe_ingredients")
+      ? fetchRecipeIngredientRowsByRecipeIds(publicRecipeIds, "recipe_ingredients", 80, accessToken)
       : Promise.resolve([]),
     importedRecipeIds.length
-      ? fetchRecipeIngredientRowsByRecipeIds(importedRecipeIds, "user_import_recipe_ingredients")
+      ? fetchRecipeIngredientRowsByRecipeIds(importedRecipeIds, "user_import_recipe_ingredients", 80, accessToken)
       : Promise.resolve([]),
   ]);
 
@@ -5897,17 +5946,19 @@ async function hydrateRecipesWithIngredientRows(recipes) {
   });
 }
 
-async function fetchRecipeStepRows(recipeId) {
+async function fetchRecipeStepRows(recipeId, accessToken = null) {
   const config = recipeTableConfigForID(recipeId);
   return fetchSupabaseTableRows(
     config.stepTable,
     "id,recipe_id,step_number,instruction_text,tip_text",
     [`recipe_id=eq.${encodeURIComponent(recipeId)}`],
-    ["step_number.asc", "created_at.asc"]
+    ["step_number.asc", "created_at.asc"],
+    null,
+    accessToken
   );
 }
 
-async function fetchRecipeStepIngredientRows(stepIDs) {
+async function fetchRecipeStepIngredientRows(stepIDs, accessToken = null) {
   const normalizedIDs = [...new Set((stepIDs ?? []).map((value) => String(value ?? "").trim()).filter(Boolean))];
   if (!normalizedIDs.length) return [];
   const config = normalizedIDs[0]?.startsWith("uirs_")
@@ -5918,7 +5969,9 @@ async function fetchRecipeStepIngredientRows(stepIDs) {
     config.stepIngredientTable,
     "id,recipe_step_id,ingredient_id,display_name,quantity_text,sort_order",
     [`recipe_step_id=in.(${normalizedIDs.map((id) => encodeURIComponent(id)).join(",")})`],
-    ["recipe_step_id.asc", "sort_order.asc"]
+    ["recipe_step_id.asc", "sort_order.asc"],
+    null,
+    accessToken
   );
 }
 

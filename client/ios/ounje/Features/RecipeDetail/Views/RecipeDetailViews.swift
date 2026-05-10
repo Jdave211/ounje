@@ -90,6 +90,10 @@ struct RecipeDetailExperienceView: View {
     private let detailBackground = OunjePalette.background
     private let sectionDivider = OunjePalette.stroke
 
+    private var accessToken: String? {
+        store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+    }
+
     private var transitionContext: RecipeTransitionContext? {
         guard let transitionNamespace else { return nil }
         return RecipeTransitionContext(namespace: transitionNamespace, recipeID: presentedRecipe.id)
@@ -364,7 +368,7 @@ struct RecipeDetailExperienceView: View {
             defer { isPreparingShareLink = false }
             do {
                 let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID
-                let response = try await RecipeDetailService.shared.createShareLink(recipeID: recipeID, userID: userID)
+                let response = try await RecipeDetailService.shared.createShareLink(recipeID: recipeID, userID: userID, accessToken: accessToken)
                 guard let shareURL = response.shareURL else {
                     throw SupabaseProfileStateError.invalidResponse
                 }
@@ -2843,7 +2847,7 @@ actor RecipeAdaptationService {
 
     private var historyCache: [String: [RecipeAdaptationResponse]] = [:]
 
-    func history(recipeID: String, userID: String?, limit: Int = 8) async throws -> [RecipeAdaptationResponse] {
+    func history(recipeID: String, userID: String?, limit: Int = 8, accessToken: String? = nil) async throws -> [RecipeAdaptationResponse] {
         let normalizedRecipeID = recipeID.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !normalizedRecipeID.isEmpty, !normalizedUserID.isEmpty else {
@@ -2858,7 +2862,7 @@ actor RecipeAdaptationService {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                let history = try await history(baseURL: baseURL, recipeID: normalizedRecipeID, userID: normalizedUserID, limit: limit)
+                let history = try await history(baseURL: baseURL, recipeID: normalizedRecipeID, userID: normalizedUserID, limit: limit, accessToken: accessToken)
                 historyCache[cacheKey] = history
                 return history
             } catch {
@@ -2869,11 +2873,11 @@ actor RecipeAdaptationService {
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 
-    func latestHistory(recipeID: String, userID: String?) async throws -> RecipeAdaptationResponse? {
-        try await history(recipeID: recipeID, userID: userID, limit: 1).first
+    func latestHistory(recipeID: String, userID: String?, accessToken: String? = nil) async throws -> RecipeAdaptationResponse? {
+        try await history(recipeID: recipeID, userID: userID, limit: 1, accessToken: accessToken).first
     }
 
-    func adapt(recipeID: String, userID: String?, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
+    func adapt(recipeID: String, userID: String?, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?, accessToken: String? = nil) async throws -> RecipeAdaptationResponse {
         let normalizedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !recipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -2891,7 +2895,8 @@ actor RecipeAdaptationService {
                     userID: normalizedUserID,
                     prompt: normalizedPrompt,
                     intent: intent,
-                    profile: profile
+                    profile: profile,
+                    accessToken: accessToken
                 )
                 let historyKey = "\(normalizedUserID.lowercased())::\(recipeID.lowercased())::history"
                 let cached = historyCache[historyKey] ?? []
@@ -2905,7 +2910,7 @@ actor RecipeAdaptationService {
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 
-    private func adapt(baseURL: String, recipeID: String, userID: String, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?) async throws -> RecipeAdaptationResponse {
+    private func adapt(baseURL: String, recipeID: String, userID: String, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?, accessToken: String? = nil) async throws -> RecipeAdaptationResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/adapt") else {
             throw SupabaseProfileStateError.invalidRequest
         }
@@ -2914,6 +2919,9 @@ actor RecipeAdaptationService {
         request.httpMethod = "POST"
         request.timeoutInterval = 180
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONEncoder().encode(
             RecipeAdaptationRequestPayload(
                 recipeID: recipeID,
@@ -2940,7 +2948,7 @@ actor RecipeAdaptationService {
         return try JSONDecoder().decode(RecipeAdaptationResponse.self, from: data)
     }
 
-    private func history(baseURL: String, recipeID: String, userID: String, limit: Int) async throws -> [RecipeAdaptationResponse] {
+    private func history(baseURL: String, recipeID: String, userID: String, limit: Int, accessToken: String? = nil) async throws -> [RecipeAdaptationResponse] {
         var components = URLComponents(string: "\(baseURL)/v1/recipe/adapt/history")
         components?.queryItems = [
             URLQueryItem(name: "recipe_id", value: recipeID),
@@ -2954,6 +2962,9 @@ actor RecipeAdaptationService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -2990,13 +3001,13 @@ final class RecipeAdaptationViewModel: ObservableObject {
         errorMessage = nil
     }
 
-    func loadHistory(recipeID: String, userID: String?) async {
+    func loadHistory(recipeID: String, userID: String?, accessToken: String? = nil) async {
         guard history.isEmpty, !isGenerating, !isLoadingHistory else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
 
         do {
-            let loadedHistory = try await RecipeAdaptationService.shared.history(recipeID: recipeID, userID: userID, limit: 8)
+            let loadedHistory = try await RecipeAdaptationService.shared.history(recipeID: recipeID, userID: userID, limit: 8, accessToken: accessToken)
             history = loadedHistory
             result = loadedHistory.first
         } catch {
@@ -3005,13 +3016,13 @@ final class RecipeAdaptationViewModel: ObservableObject {
     }
 
     @discardableResult
-    func adapt(recipeID: String, userID: String?, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?) async -> RecipeAdaptationResponse? {
+    func adapt(recipeID: String, userID: String?, prompt: String, intent: RecipeAlterationIntent?, profile: UserProfile?, accessToken: String? = nil) async -> RecipeAdaptationResponse? {
         isGenerating = true
         errorMessage = nil
         defer { isGenerating = false }
 
         do {
-            let adapted = try await RecipeAdaptationService.shared.adapt(recipeID: recipeID, userID: userID, prompt: prompt, intent: intent, profile: profile)
+            let adapted = try await RecipeAdaptationService.shared.adapt(recipeID: recipeID, userID: userID, prompt: prompt, intent: intent, profile: profile, accessToken: accessToken)
             history = ([adapted] + history.filter { $0.historyID != adapted.historyID })
                 .prefix(8)
                 .map { $0 }
@@ -3049,6 +3060,10 @@ struct RecipeAskSheet: View {
     @State private var isAddingAdaptedRecipeToPrep = false
     @State private var onboardingResult: RecipeAdaptationResponse?
     @State private var isOnboardingGenerating = false
+
+    private var accessToken: String? {
+        store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+    }
 
     private var canGenerate: Bool {
         switch mode {
@@ -3109,7 +3124,7 @@ struct RecipeAskSheet: View {
         switch mode {
         case .live:
             Task {
-                await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: intent.promptSeed, intent: intent, profile: profile)
+                await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: intent.promptSeed, intent: intent, profile: profile, accessToken: accessToken)
             }
         case let .onboarding(config):
             guard let fixture = onboardingFixtures.first(where: { $0.intent == intent }) else { return }
@@ -3357,7 +3372,7 @@ struct RecipeAskSheet: View {
         }
         .task(id: "\(userID ?? "")::\(recipeID)") {
             guard isLiveMode else { return }
-            await viewModel.loadHistory(recipeID: recipeID, userID: userID)
+            await viewModel.loadHistory(recipeID: recipeID, userID: userID, accessToken: accessToken)
         }
         .fullScreenCover(item: $presentedAdaptedRecipe) { recipe in
             RecipeDetailExperienceView(

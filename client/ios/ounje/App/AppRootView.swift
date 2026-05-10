@@ -2092,6 +2092,7 @@ private struct MealPlannerShellView: View {
     }
 
     private func prewarmCompletedImportDetails() async {
+        let accessToken = await store.refreshAuthSessionIfNeeded()?.accessToken
         let recipeIDs = recipeImportHistory.completedItems.compactMap { item -> String? in
             guard let id = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
                 return nil
@@ -2102,7 +2103,7 @@ private struct MealPlannerShellView: View {
         for recipeID in recipeIDs.reversed() {
             guard prewarmedCompletedImportIDs.insert(recipeID).inserted else { continue }
             Task(priority: .utility) {
-                _ = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID)
+                _ = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
             }
         }
     }

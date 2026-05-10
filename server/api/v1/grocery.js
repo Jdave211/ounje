@@ -70,7 +70,7 @@ function stableJSONStringify(value) {
   return JSON.stringify(value);
 }
 
-function grocerySpecCacheKey(normalizedItems = [], plan = null) {
+function grocerySpecCacheKey(normalizedItems = [], plan = null, userID = null) {
   const recipeContext = Array.isArray(plan?.recipes)
     ? plan.recipes.map((entry) => {
         const recipe = entry?.recipe ?? entry;
@@ -96,6 +96,7 @@ function grocerySpecCacheKey(normalizedItems = [], plan = null) {
       })).sort((lhs, rhs) => stableJSONStringify(lhs).localeCompare(stableJSONStringify(rhs))),
     })).sort((lhs, rhs) => stableJSONStringify(lhs).localeCompare(stableJSONStringify(rhs))),
     recipeContext,
+    userID: String(userID ?? "").trim().toLowerCase(),
   };
   return crypto.createHash("sha256").update(stableJSONStringify(payload)).digest("hex");
 }
@@ -215,7 +216,8 @@ router.post("/grocery/spec", async (req, res) => {
   }
 
   try {
-    const cacheKey = grocerySpecCacheKey(normalizedItems, plan);
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
+    const cacheKey = grocerySpecCacheKey(normalizedItems, plan, userID);
     const shouldBypassCache = Boolean(bypassCacheRaw || bypassCacheCamel);
     if (!shouldBypassCache) {
       const cached = readGrocerySpecCache(cacheKey);
@@ -238,6 +240,7 @@ router.post("/grocery/spec", async (req, res) => {
     const shoppingSpec = await buildShoppingSpecEntries({
       originalItems: normalizedItems,
       plan,
+      accessToken,
     });
     const specItems = Array.isArray(shoppingSpec?.items) ? shoppingSpec.items : [];
     const coverageSummary = buildCoverageSummary(normalizedItems, specItems);
@@ -266,7 +269,7 @@ router.post("/grocery/spec", async (req, res) => {
         message: error.message,
       })
     );
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 
@@ -505,10 +508,6 @@ async function resolveAuthorizedUserID(req) {
   return { userID: authenticatedUserID, accessToken };
 }
 
-function resolveReadOnlyUserID(req) {
-  return String(req.headers["x-user-id"] ?? req.query.user_id ?? req.query.userID ?? "").trim();
-}
-
 async function assertOrderOwnership(orderId, userID, columns = "id,user_id") {
   const supabase = getServiceSupabase();
   const { data, error } = await supabase
@@ -620,10 +619,7 @@ router.get("/grocery/orders/:id", async (req, res) => {
   const { id } = req.params;
 
   try {
-    const userID = resolveReadOnlyUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
     await assertOrderOwnership(id, userID);
     const summary = await orchestrator.getOrderSummary(id);
     return res.json(summary);
@@ -639,10 +635,7 @@ router.get("/grocery/orders/:id/tracking", async (req, res) => {
   const { id } = req.params;
 
   try {
-    const userID = resolveReadOnlyUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
     const supabase = getServiceSupabase();
 
     const { data, error } = await supabase
@@ -692,10 +685,7 @@ router.get("/grocery/orders/:id/slots", async (req, res) => {
   const { id } = req.params;
 
   try {
-    const userID = resolveReadOnlyUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
     await assertOrderOwnership(id, userID);
     const slots = await orchestrator.getDeliverySlots(id);
     return res.json(slots);
@@ -818,10 +808,7 @@ router.post("/grocery/orders/:id/retry", async (req, res) => {
  */
 router.get("/grocery/orders", async (req, res) => {
   try {
-    const userID = resolveReadOnlyUserID(req);
-    if (!userID) {
-      return res.status(401).json({ error: "User ID required" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
     const supabase = getServiceSupabase();
 
     const { data: orders, error } = await supabase

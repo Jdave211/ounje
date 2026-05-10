@@ -211,7 +211,8 @@ final class MealPlanningAgent {
             regenerationContext: regenerationContext,
             savedRecipeIDs: Array(savedRecipeIDs),
             recurringRecipes: recurringRecipes,
-            savedRecipeTitles: savedRecipeTitles
+            savedRecipeTitles: savedRecipeTitles,
+            accessToken: accessToken
         )
         let recurringSeedRecipes = recurringRecipes
             .filter(\.isEnabled)

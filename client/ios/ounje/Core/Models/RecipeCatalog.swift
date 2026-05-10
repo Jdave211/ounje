@@ -7,7 +7,8 @@ protocol RecipeCatalog {
         regenerationContext: PrepRegenerationContext?,
         savedRecipeIDs: [String],
         recurringRecipes: [RecurringPrepRecipe],
-        savedRecipeTitles: [String]
+        savedRecipeTitles: [String],
+        accessToken: String?
     ) async -> [Recipe]
 }
 
@@ -18,7 +19,8 @@ actor LocalRecipeCatalog: RecipeCatalog {
         regenerationContext: PrepRegenerationContext? = nil,
         savedRecipeIDs: [String] = [],
         recurringRecipes: [RecurringPrepRecipe] = [],
-        savedRecipeTitles: [String] = []
+        savedRecipeTitles: [String] = [],
+        accessToken: String? = nil
     ) async -> [Recipe] {
         []
     }
@@ -39,7 +41,8 @@ actor RemoteRecipeCatalog: RecipeCatalog {
         regenerationContext: PrepRegenerationContext? = nil,
         savedRecipeIDs: [String] = [],
         recurringRecipes: [RecurringPrepRecipe] = [],
-        savedRecipeTitles: [String] = []
+        savedRecipeTitles: [String] = [],
+        accessToken: String? = nil
     ) async -> [Recipe] {
         do {
             let response = try await fetchRemoteRecipesWithFallback(
@@ -49,6 +52,7 @@ actor RemoteRecipeCatalog: RecipeCatalog {
                 savedRecipeIDs: savedRecipeIDs,
                 recurringRecipes: recurringRecipes,
                 savedRecipeTitles: savedRecipeTitles,
+                accessToken: accessToken,
                 limit: max(48, profile.cadence.baseRecipeCount * 12)
             )
             if !response.recipes.isEmpty {
@@ -64,7 +68,8 @@ actor RemoteRecipeCatalog: RecipeCatalog {
             regenerationContext: regenerationContext,
             savedRecipeIDs: savedRecipeIDs,
             recurringRecipes: recurringRecipes,
-            savedRecipeTitles: savedRecipeTitles
+            savedRecipeTitles: savedRecipeTitles,
+            accessToken: accessToken
         )
     }
 
@@ -75,6 +80,7 @@ actor RemoteRecipeCatalog: RecipeCatalog {
         savedRecipeIDs: [String],
         recurringRecipes: [RecurringPrepRecipe],
         savedRecipeTitles: [String],
+        accessToken: String?,
         limit: Int
     ) async throws -> PrepCandidateRecipesResponse {
         var lastError: Error?
@@ -93,6 +99,7 @@ actor RemoteRecipeCatalog: RecipeCatalog {
                     savedRecipeIDs: savedRecipeIDs,
                     recurringRecipes: recurringRecipes,
                     savedRecipeTitles: savedRecipeTitles,
+                    accessToken: accessToken,
                     limit: limit
                 )
             } catch {
@@ -111,6 +118,7 @@ actor RemoteRecipeCatalog: RecipeCatalog {
         savedRecipeIDs: [String],
         recurringRecipes: [RecurringPrepRecipe],
         savedRecipeTitles: [String],
+        accessToken: String?,
         limit: Int
     ) async throws -> PrepCandidateRecipesResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/prep-candidates") else {
@@ -121,6 +129,9 @@ actor RemoteRecipeCatalog: RecipeCatalog {
         request.httpMethod = "POST"
         request.timeoutInterval = regenerationContext == nil ? 25 : 65
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let accessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONEncoder().encode(
             PrepCandidateRecipesRequest(
                 profile: profile,
