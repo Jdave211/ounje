@@ -22,10 +22,6 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
-	<key>UIAppFonts</key>
-	<array>
-		<string>Slee_handwritting-Regular.otf</string>
-	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -37,22 +33,25 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>instagram</string>
 		<string>instagram-stories</string>
 	</array>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
-	<dict>
-	</dict>
+	<dict/>
 	<key>NSCameraUsageDescription</key>
-	<string>Let Oúnje access your camera so we can generate recipes.</string>
+	<string>Let Oúnje access your camera so we can process recipes</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your microphone</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Let Oúnje access your photos to generate recipes.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Slee_handwritting-Regular.otf</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>OunjeLaunch</string>
 	<key>UIRequiredDeviceCapabilities</key>
