@@ -346,6 +346,11 @@ final class DiscoverRecipesViewModel: ObservableObject {
         lastLoadKey = nil
         currentFeedLimit = stagedPageSize
         currentFeedOffset = 0
+        if forceNetwork {
+            responseCache.removeAll()
+            hasResolvedInitialLoad = false
+            errorMessage = nil
+        }
         if rotateBaseFeed {
             invalidateBaseFeedRotation()
         }

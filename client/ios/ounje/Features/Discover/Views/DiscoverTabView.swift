@@ -314,6 +314,7 @@ struct DiscoverTabView: View {
 
         let refreshQuery = normalizedDraftSearchText.isEmpty ? "" : normalizedSearchText
         viewModel.updateFeedbackRevision(discoverFeedbackRevision)
+        await environmentModel.refresh(profile: store.profile)
         await viewModel.forceReload(
             profile: store.profile,
             query: refreshQuery,

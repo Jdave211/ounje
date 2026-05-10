@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import UIKit
+import PhotosUI
 
 struct PrepTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
@@ -9,9 +10,15 @@ struct PrepTabView: View {
     @Binding var requestedCookbookCycleID: String?
     let recipeTransitionNamespace: Namespace.ID
     let onSelectRecipe: (PlannedRecipe) -> Void
+    let onImportFoodPhotos: ([PhotosPickerItem]) -> Void
+    let onCaptureFoodPhoto: (UIImage) -> Void
     @State private var isRegenerationSheetPresented = false
     @State private var selectedRegenerationFocus: PrepRegenerationFocus = .balanced
     @State private var prepLinkPulse = false
+    @State private var selectedFoodPhotoItems: [PhotosPickerItem] = []
+    @State private var isFoodPhotoSourceDialogPresented = false
+    @State private var isFoodPhotoLibraryPresented = false
+    @State private var isFoodCameraPresented = false
 
     private var currentPrepRecipeCount: Int {
         store.latestPlan?.recipes.count ?? 0
@@ -36,21 +43,22 @@ struct PrepTabView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
-                    PrepTrackerCard(store: store)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 26) {
+                        PrepTrackerCard(store: store)
 
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack(alignment: .center, spacing: 12) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text("Meals in")
-                                    .biroHeaderFont(26)
-                                    .foregroundStyle(OunjePalette.primaryText)
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack(alignment: .center, spacing: 12) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("Meals in")
+                                        .biroHeaderFont(26)
+                                        .foregroundStyle(OunjePalette.primaryText)
 
-                                Button {
-                                    requestedCookbookCycleID = store.latestPlan?.id.uuidString
-                                    selectedTab = .cookbook
-                                } label: {
+                                    Button {
+                                        requestedCookbookCycleID = store.latestPlan?.id.uuidString
+                                        selectedTab = .cookbook
+                                    } label: {
                                         HStack(alignment: .center, spacing: 5) {
                                             Text("this prep")
                                                 .sleeDisplayFont(22)
@@ -68,63 +76,125 @@ struct PrepTabView: View {
                                     .padding(.vertical, 1)
                                     .scaleEffect(prepLinkPulse ? 1.03 : 0.985)
                                     .shadow(color: OunjePalette.accent.opacity(prepLinkPulse ? 0.16 : 0.08), radius: prepLinkPulse ? 6 : 3, x: 0, y: 2)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contentShape(Rectangle())
+                                    .onAppear {
+                                        guard !prepLinkPulse else { return }
+                                        withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
+                                            prepLinkPulse = true
+                                        }
+                                    }
+                                }
+
+                                Spacer(minLength: 12)
+
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    selectedRegenerationFocus = .balanced
+                                    isRegenerationSheetPresented = true
+                                } label: {
+                                    Group {
+                                        if store.isGenerating {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                                .tint(OunjePalette.softCream)
+                                        } else {
+                                            Image(systemName: "wand.and.stars")
+                                                .font(.system(size: 18, weight: .semibold))
+                                                .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
+                                        }
+                                    }
+                                    .frame(width: 26, height: 26)
+                                    .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
-                                .contentShape(Rectangle())
-                                .onAppear {
-                                    guard !prepLinkPulse else { return }
-                                    withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
-                                        prepLinkPulse = true
-                                    }
-                                }
+                                .disabled(store.isGenerating || !(store.profile?.isPlanningReady ?? false))
+                                .opacity((store.isGenerating || !(store.profile?.isPlanningReady ?? false)) ? 0.65 : 1)
                             }
 
-                            Spacer(minLength: 12)
-
-                            Button {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                selectedRegenerationFocus = .balanced
-                                isRegenerationSheetPresented = true
-                            } label: {
-                                Group {
-                                    if store.isGenerating {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                            .tint(OunjePalette.softCream)
-                                    } else {
-                                        Image(systemName: "wand.and.stars")
-                                            .font(.system(size: 18, weight: .semibold))
-                                            .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
-                                    }
-                                }
-                                .frame(width: 26, height: 26)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(store.isGenerating || !(store.profile?.isPlanningReady ?? false))
-                            .opacity((store.isGenerating || !(store.profile?.isPlanningReady ?? false)) ? 0.65 : 1)
+                            MealsPrepCarousel(
+                                plannedRecipes: store.latestPlan?.recipes ?? [],
+                                showsLoadingState: showsPrepLoadingState,
+                                showsRegenerationPlaceholders: showsRegenerationPlaceholders,
+                                recurringRecipeIDs: store.activeRecurringPrepRecipeIDs,
+                                recipeTransitionNamespace: recipeTransitionNamespace,
+                                onSelectRecipe: onSelectRecipe
+                            )
+                            .id("\(store.latestPlan?.id.uuidString ?? "empty")::\(store.latestPlanRevision)::\(showsRegenerationPlaceholders)")
+                            .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
                         }
-
-                        MealsPrepCarousel(
-                            plannedRecipes: store.latestPlan?.recipes ?? [],
-                            showsLoadingState: showsPrepLoadingState,
-                            showsRegenerationPlaceholders: showsRegenerationPlaceholders,
-                            recurringRecipeIDs: store.activeRecurringPrepRecipeIDs,
-                            recipeTransitionNamespace: recipeTransitionNamespace,
-                            onSelectRecipe: onSelectRecipe
-                        )
-                        .id("\(store.latestPlan?.id.uuidString ?? "empty")::\(store.latestPlanRevision)::\(showsRegenerationPlaceholders)")
-                        .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
+                        .padding(.top, 4)
                     }
-                    .padding(.top, 4)
+                    .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+                    .padding(.top, 14)
+                    .padding(.bottom, 12)
                 }
-                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
+                .scrollIndicators(.hidden)
+
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    isFoodPhotoSourceDialogPresented = true
+                } label: {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 19, weight: .bold))
+                        .foregroundStyle(OunjePalette.softCream)
+                        .frame(width: 52, height: 52)
+                        .background(
+                            Circle()
+                                .fill(OunjePalette.panel.opacity(0.96))
+                                .overlay(
+                                    Circle()
+                                        .stroke(OunjePalette.softCream.opacity(0.46), lineWidth: 1.1)
+                                )
+                                .shadow(color: Color.black.opacity(0.34), radius: 18, x: 0, y: 8)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Import recipe from photo")
+                .padding(.trailing, 18)
+                .padding(.bottom, 104)
             }
-            .scrollIndicators(.hidden)
         }
         .background(OunjePalette.background.ignoresSafeArea())
+        .confirmationDialog("Add food photo", isPresented: $isFoodPhotoSourceDialogPresented, titleVisibility: .visible) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take photo") {
+                    isFoodCameraPresented = true
+                }
+            }
+
+            Button("Choose from photo roll") {
+                isFoodPhotoLibraryPresented = true
+            }
+
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Build a recipe straight into Prep.")
+        }
+        .photosPicker(
+            isPresented: $isFoodPhotoLibraryPresented,
+            selection: $selectedFoodPhotoItems,
+            maxSelectionCount: 4,
+            matching: .images,
+            photoLibrary: .shared()
+        )
+        .fullScreenCover(isPresented: $isFoodCameraPresented) {
+            PrepFoodCameraCaptureView { image in
+                isFoodCameraPresented = false
+                onCaptureFoodPhoto(image)
+            } onCancel: {
+                isFoodCameraPresented = false
+            }
+            .ignoresSafeArea()
+        }
+        .onChange(of: selectedFoodPhotoItems.count) { count in
+            guard count > 0 else { return }
+            let items = selectedFoodPhotoItems
+            selectedFoodPhotoItems = []
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onImportFoodPhotos(items)
+        }
         .sheet(isPresented: $isRegenerationSheetPresented) {
             PrepRegenerationSheet(
                 selectedFocus: $selectedRegenerationFocus,
@@ -179,6 +249,53 @@ struct PrepTabView: View {
             thumbnailURLString: recipeCard?.imageURLString ?? recipeCard?.heroImageURLString,
             destination: recipeCard.map(AppToastDestination.recipe)
         )
+    }
+}
+
+private struct PrepFoodCameraCaptureView: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.cameraDevice = UIImagePickerController.isCameraDeviceAvailable(.rear) ? .rear : .front
+        picker.allowsEditing = false
+        picker.showsCameraControls = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCapture: onCapture, onCancel: onCancel)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let onCapture: (UIImage) -> Void
+        private let onCancel: () -> Void
+
+        init(onCapture: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onCapture = onCapture
+            self.onCancel = onCancel
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            guard let image = info[.originalImage] as? UIImage else {
+                onCancel()
+                return
+            }
+            onCapture(image)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCancel()
+        }
     }
 }
 
@@ -2101,12 +2218,6 @@ struct PrepTrackerCard: View {
                     }
                     .padding(.top, 10)
 
-                    if isAutoshopEnabled(for: profile) {
-                        Text("Ounje builds your cart before prep day. You stay in control of checkout.")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.88))
-                            .padding(.top, 4)
-                    }
                 }
             }
 
@@ -2185,8 +2296,12 @@ struct PrepTrackerCard: View {
             isScheduleEditorPresented = true
         } label: {
             PrepMetaPill(title: prepCadenceTitle(for: profile), accent: OunjePalette.softCream)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 2)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
     private var snapshot: PrepDeliverySnapshot {
@@ -2295,8 +2410,12 @@ struct PrepTrackerCard: View {
                             .stroke(OunjePalette.accent.opacity(0.34), lineWidth: 1)
                     )
             )
+            .frame(minHeight: 44)
+            .padding(.horizontal, 2)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
     private func saveDeliverySchedule() {
@@ -2652,7 +2771,7 @@ struct PrepDeliverySnapshot {
            let latestRun,
            latestRun.unresolvedCount == 0,
            latestRun.shortfallCount == 0 {
-            return "Instacart cart is ready"
+            return "Cart built"
         }
 
         switch stage {
@@ -2728,7 +2847,7 @@ struct PrepDeliverySnapshot {
             if normalizedOrderStatus == "checkout_started" || normalizedOrderStatus == "user_approved" {
                 return "At provider checkout"
             }
-            return "Cart built"
+            return nil
         }
         if stage == .queuedForSetup, let daysUntilPrep {
             return daysUntilPrep == 1 ? "1 day out" : "\(daysUntilPrep)d out"
@@ -2776,7 +2895,7 @@ enum PrepAutoshopOverlayPhase: Equatable {
         case .running:
             return "Building your Instacart cart..."
         case .reviewReady:
-            return "Cart ready for review"
+            return "Cart built"
         case .error:
             return "Autoshop needs a retry"
         }
@@ -2814,20 +2933,9 @@ struct PrepDeliveryMapPanel: View {
                 PrepCityPosterCard(poster: selectedPoster)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.opacity.combined(with: .scale(scale: 0.985)))
-
-                if autoshopOverlayPhase.isVisible {
-                    PrepAutoshopOverlayCue(
-                        phase: autoshopOverlayPhase,
-                        action: autoshopOverlayAction
-                    )
-                    .padding(.horizontal, 18)
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.92).combined(with: .opacity),
-                        removal: .scale(scale: 0.96).combined(with: .opacity)
-                    ))
-                }
             }
-            .frame(height: 152)
+            .frame(height: 168)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
             PrepRouteOverlay(
                 snapshot: snapshot,
@@ -2844,42 +2952,50 @@ struct PrepDeliveryMapPanel: View {
         .animation(OunjeMotion.screenSpring, value: selectedPoster.assetName)
         .animation(.spring(response: 0.34, dampingFraction: 0.78), value: autoshopOverlayPhase)
     }
-
-    private var autoshopOverlayAction: () -> Void {
-        switch autoshopOverlayPhase {
-        case .ready, .error:
-            return onRunAutoshop ?? {}
-        case .reviewReady:
-            return onOpenAutoshop ?? {}
-        case .running, .hidden:
-            return {}
-        }
-    }
 }
 
 struct PrepCityPoster {
     let assetName: String
     let cityName: String
     let alignment: Alignment
+    let anchor: UnitPoint
+    let offset: CGSize
+    let zoom: CGFloat
+
+    init(
+        assetName: String,
+        cityName: String,
+        alignment: Alignment = .top,
+        anchor: UnitPoint = .top,
+        offset: CGSize = .zero,
+        zoom: CGFloat = 1.16
+    ) {
+        self.assetName = assetName
+        self.cityName = cityName
+        self.alignment = alignment
+        self.anchor = anchor
+        self.offset = offset
+        self.zoom = zoom
+    }
 
     static let all: [PrepCityPoster] = [
-        PrepCityPoster(assetName: "PrepCityPosterAbuja", cityName: "Abuja", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterBarcelona", cityName: "Barcelona", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterBuenosAires", cityName: "Buenos Aires", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterCancun", cityName: "Cancun", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterCapeTown", cityName: "Cape Town", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterGreaterLondon", cityName: "Greater London", alignment: .top),
-        PrepCityPoster(assetName: "PrepCityPosterHanover", cityName: "Hanover", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterLagos", cityName: "Lagos", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterMiami", cityName: "Miami", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterMilan", cityName: "Milan", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterMontegoBay", cityName: "Montego Bay", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterMontreal", cityName: "Montreal", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterNewYork", cityName: "New York", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterParis", cityName: "Paris", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterRioDeJaneiro", cityName: "Rio de Janeiro", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterSanFrancisco", cityName: "San Francisco", alignment: .center),
-        PrepCityPoster(assetName: "PrepCityPosterTokyo", cityName: "Tokyo", alignment: .center)
+        PrepCityPoster(assetName: "PrepCityPosterAbuja", cityName: "Abuja", offset: CGSize(width: -6, height: -8)),
+        PrepCityPoster(assetName: "PrepCityPosterBarcelona", cityName: "Barcelona", offset: CGSize(width: -10, height: -8), zoom: 1.18),
+        PrepCityPoster(assetName: "PrepCityPosterBuenosAires", cityName: "Buenos Aires", offset: CGSize(width: 8, height: -10)),
+        PrepCityPoster(assetName: "PrepCityPosterCancun", cityName: "Cancun", offset: CGSize(width: -4, height: -6)),
+        PrepCityPoster(assetName: "PrepCityPosterCapeTown", cityName: "Cape Town", offset: CGSize(width: 10, height: -8)),
+        PrepCityPoster(assetName: "PrepCityPosterGreaterLondon", cityName: "Greater London", offset: CGSize(width: -8, height: -4), zoom: 1.12),
+        PrepCityPoster(assetName: "PrepCityPosterHanover", cityName: "Hanover", offset: CGSize(width: 8, height: -8)),
+        PrepCityPoster(assetName: "PrepCityPosterLagos", cityName: "Lagos", offset: CGSize(width: -6, height: -7)),
+        PrepCityPoster(assetName: "PrepCityPosterMiami", cityName: "Miami", offset: CGSize(width: -14, height: -10), zoom: 1.14),
+        PrepCityPoster(assetName: "PrepCityPosterMilan", cityName: "Milan", offset: CGSize(width: 4, height: -8)),
+        PrepCityPoster(assetName: "PrepCityPosterMontegoBay", cityName: "Montego Bay", offset: CGSize(width: -8, height: -6)),
+        PrepCityPoster(assetName: "PrepCityPosterMontreal", cityName: "Montreal", offset: CGSize(width: 10, height: -6)),
+        PrepCityPoster(assetName: "PrepCityPosterNewYork", cityName: "New York", offset: CGSize(width: -8, height: -9), zoom: 1.14),
+        PrepCityPoster(assetName: "PrepCityPosterParis", cityName: "Paris", offset: CGSize(width: 7, height: -7)),
+        PrepCityPoster(assetName: "PrepCityPosterRioDeJaneiro", cityName: "Rio de Janeiro", offset: CGSize(width: -10, height: -6)),
+        PrepCityPoster(assetName: "PrepCityPosterSanFrancisco", cityName: "San Francisco", offset: CGSize(width: 9, height: -8), zoom: 1.18),
+        PrepCityPoster(assetName: "PrepCityPosterTokyo", cityName: "Tokyo", offset: CGSize(width: -7, height: -8), zoom: 1.14)
     ]
 
     static func random(excluding current: PrepCityPoster? = nil) -> PrepCityPoster {
@@ -2892,137 +3008,59 @@ struct PrepCityPosterCard: View {
     let poster: PrepCityPoster
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            Image(poster.assetName)
-                .resizable()
-                .scaledToFill()
-                .scaleEffect(1.08)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: poster.alignment)
-                .clipped()
+        GeometryReader { proxy in
+            ZStack {
+                Image(poster.assetName)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: poster.alignment)
+                    .scaleEffect(poster.zoom, anchor: poster.anchor)
+                    .offset(poster.offset)
+                    .saturation(0.72)
+                    .contrast(1.08)
+                    .brightness(-0.08)
+                    .clipped()
 
-            LinearGradient(
-                colors: [
-                    OunjePalette.background.opacity(0.08),
-                    OunjePalette.background.opacity(0.48)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+                OunjePalette.background
+                    .opacity(0.16)
+                    .blendMode(.multiply)
 
-            HStack(spacing: 7) {
-                Image(systemName: "mappin.and.ellipse")
-                    .font(.system(size: 10, weight: .bold))
+                LinearGradient(
+                    colors: [
+                        Color(hex: "071312").opacity(0.42),
+                        OunjePalette.panel.opacity(0.22),
+                        OunjePalette.background.opacity(0.42)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
 
-                Text(poster.cityName)
-                    .font(.system(size: 11, weight: .bold))
-                    .lineLimit(1)
+                LinearGradient(
+                    colors: [
+                        Color.clear,
+                        OunjePalette.background.opacity(0.28),
+                        OunjePalette.background.opacity(0.72)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                RadialGradient(
+                    colors: [
+                        Color.clear,
+                        OunjePalette.background.opacity(0.48)
+                    ],
+                    center: .center,
+                    startRadius: 40,
+                    endRadius: max(proxy.size.width, proxy.size.height) * 0.7
+                )
             }
-            .foregroundStyle(OunjePalette.softCream.opacity(0.94))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(OunjePalette.background.opacity(0.76))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(OunjePalette.softCream.opacity(0.18), lineWidth: 1)
-                    )
-            )
-            .padding(12)
         }
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(OunjePalette.stroke.opacity(0.78), lineWidth: 1)
         )
-    }
-}
-
-private struct PrepAutoshopOverlayCue: View {
-    let phase: PrepAutoshopOverlayPhase
-    let action: () -> Void
-
-    @State private var isAnimating = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                icon
-
-                Text(phase.title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-
-                if phase == .reviewReady {
-                    Image(systemName: "arrow.up.forward")
-                        .font(.system(size: 10, weight: .bold))
-                } else if phase == .ready || phase == .error {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .offset(x: reduceMotion ? 0 : (isAnimating ? 2 : -1))
-                }
-            }
-            .foregroundStyle(foregroundColor)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(OunjePalette.background.opacity(0.86))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(strokeColor, lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.24), radius: 12, x: 0, y: 8)
-            )
-            .scaleEffect(reduceMotion || phase == .running ? 1 : (isAnimating ? 1.03 : 0.98))
-        }
-        .buttonStyle(.plain)
-        .disabled(phase == .running || phase == .hidden)
-        .accessibilityLabel(phase.title)
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 0.72).repeatForever(autoreverses: true)) {
-                isAnimating = true
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var icon: some View {
-        if phase == .running {
-            ProgressView()
-                .tint(OunjePalette.softCream)
-                .scaleEffect(0.72)
-                .frame(width: 15, height: 15)
-        } else {
-            Image(systemName: phase.symbol)
-                .font(.system(size: 12, weight: .bold))
-                .offset(y: reduceMotion ? 0 : (isAnimating && phase == .ready ? -1.5 : 1))
-        }
-    }
-
-    private var foregroundColor: Color {
-        switch phase {
-        case .error:
-            return Color(hex: "FFB0A0")
-        case .reviewReady:
-            return OunjePalette.accent
-        case .hidden, .ready, .running:
-            return OunjePalette.softCream.opacity(0.95)
-        }
-    }
-
-    private var strokeColor: Color {
-        switch phase {
-        case .error:
-            return Color(hex: "FF8E8E").opacity(0.58)
-        case .reviewReady, .ready, .running:
-            return OunjePalette.accent.opacity(0.52)
-        case .hidden:
-            return OunjePalette.stroke.opacity(0.5)
-        }
     }
 }
 

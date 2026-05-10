@@ -1508,7 +1508,7 @@ private struct MealPlannerShellView: View {
     @StateObject private var discoverRecipesViewModel = DiscoverRecipesViewModel()
     @StateObject private var discoverEnvironmentModel = DiscoverEnvironmentViewModel()
     @Namespace private var recipeTransitionNamespace
-    @State private var selectedTab: AppTab = .prep
+    @State private var selectedTab: AppTab = .discover
     @State private var discoverSearchText = ""
     @State private var cookbookSearchText = ""
     @State private var presentedRecipe: PresentedRecipeDetail?
@@ -1519,10 +1519,12 @@ private struct MealPlannerShellView: View {
     @State private var syncedCompletedImportIDs = Set<String>()
     @State private var prewarmedCompletedImportIDs = Set<String>()
     @State private var lastSharedImportRefreshAt = Date.distantPast
-    @State private var previousSelectedTab: AppTab = .prep
+    @State private var previousSelectedTab: AppTab = .discover
     @State private var tabTransitionDirection: CGFloat = 1
     @State private var requestedCookbookImportText: String?
     @State private var isPhotoImportComposerPresented = false
+    @State private var photoImportComposerContext: CookbookComposerContext = .saved
+    @State private var isProcessingPrepPhotoImport = false
 
     private enum SharedImportProcessingScope {
         case queued
@@ -1716,7 +1718,7 @@ private struct MealPlannerShellView: View {
             }
         }
         .sheet(isPresented: $isPhotoImportComposerPresented) {
-            DiscoverComposerSheet(context: .saved, initialText: nil)
+            DiscoverComposerSheet(context: photoImportComposerContext, initialText: nil)
                 .environmentObject(savedStore)
                 .environmentObject(sharedImportInbox)
                 .environmentObject(store)
@@ -1764,6 +1766,16 @@ private struct MealPlannerShellView: View {
                 recipeTransitionNamespace: recipeTransitionNamespace,
                 onSelectRecipe: { plannedRecipe in
                     presentRecipeDetail(PresentedRecipeDetail(plannedRecipe: plannedRecipe))
+                },
+                onImportFoodPhotos: { items in
+                    Task {
+                        await importFoodPhotosToPrep(items)
+                    }
+                },
+                onCaptureFoodPhoto: { image in
+                    Task {
+                        await importCapturedFoodPhotoToPrep(image)
+                    }
                 }
             )
         case .discover:
@@ -1843,6 +1855,223 @@ private struct MealPlannerShellView: View {
             thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
             destination: .appTab(.prep)
         )
+    }
+
+    @MainActor
+    private func importFoodPhotosToPrep(_ items: [PhotosPickerItem]) async {
+        guard !isProcessingPrepPhotoImport else { return }
+        let selectedItems = Array(items.prefix(4))
+        guard !selectedItems.isEmpty else { return }
+
+        isProcessingPrepPhotoImport = true
+        toastCenter.show(
+            title: "Checking photo",
+            subtitle: "Ounje is building a recipe from it.",
+            systemImage: "camera.viewfinder",
+            destination: nil
+        )
+        defer { isProcessingPrepPhotoImport = false }
+
+        do {
+            var drafts: [RecipeImportMediaDraft] = []
+            for item in selectedItems {
+                if let draft = try await RecipeImportMediaDraft.load(
+                    from: item,
+                    userID: store.authSession?.userID,
+                    accessToken: store.authSession?.accessToken
+                ) {
+                    drafts.append(draft)
+                }
+            }
+
+            await finishFoodPhotoImportToPrep(drafts: drafts, sourceApp: "Ounje Photo")
+        } catch {
+            toastCenter.show(
+                title: "Photo import failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.circle.fill",
+                destination: nil
+            )
+        }
+    }
+
+    @MainActor
+    private func importCapturedFoodPhotoToPrep(_ image: UIImage) async {
+        guard !isProcessingPrepPhotoImport else { return }
+
+        isProcessingPrepPhotoImport = true
+        toastCenter.show(
+            title: "Checking photo",
+            subtitle: "Ounje is building a recipe from it.",
+            systemImage: "camera.viewfinder",
+            destination: nil
+        )
+        defer { isProcessingPrepPhotoImport = false }
+
+        do {
+            let draft = try await RecipeImportMediaDraft.loadCapturedImage(
+                image,
+                userID: store.authSession?.userID,
+                accessToken: store.authSession?.accessToken
+            )
+            await finishFoodPhotoImportToPrep(drafts: [draft], sourceApp: "Ounje Camera")
+        } catch {
+            toastCenter.show(
+                title: "Photo import failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.circle.fill",
+                destination: nil
+            )
+        }
+    }
+
+    @MainActor
+    private func finishFoodPhotoImportToPrep(drafts: [RecipeImportMediaDraft], sourceApp: String) async {
+        do {
+            guard !drafts.isEmpty else {
+                toastCenter.show(
+                    title: "No photo found",
+                    subtitle: "Pick a clear food photo and try again.",
+                    systemImage: "exclamationmark.circle.fill",
+                    destination: nil
+                )
+                return
+            }
+
+            let localEnvelope = SharedRecipeImportEnvelope(
+                id: UUID().uuidString,
+                createdAt: Date(),
+                jobID: nil,
+                targetState: "prepped",
+                sourceText: "",
+                sourceURLString: nil,
+                canonicalSourceURLString: nil,
+                sourceApp: sourceApp,
+                attachments: [],
+                processingState: "queued",
+                attemptCount: 1,
+                lastAttemptAt: Date(),
+                lastError: nil,
+                updatedAt: Date()
+            )
+            try? SharedRecipeImportInbox.write(localEnvelope)
+            await sharedImportInbox.refresh()
+
+            let response = try await RecipeImportAPIService.shared.importRecipe(
+                userID: store.authSession?.userID,
+                accessToken: store.authSession?.accessToken,
+                sourceURL: nil,
+                sourceText: "",
+                targetState: "prepped",
+                attachments: drafts.map(\.payload),
+                photoContext: RecipeImportPhotoContextPayload(
+                    dishHint: nil,
+                    coarsePlaceContext: nil
+                )
+            )
+
+            NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
+
+            if let importedRecipe = response.recipe {
+                savedStore.saveImportedRecipe(importedRecipe, showToast: false)
+            }
+            if let detail = response.recipeDetail {
+                await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
+            }
+
+            let backendState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let reviewState = response.job.reviewState.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let canDisplayRecipe = response.recipe != nil || response.recipeDetail != nil
+            let failureReason = [
+                response.job.errorMessage,
+                response.job.reviewReason,
+                "Ounje could not extract a displayable recipe from this photo."
+            ]
+            .compactMap { raw -> String? in
+                let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            .first
+            let shouldFail = backendState == "failed"
+                || (["draft", "needs_review"].contains(reviewState) && !canDisplayRecipe)
+            let isLiveState = ["queued", "processing", "fetching", "parsing", "normalized"].contains(backendState)
+
+            if shouldFail {
+                let failedEnvelope = SharedRecipeImportEnvelope(
+                    id: localEnvelope.id,
+                    createdAt: localEnvelope.createdAt,
+                    jobID: response.job.id,
+                    targetState: localEnvelope.targetState,
+                    sourceText: localEnvelope.sourceText,
+                    sourceURLString: nil,
+                    canonicalSourceURLString: response.job.sourceURL,
+                    sourceApp: localEnvelope.sourceApp,
+                    attachments: localEnvelope.attachments,
+                    processingState: "failed",
+                    attemptCount: localEnvelope.attemptCount,
+                    lastAttemptAt: Date(),
+                    lastError: failureReason,
+                    updatedAt: Date()
+                )
+                try? SharedRecipeImportInbox.update(failedEnvelope)
+                await sharedImportInbox.refresh()
+                toastCenter.show(
+                    title: "Couldn’t read photo",
+                    subtitle: failureReason,
+                    systemImage: "exclamationmark.circle.fill",
+                    destination: .recipeImportQueue(.failed)
+                )
+                return
+            }
+
+            if isLiveState && !canDisplayRecipe {
+                let queuedEnvelope = SharedRecipeImportEnvelope(
+                    id: localEnvelope.id,
+                    createdAt: localEnvelope.createdAt,
+                    jobID: response.job.id,
+                    targetState: localEnvelope.targetState,
+                    sourceText: localEnvelope.sourceText,
+                    sourceURLString: nil,
+                    canonicalSourceURLString: response.job.sourceURL,
+                    sourceApp: localEnvelope.sourceApp,
+                    attachments: localEnvelope.attachments,
+                    processingState: backendState,
+                    attemptCount: localEnvelope.attemptCount,
+                    lastAttemptAt: Date(),
+                    lastError: nil,
+                    updatedAt: Date()
+                )
+                try? SharedRecipeImportInbox.update(queuedEnvelope)
+                await sharedImportInbox.refresh()
+                toastCenter.show(
+                    title: "Photo queued",
+                    subtitle: "Ounje is checking the dish photo now.",
+                    systemImage: "camera.viewfinder",
+                    destination: .recipeImportQueue(.queued)
+                )
+                return
+            }
+
+            try? SharedRecipeImportInbox.delete(envelopeID: localEnvelope.id)
+            await sharedImportInbox.refresh()
+            selectedTab = .prep
+            toastCenter.show(
+                title: "Added to next prep",
+                subtitle: response.recipeDetail?.title ?? response.recipe?.title ?? "Photo recipe ready.",
+                systemImage: "sparkles",
+                thumbnailURLString: response.recipeDetail?.discoverCardImageURLString
+                    ?? response.recipeDetail?.heroImageURLString
+                    ?? response.recipe?.imageURLString,
+                destination: .appTab(.prep)
+            )
+        } catch {
+            toastCenter.show(
+                title: "Photo import failed",
+                subtitle: error.localizedDescription,
+                systemImage: "exclamationmark.circle.fill",
+                destination: nil
+            )
+        }
     }
 
     @MainActor
@@ -3520,6 +3749,7 @@ struct InstacartRunLogsSheet: View {
     @ObservedObject var mealStore: MealPlanningAppStore
     let userID: String?
     let accessToken: String?
+    let onRerun: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var historyView: InstacartRunHistoryView = .current
 
@@ -3866,6 +4096,37 @@ struct InstacartRunLogsSheet: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(OunjePalette.primaryText)
                         Spacer(minLength: 0)
+                        Button {
+                            onRerun()
+                            Task {
+                                try? await Task.sleep(nanoseconds: 650_000_000)
+                                await refreshLogs()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if mealStore.isManualAutoshopRunning {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(OunjePalette.background)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 11, weight: .bold))
+                                }
+
+                                Text(mealStore.isManualAutoshopRunning ? "Rerunning" : "Rerun")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundStyle(OunjePalette.background)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(OunjePalette.accent)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(mealStore.isManualAutoshopRunning || currentPrepHasLiveRun)
+                        .opacity((mealStore.isManualAutoshopRunning || currentPrepHasLiveRun) ? 0.58 : 1)
                     }
 
                     HStack(spacing: 8) {
@@ -7075,6 +7336,13 @@ private struct RecipeImportMediaDraft: Identifiable {
         }
 
         throw RecipeImportMediaError.unsupported
+    }
+
+    static func loadCapturedImage(_ image: UIImage, userID: String?, accessToken: String?) async throws -> RecipeImportMediaDraft {
+        guard let data = image.jpegData(compressionQuality: 0.9) else {
+            throw RecipeImportMediaError.unreadable
+        }
+        return try await makeImageAttachment(from: data, contentType: .jpeg, userID: userID, accessToken: accessToken)
     }
 
     private static func makeImageAttachment(from data: Data, contentType: UTType, userID: String?, accessToken: String?) async throws -> RecipeImportMediaDraft {

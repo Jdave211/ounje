@@ -68,6 +68,8 @@ const PREP_REGENERATION_INTENT_CACHE_TTL_MS = 5 * 60 * 1000;
 const RECIPE_IMAGE_BUCKET = process.env.RECIPE_IMAGE_BUCKET ?? "recipe-images";
 const RECIPE_IMPORT_MEDIA_BUCKET = process.env.RECIPE_IMPORT_MEDIA_BUCKET ?? "recipe-import-media";
 const RECIPE_IMPORT_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+const DISCOVER_BASE_SHELF_MAX = 360;
+const DISCOVER_PRESET_SHELF_MAX = 240;
 
 class CappedMap extends Map {
   constructor(maxEntries = 100) {
@@ -1090,7 +1092,10 @@ recipe_router.post("/recipe/discover", async (req, res) => {
   const isBaseDiscover = normalizedFilter === "all";
   const requestedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 30;
   const requestedOffset = Number.isFinite(Number(offset)) ? Math.max(0, Number(offset)) : 0;
-  const requestedWindowLimit = Math.max(requestedLimit + requestedOffset, requestedLimit);
+  // Build one item past the requested page so pagination can truthfully report
+  // whether another page exists. Without this, page 2 often returned a full
+  // page with `hasMore: false` because the server had built exactly offset+limit.
+  const requestedWindowLimit = Math.max(requestedLimit + requestedOffset + 1, requestedLimit + 1);
   const bypassDiscoverCache = Boolean(forceRefresh)
     || String(req.get("cache-control") ?? "").toLowerCase().includes("no-cache");
 
@@ -1140,7 +1145,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         profile,
         filter,
         feedContext,
-        limit: requestedWindowLimit,
+        limit: DISCOVER_BASE_SHELF_MAX,
       });
 
       const payload = pageDiscoverResults({
@@ -1853,7 +1858,10 @@ async function buildFastBaseDiscoverRecipes({
   limit = 30,
 }) {
   const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
-  const target = Math.min(Math.max(limit, 30), normalizedFilter === "all" ? 120 : 90);
+  const target = Math.min(
+    Math.max(limit, 30),
+    normalizedFilter === "all" ? DISCOVER_BASE_SHELF_MAX : DISCOVER_PRESET_SHELF_MAX
+  );
   const baseSeed = `${feedContext?.sessionSeed ?? "base"}|${feedContext?.windowKey ?? "now"}|${normalizedFilter}|fast|${target}`;
 
   let sharedPool = await fetchDiscoverBroadPool({
@@ -2042,7 +2050,7 @@ async function buildPresetDiscoverPayload({
       profile: null,
       filter,
       feedContext,
-      limit: Math.max(limit + offset, 360),
+      limit: DISCOVER_BASE_SHELF_MAX,
     });
     return pageDiscoverResults({
       recipes,
