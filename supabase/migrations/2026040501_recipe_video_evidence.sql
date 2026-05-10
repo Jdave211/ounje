@@ -38,5 +38,5 @@ ALTER TABLE public.user_import_recipes
 ALTER TABLE IF EXISTS public.recipes
   ADD COLUMN IF NOT EXISTS source_provenance_json jsonb;
 
-ALTER TABLE public.recipe_ingestion_evidence_bundles DISABLE ROW LEVEL SECURITY;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.recipe_ingestion_evidence_bundles TO anon, authenticated;
+ALTER TABLE public.recipe_ingestion_evidence_bundles ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.recipe_ingestion_evidence_bundles FROM anon, authenticated;

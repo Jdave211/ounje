@@ -7137,8 +7137,31 @@ private enum RecipeImportPhotoStorageUploader {
         let publicHeroURL: String
     }
 
-    private static let privateBucket = "recipe-import-media"
-    private static let heroBucket = "recipe-images"
+    private struct UploadRequest: Encodable {
+        let userID: String
+        let sourceImageBase64: String
+        let heroImageBase64: String
+        let mimeType: String
+
+        enum CodingKeys: String, CodingKey {
+            case userID = "user_id"
+            case sourceImageBase64 = "source_image_base64"
+            case heroImageBase64 = "hero_image_base64"
+            case mimeType = "mime_type"
+        }
+    }
+
+    private struct UploadResponse: Decodable {
+        let privateBucket: String
+        let privatePath: String
+        let publicHeroURL: String
+
+        enum CodingKeys: String, CodingKey {
+            case privateBucket = "private_bucket"
+            case privatePath = "private_path"
+            case publicHeroURL = "public_hero_url"
+        }
+    }
 
     static func uploadPhotoPair(
         sourceData: Data,
@@ -7146,48 +7169,66 @@ private enum RecipeImportPhotoStorageUploader {
         userID: String,
         accessToken: String
     ) async throws -> UploadedPair {
-        let importID = UUID().uuidString
-        let sourcePath = "users/\(userID)/photo-imports/\(importID)/source.jpg"
-        let heroPath = "users/\(userID)/photo-imports/\(importID)/hero.jpg"
-        let heroURL = "\(SupabaseConfig.url)/storage/v1/object/public/\(heroBucket)/\(heroPath)"
-
-        try await upload(data: heroData, bucket: heroBucket, path: heroPath, accessToken: accessToken)
-
-        do {
-            try await upload(data: sourceData, bucket: privateBucket, path: sourcePath, accessToken: accessToken)
-        } catch {
-            return UploadedPair(
-                privateBucket: heroBucket,
-                privatePath: heroPath,
-                publicHeroURL: heroURL
-            )
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                return try await uploadPhotoPair(
+                    baseURL: baseURL,
+                    sourceData: sourceData,
+                    heroData: heroData,
+                    userID: userID,
+                    accessToken: accessToken
+                )
+            } catch {
+                lastError = error
+            }
         }
 
-        return UploadedPair(
-            privateBucket: privateBucket,
-            privatePath: sourcePath,
-            publicHeroURL: heroURL
-        )
+        throw lastError ?? RecipeImportMediaError.uploadRequired
     }
 
-    private static func upload(data: Data, bucket: String, path: String, accessToken: String) async throws {
-        let encodedPath = path
-            .split(separator: "/")
-            .map { String($0).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
-            .joined(separator: "/")
-        guard let url = URL(string: "\(SupabaseConfig.url)/storage/v1/object/\(bucket)/\(encodedPath)") else {
+    private static func uploadPhotoPair(
+        baseURL: String,
+        sourceData: Data,
+        heroData: Data,
+        userID: String,
+        accessToken: String
+    ) async throws -> UploadedPair {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/import-media/photo-pair") else {
             throw RecipeImportMediaError.uploadRequired
         }
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.timeoutInterval = 45
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
-        request.setValue("true", forHTTPHeaderField: "x-upsert")
-        let (_, response) = try await URLSession.shared.upload(for: request, from: data)
+        request.setValue(userID, forHTTPHeaderField: "x-user-id")
+        request.httpBody = try JSONEncoder().encode(
+            UploadRequest(
+                userID: userID,
+                sourceImageBase64: sourceData.base64EncodedString(),
+                heroImageBase64: heroData.base64EncodedString(),
+                mimeType: "image/jpeg"
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, (200 ... 299).contains(httpResponse.statusCode) else {
+            if let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data),
+               let message = errorPayload.message ?? errorPayload.error,
+               !message.isEmpty {
+                throw RecipeImportMediaError.uploadRequired
+            }
             throw RecipeImportMediaError.uploadRequired
         }
+
+        let payload = try JSONDecoder().decode(UploadResponse.self, from: data)
+        return UploadedPair(
+            privateBucket: payload.privateBucket,
+            privatePath: payload.privatePath,
+            publicHeroURL: payload.publicHeroURL
+        )
     }
 }
 

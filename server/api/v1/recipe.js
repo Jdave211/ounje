@@ -32,6 +32,7 @@ import {
 } from "../../lib/discover-brackets.js";
 import { createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
 import { createOrReuseRecipeShareLink, resolveRecipeShareLink } from "../../lib/recipe-share-links.js";
+import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import {
   getRecipeAdaptationContract,
   mergeEditSummaries,
@@ -45,6 +46,7 @@ dotenv.config({ path: new URL("../../.env", import.meta.url).pathname });
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const IFRAMELY_API_KEY = process.env.IFRAMELY_API_KEY ?? "";
 const IFRAMELY_OEMBED_ENDPOINT = process.env.IFRAMELY_OEMBED_ENDPOINT ?? "https://iframe.ly/api/oembed";
 const NODE_ENV_NAME = String(process.env.NODE_ENV ?? "").trim().toLowerCase();
@@ -63,6 +65,9 @@ const DISCOVER_BROAD_POOL_CACHE_TTL_MS = 2 * 60 * 1000;
 const INTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREP_REGENERATION_INTENT_CACHE_TTL_MS = 5 * 60 * 1000;
+const RECIPE_IMAGE_BUCKET = process.env.RECIPE_IMAGE_BUCKET ?? "recipe-images";
+const RECIPE_IMPORT_MEDIA_BUCKET = process.env.RECIPE_IMPORT_MEDIA_BUCKET ?? "recipe-import-media";
+const RECIPE_IMPORT_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 
 class CappedMap extends Map {
   constructor(maxEntries = 100) {
@@ -103,6 +108,66 @@ globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
   embedding: embeddingCache.size,
   recipeVideoResolve: recipeVideoResolveCache.size,
 });
+
+function trimString(value) {
+  return String(value ?? "").trim();
+}
+
+function encodedStoragePath(path) {
+  return trimString(path)
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function decodeImagePayload(value, label) {
+  const raw = trimString(value);
+  if (!raw) {
+    throw new Error(`${label} is required`);
+  }
+
+  const base64 = raw.includes(",") ? raw.split(",").pop() : raw;
+  const buffer = Buffer.from(base64, "base64");
+  if (!buffer.length) {
+    throw new Error(`${label} is empty`);
+  }
+  if (buffer.length > RECIPE_IMPORT_PHOTO_MAX_BYTES) {
+    throw new Error(`${label} is too large`);
+  }
+  return buffer;
+}
+
+function normalizeImageContentType(value) {
+  const contentType = trimString(value).toLowerCase();
+  if (["image/jpeg", "image/jpg"].includes(contentType)) return "image/jpeg";
+  if (contentType === "image/png") return "image/png";
+  if (contentType === "image/webp") return "image/webp";
+  return "image/jpeg";
+}
+
+async function uploadRecipeImportBuffer({ bucket, path, buffer, contentType }) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Recipe media upload requires Supabase service role configuration");
+  }
+
+  const uploadURL = `${SUPABASE_URL.replace(/\/+$/, "")}/storage/v1/object/${encodeURIComponent(bucket)}/${encodedStoragePath(path)}`;
+  const response = await fetch(uploadURL, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": contentType,
+      "x-upsert": "true",
+    },
+    body: buffer,
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Storage upload failed (${response.status}) for ${bucket}/${path}${body ? `: ${body.slice(0, 240)}` : ""}`);
+  }
+}
 
 const DISCOVER_INTENT_SCHEMA = {
   type: "object",
@@ -893,6 +958,48 @@ recipe_router.post("/recipe/similar", async (req, res) => {
   } catch (error) {
     console.error("[recipe/similar] fallback failed:", error.message);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+recipe_router.post("/recipe/import-media/photo-pair", async (req, res) => {
+  let auth;
+  try {
+    auth = await resolveAuthorizedUserID(req);
+  } catch (error) {
+    return sendAuthError(res, error, "recipe/import-media");
+  }
+
+  try {
+    const body = req.body ?? {};
+    const contentType = normalizeImageContentType(body.mime_type ?? body.mimeType);
+    const sourceBuffer = decodeImagePayload(body.source_image_base64 ?? body.sourceImageBase64, "source_image_base64");
+    const heroBuffer = decodeImagePayload(body.hero_image_base64 ?? body.heroImageBase64, "hero_image_base64");
+    const importID = crypto.randomUUID();
+    const sourcePath = `users/${auth.userID}/photo-imports/${importID}/source.jpg`;
+    const heroPath = `users/${auth.userID}/photo-imports/${importID}/hero.jpg`;
+
+    await uploadRecipeImportBuffer({
+      bucket: RECIPE_IMAGE_BUCKET,
+      path: heroPath,
+      buffer: heroBuffer,
+      contentType,
+    });
+
+    await uploadRecipeImportBuffer({
+      bucket: RECIPE_IMPORT_MEDIA_BUCKET,
+      path: sourcePath,
+      buffer: sourceBuffer,
+      contentType,
+    });
+
+    return res.status(201).json({
+      private_bucket: RECIPE_IMPORT_MEDIA_BUCKET,
+      private_path: sourcePath,
+      public_hero_url: `${SUPABASE_URL.replace(/\/+$/, "")}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/${heroPath}`,
+    });
+  } catch (error) {
+    console.error("[recipe/import-media/photo-pair] upload failed:", error.message);
+    return res.status(400).json({ error: error.message });
   }
 });
 

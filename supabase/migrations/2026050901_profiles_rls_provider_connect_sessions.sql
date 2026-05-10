@@ -2,8 +2,7 @@
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
-REVOKE INSERT, UPDATE ON public.profiles FROM anon;
-REVOKE SELECT, INSERT, UPDATE ON public.profiles FROM anon;
+REVOKE ALL ON public.profiles FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.profiles TO authenticated;
 
 DROP POLICY IF EXISTS "profiles_select_own" ON public.profiles;
@@ -71,5 +70,5 @@ CREATE POLICY "provider_connect_sessions_select_own"
   TO authenticated
   USING (auth.uid() = user_id);
 
-REVOKE ALL ON public.provider_connect_sessions FROM anon;
+REVOKE ALL ON public.provider_connect_sessions FROM anon, authenticated;
 GRANT SELECT ON public.provider_connect_sessions TO authenticated;

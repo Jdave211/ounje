@@ -58,6 +58,7 @@ EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
 
+REVOKE ALL ON public.instacart_run_log_traces FROM anon, authenticated;
 GRANT SELECT, INSERT, UPDATE ON public.instacart_run_log_traces TO authenticated;
 
 INSERT INTO public.instacart_run_log_traces (run_id, user_id, trace_json, created_at, updated_at)
