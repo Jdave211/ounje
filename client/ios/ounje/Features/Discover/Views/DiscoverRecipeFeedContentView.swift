@@ -18,11 +18,13 @@ struct DiscoverRecipeFeedContentView: View {
     let onLoadMore: () async -> Void
 
     var body: some View {
-        // Show skeleton placeholders only when there are no recipes to display yet.
-        // When recipes exist and we're transitioning (e.g. search in-flight), keep
-        // them visible at reduced opacity so the user isn't staring at a blank screen.
+        // "Feed transition" (pull-to-refresh, filter swap) always shows skeletons so the
+        // user gets a clear signal that new content is loading — even if old recipes exist.
+        // "Search refresh" keeps old recipes visible at reduced opacity so there's no
+        // jarring blank-screen moment while the query is in-flight.
         let isActivelyLoading = isSearchRefreshing || !hasResolvedInitialLoad || isLoading || isTransitioningFeed
-        if isActivelyLoading && visibleRecipes.isEmpty {
+        let isFeedTransition = isTransitioningFeed && !isSearchRefreshing
+        if (isActivelyLoading && visibleRecipes.isEmpty) || isFeedTransition {
             LazyVGrid(columns: recipeColumns, spacing: 14) {
                 ForEach(0..<6, id: \.self) { _ in
                     DiscoverRecipeCardLoadingPlaceholder()
