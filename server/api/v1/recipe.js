@@ -5204,40 +5204,53 @@ async function fetchDbBracketRecipeIds(filter = "All", { forceRefresh = false } 
 }
 
 // Keyword patterns for supplementing sparse brackets via DB ilike queries.
+// These are searched against title, description, recipe_type, and category.
+// Err on the side of more terms: false positives are filtered downstream by
+// `recipeHasDiscoverBracket` (which uses the sanitizer with regex guards).
 const BRACKET_KEYWORD_SUPPLEMENT = {
-  sandwich:   ["sandwich", "wrap", "sub", "hoagie", "baguette", "panini"],
-  drinks:     ["smoothie", "juice", "latte", "coffee", "tea", "lemonade", "spritz", "cocktail", "mocktail", "drink", "shake"],
-  salmon:     ["salmon"],
-  steak:      ["steak", "ribeye", "sirloin", "flank", "brisket", "beef"],
-  breakfast:  ["breakfast", "brunch", "oat", "pancake", "waffle", "granola", "egg", "omelet"],
+  sandwich:   ["sandwich", "wrap", "sub", "hoagie", "baguette", "panini", "burger", "bun", "roll", "pita", "flatbread", "gyro", "banh mi", "torta", "calzone", "quesadilla"],
+  drinks:     ["smoothie", "juice", "latte", "coffee", "tea", "lemonade", "spritz", "cocktail", "mocktail", "drink", "shake", "beverage", "milkshake", "frappe", "horchata", "agua fresca", "matcha", "espresso", "americano", "cappuccino", "chai", "iced tea", "punch", "slushie", "soda"],
+  salmon:     ["salmon", "smoked salmon", "gravlax", "cedar salmon", "teriyaki salmon", "lemon salmon", "miso salmon", "honey salmon", "garlic salmon", "baked salmon", "pan-seared salmon"],
+  steak:      ["steak", "ribeye", "sirloin", "flank", "brisket", "beef", "tenderloin", "t-bone", "porterhouse", "strip steak", "chuck", "hanger", "skirt steak", "flat iron", "wagyu"],
+  breakfast:  ["breakfast", "brunch", "oat", "oatmeal", "pancake", "waffle", "granola", "egg", "omelet", "omelette", "frittata", "quiche", "french toast", "bagel", "crepe", "hash brown", "benedict", "muffin", "porridge", "overnight oats", "yogurt bowl", "acai bowl", "smoothie bowl", "avocado toast"],
   vegan:      ["vegan"],
   vegetarian: ["vegetarian"],
-  chicken:    ["chicken"],
-  pasta:      ["pasta", "spaghetti", "linguine", "penne", "rigatoni", "noodle", "gnocchi"],
-  fish:       ["fish", "cod", "snapper", "tilapia", "trout", "sea bass", "halibut", "tuna", "shrimp", "prawn", "seafood"],
-  salad:      ["salad"],
-  dessert:    ["dessert", "cake", "cookie", "brownie", "pudding", "pie", "cheesecake", "muffin", "tart"],
-  potatoes:   ["potato", "potatoes", "fries", "hash"],
-  beans:      ["beans", "bean", "lentil", "legume", "chickpea", "hummus"],
+  chicken:    ["chicken", "poultry", "hen", "rotisserie", "drumstick", "thigh", "breast", "tikka", "butter chicken", "wings"],
+  pasta:      ["pasta", "spaghetti", "linguine", "penne", "rigatoni", "noodle", "gnocchi", "fettuccine", "tagliatelle", "fusilli", "orzo", "lasagna", "lasagne", "carbonara", "bolognese", "alfredo", "mac and cheese"],
+  fish:       ["fish", "cod", "snapper", "tilapia", "trout", "sea bass", "halibut", "tuna", "shrimp", "prawn", "seafood", "crab", "lobster", "scallop", "mussel", "clam", "mackerel", "mahi", "catfish", "flounder", "sardine", "anchovy", "ceviche"],
+  salad:      ["salad", "slaw", "cobb", "caesar", "niçoise", "nicoise", "caprese", "fattoush", "tabbouleh", "panzanella"],
+  dessert:    ["dessert", "cake", "cookie", "brownie", "pudding", "pie", "cheesecake", "muffin", "tart", "ice cream", "gelato", "tiramisu", "cupcake", "fudge", "cobbler", "crumble", "macaron", "mousse", "sorbet", "parfait", "blondie", "brookie", "tres leches", "flan", "biscotti", "churro", "donut", "doughnut"],
+  potatoes:   ["potato", "potatoes", "fries", "hash", "gnocchi", "colcannon", "latke", "aloo", "dauphinoise", "gratin"],
+  beans:      ["beans", "bean", "lentil", "legume", "chickpea", "hummus", "dal", "dahl", "dhal", "black bean", "kidney bean", "cannellini", "pinto", "edamame", "tofu", "tempeh", "falafel"],
+  dinner:     ["dinner", "roast", "stew", "braise", "casserole", "curry", "stir fry", "stir-fry", "chili", "skillet", "traybake", "bake"],
+  lunch:      ["lunch", "bowl", "sandwich", "wrap", "soup", "salad"],
+  nigerian:   ["jollof", "egusi", "suya", "akara", "moin moin", "moi moi", "ofada", "banga", "pepper soup", "puff puff", "yam", "asaro", "okro", "okra", "ogbono", "efo riro", "ayamase", "gizdodo", "dodo", "fufu", "eba", "garri", "tuwo", "nsala", "edikaikong", "afang", "kilishi", "nigerian", "west african"],
+  beginner:   ["easy", "simple", "quick", "5-ingredient", "beginner", "no-bake", "one-pot", "one pot", "sheet pan", "dump"],
 };
 
 const bracketKeywordSupplementCache = new CappedMap(30);
 
-async function fetchBracketKeywordSupplement(bracketKey, { limit = 100 } = {}) {
+async function fetchBracketKeywordSupplement(bracketKey, { limit = 200 } = {}) {
   const keywords = BRACKET_KEYWORD_SUPPLEMENT[bracketKey];
   if (!keywords?.length || !SUPABASE_URL || !SUPABASE_ANON_KEY) return [];
 
-  const cacheKey = `kw-supp:${bracketKey}:${limit}`;
+  // Cap at 1000 so sparse brackets can truly fill up to min(100, total).
+  const safeLimit = Math.min(Math.max(1, limit), 1000);
+  const cacheKey = `kw-supp:${bracketKey}:${safeLimit}`;
   const cached = readTimedCache(bracketKeywordSupplementCache, cacheKey, 30 * 60 * 1000);
   if (cached) return cached;
 
-  // Build OR filter: title.ilike.*keyword* OR ingredients_text.ilike.*keyword*
+  // Search title, description, recipe_type, category so even recipes that
+  // only mention the keyword in the description (e.g. "a refreshing drink")
+  // are caught. Previously only title + recipe_type were searched.
   const orTerms = keywords.flatMap((kw) => [
     `title.ilike.*${kw}*`,
+    `description.ilike.*${kw}*`,
     `recipe_type.ilike.*${kw}*`,
+    `category.ilike.*${kw}*`,
   ]).join(",");
 
-  const url = `${SUPABASE_URL}/rest/v1/recipes?select=id&or=(${encodeURIComponent(orTerms)})&limit=${Math.min(limit, 500)}`;
+  const url = `${SUPABASE_URL}/rest/v1/recipes?select=id&or=(${encodeURIComponent(orTerms)})&limit=${safeLimit}`;
   try {
     const response = await fetch(url, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
@@ -5252,6 +5265,9 @@ async function fetchBracketKeywordSupplement(bracketKey, { limit = 100 } = {}) {
   }
 }
 
+// Minimum bracket pool size before the keyword supplement kicks in.
+// Set to 100 so naturally sparse categories (drinks, sandwich, salmon)
+// always get topped up from the broader keyword search.
 const MIN_BRACKET_POOL = 100;
 
 async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "preset", forceRefresh = false }) {
@@ -5278,7 +5294,7 @@ async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "
   // If the bracket pool is still thin, supplement with a broad keyword search against
   // the full DB so users see a full shelf even before the classify script is run.
   if (bracketIds.length < MIN_BRACKET_POOL) {
-    const kwIds = await fetchBracketKeywordSupplement(preset.key, { limit: MIN_BRACKET_POOL * 2 }).catch(() => []);
+    const kwIds = await fetchBracketKeywordSupplement(preset.key, { limit: 500 }).catch(() => []);
     if (kwIds.length > 0) {
       bracketIds = [...new Set([...bracketIds, ...kwIds])];
     }
@@ -5328,7 +5344,7 @@ async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset
   }
   // Supplement thin brackets with a keyword-based DB query.
   if (bracketIds.length < MIN_BRACKET_POOL) {
-    const kwIdsPage = await fetchBracketKeywordSupplement(preset.key, { limit: MIN_BRACKET_POOL * 2 }).catch(() => []);
+    const kwIdsPage = await fetchBracketKeywordSupplement(preset.key, { limit: 500 }).catch(() => []);
     if (kwIdsPage.length > 0) {
       bracketIds = [...new Set([...bracketIds, ...kwIdsPage])];
     }
