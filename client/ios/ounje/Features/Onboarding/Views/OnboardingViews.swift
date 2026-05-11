@@ -2259,7 +2259,7 @@ struct FirstLoginOnboardingView: View {
     private func schedulePaywallIntroPresentation() {
         onboardingAutoAdvanceTask?.cancel()
         onboardingAutoAdvanceTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_750_000_000)
+            try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled, currentStep == .paywallIntro else { return }
             finishOnboardingOrPresentPaywall()
         }
@@ -2823,7 +2823,9 @@ struct FirstLoginOnboardingView: View {
             budgetFlexibility: .slightlyFlexible,
             purchasingBehavior: purchasingBehavior,
             orderingAutonomy: orderingAutonomy,
-            pricingTier: store.effectivePricingTier
+            pricingTier: store.effectivePricingTier,
+            foodPersona: selectedFoodPersona,
+            foodGoals: selectedFoodChallengeList
         )
     }
 

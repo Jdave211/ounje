@@ -87,6 +87,9 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var availableMembershipProducts: [OunjeMembershipPlan: StoreProductSnapshot] = [:]
     @Published var isBillingBusy = false
     @Published var billingStatusMessage: String?
+    /// True after the first `refreshMembershipEntitlement` call completes (success or failure).
+    /// Used to hold the paywall gate splash until entitlement is confirmed.
+    @Published private(set) var membershipEntitlementResolved: Bool = false
     @Published var manualInstacartRerunQueuedAt: Date?
     @Published var isManualAutoshopRunning = false
     @Published var manualAutoshopErrorMessage: String?
@@ -308,9 +311,11 @@ final class MealPlanningAppStore: ObservableObject {
             membershipEntitlement = nil
             billingStatusMessage = nil
             syncProfilePricingTierToEntitlement()
+            membershipEntitlementResolved = true
             return
         }
 
+        // Products needed for paywall price display — fetch eagerly but non-fatally.
         do {
             availableMembershipProducts = try await StoreKitMembershipBillingService.shared.fetchProductsByPlan()
         } catch {
@@ -320,18 +325,30 @@ final class MealPlanningAppStore: ObservableObject {
         guard let session = await freshTrackingSession() else {
             membershipEntitlement = nil
             syncProfilePricingTierToEntitlement()
+            membershipEntitlementResolved = true
             return
         }
 
+        // ── Phase 1: Local StoreKit scan (reads from device, no network) ──────────
+        // Reads the device's local transaction database (~1 s).  This is enough to
+        // unlock the paywall splash gate so the app is responsive even with no Wi-Fi.
+        let localSnapshot = try? await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: session.userID)
+        membershipEntitlement = localSnapshot
+        syncProfilePricingTierToEntitlement()
+        membershipEntitlementResolved = true   // ← UI gate unlocked; rendering can proceed
+
+        // ── Phase 2: Server sync (best-effort, non-blocking for UI) ─────────────
+        // Keep the server's entitlement record up to date and pull the authoritative
+        // state back.  On no network the 20 s timeouts fire and we keep the local
+        // StoreKit snapshot already applied above.
+        if let localSnapshot {
+            _ = try? await SupabaseEntitlementService.shared.syncCurrentEntitlement(
+                snapshot: localSnapshot,
+                userID: session.userID,
+                accessToken: session.accessToken
+            )
+        }
         do {
-            let localSnapshot = try await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: session.userID)
-            if let localSnapshot {
-                _ = try? await SupabaseEntitlementService.shared.syncCurrentEntitlement(
-                    snapshot: localSnapshot,
-                    userID: session.userID,
-                    accessToken: session.accessToken
-                )
-            }
             let remoteEntitlement = try await SupabaseEntitlementService.shared.fetchCurrentEntitlement(
                 userID: session.userID,
                 accessToken: session.accessToken
@@ -340,11 +357,7 @@ final class MealPlanningAppStore: ObservableObject {
             syncProfilePricingTierToEntitlement()
             billingStatusMessage = nil
         } catch {
-            if membershipEntitlement == nil,
-               let localSnapshot = try? await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: session.userID) {
-                membershipEntitlement = localSnapshot
-                syncProfilePricingTierToEntitlement()
-            }
+            // Server unreachable — keep the local StoreKit snapshot.
             billingStatusMessage = "[\(trigger)] \(error.localizedDescription)"
         }
     }
@@ -1299,6 +1312,8 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func finalizeCompletedOnboarding(with profile: UserProfile, lastStep: Int) async {
+        // Persist the completed profile first — the server must have the latest state
+        // before we fire the plan generation (which uses the profile on the backend).
         if let session = await freshUserDataSession() {
             await persistCompletedOnboardingState(
                 profile: profile,
@@ -1307,20 +1322,37 @@ final class MealPlanningAppStore: ObservableObject {
             )
         }
 
+        // Run plan generation and membership refresh concurrently.
+        // generatePlan() is the dominant latency source (10–30 s of LLM inference);
+        // membership refresh should not serialize behind it.
+        async let membershipRefresh: Void = refreshMembershipEntitlement(trigger: "post-onboarding")
         if profile.isPlanningReady {
             await generatePlan()
         }
+        await membershipRefresh
 
-        await refreshMembershipEntitlement(trigger: "post-onboarding")
+        // Load all prep / automation / tracking state in one parallel wave.
         if let session = await freshUserDataSession() {
-            _ = await loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
-            await loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
-            await loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
-            await loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
-            await loadAutomationState(userID: session.userID, accessToken: session.accessToken)
+            async let cyclesLoad = loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            async let completedLoad: Void = loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            async let overridesLoad: Void = loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
+            async let recurringLoad: Void = loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
+            async let automationLoad: Void = loadAutomationState(userID: session.userID, accessToken: session.accessToken)
+            async let instacartLoad: Void = loadLatestInstacartRun()
+            async let groceryLoad: Void = loadLatestGroceryOrder()
+            _ = await cyclesLoad
+            await completedLoad
+            await overridesLoad
+            await recurringLoad
+            await automationLoad
+            await instacartLoad
+            await groceryLoad
+        } else {
+            async let instacartLoad: Void = loadLatestInstacartRun()
+            async let groceryLoad: Void = loadLatestGroceryOrder()
+            await instacartLoad
+            await groceryLoad
         }
-        await loadLatestInstacartRun()
-        await loadLatestGroceryOrder()
     }
 
     private func persistCompletedOnboardingState(

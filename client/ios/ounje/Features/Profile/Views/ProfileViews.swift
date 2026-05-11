@@ -1233,18 +1233,28 @@ struct MembershipSettingsSheet: View {
     @State private var isRestoringPurchases = false
     @State private var actionMessage: String?
 
+    private var isOnTrial: Bool {
+        store.membershipEntitlement?.metadata["is_on_trial"] == "true"
+    }
+
+    private var annualSavingsText: String? {
+        let yearlyPlan = OunjeMembershipPlan(tier: currentTier, cadence: .yearly)
+        return yearlyPlan.savingsText
+    }
+
     private var benefits: [(String, String)] {
         let entitlement = store.membershipEntitlement
         let cadence = currentCadence?.title ?? "Managed by Apple"
+        let expiryLabel = isOnTrial ? "Trial ends" : "Renews"
         let renewalText = entitlement?.expiresAt.map {
             $0.formatted(date: .abbreviated, time: .omitted)
         } ?? "Apple subscription settings"
 
         return [
-            ("Membership", currentPlanTitle),
+            ("Membership", isOnTrial ? "\(currentPlanTitle) · Trial" : currentPlanTitle),
             ("Access", currentTier.subtitle),
             ("Billing", cadence),
-            ("Renews", renewalText)
+            (expiryLabel, renewalText)
         ]
     }
 
@@ -1325,6 +1335,43 @@ struct MembershipSettingsSheet: View {
                                         .stroke(OunjePalette.stroke, lineWidth: 1)
                                 )
                         )
+
+                        if currentCadence == .monthly && currentTier != .free,
+                           let yearlySavings = annualSavingsText {
+                            Button {
+                                Task { await openSubscriptionManager() }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "arrow.up.circle.fill")
+                                        .font(.system(size: 22, weight: .semibold))
+                                        .foregroundStyle(OunjePalette.accent)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Switch to Annual · \(yearlySavings)")
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundStyle(OunjePalette.primaryText)
+                                        Text("Upgrade in Apple subscriptions — prorated automatically.")
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(OunjePalette.secondaryText)
+                                    }
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(OunjePalette.secondaryText)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(OunjePalette.accent.opacity(0.08))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                                .stroke(OunjePalette.accent.opacity(0.28), lineWidth: 1)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
 
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Manage membership")

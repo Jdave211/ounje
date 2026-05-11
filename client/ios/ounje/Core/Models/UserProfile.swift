@@ -1116,6 +1116,10 @@ struct UserProfile: Codable, Hashable {
     var purchasingBehavior: PurchasingBehavior
     var orderingAutonomy: OrderingAutonomyLevel
     var pricingTier: OunjePricingTier
+    /// Identity persona chosen during onboarding (e.g. "student", "parent").
+    var foodPersona: String
+    /// Food goals / challenges chosen during onboarding (e.g. "Save money", "Eat healthier").
+    var foodGoals: [String]
 
     init(
         preferredName: String? = nil,
@@ -1149,7 +1153,9 @@ struct UserProfile: Codable, Hashable {
         budgetFlexibility: BudgetFlexibility = .strict,
         purchasingBehavior: PurchasingBehavior = .healthier,
         orderingAutonomy: OrderingAutonomyLevel = .autoOrderWithinBudget,
-        pricingTier: OunjePricingTier = .free
+        pricingTier: OunjePricingTier = .free,
+        foodPersona: String = "",
+        foodGoals: [String] = []
     ) {
         self.preferredName = preferredName?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredCuisines = preferredCuisines
@@ -1183,6 +1189,8 @@ struct UserProfile: Codable, Hashable {
         self.purchasingBehavior = purchasingBehavior
         self.orderingAutonomy = orderingAutonomy
         self.pricingTier = pricingTier
+        self.foodPersona = foodPersona
+        self.foodGoals = foodGoals
     }
 
     static let starter = UserProfile(
@@ -1543,6 +1551,8 @@ struct UserProfile: Codable, Hashable {
         case purchasingBehavior
         case orderingAutonomy
         case pricingTier
+        case foodPersona
+        case foodGoals
     }
 
     init(from decoder: Decoder) throws {
@@ -1581,6 +1591,8 @@ struct UserProfile: Codable, Hashable {
         purchasingBehavior = try container.decodeIfPresent(PurchasingBehavior.self, forKey: .purchasingBehavior) ?? .healthier
         orderingAutonomy = try container.decodeIfPresent(OrderingAutonomyLevel.self, forKey: .orderingAutonomy) ?? .autoOrderWithinBudget
         pricingTier = try container.decodeIfPresent(OunjePricingTier.self, forKey: .pricingTier) ?? .plus
+        foodPersona = try container.decodeIfPresent(String.self, forKey: .foodPersona) ?? ""
+        foodGoals = try container.decodeIfPresent([String].self, forKey: .foodGoals) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1615,6 +1627,8 @@ struct UserProfile: Codable, Hashable {
         try container.encode(purchasingBehavior, forKey: .purchasingBehavior)
         try container.encode(orderingAutonomy, forKey: .orderingAutonomy)
         try container.encode(pricingTier, forKey: .pricingTier)
+        if !foodPersona.isEmpty { try container.encode(foodPersona, forKey: .foodPersona) }
+        if !foodGoals.isEmpty { try container.encode(foodGoals, forKey: .foodGoals) }
     }
 
     private func joinedOrFallback(_ values: [String], fallback: String) -> String {

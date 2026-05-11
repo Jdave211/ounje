@@ -57,6 +57,19 @@ struct RootView: View {
             } else if store.requiresProfileOnboarding {
                 FirstLoginOnboardingView()
                     .id("profile-onboarding")
+            } else if OunjeLaunchFlags.paywallsEnabled && !store.membershipEntitlementResolved {
+                // Hold on a splash while we confirm the user's subscription status.
+                // This prevents a brief flash of the planner before the paywall gate renders.
+                OunjeSplashLoaderView()
+                    .id("membership-check-splash")
+            } else if OunjeLaunchFlags.paywallsEnabled && !store.hasActivePaidEntitlement {
+                // Hard paywall gate — user must subscribe before accessing the app.
+                OunjePaywallHostView(
+                    initialTier: .plus,
+                    isDismissible: false,
+                    onClose: { }
+                )
+                .id("subscription-gate")
             } else {
                 MealPlannerShellView(toastCenter: toastCenter)
                     .id("planner-shell")
@@ -1022,12 +1035,23 @@ private struct AuthenticationView: View {
             ? FirstLoginOnboardingView.SetupStep.completedRawValue
             : (isSameCachedUser ? store.lastOnboardingStep : 0)
 
-        store.signIn(
-            with: session,
-            onboarded: cachedCompleted,
-            profile: cachedProfile,
-            lastOnboardingStep: initialStep
-        )
+        // Only commit to the "signed in and onboarded" state immediately when we have
+        // local evidence the user already completed onboarding (same device, same user).
+        // When there's no cached evidence (e.g. after a reinstall), just mark the session
+        // as authenticated and show the bootstrap loader — the remote state check below
+        // will call signIn() again with the authoritative onboarded flag from Supabase.
+        // Calling signIn(onboarded: false) prematurely would set hasResolvedInitialState=true
+        // with isOnboarded=false, causing the onboarding screen to flash for returning users.
+        if cachedCompleted {
+            store.signIn(
+                with: session,
+                onboarded: true,
+                profile: cachedProfile,
+                lastOnboardingStep: initialStep
+            )
+        } else {
+            store.persistAuthSession(session)
+        }
         showQuickTour = false
         authStatusMessage = cachedCompleted
             ? "Signed in with \(session.provider.title)."

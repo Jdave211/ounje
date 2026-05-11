@@ -137,7 +137,19 @@ final class StoreKitMembershipBillingService {
     }
 
     private func entitlement(from transaction: StoreKit.Transaction, plan: OunjeMembershipPlan, status: AppEntitlementStatus, userID: String?) -> AppUserEntitlement {
-        AppUserEntitlement(
+        var meta: [String: String] = [
+            "environment": String(describing: transaction.environment),
+            "ownership_type": String(describing: transaction.ownershipType),
+            "billing_cadence": plan.cadence.rawValue
+        ]
+        // Detect intro offer (free trial) by checking the raw description of offerType.
+        // Using String(describing:) avoids SDK-version-specific enum case comparisons which
+        // can be ambiguous alongside Product.SubscriptionInfo.introductoryOffer in the same file.
+        if let offerType = transaction.offerType,
+           String(describing: offerType).lowercased().contains("intro") {
+            meta["is_on_trial"] = "true"
+        }
+        return AppUserEntitlement(
             userID: userID ?? String(transaction.appAccountToken?.uuidString ?? ""),
             tier: plan.tier,
             status: status,
@@ -147,11 +159,7 @@ final class StoreKitMembershipBillingService {
             originalTransactionID: String(transaction.originalID),
             expiresAt: transaction.expirationDate,
             updatedAt: Date(),
-            metadata: [
-                "environment": String(describing: transaction.environment),
-                "ownership_type": String(describing: transaction.ownershipType),
-                "billing_cadence": plan.cadence.rawValue
-            ]
+            metadata: meta
         )
     }
 

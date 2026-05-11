@@ -129,7 +129,7 @@ struct OunjePaywallHostView: View {
                             }
                             .frame(width: contentWidth * 0.92)
 
-                            Text("Try 3 days free. Cancel anytime.")
+                            Text(introTrialAvailable(for: selectedPlan) ? "Try 3 days free. Cancel anytime." : "Cancel anytime.")
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .foregroundStyle(Color.white.opacity(0.82))
                                 .frame(maxWidth: .infinity, alignment: .center)
@@ -308,7 +308,7 @@ struct OunjePaywallHostView: View {
         if usesDummyTrialFlow && purchaseVisualState == .processing {
             return "Opening Ounje"
         }
-        return "Start Free Trial"
+        return introTrialAvailable(for: selectedPlan) ? "Start Free Trial" : "Subscribe"
     }
 
     private var displayedErrorMessage: String? {

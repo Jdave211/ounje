@@ -365,8 +365,6 @@ final class SupabaseProfileStateService {
             onboardingCompletedAt: onboarded ? ISO8601DateFormatter().string(from: Date()) : nil,
             lastOnboardingStep: lastOnboardingStep,
             preferredName: profile?.trimmedPreferredName,
-            preferredCuisines: profile?.preferredCuisines.map(\.rawValue) ?? [],
-            cuisineCountries: profile?.cuisineCountries ?? [],
             dietaryPatterns: profile?.dietaryPatterns ?? [],
             hardRestrictions: profile?.absoluteRestrictions ?? [],
             cadence: profile?.cadence.rawValue,
@@ -384,7 +382,9 @@ final class SupabaseProfileStateService {
             region: profile?.deliveryAddress.region,
             postalCode: profile?.deliveryAddress.postalCode,
             deliveryNotes: profile?.deliveryAddress.deliveryNotes,
-            profileJSON: profile
+            profileJSON: profile,
+            foodPersona: profile?.foodPersona.isEmpty == false ? profile?.foodPersona : nil,
+            foodGoals: profile?.foodGoals ?? []
         )
 
         var request = URLRequest(url: url)
@@ -442,7 +442,13 @@ final class SupabaseProfileStateService {
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Cap each profile REST call at 10 s so bootstrap fails fast on no network
+        // and the app can fall back to its local cache rather than stalling for 60 s.
+        var timedRequest = request
+        if timedRequest.timeoutInterval > 10 || timedRequest.timeoutInterval == 0 {
+            timedRequest.timeoutInterval = 10
+        }
+        let (data, response) = try await URLSession.shared.data(for: timedRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseProfileStateError.invalidResponse
         }
@@ -671,7 +677,9 @@ final class SupabaseSavedRecipesService {
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        var r = request
+        if r.timeoutInterval <= 0 { r.timeoutInterval = 12 }
+        let (data, response) = try await URLSession.shared.data(for: r)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseSavedRecipesError.invalidResponse
         }
@@ -1193,7 +1201,9 @@ final class SupabaseMealPrepCycleService {
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        var r = request
+        if r.timeoutInterval <= 0 { r.timeoutInterval = 12 }
+        let (data, response) = try await URLSession.shared.data(for: r)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseMealPrepCyclesError.invalidResponse
         }
@@ -1672,7 +1682,9 @@ final class SupabaseMealPrepCycleCompletionService {
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        var r = request
+        if r.timeoutInterval <= 0 { r.timeoutInterval = 12 }
+        let (data, response) = try await URLSession.shared.data(for: r)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseMealPrepCycleCompletionsError.invalidResponse
         }
@@ -2163,7 +2175,9 @@ final class SupabaseMealPrepAutomationStateService {
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        var r = request
+        if r.timeoutInterval <= 0 { r.timeoutInterval = 12 }
+        let (data, response) = try await URLSession.shared.data(for: r)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseMealPrepAutomationStateError.invalidResponse
         }
@@ -2967,8 +2981,8 @@ struct SupabaseProfileUpsertPayload: Codable {
     let onboardingCompletedAt: String?
     let lastOnboardingStep: Int
     let preferredName: String?
-    let preferredCuisines: [String]
-    let cuisineCountries: [String]
+    // preferred_cuisines / cuisine_countries removed — these steps are not in the
+    // active onboarding flow; the data lives in profile_json if needed.
     let dietaryPatterns: [String]
     let hardRestrictions: [String]
     let cadence: String?
@@ -2987,6 +3001,10 @@ struct SupabaseProfileUpsertPayload: Codable {
     let postalCode: String?
     let deliveryNotes: String?
     let profileJSON: UserProfile?
+    /// Dedicated column for the persona chosen on the identity step.
+    let foodPersona: String?
+    /// Dedicated column for the food goals chosen on the challenge step.
+    let foodGoals: [String]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -2997,8 +3015,6 @@ struct SupabaseProfileUpsertPayload: Codable {
         case onboardingCompletedAt = "onboarding_completed_at"
         case lastOnboardingStep = "last_onboarding_step"
         case preferredName = "preferred_name"
-        case preferredCuisines = "preferred_cuisines"
-        case cuisineCountries = "cuisine_countries"
         case dietaryPatterns = "dietary_patterns"
         case hardRestrictions = "hard_restrictions"
         case cadence
@@ -3017,6 +3033,8 @@ struct SupabaseProfileUpsertPayload: Codable {
         case postalCode = "postal_code"
         case deliveryNotes = "delivery_notes"
         case profileJSON = "profile_json"
+        case foodPersona = "food_persona"
+        case foodGoals = "food_goals"
     }
 }
 
@@ -3031,8 +3049,8 @@ struct SupabaseProfileRow: Codable {
     let lastOnboardingStep: Int?
     let profileJSON: UserProfile?
     let preferredName: String?
-    let preferredCuisines: [String]?
-    let cuisineCountries: [String]?
+    // preferred_cuisines / cuisine_countries removed from the DB schema —
+    // the full profile (including cuisines) is in profile_json.
     let dietaryPatterns: [String]?
     let hardRestrictions: [String]?
     let cadence: String?
@@ -3050,6 +3068,8 @@ struct SupabaseProfileRow: Codable {
     let region: String?
     let postalCode: String?
     let deliveryNotes: String?
+    let foodPersona: String?
+    let foodGoals: [String]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -3062,8 +3082,6 @@ struct SupabaseProfileRow: Codable {
         case lastOnboardingStep = "last_onboarding_step"
         case profileJSON = "profile_json"
         case preferredName = "preferred_name"
-        case preferredCuisines = "preferred_cuisines"
-        case cuisineCountries = "cuisine_countries"
         case dietaryPatterns = "dietary_patterns"
         case hardRestrictions = "hard_restrictions"
         case cadence
@@ -3081,6 +3099,8 @@ struct SupabaseProfileRow: Codable {
         case region
         case postalCode = "postal_code"
         case deliveryNotes = "delivery_notes"
+        case foodPersona = "food_persona"
+        case foodGoals = "food_goals"
     }
 
     var decodedProfile: UserProfile? {
@@ -3088,15 +3108,16 @@ struct SupabaseProfileRow: Codable {
             return profileJSON
         }
 
-        guard let preferredCuisines,
-              let cadence,
+        // Legacy scalar fallback — reconstructs a minimal profile from dedicated
+        // columns when profile_json is absent (older rows written before the blob).
+        guard let cadence,
               let budgetPerCycle,
               let budgetWindow,
               let orderingAutonomy else {
             return nil
         }
 
-        let cuisines = preferredCuisines.compactMap(CuisinePreference.init(rawValue:))
+        let cuisines: [CuisinePreference] = UserProfile.starter.preferredCuisines
         guard !cuisines.isEmpty,
               let cadenceValue = MealCadence(rawValue: cadence),
               let budgetWindowValue = BudgetWindow(rawValue: budgetWindow),
@@ -3133,7 +3154,6 @@ struct SupabaseProfileRow: Codable {
                 deliveryNotes: deliveryNotes ?? ""
             ),
             dietaryPatterns: dietaryPatterns ?? [],
-            cuisineCountries: cuisineCountries ?? [],
             hardRestrictions: hardRestrictions ?? [],
             favoriteFoods: [],
             favoriteFlavors: [],
@@ -3144,7 +3164,9 @@ struct SupabaseProfileRow: Codable {
             budgetWindow: budgetWindowValue,
             budgetFlexibility: .slightlyFlexible,
             purchasingBehavior: .healthier,
-            orderingAutonomy: orderingAutonomyValue
+            orderingAutonomy: orderingAutonomyValue,
+            foodPersona: foodPersona ?? "",
+            foodGoals: foodGoals ?? []
         )
     }
 }
