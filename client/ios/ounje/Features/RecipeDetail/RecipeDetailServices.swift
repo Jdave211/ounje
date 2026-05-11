@@ -1058,23 +1058,47 @@ actor RecipeDetailService {
             return onboardingDetail
         }
 
-        // Race Supabase and backend — whichever responds first wins.
-        // For user-imported recipes the backend is required (auth-scoped), so
-        // fall back sequentially there to avoid sending the JWT to Supabase twice.
+        // Race Supabase and backend — take the first SUCCESSFUL result.
+        // Previous implementation used group.next()! which surfaces the first
+        // *completion* regardless of whether it was an error, so a fast auth
+        // failure from Supabase could cancel a backend call that would have won.
+        // Now we collect results until one succeeds; only throw if both fail.
         let baseDetail: RecipeDetailData
         if id.hasPrefix("uir_") {
+            // Imported recipes need auth on both paths — try Supabase first,
+            // fall back to backend. Both share the same token so a second try
+            // with a stale token is pointless; caller must pass a fresh one.
             do {
                 baseDetail = try await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)
             } catch {
                 baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
             }
         } else {
-            baseDetail = try await withThrowingTaskGroup(of: RecipeDetailData.self) { group in
-                group.addTask { try await self.fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken) }
-                group.addTask { try await self.fetchRecipeDetailFromBackend(id: id, accessToken: accessToken) }
-                let first = try await group.next()!
-                group.cancelAll()
-                return first
+            // Public recipes: race both sources; take whichever succeeds first.
+            // If the first finisher throws (e.g. transient Supabase error, flaky
+            // network), we wait for the second rather than propagating the error.
+            // Child tasks wrap their results as Result<> so the group itself never
+            // throws on child failure; the body throws only when both fail.
+            baseDetail = try await withThrowingTaskGroup(of: Result<RecipeDetailData, Error>.self) { group in
+                group.addTask {
+                    do { return .success(try await self.fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)) }
+                    catch { return .failure(error) }
+                }
+                group.addTask {
+                    do { return .success(try await self.fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)) }
+                    catch { return .failure(error) }
+                }
+                var firstError: Error?
+                while let result = try await group.next() {
+                    switch result {
+                    case .success(let detail):
+                        group.cancelAll()
+                        return detail
+                    case .failure(let error):
+                        if firstError == nil { firstError = error }
+                    }
+                }
+                throw firstError ?? SupabaseProfileStateError.invalidResponse
             }
         }
 

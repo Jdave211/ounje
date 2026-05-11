@@ -45,6 +45,7 @@ const RECIPE_WEB_REFERENCE_MODEL = process.env.RECIPE_WEB_REFERENCE_MODEL ?? "gp
 const RECIPE_FINAL_VALIDATOR_MODEL = process.env.RECIPE_FINAL_VALIDATOR_MODEL ?? RECIPE_IMPORT_COMPLETION_MODEL;
 const RECIPE_GATE_MODEL = process.env.RECIPE_GATE_MODEL ?? "gpt-5-nano";
 const PHOTO_RECIPE_VISION_MODEL = process.env.PHOTO_RECIPE_VISION_MODEL ?? RECIPE_INGESTION_MODEL;
+const PHOTO_MEAL_GATE_MODEL = process.env.PHOTO_MEAL_GATE_MODEL ?? PHOTO_RECIPE_VISION_MODEL;
 const PHOTO_RECIPE_CLEANUP_MODEL = process.env.PHOTO_RECIPE_CLEANUP_MODEL ?? RECIPE_IMPORT_COMPLETION_MODEL;
 const PHOTO_RECIPE_SONAR_MODEL = process.env.PHOTO_RECIPE_SONAR_MODEL ?? "sonar";
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY ?? "";
@@ -83,6 +84,41 @@ const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, ser
 verifyAIUsageLoggingConfiguration({ service: "recipe-ingestion" });
 let ocrWorkerPromise = null;
 let recipeImageBucketReadyPromise = null;
+
+// In-memory canonical URL cache — avoids a DB round-trip when the same URL
+// has already been imported in this process lifetime.
+const CANONICAL_IMPORT_CACHE_MAX = 500;
+const CANONICAL_IMPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const _canonicalImportCache = new Map();
+
+function _canonicalImportCacheKey(userID, canonicalURL, dedupeKey) {
+  const ns = userID ? String(userID) : "anon";
+  if (canonicalURL) return `${ns}:url:${canonicalURL}`;
+  if (dedupeKey) return `${ns}:dk:${dedupeKey}`;
+  return null;
+}
+
+function _setCanonicalImportCache(userID, canonicalURL, dedupeKey, job) {
+  const key = _canonicalImportCacheKey(userID, canonicalURL, dedupeKey);
+  if (!key || !job) return;
+  _canonicalImportCache.delete(key); // refresh insertion order for LRU
+  _canonicalImportCache.set(key, { job, cachedAt: Date.now() });
+  if (_canonicalImportCache.size > CANONICAL_IMPORT_CACHE_MAX) {
+    _canonicalImportCache.delete(_canonicalImportCache.keys().next().value);
+  }
+}
+
+function _getCanonicalImportCache(userID, canonicalURL, dedupeKey) {
+  const key = _canonicalImportCacheKey(userID, canonicalURL, dedupeKey);
+  if (!key) return null;
+  const entry = _canonicalImportCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > CANONICAL_IMPORT_CACHE_TTL_MS) {
+    _canonicalImportCache.delete(key);
+    return null;
+  }
+  return entry.job;
+}
 
 function withRecipeAIStage(operation, fn) {
   return withAIUsageContext({ operation }, fn);
@@ -2342,6 +2378,10 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
   if (!cacheableURL && !cacheDedupeKey) return null;
   if (!isCanonicalCacheableSource(request.source_type, cacheableURL ?? request.source_url)) return null;
 
+  // Fast path: in-memory cache hit (avoids DB round-trip for repeated URLs).
+  const memCached = _getCanonicalImportCache(request.user_id, cacheableURL, cacheDedupeKey);
+  if (memCached && (!excludeJobID || memCached.id !== excludeJobID)) return memCached;
+
   const userFilter = request.user_id
     ? `user_id=eq.${encodeURIComponent(request.user_id)}`
     : "user_id=is.null";
@@ -2376,7 +2416,11 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
     }
   );
 
-  return rows[0] ?? null;
+  const result = rows[0] ?? null;
+  if (result) {
+    _setCanonicalImportCache(request.user_id, cacheableURL, cacheDedupeKey, result);
+  }
+  return result;
 }
 
 async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, canonicalURL = null } = {}) {
@@ -5184,8 +5228,8 @@ async function runPhotoMealGate(imageInput, photoContext = {}) {
     };
   }
   const response = await withRecipeAIStage("recipe_import.photo_meal_gate", () => openai.chat.completions.create({
-    model: PHOTO_RECIPE_VISION_MODEL,
-    ...chatCompletionTemperatureParams(PHOTO_RECIPE_VISION_MODEL, 0),
+    model: PHOTO_MEAL_GATE_MODEL,
+    ...chatCompletionTemperatureParams(PHOTO_MEAL_GATE_MODEL, 0),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -5481,7 +5525,29 @@ async function extractPhotoRecipeSource(request) {
     };
   }
   const mealGate = await runPhotoMealGate(primaryImage, photoContext);
-  const visualAnalysis = mealGate.is_meal ? await runPhotoVisualAnalysis(primaryImage, mealGate, photoContext) : null;
+
+  let visualAnalysis = null;
+  let heroImageURL = null;
+
+  if (mealGate.is_meal) {
+    // Run visual analysis and image upload in parallel — the upload doesn't
+    // depend on analysis output; only sonar (next step) needs visualAnalysis.
+    const earlyRecipeKey = photoContext?.dish_hint ?? "photo-recipe";
+    [visualAnalysis, heroImageURL] = await Promise.all([
+      runPhotoVisualAnalysis(primaryImage, mealGate, photoContext),
+      persistPhotoRecipeHeroImage(primaryImage, {
+        recipeKey: earlyRecipeKey,
+        accessToken: request.access_token ?? null,
+      }),
+    ]);
+    heroImageURL = heroImageURL ?? sourceURL ?? null;
+  } else {
+    heroImageURL = await persistPhotoRecipeHeroImage(primaryImage, {
+      recipeKey: photoContext?.dish_hint ?? "photo-recipe",
+      accessToken: request.access_token ?? null,
+    }).catch(() => null) ?? sourceURL ?? null;
+  }
+
   const sonarContext = mealGate.is_meal
     ? await runPhotoSonarContext(visualAnalysis, photoContext, {
         source_type: "media_image",
@@ -5494,10 +5560,6 @@ async function extractPhotoRecipeSource(request) {
     ?? sonarContext?.matched_dish_name
     ?? visualAnalysis?.dish_candidates?.[0]?.name
     ?? "Photo recipe";
-  const heroImageURL = await persistPhotoRecipeHeroImage(primaryImage, {
-    recipeKey: title,
-    accessToken: request.access_token ?? null,
-  }) ?? sourceURL ?? null;
   sourceURL = sourceURL ?? heroImageURL;
   const rawText = [
     photoContext?.dish_hint ? `Dish hint: ${photoContext.dish_hint}` : null,
@@ -7289,33 +7351,23 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   const inferredDiscoverBrackets = sanitizeDiscoverBrackets(normalized, normalized.discover_brackets ?? []);
   const normalizedCategory = normalizeText(normalized.category ?? "");
 
-  const persistedHeroImageURL = await persistRecipeImageToStorage(
-    normalized.hero_image_url
-      ?? normalized.discover_card_image_url
-      ?? source.hero_image_url
-      ?? source.meta_image_url
-      ?? source.thumbnail_url
-      ?? null,
-    {
-      recipeKey: normalized.title ?? source.title ?? source.canonical_url ?? source.source_url ?? source.source_type ?? "recipe",
-      imageRole: "hero",
-      accessToken,
-    }
-  );
-  const persistedCardImageURL = await persistRecipeImageToStorage(
-    normalized.discover_card_image_url
-      ?? persistedHeroImageURL
-      ?? normalized.hero_image_url
-      ?? source.hero_image_url
-      ?? source.meta_image_url
-      ?? source.thumbnail_url
-      ?? null,
-    {
-      recipeKey: normalized.title ?? source.title ?? source.canonical_url ?? source.source_url ?? source.source_type ?? "recipe",
-      imageRole: "card",
-      accessToken,
-    }
-  );
+  const _imgRecipeKey = normalized.title ?? source.title ?? source.canonical_url ?? source.source_url ?? source.source_type ?? "recipe";
+  const _heroSrc = normalized.hero_image_url ?? normalized.discover_card_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
+  const _cardSrc = normalized.discover_card_image_url ?? normalized.hero_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
+
+  let persistedHeroImageURL, persistedCardImageURL;
+  if (_heroSrc && _cardSrc && _heroSrc !== _cardSrc) {
+    // Different source URLs — upload hero and card in parallel.
+    [persistedHeroImageURL, persistedCardImageURL] = await Promise.all([
+      persistRecipeImageToStorage(_heroSrc, { recipeKey: _imgRecipeKey, imageRole: "hero", accessToken }),
+      persistRecipeImageToStorage(_cardSrc, { recipeKey: _imgRecipeKey, imageRole: "card", accessToken }),
+    ]);
+  } else {
+    // Same source URL (or only one exists) — upload once and reuse.
+    persistedHeroImageURL = await persistRecipeImageToStorage(_heroSrc, { recipeKey: _imgRecipeKey, imageRole: "hero", accessToken });
+    persistedCardImageURL = persistedHeroImageURL;
+  }
+
   normalized = {
     ...normalized,
     hero_image_url: persistedHeroImageURL ?? normalized.hero_image_url ?? null,
@@ -7815,6 +7867,15 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       error_message: null,
     });
 
+    // Populate in-memory canonical URL cache so repeat imports of the same URL
+    // short-circuit instantly without a DB round-trip.
+    _setCanonicalImportCache(
+      existingJob.user_id,
+      requestPayload.source_url ?? existingJob.canonical_url ?? null,
+      existingJob.dedupe_key ?? null,
+      job
+    );
+
     return formatJobResponse(job, {
       recipe: persisted.recipe_card,
       recipe_detail: persisted.recipe_detail,
@@ -7888,6 +7949,7 @@ export {
   RECIPE_IMPORT_COMPLETION_MODEL,
   RECIPE_INGESTION_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
+  PHOTO_MEAL_GATE_MODEL,
   buildFinalRecipeValidationIssues,
   extractRecipeSearchSource,
   persistNormalizedRecipe,
