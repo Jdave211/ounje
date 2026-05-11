@@ -3861,6 +3861,38 @@ async function persistNormalizedRecipe(
 
     await insertRecipeTableRow(tableConfig.recipeTable, recipeArtifacts.recipe_row);
 
+    // Generate and persist a basic embedding for user-imported recipes so
+    // similar-recipe matching can surface them alongside public catalog results.
+    if (userID && openai) {
+      const recipeRow = recipeArtifacts.recipe_row;
+      const embeddingInput = [
+        `title: ${normalizeText(recipeRow.title ?? "", 240)}`,
+        `description: ${normalizeText(recipeRow.description ?? "", 600)}`,
+        `recipe_type: ${normalizeText(recipeRow.recipe_type ?? recipeRow.category ?? "", 80)}`,
+        `main_protein: ${normalizeText(recipeRow.main_protein ?? "", 80)}`,
+        `cuisine_tags: ${(recipeRow.cuisine_tags ?? []).join(", ")}`,
+        `dietary_tags: ${(recipeRow.dietary_tags ?? []).join(", ")}`,
+        `flavor_tags: ${(recipeRow.flavor_tags ?? []).join(", ")}`,
+        `ingredients: ${normalizeText(recipeRow.ingredients_text ?? "", 1600)}`,
+      ].join("\n");
+
+      openai.embeddings.create({ model: "text-embedding-3-small", input: embeddingInput })
+        .then(async (resp) => {
+          const vector = resp.data?.[0]?.embedding;
+          if (!Array.isArray(vector) || vector.length === 0) return;
+          const vectorLiteral = `[${vector.join(",")}]`;
+          await patchRows(
+            tableConfig.recipeTable,
+            [`id=eq.${encodeURIComponent(recipeArtifacts.recipe_id)}`],
+            { embedding_basic: vectorLiteral },
+            { prefer: "return=minimal" }
+          );
+        })
+        .catch((embeddingError) => {
+          console.warn("[recipe-ingestion] user-import embedding failed:", embeddingError.message);
+        });
+    }
+
     if (recipeArtifacts.recipe_ingredients.length) {
       await insertRows(tableConfig.ingredientTable, recipeArtifacts.recipe_ingredients, {
         prefer: "return=minimal",

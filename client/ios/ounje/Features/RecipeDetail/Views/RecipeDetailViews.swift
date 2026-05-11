@@ -3919,7 +3919,7 @@ private struct RecipeAdaptedPreviewArtwork: View {
                     .scaledToFill()
             } else if loader.isLoading {
                 ProgressView()
-                    .tint(OunjePalette.accent)
+                    .tint(.white.opacity(0.72))
                     .scaleEffect(0.78)
             } else {
                 OunjePalette.elevated

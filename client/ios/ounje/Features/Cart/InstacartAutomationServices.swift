@@ -1,5 +1,10 @@
 import Foundation
 
+/// Thrown when the server returns 409 because an Instacart run is already
+/// queued or running for this user. The caller should refresh tracking state
+/// instead of treating it as a real error.
+struct InstacartRunAlreadyInProgressError: Error {}
+
 struct InstacartRunLogsListResponse: Codable {
     let items: [InstacartRunLogSummary]
     let total: Int
@@ -1098,6 +1103,13 @@ final class InstacartAutomationAPIService {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
+            // 409 means a run is already in progress for this user's account —
+            // not an error from the client's perspective, just a signal to reload.
+            if httpResponse.statusCode == 409,
+               let body = try? JSONDecoder().decode([String: String].self, from: data),
+               body["code"] == "instacart_run_in_progress" {
+                throw InstacartRunAlreadyInProgressError()
+            }
             let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             throw RecipeImportServiceError.requestFailed(
                 errorPayload?.message ?? errorPayload?.error ?? "Instacart run failed (\(httpResponse.statusCode))."

@@ -104,9 +104,14 @@ struct RootView: View {
                     await store.refreshLiveTrackingState()
                 }
                 await notificationCenter.syncForCurrentSession(session)
+
+                // Poll faster while a job is queued-but-not-yet-running so we
+                // detect worker pickup (or a stale job) within a few seconds.
+                let hasQueuedJob = store.latestInstacartRun?.normalizedStatusKind == "queued"
+                    || store.latestInstacartRun?.normalizedRetryState == "queued"
                 let sleepInterval: UInt64 = realtimeCoordinator.isRunning
-                    ? (store.hasLiveInstacartActivity ? 15_000_000_000 : 90_000_000_000)
-                    : (store.hasLiveInstacartActivity ? 8_000_000_000 : 30_000_000_000)
+                    ? (hasQueuedJob ? 7_000_000_000 : (store.hasLiveInstacartActivity ? 15_000_000_000 : 90_000_000_000))
+                    : (hasQueuedJob ? 5_000_000_000 : (store.hasLiveInstacartActivity ? 8_000_000_000 : 30_000_000_000))
                 try? await Task.sleep(nanoseconds: sleepInterval)
             }
         }
@@ -2125,13 +2130,18 @@ private struct MealPlannerShellView: View {
     private func prewarmBaseDiscoverFeed() async {
         guard discoverSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         discoverRecipesViewModel.updateFeedbackRevision(discoverFeedbackRevision)
-        await discoverEnvironmentModel.refresh(profile: store.profile)
+
+        // Fire the feed load immediately with whatever context is already available —
+        // don't wait for the weather round-trip. Weather refresh runs in parallel
+        // and will update the context afterwards, but the feed is already loading.
+        async let environmentRefresh: Void = discoverEnvironmentModel.refresh(profile: store.profile)
         await discoverRecipesViewModel.loadIfNeeded(
             profile: store.profile,
             query: "",
             feedContext: discoverEnvironmentModel.feedContext,
             behaviorSeeds: []
         )
+        await environmentRefresh
     }
 
     private func presentRecipeDetail(_ recipe: PresentedRecipeDetail) {

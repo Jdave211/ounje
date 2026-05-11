@@ -2338,6 +2338,13 @@ struct PrepTrackerCard: View {
         let retryState = store.latestInstacartRun?.normalizedRetryState ?? ""
         let orderStatus = store.latestGroceryOrder?.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
 
+        // A job stuck in "queued" for >90 s without worker pickup shows as an error
+        // so the user knows something needs attention rather than waiting silently.
+        let snapshot = self.snapshot
+        if snapshot.isJobStuck {
+            return .error
+        }
+
         if store.isManualAutoshopRunning || ["queued", "running"].contains(runStatus) || ["queued", "running"].contains(retryState) {
             return .running
         }
@@ -2568,6 +2575,20 @@ struct PrepDeliverySnapshot {
         return (value?.isEmpty == false) ? value : nil
     }
 
+    /// True when a queued job hasn't been picked up by the worker within a reasonable window.
+    /// The automation_worker idle sleep is 5 s; 90 s is generous enough to survive any
+    /// brief worker restart, but short enough that users don't wait silently for too long.
+    var isJobStuck: Bool {
+        guard let run = latestRun,
+              run.normalizedStatusKind == "queued" || run.normalizedRetryState == "queued"
+        else { return false }
+        let anchor = run.latestEventAt ?? run.startedAt ?? ""
+        guard let anchorDate = Self.iso8601.date(from: anchor) else { return false }
+        return Date().timeIntervalSince(anchorDate) > 90
+    }
+
+    private static let iso8601 = ISO8601DateFormatter()
+
     private var hasStoreSelection: Bool {
         sanitizedInstacartStoreName(quote?.selectedStore?.storeName) != nil
             || sanitizedInstacartStoreName(latestRun?.selectedStore) != nil
@@ -2778,13 +2799,16 @@ struct PrepDeliverySnapshot {
             return "Queued for setup"
         case .matchingToInstacart:
             if normalizedRunStatus == "running" || normalizedRunStatus == "queued" {
-                return hasReachedConfirmationWindow ? "Confirming Instacart cart" : "Building Instacart cart"
+                if isJobStuck { return "Waiting for worker — taking longer than expected" }
+                // Show the live event title from the server so the user sees real progress.
+                let baseLabel = hasReachedConfirmationWindow ? "Confirming Instacart cart" : "Building Instacart cart"
+                return latestRunEventTitle ?? baseLabel
             }
             return "Matching to Instacart"
         case .selectingStore:
-            return "Selecting store"
+            return latestRunEventTitle ?? "Selecting store"
         case .finalizingGroceries:
-            return "Working on your cart"
+            return latestRunEventTitle ?? "Working on your cart"
         case .checkoutReady:
             return "Checkout is ready"
         case .waitingForDelivery:

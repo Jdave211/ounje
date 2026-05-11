@@ -1131,6 +1131,10 @@ struct DiscoverFeedContext: Encodable {
     }
 
     var cacheKey: String {
+        // Deliberately excludes weather fields (weatherSummary, weatherMood, temperatureBand,
+        // sweetTreatBias) — weather is sent in the server request body for ranking but should
+        // not bust the client-side cache, which would cause a redundant second fetch every time
+        // the weather resolves after the initial prewarm.
         [
             windowKey,
             weekday,
@@ -1138,11 +1142,7 @@ struct DiscoverFeedContext: Encodable {
             isWeekend ? "weekend" : "weekday",
             locationLabel ?? "",
             regionCode ?? "",
-            weatherSummary ?? "",
-            weatherMood ?? "",
-            temperatureBand ?? "",
             seasonCue ?? "",
-            String(format: "%.2f", sweetTreatBias)
         ].joined(separator: "|")
     }
 

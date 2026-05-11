@@ -14,6 +14,7 @@ import {
   persistInstacartRunLog,
 } from "../../lib/instacart-run-logs.js";
 import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
+import { createNotificationEvent } from "../../lib/notification-events.js";
 
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
@@ -862,6 +863,45 @@ export async function executeInstacartAutomationJob(job, { logger = console } = 
     });
   }
 
+  // Push a notification so the user is informed even when the app is backgrounded.
+  const isRetry = Boolean(retryContext?.rootRunID);
+  const runResultForNotif = { ...result, runId: result?.runId ?? runID };
+  if (runResultForNotif.success) {
+    const resolvedCount = resolvedItems.length - (result?.unresolvedItems?.length ?? 0);
+    await createNotificationEvent({
+      userId: userID,
+      kind: "grocery_cart_ready",
+      dedupeKey: `grocery-cart-ready-${runID}`,
+      title: isRetry ? "Instacart cart updated" : "Instacart cart is ready",
+      body: resolvedCount > 0
+        ? `${resolvedCount} of ${resolvedItems.length} items were added to your cart.`
+        : "Your grocery cart is ready for checkout.",
+      actionUrl: result?.cartUrl ?? null,
+      actionLabel: result?.cartUrl ? "Open cart" : null,
+      orderId: groceryOrderID ?? null,
+      planId: mealPlanID ?? null,
+      metadata: { runId: runID, resolvedCount, totalCount: resolvedItems.length },
+    }).catch((error) => {
+      logger.warn?.("[instacart/worker] cart-ready notification failed:", error.message);
+    });
+  } else if (result?.partialSuccess) {
+    const addedCount = result?.addedItems?.length ?? 0;
+    await createNotificationEvent({
+      userId: userID,
+      kind: "grocery_cart_partial",
+      dedupeKey: `grocery-cart-partial-${runID}`,
+      title: "Most items added — a few need attention",
+      body: addedCount > 0
+        ? `${addedCount} items added. Ounje is retrying the rest.`
+        : "Some items couldn't be matched. Ounje is retrying.",
+      orderId: groceryOrderID ?? null,
+      planId: mealPlanID ?? null,
+      metadata: { runId: runID, addedCount, totalCount: resolvedItems.length },
+    }).catch((error) => {
+      logger.warn?.("[instacart/worker] partial-cart notification failed:", error.message);
+    });
+  }
+
   return {
     ...result,
     runId: result?.runId ?? runID,
@@ -1043,6 +1083,32 @@ router.post("/instacart/runs", async (req, res) => {
         error: "Autoshop requires manual start",
         code: "autoshop_manual_start_required",
       });
+    }
+
+    // Reject duplicate runs: if this user already has a queued or running
+    // instacart_run job, return 409 so the client can surface the existing run
+    // rather than enqueue a second one that would conflict on the same cart.
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && !retryContext?.rootRunID) {
+      const dedupClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const { data: activeJobs } = await dedupClient
+        .from("automation_jobs")
+        .select("id,status,run_id,created_at")
+        .eq("user_id", userID)
+        .eq("kind", "instacart_run")
+        .in("status", ["queued", "running"])
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (activeJobs?.length) {
+        const existing = activeJobs[0];
+        return res.status(409).json({
+          error: "A cart run is already in progress for this account",
+          code: "instacart_run_in_progress",
+          existingJobId: existing.id,
+          existingRunId: existing.run_id ?? null,
+          existingStatus: existing.status,
+        });
+      }
     }
 
     const normalizedItems = normalizeIncomingItems(items);

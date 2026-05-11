@@ -821,11 +821,20 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
     }
 
     let accessToken = null;
+    let resolvedUserID = null;
     if (recipeId.startsWith("uir_")) {
       try {
-        ({ accessToken } = await resolveAuthorizedUserID(req));
+        ({ accessToken, userID: resolvedUserID } = await resolveAuthorizedUserID(req));
       } catch (error) {
         return sendAuthError(res, error, "recipe/detail/similar");
+      }
+    } else {
+      // Optional auth — allows surfacing the user's own imports as similar results
+      // on public recipe pages without requiring authentication.
+      try {
+        ({ accessToken, userID: resolvedUserID } = await resolveAuthorizedUserID(req));
+      } catch {
+        // Unauthenticated is fine for public recipe similar lookups.
       }
     }
 
@@ -891,10 +900,22 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
     ]).join(", ");
 
     const embedding = await embedTextCached(semanticQuery, "text-embedding-3-small");
-    const semanticMatches = await callRecipeRpc("match_recipes_basic", {
-      query_embedding: toPgVector(embedding),
-      match_count: 32,
-    });
+
+    // Run public catalog search and (when authenticated) user-import search in parallel.
+    const [semanticMatches, importMatches] = await Promise.all([
+      callRecipeRpc("match_recipes_basic", {
+        query_embedding: toPgVector(embedding),
+        match_count: 32,
+      }).catch(() => []),
+      resolvedUserID
+        ? callRecipeRpc("match_user_import_recipes_basic", {
+            p_user_id: resolvedUserID,
+            query_embedding: toPgVector(embedding),
+            match_count: Math.min(limit + 2, 6),
+            exclude_id: recipeId,
+          }).catch(() => [])
+        : Promise.resolve([]),
+    ]);
 
     const candidateIDs = [...new Set(
       (semanticMatches ?? [])
@@ -902,16 +923,40 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
         .filter((id) => id && id !== recipeId)
     )];
 
-    if (!candidateIDs.length) {
+    // Normalise user-import matches (they have text id, not uuid) so the
+    // scoring loop below can handle them alongside public catalog rows.
+    const importCandidates = (importMatches ?? [])
+      .map((match, index) => ({
+        id: String(match.id ?? ""),
+        title: match.title ?? "",
+        description: match.description ?? "",
+        recipe_type: match.recipe_type ?? "",
+        hero_image_url: match.hero_image_url ?? null,
+        discover_card_image_url: null,
+        cook_time_minutes: match.cook_time_minutes ?? null,
+        calories_kcal: match.calories_kcal ?? null,
+        main_protein: match.main_protein ?? "",
+        cuisine_tags: match.cuisine_tags ?? [],
+        dietary_tags: match.dietary_tags ?? [],
+        flavor_tags: [],
+        occasion_tags: [],
+        // Treat import similarity as a semantic rank for the scoring step.
+        _importRank: index,
+        _importSimilarity: Number(match.similarity ?? 0),
+      }));
+
+    if (!candidateIDs.length && !importCandidates.length) {
       const fallback = await fallbackSimilarRecipeCards({ detail, recipeId, limit });
       return res.json({ recipes: fallback, rankingMode: "similar_fallback_contextual_empty_semantic" });
     }
 
-    const candidates = await fetchRecipesByIds(candidateIDs.slice(0, 24));
+    const publicCandidates = await fetchRecipesByIds(candidateIDs.slice(0, 24));
+    const candidates = [...publicCandidates, ...importCandidates];
     const normalizedIngredientSet = new Set(
       ingredientNames.map((name) => normalizeSearchName(name)).filter(Boolean)
     );
 
+    const publicCandidatesTotal = Math.max(publicCandidates.length, 1);
     const scored = candidates
       .filter((candidate) => String(candidate.id) !== recipeId)
       .map((candidate, index) => {
@@ -929,7 +974,11 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
         const proteinOverlap = normalizeSearchName(candidate.main_protein) === normalizeSearchName(detail.main_protein)
           ? 1
           : 0;
-        const semanticScore = Number(candidateIDs.length - index) / candidateIDs.length;
+        // Use direct cosine similarity for user-imports, rank-based score for public catalog.
+        const isImport = "_importSimilarity" in candidate;
+        const semanticScore = isImport
+          ? Number(candidate._importSimilarity ?? 0)
+          : Number(publicCandidatesTotal - index) / publicCandidatesTotal;
 
         return {
           recipe: candidate,

@@ -105,6 +105,9 @@ final class MealPlanningAppStore: ObservableObject {
     private var prepRecipeOverrides: [PrepRecipeOverride] = []
     private var latestPlanArtifactRefreshTask: Task<Void, Never>?
     private var recurringPrepToggleRecipeIDs = Set<String>()
+    /// Guard against two concurrent calls to maybeStartInstacartRunIfNeeded
+    /// (e.g., realtime event + background poll arriving within the same second).
+    private var isAutoshopRunInFlight = false
 
     private let authSessionKey = "agentic-auth-session-v1"
     private let onboardedKey = "agentic-onboarded-v1"
@@ -2398,8 +2401,10 @@ final class MealPlanningAppStore: ObservableObject {
         guard !hasBlockingInstacartActivity else { return }
 
         if pendingCartSyncIntent != nil {
-            pendingCartSyncIntent = nil
-            savePendingCartSyncIntentCache()
+            // Forward to maybeStartInstacartRunIfNeeded with force=true — it reads
+            // hasPendingCartSyncIntent and handles deduplication itself. Do NOT clear
+            // the intent here; maybeStartInstacartRunIfNeeded clears it on success.
+            await maybeStartInstacartRunIfNeeded(trigger: "pending_sync_intent", force: true)
             return
         }
 
@@ -2660,6 +2665,11 @@ final class MealPlanningAppStore: ObservableObject {
         allowPlanRepair: Bool = true
     ) async {
         guard !isAutoshopManualBetaOnly else { return }
+        // Prevent two concurrent auto-run attempts from racing through the same
+        // guard checks before either one has updated latestInstacartRun.
+        guard !isAutoshopRunInFlight else { return }
+        isAutoshopRunInFlight = true
+        defer { isAutoshopRunInFlight = false }
         if let latestPlanArtifactRefreshTask {
             await latestPlanArtifactRefreshTask.value
         }
@@ -2782,6 +2792,11 @@ final class MealPlanningAppStore: ObservableObject {
                 session: session
             )
             await emitLifecycleNotificationsIfNeeded(trigger: needsConfirmationPass ? "confirmation_run_started" : (force ? "manual_rerun_started" : "instacart_run_started"))
+        } catch is InstacartRunAlreadyInProgressError {
+            // Server says a run is already queued/running — not an error.
+            // Refresh tracking state so the client reflects the existing run.
+            await loadLatestInstacartRun()
+            await loadLatestGroceryOrder()
         } catch {
             automationState = updatedAutomationState {
                 $0.autoshopEnabled = profile.isAutoshopOptedIn
