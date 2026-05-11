@@ -7257,6 +7257,73 @@ async function repairSparseImportedRecipe(normalizedRecipe, source) {
     : normalizedRecipe;
 }
 
+// Lightweight macro estimation — runs only when all four macros are still null
+// after the main synthesis passes. Uses a small, cheap model focused solely on
+// estimating per-serving calories/protein/carbs/fat from the finalized ingredient list.
+async function maybeFillMissingMacros(normalizedRecipe) {
+  const alreadyHas =
+    Number.isFinite(normalizedRecipe.calories_kcal)
+    || Number.isFinite(normalizedRecipe.protein_g)
+    || Number.isFinite(normalizedRecipe.carbs_g)
+    || Number.isFinite(normalizedRecipe.fat_g);
+  if (alreadyHas || !openai) return normalizedRecipe;
+
+  const ingredients = Array.isArray(normalizedRecipe.ingredients) ? normalizedRecipe.ingredients : [];
+  if (ingredients.length < 2) return normalizedRecipe;
+
+  const ingredientSummary = ingredients
+    .map((i) => [i.quantity_text, i.display_name].filter(Boolean).join(" "))
+    .filter(Boolean)
+    .join(", ");
+
+  const context = [
+    `Title: ${normalizedRecipe.title ?? "Recipe"}`,
+    normalizedRecipe.servings_text ? `Servings: ${normalizedRecipe.servings_text}` : null,
+    Number.isFinite(normalizedRecipe.servings_count) ? `Serving count: ${normalizedRecipe.servings_count}` : null,
+    `Ingredients: ${ingredientSummary}`,
+    normalizedRecipe.category ? `Category: ${normalizedRecipe.category}` : null,
+    normalizedRecipe.recipe_type ? `Type: ${normalizedRecipe.recipe_type}` : null,
+  ].filter(Boolean).join("\n");
+
+  try {
+    const response = await withRecipeAIStage("recipe_import.macro_fill", () => openai.chat.completions.create({
+      model: RECIPE_IMPORT_COMPLETION_MODEL,
+      ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0),
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are a nutrition estimator. Given a recipe title and ingredient list, estimate conservative per-serving macros.",
+            "Return realistic estimates for app display — not lab-accurate.",
+            "Return JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (e.g. '420 kcal per serving').",
+            "If the recipe is too vague to estimate any single field, return null for that field only.",
+            "Do NOT return null for all fields unless the recipe is completely unintelligible.",
+          ].join("\n"),
+        },
+        { role: "user", content: context },
+      ],
+    }));
+    const parsed = JSON.parse(response.choices?.[0]?.message?.content ?? "{}");
+    const caloriesKcal = Number.isFinite(Number(parsed?.calories_kcal)) ? Number(parsed.calories_kcal) : null;
+    const proteinG = Number.isFinite(Number(parsed?.protein_g)) ? Number(parsed.protein_g) : null;
+    const carbsG = Number.isFinite(Number(parsed?.carbs_g)) ? Number(parsed.carbs_g) : null;
+    const fatG = Number.isFinite(Number(parsed?.fat_g)) ? Number(parsed.fat_g) : null;
+    const estCaloriesText = typeof parsed?.est_calories_text === "string" ? parsed.est_calories_text.trim() : null;
+    if (caloriesKcal == null && proteinG == null && carbsG == null && fatG == null) return normalizedRecipe;
+    return {
+      ...normalizedRecipe,
+      calories_kcal: normalizedRecipe.calories_kcal ?? caloriesKcal,
+      protein_g: normalizedRecipe.protein_g ?? proteinG,
+      carbs_g: normalizedRecipe.carbs_g ?? carbsG,
+      fat_g: normalizedRecipe.fat_g ?? fatG,
+      est_calories_text: normalizedRecipe.est_calories_text ?? estCaloriesText,
+    };
+  } catch {
+    return normalizedRecipe;
+  }
+}
+
 async function buildNormalizedRecipe(source, { accessToken = null, jobID = null } = {}) {
   const directStructured = source.structured_recipe
     ? coerceStructuredRecipeCandidate(
@@ -7348,6 +7415,9 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     modelResult.review_reason = finalValidation.review_reason ?? modelResult.review_reason ?? null;
   }
 
+  // Estimate macros if still missing after all enrichment passes.
+  normalized = await maybeFillMissingMacros(normalized);
+
   const inferredDiscoverBrackets = sanitizeDiscoverBrackets(normalized, normalized.discover_brackets ?? []);
   const normalizedCategory = normalizeText(normalized.category ?? "");
 
@@ -7373,6 +7443,26 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     hero_image_url: persistedHeroImageURL ?? normalized.hero_image_url ?? null,
     discover_card_image_url: persistedCardImageURL ?? persistedHeroImageURL ?? normalized.discover_card_image_url ?? null,
   };
+
+  // When the import still has no image (scraping couldn't extract one),
+  // fall back to the most visually similar recipe already in the catalog.
+  // This is a free DB lookup — no generation, no upload, no API cost.
+  if (!normalized.hero_image_url && !normalized.discover_card_image_url) {
+    try {
+      const refRecipe = await fetchRecipeImageReference(normalized);
+      const refImageURL = cleanURL(refRecipe?.hero_image_url ?? refRecipe?.discover_card_image_url ?? null);
+      if (refImageURL) {
+        normalized = {
+          ...normalized,
+          hero_image_url: refImageURL,
+          discover_card_image_url: refImageURL,
+        };
+        modelResult.quality_flags = uniqueStrings([...(modelResult.quality_flags ?? []), "reference_image_fallback"]);
+      }
+    } catch {
+      // Non-fatal — continue without image.
+    }
+  }
 
   if (isOunjeGeneratedSourceType(source.source_type)) {
     const shouldReplaceCategory = !normalizedCategory || ["concept_prompt", "direct_input", "text", "custom", "ounje"].includes(normalizedCategory.toLowerCase());

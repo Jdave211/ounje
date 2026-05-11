@@ -884,6 +884,7 @@ final class RecipeDetailViewModel: ObservableObject {
             let fallbackID = similarFallbackRecipeID ?? (fetchedDetail.id == recipeID ? nil : recipeID)
             scheduleSimilarRecipesLoad(for: fetchedDetail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
             scheduleMacroEnrichmentIfNeeded(for: fetchedDetail, accessToken: accessToken)
+            scheduleImageEnrichmentIfNeeded(for: fetchedDetail, accessToken: accessToken)
         } catch {
             similarRecipes = []
             hasLoadedSimilarRecipes = false
@@ -892,10 +893,11 @@ final class RecipeDetailViewModel: ObservableObject {
     }
 
     private func scheduleMacroEnrichmentIfNeeded(for fetchedDetail: RecipeDetailData, accessToken: String?) {
+        // Run if ANY macro is missing (not just all-null) so partial data gets filled.
         let missingMacros = fetchedDetail.caloriesKcal == nil
-            && fetchedDetail.proteinG == nil
-            && fetchedDetail.carbsG == nil
-            && fetchedDetail.fatG == nil
+            || fetchedDetail.proteinG == nil
+            || fetchedDetail.carbsG == nil
+            || fetchedDetail.fatG == nil
         guard missingMacros else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -946,6 +948,43 @@ final class RecipeDetailViewModel: ObservableObject {
                 ingredients: current.ingredients,
                 steps: current.steps,
                 servingsCount: current.servingsCount
+            )
+        }
+    }
+
+    private func scheduleImageEnrichmentIfNeeded(for fetchedDetail: RecipeDetailData, accessToken: String?) {
+        // Only run for imported recipes with no hero image.
+        guard fetchedDetail.id.hasPrefix("uir_"),
+              fetchedDetail.heroImageURLString == nil || fetchedDetail.heroImageURLString?.isEmpty == true else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let enriched = await RecipeDetailService.shared.enrichImage(for: fetchedDetail.id, accessToken: accessToken),
+                  let heroURL = enriched.heroImageURLString, !heroURL.isEmpty else { return }
+            guard let current = self.detail, current.id == fetchedDetail.id else { return }
+            self.detail = RecipeDetailData(
+                id: current.id, title: current.title, description: current.description,
+                authorName: current.authorName, authorHandle: current.authorHandle,
+                authorURLString: current.authorURLString, source: current.source,
+                sourcePlatform: current.sourcePlatform, category: current.category,
+                subcategory: current.subcategory, recipeType: current.recipeType,
+                skillLevel: current.skillLevel, cookTimeText: current.cookTimeText,
+                servingsText: current.servingsText, servingSizeText: current.servingSizeText,
+                dailyDietText: current.dailyDietText, estCostText: current.estCostText,
+                estCaloriesText: current.estCaloriesText, carbsText: current.carbsText,
+                proteinText: current.proteinText, fatsText: current.fatsText,
+                caloriesKcal: current.caloriesKcal, proteinG: current.proteinG,
+                carbsG: current.carbsG, fatG: current.fatG,
+                prepTimeMinutes: current.prepTimeMinutes, cookTimeMinutes: current.cookTimeMinutes,
+                heroImageURLString: enriched.heroImageURLString ?? current.heroImageURLString,
+                discoverCardImageURLString: enriched.discoverCardImageURLString ?? enriched.heroImageURLString ?? current.discoverCardImageURLString,
+                recipeURLString: current.recipeURLString, originalRecipeURLString: current.originalRecipeURLString,
+                attachedVideoURLString: current.attachedVideoURLString, detailFootnote: current.detailFootnote,
+                imageCaption: current.imageCaption, sourcePlatformDisplayName: current.sourcePlatformDisplayName,
+                dietaryTags: current.dietaryTags, flavorTags: current.flavorTags,
+                cuisineTags: current.cuisineTags, occasionTags: current.occasionTags,
+                mainProtein: current.mainProtein, cookMethod: current.cookMethod,
+                publishedDate: current.publishedDate, discoverBrackets: current.discoverBrackets,
+                ingredients: current.ingredients, steps: current.steps, servingsCount: current.servingsCount
             )
         }
     }
@@ -1038,6 +1077,18 @@ struct RecipeMacroEnrichmentResult: Decodable {
         case carbsG = "carbs_g"
         case fatG = "fat_g"
         case estCaloriesText = "est_calories_text"
+        case cached
+    }
+}
+
+struct RecipeImageEnrichmentResult: Decodable {
+    let heroImageURLString: String?
+    let discoverCardImageURLString: String?
+    let cached: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case heroImageURLString = "hero_image_url"
+        case discoverCardImageURLString = "discover_card_image_url"
         case cached
     }
 }
@@ -1306,6 +1357,23 @@ actor RecipeDetailService {
                   let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode) else { continue }
             return try? JSONDecoder().decode(RecipeMacroEnrichmentResult.self, from: data)
+        }
+        return nil
+    }
+
+    func enrichImage(for recipeID: String, accessToken: String? = nil) async -> RecipeImageEnrichmentResult? {
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            guard let url = URL(string: "\(baseURL)/v1/recipe/\(recipeID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? recipeID)/enrich-image") else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 30
+            if let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode) else { continue }
+            return try? JSONDecoder().decode(RecipeImageEnrichmentResult.self, from: data)
         }
         return nil
     }

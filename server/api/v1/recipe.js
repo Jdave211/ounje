@@ -19,9 +19,11 @@ import {
 import {
   fetchRecipeIngestionJob,
   listCompletedRecipeImportItems,
+  maybeGenerateImportedRecipeImage,
   persistNormalizedRecipe,
   processRecipeIngestionJob,
   queueRecipeIngestion,
+  RECIPE_IMPORT_COMPLETION_MODEL,
 } from "../../lib/recipe-ingestion.js";
 import {
   attachDiscoverBrackets,
@@ -7641,17 +7643,18 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
       return res.status(404).json({ error: "Recipe not found." });
     }
 
-    const alreadyHasMacros =
-      recipe.calories_kcal != null ||
-      recipe.protein_g != null ||
-      recipe.carbs_g != null ||
-      recipe.fat_g != null;
-    if (alreadyHasMacros) {
+    // Already has all four macros — skip.
+    const hasAllMacros =
+      recipe.calories_kcal != null
+      && recipe.protein_g != null
+      && recipe.carbs_g != null
+      && recipe.fat_g != null;
+    if (hasAllMacros) {
       return res.json({
-        calories_kcal: recipe.calories_kcal ?? null,
-        protein_g: recipe.protein_g ?? null,
-        carbs_g: recipe.carbs_g ?? null,
-        fat_g: recipe.fat_g ?? null,
+        calories_kcal: recipe.calories_kcal,
+        protein_g: recipe.protein_g,
+        carbs_g: recipe.carbs_g,
+        fat_g: recipe.fat_g,
         est_calories_text: recipe.est_calories_text ?? null,
         cached: true,
       });
@@ -7670,11 +7673,15 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
       ingredientSummary ? `Ingredients: ${ingredientSummary}` : null,
       recipe.recipe_type ? `Type: ${recipe.recipe_type}` : null,
       recipe.category ? `Category: ${recipe.category}` : null,
+      // Pass any already-known macros so the model fills only what's missing.
+      recipe.calories_kcal != null ? `Known calories_kcal: ${recipe.calories_kcal}` : null,
+      recipe.protein_g != null ? `Known protein_g: ${recipe.protein_g}` : null,
+      recipe.carbs_g != null ? `Known carbs_g: ${recipe.carbs_g}` : null,
+      recipe.fat_g != null ? `Known fat_g: ${recipe.fat_g}` : null,
     ].filter(Boolean).join("\n");
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
+      model: RECIPE_IMPORT_COMPLETION_MODEL,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -7682,8 +7689,9 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
           content: [
             "You are a nutrition estimator. Estimate per-serving macros for a recipe based on its title and ingredient list.",
             "Return conservative, realistic estimates — not lab-accurate, but reasonable for app display.",
-            "Return only valid JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (string like '420 kcal').",
-            "If you truly cannot estimate (e.g., too vague), return null for all fields.",
+            "If 'Known' values are supplied for a field, return those exact values unchanged.",
+            "Return only valid JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (string like '420 kcal per serving').",
+            "If you truly cannot estimate a field, return null for that field only.",
           ].join("\n"),
         },
         {
@@ -7722,6 +7730,47 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
     });
   } catch (error) {
     console.error("[recipe/enrich-macros] failed:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// Backfill a missing hero/card image for an imported recipe.
+// Tries: (1) persist the source URL already on the recipe, (2) reference catalog
+// image lookup, (3) AI image generation (if enabled). Patches the DB row.
+recipe_router.post("/recipe/:id/enrich-image", async (req, res) => {
+  const recipeId = String(req.params.id ?? "").trim();
+  if (!recipeId) return res.status(400).json({ error: "Recipe ID is required." });
+
+  try {
+    let accessToken = null;
+    try { ({ accessToken } = await resolveAuthorizedUserID(req)); } catch {}
+
+    const recipe = await fetchRecipeById(recipeId, accessToken);
+    if (!recipe) return res.status(404).json({ error: "Recipe not found." });
+
+    const currentHero = cleanURL(recipe.hero_image_url ?? recipe.discover_card_image_url ?? null);
+    if (currentHero) {
+      return res.json({ hero_image_url: currentHero, discover_card_image_url: currentHero, cached: true });
+    }
+
+    const generated = await maybeGenerateImportedRecipeImage(recipe, {}, { accessToken });
+    const heroURL = generated?.hero_image_url ?? null;
+    const cardURL = generated?.discover_card_image_url ?? heroURL ?? null;
+
+    if (heroURL) {
+      await patchRecipeRow(recipeId, {
+        hero_image_url: heroURL,
+        discover_card_image_url: cardURL ?? heroURL,
+      }).catch((err) => console.warn("[recipe/enrich-image] DB patch failed:", err.message));
+    }
+
+    return res.json({
+      hero_image_url: heroURL,
+      discover_card_image_url: cardURL,
+      cached: false,
+    });
+  } catch (error) {
+    console.error("[recipe/enrich-image] failed:", error.message);
     return res.status(500).json({ error: error.message });
   }
 });
