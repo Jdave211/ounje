@@ -190,7 +190,17 @@ final class SavedRecipesStore: ObservableObject {
         }
     }
 
-    func saveImportedRecipe(_ recipe: DiscoverRecipeCardData, showToast: Bool = true) {
+    /// Saves an imported recipe. When `respectUnsave` is true (the default for
+    /// background auto-sync) the call is silently skipped if the user has
+    /// explicitly unsaved this recipe, so the tombstone is never cleared by a
+    /// background job re-syncing historical imports.
+    /// Pass `respectUnsave: false` only when the user directly triggers the import.
+    func saveImportedRecipe(
+        _ recipe: DiscoverRecipeCardData,
+        showToast: Bool = true,
+        respectUnsave: Bool = false
+    ) {
+        if respectUnsave, deletedSavedRecipeIDs.contains(recipe.id) { return }
         let existing = savedRecipes.first(where: { $0.id == recipe.id })
         let resolved = mergeRecipeCards(primary: recipe, fallback: existing)
         deletedSavedRecipeIDs.remove(recipe.id)

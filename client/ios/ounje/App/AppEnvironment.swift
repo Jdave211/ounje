@@ -602,17 +602,15 @@ final class MealPlanningAppStore: ObservableObject {
 
             isRefreshingPrepRecipes = true
 
-            // Fire independent prep-data loads in parallel with the main plan load.
-            // Each writes to a distinct property, so concurrent writes are safe.
-            async let completedCyclesLoad: Void = loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            // Critical path: only the loads whose results gate the planner shell.
+            // • overrides + recurring: needed before the prep carousel renders.
+            // • loadMealPrepCycles: sets latestPlan which gates shouldHoldPlannerSplash.
+            // Everything else moves to the background tail below.
             async let overridesLoad: Void = loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
             async let recurringLoad: Void = loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
-            async let automationLoad: Void = loadAutomationState(userID: session.userID, accessToken: session.accessToken)
             let remotePlanLoadState = await loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
-            _ = await completedCyclesLoad
             _ = await overridesLoad
             _ = await recurringLoad
-            _ = await automationLoad
 
             guard authStateRevision == bootstrapRevision else { return }
             if latestPlan?.recipes.isEmpty == false {
@@ -621,34 +619,42 @@ final class MealPlanningAppStore: ObservableObject {
             await repairRemotePrepStateIfNeeded(session: session, remotePlanLoadState: remotePlanLoadState)
             guard authStateRevision == bootstrapRevision else { return }
             await reconcileLatestPlanWithPrepOverrides()
-            guard authStateRevision == bootstrapRevision else { return }
-            await repairRemoteCartStateIfNeeded(session: session)
-            guard authStateRevision == bootstrapRevision else { return }
-            if let latestPlan, !latestPlan.recipes.isEmpty {
-                _ = await persistLatestPlanRemotelyIfPossible(latestPlan)
-            }
             isRefreshingPrepRecipes = false
             isHydratingRemoteState = false
             hasResolvedInitialState = true
             guard authStateRevision == bootstrapRevision else { return }
 
-            // Trailing lookups are NOT on the critical path to a usable UI:
-            //  • instacart-run: only affects the Prep cart preview banner.
-            //  • grocery-order: only affects the delivery progress card.
-            //  • provider-connection: only affects the "connect store" toggle.
-            // Letting `bootstrapFromSupabaseIfNeeded` return BEFORE they finish
-            // unblocks the root task's membership refresh + notification sync
-            // (and the discover prefetch we added) which all start running
-            // sooner. Each load writes to its own @Published state, so any
-            // delayed result still updates the UI live.
+            // Background tail — none of these need to complete before the shell renders:
+            //  • completedCycles: feeds Cookbook history tab only.
+            //  • automationState: feeds the prep schedule card.
+            //  • repairRemoteCart: Supabase write, only needed when groceries are stale.
+            //  • persistLatestPlan: syncs a locally-preferred plan back to Supabase.
+            //  • instacart / grocery / provider: affect cart banner + delivery card.
+            // All run fully in parallel; each writes to a distinct @Published property
+            // so delayed results still update the UI live.
+            let capturedSession = session
+            let capturedPlanLoadState = remotePlanLoadState
+            let capturedLatestPlan = latestPlan
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                async let completedCyclesLoad: Void = self.loadCompletedMealPrepCycles(userID: capturedSession.userID, accessToken: capturedSession.accessToken)
+                async let automationLoad: Void = self.loadAutomationState(userID: capturedSession.userID, accessToken: capturedSession.accessToken)
+                async let cartRepairLoad: Void = self.repairRemoteCartStateIfNeeded(session: capturedSession)
                 async let instacartLoad: Void = self.loadLatestInstacartRun()
                 async let groceryLoad: Void = self.loadLatestGroceryOrder()
                 async let providerLoad: Void = self.refreshProviderConnectionState()
+                _ = await completedCyclesLoad
+                _ = await automationLoad
+                _ = await cartRepairLoad
                 _ = await instacartLoad
                 _ = await groceryLoad
                 _ = await providerLoad
+                // Persist a locally-preferred plan back to Supabase only when the
+                // remote had no usable data (the plan came from local cache).
+                if let plan = capturedLatestPlan, !plan.recipes.isEmpty,
+                   capturedPlanLoadState.confirmsNoUsablePrep {
+                    _ = await self.persistLatestPlanRemotelyIfPossible(plan)
+                }
             }
 
             guard authStateRevision == bootstrapRevision else { return }

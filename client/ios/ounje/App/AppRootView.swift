@@ -2170,7 +2170,9 @@ private struct MealPlannerShellView: View {
         for item in recipeImportHistory.completedItems.reversed() {
             guard syncedCompletedImportIDs.insert(item.id).inserted else { continue }
             guard let savedRecipe = item.savedRecipeCard else { continue }
-            savedStore.saveImportedRecipe(savedRecipe, showToast: false)
+            // respectUnsave: true so that background auto-sync never overrides an
+            // explicit unsave — recipes the user has tombstoned stay hidden.
+            savedStore.saveImportedRecipe(savedRecipe, showToast: false, respectUnsave: true)
         }
     }
 
