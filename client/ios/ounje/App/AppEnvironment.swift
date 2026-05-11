@@ -97,6 +97,9 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var isGenerating = false
     @Published var isRefreshingPrepRecipes = false
     @Published private(set) var latestPlanRevision = 0
+    /// The batch the user currently has selected in PrepTabView. nil means
+    /// the legacy single-batch view (plan has no named batches yet).
+    @Published var activeBatchID: UUID? = nil
     @Published private(set) var isRefreshingMainShopSnapshot = false
     @Published var isHydratingRemoteState = false
     @Published var hasResolvedInitialState = false
@@ -141,6 +144,11 @@ final class MealPlanningAppStore: ObservableObject {
     private var authStateRevision = 0
     private var cachedAuthenticatedEntryRoute: CachedAuthenticatedEntryRoute?
     private var hasPersistedOnboardingState = false
+    // Set to true only when the server (or a completed onboarding flow) has positively
+    // confirmed the user's onboarding state. Guards against showing the onboarding screen
+    // on reinstall + network failure, where hasResolvedInitialState becomes true but
+    // isOnboarded stays false simply because the bootstrap network call timed out.
+    private var bootstrapDidConfirmOnboardingState = false
     private var pendingCartSyncIntent: PendingCartSyncIntent?
     private var remoteMealPrepCycleLoadState: RemoteMealPrepCycleLoadState = .notRequested
     private var activeAutoPrepGenerationKey: String?
@@ -187,6 +195,13 @@ final class MealPlanningAppStore: ObservableObject {
     var requiresProfileOnboarding: Bool {
         guard isAuthenticated else { return false }
         if hasResolvedInitialState {
+            // Require positive confirmation before routing to onboarding. On reinstall +
+            // network failure, bootstrap sets hasResolvedInitialState=true (via defer)
+            // but never updates isOnboarded — so without this guard we'd flash the
+            // onboarding screen at a returning user whose profile fetch just timed out.
+            guard bootstrapDidConfirmOnboardingState || hasPersistedOnboardingState else {
+                return false
+            }
             return !isOnboarded
         }
         return provisionalAuthenticatedEntryRoute == .onboarding
@@ -272,6 +287,7 @@ final class MealPlanningAppStore: ObservableObject {
         let effectiveOnboardingStep = shouldForceOnboardingIncomplete ? 0 : remoteStep
         isOnboarded = effectiveOnboarded
         lastOnboardingStep = effectiveOnboardingStep
+        bootstrapDidConfirmOnboardingState = true
         hasResolvedInitialState = true
         cacheAuthenticatedEntryRoute(effectiveOnboarded ? .planner : .onboarding)
         saveAuthSession(session)
@@ -284,6 +300,12 @@ final class MealPlanningAppStore: ObservableObject {
         authStateRevision += 1
         authSession = session
         cachedLiveUserID = session.userID
+        // Reset the resolved-state flag so the bootstrap loading splash is shown while we
+        // re-confirm the user's onboarding and membership state from the server. Without
+        // this, signing out (which sets hasResolvedInitialState=true) then back in would
+        // skip the splash and immediately evaluate routing with isOnboarded=false, causing
+        // the first onboarding page to flash briefly before bootstrap completes.
+        hasResolvedInitialState = false
         saveAuthSession(session)
     }
 
@@ -458,6 +480,7 @@ final class MealPlanningAppStore: ObservableObject {
         self.profile = profile
         isOnboarded = shouldForceOnboardingIncomplete ? false : true
         lastOnboardingStep = lastStep
+        bootstrapDidConfirmOnboardingState = true
         hasResolvedInitialState = true
         isCompletingOnboarding = true
         cacheAuthenticatedEntryRoute(isOnboarded ? .planner : .onboarding)
@@ -574,6 +597,7 @@ final class MealPlanningAppStore: ObservableObject {
                 saveProfile()
             }
 
+            bootstrapDidConfirmOnboardingState = true
             hasResolvedInitialState = true
 
             isRefreshingPrepRecipes = true
@@ -608,13 +632,24 @@ final class MealPlanningAppStore: ObservableObject {
             hasResolvedInitialState = true
             guard authStateRevision == bootstrapRevision else { return }
 
-            // Fire trailing independent lookups in parallel.
-            async let instacartLoad: Void = loadLatestInstacartRun()
-            async let groceryLoad: Void = loadLatestGroceryOrder()
-            async let providerLoad: Void = refreshProviderConnectionState()
-            _ = await instacartLoad
-            _ = await groceryLoad
-            _ = await providerLoad
+            // Trailing lookups are NOT on the critical path to a usable UI:
+            //  • instacart-run: only affects the Prep cart preview banner.
+            //  • grocery-order: only affects the delivery progress card.
+            //  • provider-connection: only affects the "connect store" toggle.
+            // Letting `bootstrapFromSupabaseIfNeeded` return BEFORE they finish
+            // unblocks the root task's membership refresh + notification sync
+            // (and the discover prefetch we added) which all start running
+            // sooner. Each load writes to its own @Published state, so any
+            // delayed result still updates the UI live.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                async let instacartLoad: Void = self.loadLatestInstacartRun()
+                async let groceryLoad: Void = self.loadLatestGroceryOrder()
+                async let providerLoad: Void = self.refreshProviderConnectionState()
+                _ = await instacartLoad
+                _ = await groceryLoad
+                _ = await providerLoad
+            }
 
             guard authStateRevision == bootstrapRevision else { return }
             await emitLifecycleNotificationsIfNeeded(trigger: "bootstrap")
@@ -1491,6 +1526,8 @@ final class MealPlanningAppStore: ObservableObject {
         isRunningAutomationPass = false
         cachedAuthenticatedEntryRoute = nil
         hasPersistedOnboardingState = false
+        bootstrapDidConfirmOnboardingState = false
+        membershipEntitlementResolved = false
     }
 
     func signOutToWelcome() {
@@ -1772,6 +1809,77 @@ final class MealPlanningAppStore: ObservableObject {
 
     func isRecurringPrepRecipeToggleInFlight(recipeID: String) -> Bool {
         recurringPrepToggleRecipeIDs.contains(recipeID)
+    }
+
+    // MARK: - Batch management
+
+    /// The currently selected batch, or nil for legacy single-batch plans.
+    var activeBatch: PrepBatch? {
+        guard let batches = latestPlan?.batches, !batches.isEmpty else { return nil }
+        return batches.first(where: { $0.id == activeBatchID }) ?? batches.first
+    }
+
+    /// Recipes to display in the Prep carousel — active batch's recipes for
+    /// multi-batch plans, or the full plan recipes for legacy plans.
+    var prepDisplayRecipes: [PlannedRecipe] {
+        activeBatch?.recipes ?? latestPlan?.recipes ?? []
+    }
+
+    /// Creates a new named batch on the latest plan and selects it.
+    func addPrepBatch(name: String? = nil) {
+        guard var plan = latestPlan else { return }
+        var currentBatches = plan.batches ?? []
+        if currentBatches.isEmpty {
+            // Migrate existing `recipes` into "Batch 1" on first named-batch creation.
+            let seedBatch = PrepBatch(
+                name: "Batch 1",
+                recipes: plan.recipes,
+                groceryItems: plan.groceryItems,
+                recurringRecipeIDs: plan.recurringRecipeIDs
+            )
+            currentBatches = [seedBatch]
+        }
+        let newIndex = currentBatches.count + 1
+        let resolvedName = name ?? "Batch \(newIndex)"
+        let newBatch = PrepBatch(name: resolvedName)
+        currentBatches.append(newBatch)
+        plan.batches = currentBatches
+        activeBatchID = newBatch.id
+        updateCurrentPlanCache(with: plan, persistRemote: true)
+    }
+
+    /// Renames a batch. No-op if no batch with that id exists.
+    func renamePrepBatch(id: UUID, to name: String) {
+        guard var plan = latestPlan,
+              var batches = plan.batches,
+              let idx = batches.firstIndex(where: { $0.id == id })
+        else { return }
+        batches[idx].name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Batch \(idx + 1)"
+            : name.trimmingCharacters(in: .whitespacesAndNewlines)
+        plan.batches = batches
+        updateCurrentPlanCache(with: plan, persistRemote: true)
+    }
+
+    /// Deletes a batch. If there's only one batch left it collapses back to
+    /// a single-batch plan (sets `batches` to nil and moves recipes up).
+    func deletePrepBatch(id: UUID) {
+        guard var plan = latestPlan,
+              var batches = plan.batches
+        else { return }
+        batches.removeAll { $0.id == id }
+        if batches.count <= 1 {
+            plan.recipes = batches.first?.recipes ?? plan.recipes
+            plan.groceryItems = batches.first?.groceryItems ?? plan.groceryItems
+            plan.batches = nil
+            activeBatchID = nil
+        } else {
+            plan.batches = batches
+            if activeBatchID == id {
+                activeBatchID = batches.first?.id
+            }
+        }
+        updateCurrentPlanCache(with: plan, persistRemote: true)
     }
 
     func toggleRecurringPrepRecipe(_ recipe: Recipe) async -> Bool {

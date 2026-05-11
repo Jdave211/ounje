@@ -46,6 +46,9 @@
 		DAA00000000000000000019 /* ounje/Core/Services/ImagePrefetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000019 /* ounje/Core/Services/ImagePrefetcher.swift */; };
 		DAA00000000000000000020 /* ounje/Features/Cookbook/SavedRecipesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000020 /* ounje/Features/Cookbook/SavedRecipesStore.swift */; };
 		DAA00000000000000000021 /* ounje/Features/Settings/FeedbackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000021 /* ounje/Features/Settings/FeedbackService.swift */; };
+		DAA00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift */; };
+		DAA00000000000000000023 /* ounje/App/OunjeAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000023 /* ounje/App/OunjeAppDelegate.swift */; };
+		DAA00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift */; };
 		DAD00000000000000000001 /* ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000001 /* ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift */; };
 		DAD00000000000000000002 /* ounje/Core/Services/AppNotificationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000002 /* ounje/Core/Services/AppNotificationServices.swift */; };
 		DAD00000000000000000003 /* ounje/Core/Services/MembershipServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000003 /* ounje/Core/Services/MembershipServices.swift */; };
@@ -137,6 +140,9 @@
 		DAB00000000000000000019 /* ounje/Core/Services/ImagePrefetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/ImagePrefetcher.swift; sourceTree = "<group>"; };
 		DAB00000000000000000020 /* ounje/Features/Cookbook/SavedRecipesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cookbook/SavedRecipesStore.swift; sourceTree = "<group>"; };
 		DAB00000000000000000021 /* ounje/Features/Settings/FeedbackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Settings/FeedbackService.swift; sourceTree = "<group>"; };
+		DAB00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Settings/FeedbackAttachmentStorageService.swift; sourceTree = "<group>"; };
+		DAB00000000000000000023 /* ounje/App/OunjeAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/OunjeAppDelegate.swift; sourceTree = "<group>"; };
+		DAB00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/OunjePushTokenRegistrar.swift; sourceTree = "<group>"; };
 		DAE00000000000000000001 /* ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift; sourceTree = "<group>"; };
 		DAE00000000000000000002 /* ounje/Core/Services/AppNotificationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/AppNotificationServices.swift; sourceTree = "<group>"; };
 		DAE00000000000000000003 /* ounje/Core/Services/MembershipServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/MembershipServices.swift; sourceTree = "<group>"; };
@@ -262,6 +268,7 @@
 				DAB00000000000000000014 /* ounje/App/AppTab.swift */,
 				F1A2B3C40100000100000002 /* ounje/App/AppEnvironment.swift */,
 				DAB00000000000000000001 /* ounje/App/OunjeDevelopmentServer.swift */,
+				DAB00000000000000000023 /* ounje/App/OunjeAppDelegate.swift */,
 			);
 			name = App;
 			sourceTree = "<group>";
@@ -355,6 +362,7 @@
 				DAE00000000000000000001 /* ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift */,
 				DAE00000000000000000002 /* ounje/Core/Services/AppNotificationServices.swift */,
 				DAE00000000000000000003 /* ounje/Core/Services/MembershipServices.swift */,
+				DAB00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -425,6 +433,7 @@
 			children = (
 				DAC00000000000000000026 /* Views */,
 				DAB00000000000000000021 /* ounje/Features/Settings/FeedbackService.swift */,
+				DAB00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift */,
 			);
 			name = Settings;
 			sourceTree = "<group>";
@@ -742,6 +751,9 @@
 				DAD00000000000000000012 /* ounje/Features/Discover/Views/DiscoverRecipeFeedContentView.swift in Sources */,
 				DAA00000000000000000020 /* ounje/Features/Cookbook/SavedRecipesStore.swift in Sources */,
 				DAA00000000000000000021 /* ounje/Features/Settings/FeedbackService.swift in Sources */,
+				DAA00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift in Sources */,
+				DAA00000000000000000023 /* ounje/App/OunjeAppDelegate.swift in Sources */,
+				DAA00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift in Sources */,
 				DAA00000000000000000002 /* ounje/Core/DesignSystem/OunjePalette.swift in Sources */,
 				DAA00000000000000000007 /* ounje/Core/DesignSystem/OunjeLayout.swift in Sources */,
 				DAA00000000000000000008 /* ounje/Core/DesignSystem/OunjeMotion.swift in Sources */,

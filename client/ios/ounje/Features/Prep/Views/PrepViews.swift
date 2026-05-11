@@ -21,11 +21,15 @@ struct PrepTabView: View {
     @State private var isFoodCameraPresented = false
 
     private var currentPrepRecipeCount: Int {
-        store.latestPlan?.recipes.count ?? 0
+        store.prepDisplayRecipes.count
     }
 
     private var currentRecurringCount: Int {
         store.resolvedRecurringAnchorCount
+    }
+
+    private var activeAnchors: [RecurringPrepRecipe] {
+        store.recurringPrepRecipes.filter(\.isEnabled)
     }
 
     private var showsPrepLoadingState: Bool {
@@ -49,79 +53,49 @@ struct PrepTabView: View {
                         PrepTrackerCard(store: store)
 
                         VStack(alignment: .leading, spacing: 16) {
-                            HStack(alignment: .center, spacing: 12) {
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text("Meals in")
-                                        .biroHeaderFont(26)
-                                        .foregroundStyle(OunjePalette.primaryText)
-
-                                    Button {
-                                        requestedCookbookCycleID = store.latestPlan?.id.uuidString
-                                        selectedTab = .cookbook
-                                    } label: {
-                                        HStack(alignment: .center, spacing: 5) {
-                                            Text("this prep")
-                                                .sleeDisplayFont(22)
-                                                .foregroundStyle(prepLinkPulse ? OunjePalette.softCream : OunjePalette.softCream.opacity(0.96))
-
-                                            Image(systemName: "pencil")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .foregroundStyle(OunjePalette.softCream.opacity(prepLinkPulse ? 1 : 0.88))
-                                                .scaleEffect(prepLinkPulse ? 1.08 : 0.98)
-                                                .rotationEffect(.degrees(prepLinkPulse ? 6 : -3))
-                                                .offset(y: prepLinkPulse ? -1 : 0)
-                                                .shadow(color: .black.opacity(0.22), radius: 1, y: 1)
-                                        }
-                                    .padding(.horizontal, 2)
-                                    .padding(.vertical, 1)
-                                    .scaleEffect(prepLinkPulse ? 1.03 : 0.985)
-                                    .shadow(color: OunjePalette.accent.opacity(prepLinkPulse ? 0.16 : 0.08), radius: prepLinkPulse ? 6 : 3, x: 0, y: 2)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contentShape(Rectangle())
-                                    .onAppear {
-                                        guard !prepLinkPulse else { return }
-                                        withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
-                                            prepLinkPulse = true
-                                        }
-                                    }
-                                }
-
-                                Spacer(minLength: 12)
-
-                                Button {
+                            // Batch picker — multi-batch header
+                            PrepBatchPickerRow(
+                                plan: store.latestPlan,
+                                activeBatchID: $store.activeBatchID,
+                                isGenerating: store.isGenerating,
+                                onAddBatch: { store.addPrepBatch() },
+                                onRenameBatch: { id, name in store.renamePrepBatch(id: id, to: name) },
+                                onDeleteBatch: { id in store.deletePrepBatch(id: id) },
+                                onOpenCookbook: {
+                                    requestedCookbookCycleID = store.latestPlan?.id.uuidString
+                                    selectedTab = .cookbook
+                                },
+                                onOpenRegenSheet: {
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                     selectedRegenerationFocus = .balanced
                                     isRegenerationSheetPresented = true
-                                } label: {
-                                    Group {
-                                        if store.isGenerating {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                                .tint(OunjePalette.softCream)
-                                        } else {
-                                            Image(systemName: "wand.and.stars")
-                                                .font(.system(size: 18, weight: .semibold))
-                                                .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
-                                        }
+                                },
+                                isProfileReady: store.profile?.isPlanningReady ?? false,
+                                prepLinkPulse: $prepLinkPulse
+                            )
+
+                            // Anchor strip — shows active recurring anchors above
+                            // the carousel so the user always knows what's locked.
+                            if !activeAnchors.isEmpty {
+                                PrepAnchorStrip(
+                                    anchors: activeAnchors,
+                                    onRemove: { recipe in
+                                        guard !store.isRecurringPrepRecipeToggleInFlight(recipeID: recipe.id) else { return }
+                                        Task { _ = await store.toggleRecurringPrepRecipe(recipe) }
                                     }
-                                    .frame(width: 26, height: 26)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(store.isGenerating || !(store.profile?.isPlanningReady ?? false))
-                                .opacity((store.isGenerating || !(store.profile?.isPlanningReady ?? false)) ? 0.65 : 1)
+                                )
+                                .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
                             }
 
                             MealsPrepCarousel(
-                                plannedRecipes: store.latestPlan?.recipes ?? [],
+                                plannedRecipes: store.prepDisplayRecipes,
                                 showsLoadingState: showsPrepLoadingState,
                                 showsRegenerationPlaceholders: showsRegenerationPlaceholders,
                                 recurringRecipeIDs: store.activeRecurringPrepRecipeIDs,
                                 recipeTransitionNamespace: recipeTransitionNamespace,
                                 onSelectRecipe: onSelectRecipe
                             )
-                            .id("\(store.latestPlan?.id.uuidString ?? "empty")::\(store.latestPlanRevision)::\(showsRegenerationPlaceholders)")
+                            .id("\(store.latestPlan?.id.uuidString ?? "empty")::\(store.latestPlanRevision)::\(store.activeBatchID?.uuidString ?? "main")::\(showsRegenerationPlaceholders)")
                             .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
                         }
                         .padding(.top, 4)
@@ -598,6 +572,265 @@ extension PrepRegenerationFocus {
     }
 }
 
+// MARK: - Batch picker
+
+/// Horizontal strip of batch pills replacing the old "Meals in this prep"
+/// header. Shows each named batch as a selectable pill, a "+ New" pill at the
+/// end, and the wand regeneration button on the right.
+///
+/// Falls back to a simple "Meals in this prep" header when the plan has no
+/// named batches (legacy single-batch mode).
+struct PrepBatchPickerRow: View {
+    let plan: MealPlan?
+    @Binding var activeBatchID: UUID?
+    let isGenerating: Bool
+    let onAddBatch: () -> Void
+    let onRenameBatch: (UUID, String) -> Void
+    let onDeleteBatch: (UUID) -> Void
+    let onOpenCookbook: () -> Void
+    let onOpenRegenSheet: () -> Void
+    let isProfileReady: Bool
+    @Binding var prepLinkPulse: Bool
+    @State private var editingBatchID: UUID? = nil
+    @State private var editingName: String = ""
+
+    private var batches: [PrepBatch] { plan?.batches ?? [] }
+    private var isMultiBatch: Bool { !batches.isEmpty }
+    private var resolvedActiveBatchID: UUID? {
+        activeBatchID ?? batches.first?.id
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            if isMultiBatch {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(batches) { batch in
+                            batchPill(batch)
+                        }
+                        addBatchPill
+                    }
+                    .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+                    .padding(.vertical, 2)
+                }
+                .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
+            } else {
+                // Legacy single-batch header
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Meals in")
+                        .biroHeaderFont(26)
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Button(action: onOpenCookbook) {
+                        HStack(alignment: .center, spacing: 5) {
+                            Text("this prep")
+                                .sleeDisplayFont(22)
+                                .foregroundStyle(prepLinkPulse
+                                    ? OunjePalette.softCream
+                                    : OunjePalette.softCream.opacity(0.96))
+
+                            Image(systemName: "pencil")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(OunjePalette.softCream.opacity(prepLinkPulse ? 1 : 0.88))
+                                .scaleEffect(prepLinkPulse ? 1.08 : 0.98)
+                                .rotationEffect(.degrees(prepLinkPulse ? 6 : -3))
+                                .offset(y: prepLinkPulse ? -1 : 0)
+                        }
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 1)
+                        .scaleEffect(prepLinkPulse ? 1.03 : 0.985)
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .onAppear {
+                        guard !prepLinkPulse else { return }
+                        withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
+                            prepLinkPulse = true
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            // Wand button (always visible)
+            Button(action: onOpenRegenSheet) {
+                Group {
+                    if isGenerating {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(OunjePalette.softCream)
+                    } else {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText.opacity(0.92))
+                    }
+                }
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isGenerating || !isProfileReady)
+            .opacity((isGenerating || !isProfileReady) ? 0.65 : 1)
+        }
+        .alert("Rename batch", isPresented: Binding(
+            get: { editingBatchID != nil },
+            set: { if !$0 { editingBatchID = nil } }
+        )) {
+            TextField("Batch name", text: $editingName)
+                .autocorrectionDisabled()
+            Button("Save") {
+                if let id = editingBatchID {
+                    onRenameBatch(id, editingName)
+                }
+                editingBatchID = nil
+            }
+            Button("Cancel", role: .cancel) { editingBatchID = nil }
+        }
+    }
+
+    @ViewBuilder
+    private func batchPill(_ batch: PrepBatch) -> some View {
+        let isActive = batch.id == resolvedActiveBatchID
+        Button {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                activeBatchID = batch.id
+            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } label: {
+            Text(batch.name)
+                .font(.system(size: 13, weight: isActive ? .bold : .semibold, design: .rounded))
+                .foregroundStyle(isActive ? OunjePalette.background : OunjePalette.primaryText.opacity(0.7))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(isActive ? OunjePalette.softCream : OunjePalette.surface)
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(isActive ? Color.clear : OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                editingName = batch.name
+                editingBatchID = batch.id
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            if batches.count > 1 {
+                Button(role: .destructive) {
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    onDeleteBatch(batch.id)
+                } label: {
+                    Label("Delete batch", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    private var addBatchPill: some View {
+        Button(action: onAddBatch) {
+            HStack(spacing: 5) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                Text("New")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(OunjePalette.secondaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(OunjePalette.surface)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Anchor strip
+
+/// Horizontal scrollable strip of anchored (recurring) recipe pills shown
+/// above the prep carousel. Lets the user immediately see and remove anchors
+/// without navigating to Profile.
+struct PrepAnchorStrip: View {
+    let anchors: [RecurringPrepRecipe]
+    let onRemove: (Recipe) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "repeat.circle.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                Text("Anchored every prep")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(anchors) { anchor in
+                        anchorPill(anchor)
+                    }
+                }
+                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func anchorPill(_ anchor: RecurringPrepRecipe) -> some View {
+        HStack(spacing: 6) {
+            if let urlStr = anchor.recipe.heroImageURLString ?? anchor.recipe.cardImageURLString,
+               let url = URL(string: urlStr) {
+                AsyncImage(url: url) { img in
+                    img.resizable().scaledToFill()
+                } placeholder: {
+                    OunjePalette.surface
+                }
+                .frame(width: 22, height: 22)
+                .clipShape(Circle())
+            }
+
+            Text(anchor.recipe.title)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .lineLimit(1)
+
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                onRemove(anchor.recipe)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            Capsule(style: .continuous)
+                .fill(OunjePalette.surface)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Recipe deck
+
 struct MealsPrepCarousel: View {
     let plannedRecipes: [PlannedRecipe]
     let showsLoadingState: Bool
@@ -947,6 +1180,7 @@ struct MealDeckCard: View {
     }
 
     var body: some View {
+        let isRecurring = store.isRecurringPrepRecipe(recipeID: plannedRecipe.recipe.id)
         DiscoverRemoteRecipeCard(
             recipe: DiscoverRecipeCardData(preppedRecipe: plannedRecipe),
             showsSaveAction: false,
@@ -955,6 +1189,29 @@ struct MealDeckCard: View {
             showsImageLoadingSkeleton: true,
             onSelect: onSelect
         )
+        .overlay(alignment: .bottomLeading) {
+            if isRecurring {
+                // Permanent anchor badge — visible in normal state so the
+                // user can see which cards are locked without triggering regen.
+                HStack(spacing: 4) {
+                    Image(systemName: "repeat")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("Anchored")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .foregroundStyle(OunjePalette.softCream)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.black.opacity(0.4))
+                        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+                )
+                .padding(10)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: isRecurring)
     }
 }
 

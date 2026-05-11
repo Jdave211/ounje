@@ -55,7 +55,14 @@ private actor DiscoverWeatherService {
             throw URLError(.badURL)
         }
 
-        let (geoData, _) = try await URLSession.shared.data(from: geocodeURL)
+        // Open-Meteo is a "nice to have" — without a timeout, a flaky network
+        // hangs DiscoverEnvironmentViewModel.refresh() and that task is awaited
+        // at the end of DiscoverTabView's `.task`, which gates a second feed
+        // fetch decision. Cap each hop at 2.5s and fail open. The feed context
+        // falls back to the local-only `DiscoverFeedContext.current` snapshot.
+        var geoRequest = URLRequest(url: geocodeURL)
+        geoRequest.timeoutInterval = 2.5
+        let (geoData, _) = try await URLSession.shared.data(for: geoRequest)
         let geocode = try JSONDecoder().decode(DiscoverWeatherGeocodeResponse.self, from: geoData)
         guard let result = geocode.results?.first else {
             throw URLError(.resourceUnavailable)
@@ -65,7 +72,9 @@ private actor DiscoverWeatherService {
             throw URLError(.badURL)
         }
 
-        let (weatherData, _) = try await URLSession.shared.data(from: weatherURL)
+        var weatherRequest = URLRequest(url: weatherURL)
+        weatherRequest.timeoutInterval = 2.5
+        let (weatherData, _) = try await URLSession.shared.data(for: weatherRequest)
         let weather = try JSONDecoder().decode(DiscoverWeatherForecastResponse.self, from: weatherData)
 
         let temperatureBand: String

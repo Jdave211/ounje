@@ -85,6 +85,16 @@ struct FirstLoginOnboardingView: View {
     @State private var shouldUseBudgetGuardrail = false
     @FocusState private var isBudgetFieldFocused: Bool
 
+    // shareImport step — the hands-on "send Ounje a recipe" demo. We capture
+    // the user's pasted link, the in-flight import state, and a status
+    // message so the step can show a success / error confirmation without
+    // navigating away.
+    @State private var shareImportDraftLink: String = ""
+    @State private var isSubmittingShareImport: Bool = false
+    @State private var didQueueShareImport: Bool = false
+    @State private var shareImportStatusMessage: String? = nil
+    @FocusState private var isShareImportFieldFocused: Bool
+
     private let recipeStylePreviewRecipeID = "8c02aaff-33cd-4927-8c81-aae45e015c0d"
     private let foodGoalSelectionLimit = 3
 
@@ -995,6 +1005,8 @@ struct FirstLoginOnboardingView: View {
             recipeUpgradeIntroStepContent
         case .recipeEditDemo:
             recipeEditDemoStepContent
+        case .shareImport:
+            shareImportStepContent
         case .cuisines:
             cuisineStepContent
         case .household:
@@ -1169,6 +1181,218 @@ struct FirstLoginOnboardingView: View {
     private var paywallIntroStepContent: some View {
         OnboardingMinimalTransitionPage(title: "One last thing")
         .onAppear(perform: schedulePaywallIntroPresentation)
+    }
+
+    /// Hands-on "send Ounje a recipe" step. Shows the three sharing surfaces
+    /// (TikTok / Instagram / camera roll) plus an inline link composer so the
+    /// user can actually kick off a real import job from inside onboarding.
+    /// The job runs in the background; the user can advance immediately and
+    /// will get an APNs push when the recipe is ready.
+    private var shareImportStepContent: some View {
+        VStack(spacing: 18) {
+            Text("Send recipes from anywhere")
+                .font(.system(size: 28, weight: .black, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(-1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 320)
+
+            Text("Tap **Share** on a TikTok or Instagram post, snap a photo of a dish, or paste any recipe link — Ounje turns it into a cookbook card you can actually cook.")
+                .font(.system(size: 14.5, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 320)
+
+            shareImportFlowChips
+
+            shareImportComposer
+
+            // Inline confirmation strip — replaces the toast / banner so the
+            // user sees the state right where they tapped.
+            if let message = shareImportStatusMessage {
+                Label {
+                    Text(message)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .multilineTextAlignment(.leading)
+                } icon: {
+                    Image(systemName: didQueueShareImport ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(didQueueShareImport ? Color.green : Color.orange)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: 320, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(OunjePalette.panel.opacity(0.6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(OunjePalette.stroke.opacity(0.5), lineWidth: 1)
+                        )
+                )
+                .transition(.opacity)
+            }
+        }
+        .padding(.top, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(.easeInOut(duration: 0.2), value: shareImportStatusMessage)
+    }
+
+    /// Three pill chips showing the share surfaces. Visual only — taps don't
+    /// do anything (the iOS share sheet can't be simulated from inside the
+    /// app). They exist to anchor users' mental model of what's possible.
+    private var shareImportFlowChips: some View {
+        HStack(spacing: 10) {
+            shareImportFlowChip(symbol: "music.note", label: "TikTok")
+            shareImportFlowChip(symbol: "camera.fill", label: "Photos")
+            shareImportFlowChip(symbol: "link", label: "Any link")
+        }
+        .frame(maxWidth: 320)
+    }
+
+    private func shareImportFlowChip(symbol: String, label: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(currentStepAccent)
+            Text(label)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+
+    /// Inline composer card: textfield + Send button + "Try a sample" link.
+    private var shareImportComposer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Try it now")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+
+            HStack(spacing: 8) {
+                Image(systemName: "link")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                TextField("Paste a TikTok or recipe link", text: $shareImportDraftLink)
+                    .font(.system(size: 14, weight: .medium))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .keyboardType(.URL)
+                    .focused($isShareImportFieldFocused)
+                    .submitLabel(.send)
+                    .onSubmit { Task { await submitShareImportDraft() } }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(OunjePalette.panel.opacity(0.8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.6), lineWidth: 1)
+                    )
+            )
+
+            HStack(spacing: 12) {
+                Button {
+                    // Sample TikTok-style link. The ingestion service handles
+                    // a wide range of inputs so this is just to demonstrate
+                    // the flow — even a plain recipe URL works.
+                    shareImportDraftLink = "https://www.bonappetit.com/recipe/chicken-noodle-soup"
+                    Task { await submitShareImportDraft() }
+                } label: {
+                    Label("Try a sample", systemImage: "wand.and.stars")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                }
+                .buttonStyle(.plain)
+                .disabled(isSubmittingShareImport)
+
+                Spacer()
+
+                Button {
+                    Task { await submitShareImportDraft() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isSubmittingShareImport {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(.black)
+                        }
+                        Text(isSubmittingShareImport ? "Sending" : "Send")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.black)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(canSubmitShareImport ? currentStepAccent : currentStepAccent.opacity(0.35))
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSubmitShareImport)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 320)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.35))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+
+    private var canSubmitShareImport: Bool {
+        let trimmed = shareImportDraftLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !isSubmittingShareImport
+    }
+
+    /// Sends the typed link to /v1/recipe/imports. The import runs in the
+    /// background; we report status inline and let the user keep going.
+    private func submitShareImportDraft() async {
+        let trimmed = shareImportDraftLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isSubmittingShareImport else { return }
+        isSubmittingShareImport = true
+        defer { isSubmittingShareImport = false }
+        isShareImportFieldFocused = false
+
+        let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID
+        let accessToken = store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+
+        do {
+            _ = try await RecipeImportAPIService.shared.importRecipe(
+                userID: userID,
+                accessToken: accessToken,
+                sourceURL: trimmed,
+                sourceText: trimmed,
+                targetState: "saved"
+            )
+            await MainActor.run {
+                didQueueShareImport = true
+                shareImportStatusMessage = "Got it — we'll let you know when your recipe is ready in your cookbook."
+                shareImportDraftLink = ""
+            }
+        } catch {
+            await MainActor.run {
+                didQueueShareImport = false
+                shareImportStatusMessage = "Couldn't send that link. You can also share recipes after setup — tap Share on any TikTok or recipe site and pick Ounje."
+            }
+        }
     }
 
     private struct OnboardingRecipeEditDemoPickerGrid: View {
@@ -2105,6 +2329,11 @@ struct FirstLoginOnboardingView: View {
             return true
         case .recipeEditDemo:
             return hasCompletedRecipeEditDemo
+        case .shareImport:
+            // Always advanceable: the demo is interactive but skippable. Users
+            // who paste a link kick off a real import in the background; users
+            // who tap "Skip for now" still see the visual primer.
+            return true
         case .cuisines:
             return !selectedCuisines.isEmpty || !selectedCuisineCountries.isEmpty
         case .household:
@@ -3195,6 +3424,10 @@ struct FirstLoginOnboardingView: View {
         case budget = 9
         case ordering = 10
         case address = 11
+        // New step teaching users to send recipes to Ounje from outside apps
+        // (TikTok / Instagram / photos / links). Interactive — the user can
+        // actually paste a link and kick off a real import right here.
+        case shareImport = 17
 
         static var allCases: [SetupStep] {
             [
@@ -3206,6 +3439,7 @@ struct FirstLoginOnboardingView: View {
                 .diets,
                 .recipeEditIntro,
                 .recipeEditDemo,
+                .shareImport,
                 .ordering,
                 .address,
                 .budget,
@@ -3242,6 +3476,8 @@ struct FirstLoginOnboardingView: View {
                 return "Recipe upgrades"
             case .recipeEditDemo:
                 return "Recipe edit"
+            case .shareImport:
+                return "Send recipes"
             case .paywallIntro:
                 return "Trial"
             case .cuisines:
@@ -3279,6 +3515,8 @@ struct FirstLoginOnboardingView: View {
                 return "Ounje can adapt recipes to your taste, diet, and routine."
             case .recipeEditDemo:
                 return "See how recipe edits work before Ounje starts planning for you."
+            case .shareImport:
+                return "Recipes from anywhere — TikTok, Instagram, photos, links."
             case .paywallIntro:
                 return "Your setup is ready before the trial starts."
             case .cuisines:
@@ -3316,6 +3554,8 @@ struct FirstLoginOnboardingView: View {
                 return "See how Ounje upgrades recipes."
             case .recipeEditDemo:
                 return "Pick a recipe and try a guided edit."
+            case .shareImport:
+                return "Try sending Ounje a recipe."
             case .paywallIntro:
                 return "Get ready to start your trial."
             case .cuisines:
@@ -3353,6 +3593,8 @@ struct FirstLoginOnboardingView: View {
                 return ["✨", "🍽️", "✓"]
             case .recipeEditDemo:
                 return ["✍️", "🍽️", "✨"]
+            case .shareImport:
+                return ["📲", "🔗", "✨"]
             case .paywallIntro:
                 return ["🎉", "✓", "→"]
             case .cuisines:
@@ -3390,6 +3632,8 @@ struct FirstLoginOnboardingView: View {
                 return "sparkles"
             case .recipeEditDemo:
                 return "wand.and.stars"
+            case .shareImport:
+                return "paperplane.circle.fill"
             case .paywallIntro:
                 return "party.popper.fill"
             case .cuisines:

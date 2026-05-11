@@ -30,6 +30,18 @@ struct OunjeAppScene: View {
             .environmentObject(notificationCenter)
             .environmentObject(realtimeCoordinator)
             .preferredColorScheme(.dark)
+            .task {
+                // Wire the push-token registrar's session provider once, on
+                // first appearance. The registrar caches device tokens
+                // delivered before the user has signed in and replays them
+                // here once a session exists.
+                OunjePushTokenRegistrar.shared.sessionProvider = { [weak store] in
+                    await store?.freshTrackingSession()
+                }
+            }
+            .onChange(of: store.authSession?.userID) { _ in
+                OunjePushTokenRegistrar.shared.registerCurrentTokenIfPossible(session: store.authSession)
+            }
     }
 }
 
@@ -79,10 +91,23 @@ struct RootView: View {
             StatusBarShield()
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
+            // Critical-path bootstrap (profile, prep state, plan): blocks the
+            // splash via `shouldHoldPlannerSplash` / `shouldShowBootstrapLoadingView`.
             await store.bootstrapFromSupabaseIfNeeded()
-            await store.refreshMembershipEntitlement(trigger: "root-bootstrap")
-            let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
-            await notificationCenter.syncForCurrentSession(session, force: true)
+
+            // Membership refresh + notification sync are not on the critical
+            // path to a useful Discover/Planner shell — they only gate paywall
+            // routing (which has its own splash via `membershipEntitlementResolved`)
+            // and the notification bell badge. Running them in parallel + as
+            // detached child tasks lets the rest of the UI (Discover prefetch,
+            // tab interactions) start immediately while these complete in the
+            // background.
+            async let membershipRefresh: Void = store.refreshMembershipEntitlement(trigger: "root-bootstrap")
+            async let notificationSync: Void = {
+                let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
+                await notificationCenter.syncForCurrentSession(session, force: true)
+            }()
+            _ = await (membershipRefresh, notificationSync)
         }
         .onChange(of: scenePhase) { newPhase in
             guard newPhase == .active else {
@@ -360,6 +385,14 @@ final class AppNotificationCenterManager: ObservableObject {
         do {
             let granted = try await notificationCenter.requestAuthorization(options: [.alert, .sound, .badge])
             authorizationStatus = granted ? .authorized : .denied
+            // Register with APNs so remote pushes can reach the device while
+            // the app is killed/backgrounded. The AppDelegate captures the
+            // resulting device token and forwards it to our backend.
+            if granted {
+                await MainActor.run {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
         } catch {
             authorizationStatus = .denied
         }
@@ -1669,6 +1702,14 @@ private struct MealPlannerShellView: View {
         }
         .task(id: discoverPrewarmKey) {
             guard scenePhase == .active else { return }
+            // Wait for profile bootstrap to finish before firing the prewarm.
+            // Without this gate the task fires twice on cold launch (once with
+            // profile=nil and a default-context cache key, once with profile
+            // loaded and the real key), wasting a network round-trip and
+            // delaying the real prefetch. With the gate we get a single
+            // request with the correct cache key, so the Discover tab's own
+            // `.task` short-circuits via `lastLoadKey` when the user lands.
+            guard store.profile != nil else { return }
             await prewarmBaseDiscoverFeed()
         }
         .task(id: cartSupportWarmupKey) {
@@ -2874,6 +2915,44 @@ private enum CookbookComposerContext {
     }
 }
 
+/// Glove pointer + label cue that appears under the cookbook Import button on
+/// first launch. Visually matches `OnboardingAskReturnCueView` (the cue used
+/// in the recipe-edit onboarding demo): a pulsing-hover hand icon paired with
+/// a pill-shaped label. Tapping anywhere on the cue dismisses it.
+private struct CookbookImportTapCue: View {
+    var onTap: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                Image(systemName: "hand.point.up.fill")
+                    .font(.system(size: 30, weight: .bold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Color.white, Color.white.opacity(0.78))
+                    .shadow(color: .black.opacity(0.24), radius: 10, y: 7)
+                    .rotationEffect(.degrees(isHovering ? 6 : -4))
+                    .offset(x: reduceMotion ? 0 : (isHovering ? 3 : -2),
+                            y: reduceMotion ? 0 : (isHovering ? -6 : 4))
+
+                OnboardingCueLabel(text: "Send recipes")
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Tap the Import button to send recipes to Ounje")
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.94).repeatForever(autoreverses: true)) {
+                isHovering = true
+            }
+        }
+    }
+}
+
 private struct CookbookTabView: View {
     @Binding var selectedTab: AppTab
     @Binding var searchText: String
@@ -2905,6 +2984,13 @@ private struct CookbookTabView: View {
     @State private var previousSelectedSection: CookbookSection = .prepped
     @State private var sectionTransitionDirection: CGFloat = 1
     @Namespace private var savedSearchTransitionNamespace
+
+    // Coachmark: first time a freshly-onboarded user lands in the cookbook,
+    // call out the Import button so they remember the share flow they just
+    // saw in onboarding. Backed by AppStorage so we only show it once per
+    // install. Reset on sign-out via `resetAll()` in MealPlanningAppStore.
+    @AppStorage("ounje.hasShownCookbookImportCoachmark") private var hasShownCookbookImportCoachmark: Bool = false
+    @State private var isShowingImportCoachmark: Bool = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 14, alignment: .top),
@@ -3175,6 +3261,7 @@ private struct CookbookTabView: View {
 
             Button {
                 openComposer(context: selectedSection == .prepped ? .prepped : .saved)
+                if isShowingImportCoachmark { dismissImportCoachmark() }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "square.and.arrow.down")
@@ -3195,7 +3282,39 @@ private struct CookbookTabView: View {
                 )
             }
             .buttonStyle(.plain)
+            .overlay(alignment: .topTrailing) {
+                if isShowingImportCoachmark {
+                    // Glove + label cue, same look the onboarding "Ask Ounje"
+                    // recipe edit demo uses to point at the Edit Recipe button.
+                    // We offset DOWN + RIGHT so the hand sits just under the
+                    // Import button and the label trails behind it.
+                    CookbookImportTapCue { dismissImportCoachmark() }
+                        .offset(x: 18, y: 56)
+                        .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .topTrailing)))
+                        .zIndex(10)
+                }
+            }
         }
+        .onAppear { maybeShowImportCoachmark() }
+    }
+
+    private func maybeShowImportCoachmark() {
+        guard !hasShownCookbookImportCoachmark, !isShowingImportCoachmark else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                isShowingImportCoachmark = true
+            }
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            if isShowingImportCoachmark { dismissImportCoachmark() }
+        }
+    }
+
+    private func dismissImportCoachmark() {
+        withAnimation(.easeOut(duration: 0.22)) {
+            isShowingImportCoachmark = false
+        }
+        hasShownCookbookImportCoachmark = true
     }
 
     @ViewBuilder
@@ -9224,6 +9343,8 @@ private struct OnboardingPromptCard: View {
         case .recipeEditIntro:
             return OunjePalette.accent
         case .recipeEditDemo:
+            return OunjePalette.accent
+        case .shareImport:
             return OunjePalette.accent
         case .paywallIntro:
             return OunjePalette.accent

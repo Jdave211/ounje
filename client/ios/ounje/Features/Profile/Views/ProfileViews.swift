@@ -5,6 +5,8 @@ import UIKit
 import WebKit
 import SafariServices
 import PhotosUI
+import AVFoundation
+import AVKit
 import StoreKit
 import AuthenticationServices
 import CryptoKit
@@ -1964,11 +1966,22 @@ struct FeedbackSheet: View {
                     HStack(spacing: 8) {
                         ForEach(photoAttachments) { attachment in
                             ZStack(alignment: .topTrailing) {
-                                Image(uiImage: attachment.image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 72, height: 72)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                ZStack {
+                                    Image(uiImage: attachment.previewImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 72, height: 72)
+                                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                                    if attachment.kind == .video {
+                                        // Play badge so the user knows the
+                                        // composed attachment is a video clip.
+                                        Image(systemName: "play.circle.fill")
+                                            .font(.system(size: 22, weight: .bold))
+                                            .foregroundStyle(.white)
+                                            .shadow(color: .black.opacity(0.4), radius: 4, y: 1)
+                                    }
+                                }
 
                                 Button {
                                     removePhotoAttachment(id: attachment.id)
@@ -1992,7 +2005,7 @@ struct FeedbackSheet: View {
                 PhotosPicker(
                     selection: $selectedPhotoItems,
                     maxSelectionCount: max(0, 4 - photoAttachments.count),
-                    matching: .images,
+                    matching: .any(of: [.images, .videos]),
                     photoLibrary: .shared()
                 ) {
                     Circle()
@@ -2073,7 +2086,7 @@ struct FeedbackSheet: View {
             HStack {
                 if isOutgoing { Spacer(minLength: 44) }
 
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     if !message.body.isEmpty {
                         Text(message.body)
                             .font(.system(size: 14.5, weight: .regular))
@@ -2082,9 +2095,7 @@ struct FeedbackSheet: View {
                     }
 
                     if !message.attachments.isEmpty {
-                        Text(message.attachments.count == 1 ? "1 photo attached" : "\(message.attachments.count) photos attached")
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(isOutgoing ? OunjePalette.softCream.opacity(0.84) : OunjePalette.secondaryText)
+                        FeedbackAttachmentGrid(attachments: message.attachments)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -2123,23 +2134,58 @@ struct FeedbackSheet: View {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         let draftBody = trimmedFeedbackDraft
         let outgoingPhotos = photoAttachments
-        let attachmentMetadata = outgoingPhotos.map { attachment in
-            AppFeedbackMessageAttachment(
-                fileName: attachment.fileName,
-                mimeType: attachment.mimeType,
-                kind: "image"
-            )
-        }
+        let messageID = UUID()
 
         isSubmittingFeedback = true
         defer { isSubmittingFeedback = false }
 
         do {
+            // Upload attachments to Supabase Storage BEFORE posting the
+            // feedback row. This way the row never references a path that
+            // doesn't exist. Uploads run in parallel so 4 photos don't block.
+            var attachmentMetadata: [AppFeedbackMessageAttachment] = []
+            if !outgoingPhotos.isEmpty, let token = accessToken, !token.isEmpty {
+                try await withThrowingTaskGroup(of: FeedbackUploadedAttachment.self) { group in
+                    for draft in outgoingPhotos {
+                        group.addTask {
+                            try await FeedbackAttachmentStorageService.shared.upload(
+                                data: draft.data,
+                                userID: userID,
+                                messageID: messageID,
+                                fileName: draft.fileName,
+                                mimeType: draft.mimeType,
+                                kind: draft.kind.serverValue,
+                                dimensions: draft.pixelSize,
+                                accessToken: token
+                            )
+                        }
+                    }
+                    for try await uploaded in group {
+                        attachmentMetadata.append(uploaded.metadata)
+                    }
+                }
+            } else if !outgoingPhotos.isEmpty {
+                // No access token — fall back to metadata-only so the message
+                // still goes through. The bytes simply won't be uploaded.
+                attachmentMetadata = outgoingPhotos.map { draft in
+                    AppFeedbackMessageAttachment(
+                        fileName: draft.fileName,
+                        mimeType: draft.mimeType,
+                        kind: draft.kind.serverValue
+                    )
+                }
+            }
+
             let response = try await OunjeFeedbackService.shared.submitFeedback(
                 userID: userID,
                 body: draftBody,
                 attachments: attachmentMetadata,
-                accessToken: accessToken
+                accessToken: accessToken,
+                refreshAccessToken: { [weak store] in
+                    // Refresh the Supabase session on 401 and hand back the new
+                    // access token so the service can retry the request once.
+                    await store?.refreshAuthSessionIfNeeded()?.accessToken
+                }
             )
 
             feedbackErrorMessage = nil
@@ -2158,6 +2204,30 @@ struct FeedbackSheet: View {
         var loaded: [FeedbackPhotoAttachment] = photoAttachments
         for item in items {
             guard loaded.count < 4 else { break }
+
+            // Try to detect a video by its supported content types first; fall
+            // back to image handling otherwise. Videos can be large so we
+            // upload the bytes as-is (no transcoding) but cap the size at 50 MB.
+            let isVideo = item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) })
+
+            if isVideo,
+               let data = try? await item.loadTransferable(type: Data.self),
+               data.count <= 50 * 1024 * 1024 {
+                let (thumb, size) = await videoThumbnail(from: data)
+                let fallbackThumb = thumb ?? UIImage(systemName: "video.fill") ?? UIImage()
+                loaded.append(
+                    FeedbackPhotoAttachment(
+                        kind: .video,
+                        previewImage: fallbackThumb,
+                        data: data,
+                        mimeType: "video/mp4",
+                        fileName: "feedback-video-\(UUID().uuidString).mp4",
+                        pixelSize: size
+                    )
+                )
+                continue
+            }
+
             guard let data = try? await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data) else { continue }
 
@@ -2165,10 +2235,12 @@ struct FeedbackSheet: View {
             let jpegData = normalizedImage.jpegData(compressionQuality: 0.82) ?? data
             loaded.append(
                 FeedbackPhotoAttachment(
-                    image: normalizedImage,
+                    kind: .image,
+                    previewImage: normalizedImage,
                     data: jpegData,
                     mimeType: "image/jpeg",
-                    fileName: "feedback-photo-\(UUID().uuidString).jpg"
+                    fileName: "feedback-photo-\(UUID().uuidString).jpg",
+                    pixelSize: normalizedImage.size
                 )
             )
         }
@@ -2176,6 +2248,29 @@ struct FeedbackSheet: View {
         await MainActor.run {
             photoAttachments = Array(loaded.prefix(4))
             selectedPhotoItems = []
+        }
+    }
+
+    /// Generates a still-frame thumbnail and pixel dimensions from raw video
+    /// bytes. Writes the video to a temp file because AVAsset needs a URL.
+    private func videoThumbnail(from data: Data) async -> (UIImage?, CGSize?) {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("feedback-video-\(UUID().uuidString).mp4")
+        do {
+            try data.write(to: tempURL)
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+
+            let asset = AVURLAsset(url: tempURL)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            let time = CMTime(seconds: 0.1, preferredTimescale: 600)
+            let cgImage = try generator.copyCGImage(at: time, actualTime: nil)
+            let image = UIImage(cgImage: cgImage)
+            let videoTrack = try await asset.loadTracks(withMediaType: .video).first
+            let naturalSize = try await videoTrack?.load(.naturalSize)
+            return (image, naturalSize)
+        } catch {
+            return (nil, nil)
         }
     }
 
@@ -2190,7 +2285,13 @@ struct FeedbackSheet: View {
         defer { isLoadingMessages = false }
 
         do {
-            let fetched = try await OunjeFeedbackService.shared.fetchMessages(userID: userID, accessToken: accessToken)
+            let fetched = try await OunjeFeedbackService.shared.fetchMessages(
+                userID: userID,
+                accessToken: accessToken,
+                refreshAccessToken: { [weak store] in
+                    await store?.refreshAuthSessionIfNeeded()?.accessToken
+                }
+            )
             threadMessages = mergedThreadMessages(fetched)
             feedbackErrorMessage = nil
         } catch {
@@ -2228,12 +2329,156 @@ struct FeedbackDateSection: Identifiable {
     var id: String { String(Int(day.timeIntervalSince1970)) }
 }
 
+/// Renders the photo/video bubble grid below a feedback message. Up to four
+/// attachments per message; layout flexes between a single big tile and a 2x2
+/// grid. Tap an image to view it full-screen.
+struct FeedbackAttachmentGrid: View {
+    let attachments: [AppFeedbackMessageAttachment]
+    @State private var previewAttachment: AppFeedbackMessageAttachment?
+
+    private var validAttachments: [AppFeedbackMessageAttachment] {
+        attachments.filter { ($0.signedURL ?? "").isEmpty == false }
+    }
+
+    var body: some View {
+        if validAttachments.isEmpty {
+            // We received attachments but no signed URLs landed (server-side
+            // signing failure or path missing). Fall back to a label so the
+            // user still knows something was attached.
+            Text(attachments.count == 1 ? "1 attachment" : "\(attachments.count) attachments")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+        } else if validAttachments.count == 1 {
+            attachmentTile(validAttachments[0], size: 220)
+        } else {
+            let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(validAttachments, id: \.self) { attachment in
+                    attachmentTile(attachment, size: 110)
+                }
+            }
+            .frame(maxWidth: 230)
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentTile(_ attachment: AppFeedbackMessageAttachment, size: CGFloat) -> some View {
+        Button {
+            previewAttachment = attachment
+        } label: {
+            ZStack {
+                if attachment.isVideo {
+                    Rectangle()
+                        .fill(Color.black.opacity(0.85))
+                        .frame(width: size, height: size)
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: size * 0.32, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.95))
+                        .shadow(color: .black.opacity(0.45), radius: 5, y: 2)
+                } else if let urlString = attachment.signedURL, let url = URL(string: urlString) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case let .success(image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: size, height: size)
+                                .clipped()
+                        case .failure:
+                            Color.black.opacity(0.05)
+                                .frame(width: size, height: size)
+                                .overlay(Image(systemName: "photo").foregroundStyle(.gray))
+                        default:
+                            Color.black.opacity(0.05)
+                                .frame(width: size, height: size)
+                                .overlay(ProgressView().controlSize(.small))
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .sheet(item: $previewAttachment) { attachment in
+            FeedbackAttachmentPreview(attachment: attachment)
+        }
+    }
+}
+
+/// Full-screen preview shown when a user taps an attachment bubble.
+struct FeedbackAttachmentPreview: View {
+    let attachment: AppFeedbackMessageAttachment
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                if attachment.isVideo,
+                   let urlString = attachment.signedURL,
+                   let url = URL(string: urlString) {
+                    VideoPlayer(player: AVPlayer(url: url))
+                        .ignoresSafeArea()
+                } else if let urlString = attachment.signedURL,
+                          let url = URL(string: urlString) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case let .success(image):
+                            image
+                                .resizable()
+                                .scaledToFit()
+                        case .failure:
+                            VStack(spacing: 12) {
+                                Image(systemName: "photo.badge.exclamationmark")
+                                    .font(.system(size: 32))
+                                    .foregroundStyle(.white)
+                                Text("Image is unavailable")
+                                    .foregroundStyle(.white)
+                            }
+                        default:
+                            ProgressView()
+                                .tint(.white)
+                        }
+                    }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(.white)
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+        }
+    }
+}
+
+extension AppFeedbackMessageAttachment: Identifiable {
+    public var id: String {
+        storagePath ?? signedURL ?? fileName ?? UUID().uuidString
+    }
+}
+
+/// In-memory draft for an attachment the user picked but has not yet uploaded.
+/// `previewImage` is the thumbnail shown in the composer strip (a still frame
+/// for videos). `data` is the compressed bytes we will upload to Supabase
+/// Storage; for videos it's the original encoded file.
 struct FeedbackPhotoAttachment: Identifiable {
     let id = UUID()
-    let image: UIImage
+    let kind: AttachmentKind
+    let previewImage: UIImage
     let data: Data
     let mimeType: String
     let fileName: String
+    let pixelSize: CGSize?
+
+    enum AttachmentKind: String {
+        case image
+        case video
+
+        var serverValue: String { rawValue }
+    }
 }
 
 struct RecurringPrepRecipesSheet: View {

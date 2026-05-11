@@ -4,11 +4,45 @@ struct AppFeedbackMessageAttachment: Codable, Hashable {
     let fileName: String?
     let mimeType: String?
     let kind: String?
+    let storagePath: String?
+    let signedURL: String?
+    let width: Int?
+    let height: Int?
+    let sizeBytes: Int?
+
+    init(
+        fileName: String? = nil,
+        mimeType: String? = nil,
+        kind: String? = nil,
+        storagePath: String? = nil,
+        signedURL: String? = nil,
+        width: Int? = nil,
+        height: Int? = nil,
+        sizeBytes: Int? = nil
+    ) {
+        self.fileName = fileName
+        self.mimeType = mimeType
+        self.kind = kind
+        self.storagePath = storagePath
+        self.signedURL = signedURL
+        self.width = width
+        self.height = height
+        self.sizeBytes = sizeBytes
+    }
+
+    var isVideo: Bool {
+        (kind?.lowercased() == "video") || (mimeType?.lowercased().hasPrefix("video") ?? false)
+    }
 
     enum CodingKeys: String, CodingKey {
         case fileName = "file_name"
         case mimeType = "mime_type"
         case kind
+        case storagePath = "storage_path"
+        case signedURL = "signed_url"
+        case width
+        case height
+        case sizeBytes = "size_bytes"
     }
 }
 
@@ -96,6 +130,12 @@ struct FeedbackSubmissionResponse: Decodable {
     let items: [AppFeedbackMessage]
 }
 
+/// Closure that returns a fresh Supabase access token, refreshing the session
+/// if the cached token is near expiry. The feedback service calls this when it
+/// receives a 401 so it can retry once with a non-stale token rather than
+/// surfacing a confusing "Authorization expired or invalid" error to the user.
+typealias FreshAccessTokenProvider = () async -> String?
+
 final class OunjeFeedbackService {
     static let shared = OunjeFeedbackService()
 
@@ -108,7 +148,12 @@ final class OunjeFeedbackService {
         threadCache.removeValue(forKey: userID)
     }
 
-    func fetchMessages(userID: String, accessToken: String? = nil, forceRefresh: Bool = false) async throws -> [AppFeedbackMessage] {
+    func fetchMessages(
+        userID: String,
+        accessToken: String? = nil,
+        forceRefresh: Bool = false,
+        refreshAccessToken: FreshAccessTokenProvider? = nil
+    ) async throws -> [AppFeedbackMessage] {
         if !forceRefresh,
            let cached = threadCache[userID],
            Date().timeIntervalSince(cached.fetchedAt) < threadCacheTTL {
@@ -123,14 +168,15 @@ final class OunjeFeedbackService {
             throw FeedbackServiceError.invalidRequest
         }
 
-        var urlRequest = URLRequest(url: url)
-        if let token = accessToken, !token.isEmpty {
-            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw FeedbackServiceError.invalidResponse
-        }
+        let (data, httpResponse) = try await performWithRefresh(
+            url: url,
+            method: "GET",
+            body: nil,
+            contentType: nil,
+            initialToken: accessToken,
+            refreshAccessToken: refreshAccessToken
+        )
+
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             if Self.isMissingFeedbackTable(errorPayload?.message ?? errorPayload?.error ?? "") {
@@ -150,7 +196,8 @@ final class OunjeFeedbackService {
         userID: String,
         body: String,
         attachments: [AppFeedbackMessageAttachment],
-        accessToken: String? = nil
+        accessToken: String? = nil,
+        refreshAccessToken: FreshAccessTokenProvider? = nil
     ) async throws -> FeedbackSubmissionResponse {
         guard let url = URL(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/feedback") else {
             throw FeedbackServiceError.invalidRequest
@@ -168,18 +215,17 @@ final class OunjeFeedbackService {
             }
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = accessToken, !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try JSONEncoder().encode(Payload(userID: userID, body: body, attachments: attachments))
+        let bodyData = try JSONEncoder().encode(Payload(userID: userID, body: body, attachments: attachments))
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw FeedbackServiceError.invalidResponse
-        }
+        let (data, httpResponse) = try await performWithRefresh(
+            url: url,
+            method: "POST",
+            body: bodyData,
+            contentType: "application/json",
+            initialToken: accessToken,
+            refreshAccessToken: refreshAccessToken
+        )
+
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let message = errorPayload?.message ?? errorPayload?.error ?? "Feedback could not be submitted (\(httpResponse.statusCode))."
@@ -194,6 +240,62 @@ final class OunjeFeedbackService {
         let result = try decoder.decode(FeedbackSubmissionResponse.self, from: data)
         threadCache.removeValue(forKey: userID)
         return result
+    }
+
+    /// Performs the HTTP request with an automatic one-shot retry on 401.
+    /// When the server responds with 401 ("Authorization expired or invalid"),
+    /// we ask the caller for a freshly refreshed access token and retry the
+    /// request once. This eliminates spurious auth errors that show up after
+    /// the app has been backgrounded long enough for the cached JWT to expire.
+    private func performWithRefresh(
+        url: URL,
+        method: String,
+        body: Data?,
+        contentType: String?,
+        initialToken: String?,
+        refreshAccessToken: FreshAccessTokenProvider?
+    ) async throws -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 15
+        if let contentType {
+            request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        if let token = initialToken, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = body
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw FeedbackServiceError.invalidResponse
+        }
+
+        // Retry once on 401 with a freshly refreshed token. Skip retry if we
+        // never had a token to begin with (refresh wouldn't help) or no
+        // refresher was supplied.
+        guard httpResponse.statusCode == 401,
+              let refreshAccessToken,
+              let refreshedToken = await refreshAccessToken(),
+              !refreshedToken.isEmpty,
+              refreshedToken != initialToken else {
+            return (data, httpResponse)
+        }
+
+        var retryRequest = URLRequest(url: url)
+        retryRequest.httpMethod = method
+        retryRequest.timeoutInterval = 15
+        if let contentType {
+            retryRequest.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        retryRequest.setValue("Bearer \(refreshedToken)", forHTTPHeaderField: "Authorization")
+        retryRequest.httpBody = body
+
+        let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+        guard let retryHTTP = retryResponse as? HTTPURLResponse else {
+            throw FeedbackServiceError.invalidResponse
+        }
+        return (retryData, retryHTTP)
     }
 
     private struct NotificationEventsResponse<Item: Decodable>: Decodable {

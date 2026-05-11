@@ -189,6 +189,36 @@ struct PipelineDecision: Identifiable, Codable, Hashable {
     var summary: String
 }
 
+/// A named collection of recipes within a `MealPlan`. Users can maintain
+/// multiple batches simultaneously — e.g. "Weekly Prep", "Snacks", "Lunches".
+/// Encoded in `MealPlan.batches`; nil batches means a legacy single-batch plan
+/// whose recipes live in `MealPlan.recipes` directly.
+struct PrepBatch: Identifiable, Codable, Hashable {
+    var id: UUID
+    /// User-facing display name (e.g. "Prep 1", "Sunday Batch").
+    var name: String
+    var recipes: [PlannedRecipe]
+    var groceryItems: [GroceryItem]
+    var recurringRecipeIDs: [String]?
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        recipes: [PlannedRecipe] = [],
+        groceryItems: [GroceryItem] = [],
+        recurringRecipeIDs: [String]? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.recipes = recipes
+        self.groceryItems = groceryItems
+        self.recurringRecipeIDs = recurringRecipeIDs
+        self.createdAt = createdAt
+    }
+}
+
 struct MealPlan: Identifiable, Codable, Hashable {
     var id: UUID
     var generatedAt: Date
@@ -201,9 +231,19 @@ struct MealPlan: Identifiable, Codable, Hashable {
     var pipeline: [PipelineDecision]
     var mainShopSnapshot: MainShopSnapshot? = nil
     var recurringRecipeIDs: [String]? = nil
+    /// Named batches. When non-nil, the UI renders these instead of `recipes`
+    /// directly. `recipes` stays as the merged superset for backward compat
+    /// with generation, cart, and grocery logic that hasn't been migrated yet.
+    var batches: [PrepBatch]? = nil
 
     var bestQuote: ProviderQuote? {
         providerQuotes.first
+    }
+
+    /// All recipes across every batch (or `recipes` for legacy single-batch plans).
+    var allBatchRecipes: [PlannedRecipe] {
+        guard let batches, !batches.isEmpty else { return recipes }
+        return batches.flatMap(\.recipes)
     }
 }
 

@@ -656,20 +656,22 @@ final class SupabaseSavedRecipesService {
             throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        // Verify the row was actually deleted.
-        // Supabase returns `Content-Range: */N` with Prefer: count=exact.
-        // If N == 0 or the count part is non-numeric ("*"), treat as 0 rows deleted
-        // so the tombstone is kept and the delete is retried on next launch.
+        // Verify the row was actually deleted by inspecting the Content-Range count.
+        // PostgREST returns `Content-Range: */<N>` (or `0-0/<N>`) with Prefer: count=exact.
+        // Only throw when the count is explicitly 0 — that means the row wasn't found
+        // (already deleted, RLS mismatch, etc.) so the tombstone must be retained for retry.
+        // A missing Content-Range header is treated as a successful delete: older PostgREST
+        // versions and some Supabase proxy configurations omit this header for DML even when
+        // rows are affected, and throwing in that case causes the tombstone to persist forever
+        // while the server actually removed the record.
         if let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range") {
             let countPart = contentRange.split(separator: "/").last.map(String.init) ?? "*"
-            let deletedCount = Int(countPart) ?? 0
+            let deletedCount = Int(countPart) ?? 1
             if deletedCount == 0 {
                 throw SupabaseSavedRecipesError.requestFailed("Recipe bookmark was not found for this account.")
             }
-        } else {
-            // No Content-Range header despite requesting count=exact → treat as 0 deleted.
-            throw SupabaseSavedRecipesError.requestFailed("Recipe bookmark removal could not be confirmed.")
         }
+        // No Content-Range → assume the delete was processed (HTTP 2xx already confirmed).
     }
 
     private func applyAuthHeaders(to request: inout URLRequest, accessToken: String?) throws {

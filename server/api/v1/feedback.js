@@ -7,6 +7,11 @@ const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const FEEDBACK_SHADOW_KIND = "recipe_nudge";
+const FEEDBACK_ATTACHMENTS_BUCKET = "feedback-attachments";
+// Signed URLs live for 1 hour. The client opens the feedback sheet, fetches
+// the thread, and renders attachments inline; an hour is plenty for the
+// average session and short enough that a leaked URL has limited blast radius.
+const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 function getSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -16,6 +21,53 @@ function getSupabase() {
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 }
 
+// Generates signed read URLs for every attachment with a storage_path. We use
+// service-role credentials here so the response is the same shape regardless
+// of the calling user's RLS context. The signed URL is scoped to the bucket +
+// path, so users only ever receive URLs for their own files (the row was
+// loaded under their user_id filter).
+async function signAttachmentUrls(supabase, attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
+
+  const result = [];
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") continue;
+    const path = attachment.storage_path ?? attachment.storagePath;
+    if (!path) {
+      result.push(attachment);
+      continue;
+    }
+    try {
+      const { data, error } = await supabase.storage
+        .from(FEEDBACK_ATTACHMENTS_BUCKET)
+        .createSignedUrl(path, ATTACHMENT_SIGNED_URL_TTL_SECONDS);
+      if (error) throw error;
+      result.push({
+        ...attachment,
+        signed_url: data?.signedUrl ?? null,
+      });
+    } catch (cause) {
+      console.warn("[feedback] failed to sign attachment URL:", cause.message);
+      result.push(attachment);
+    }
+  }
+  return result;
+}
+
+async function hydrateMessageAttachments(supabase, messages) {
+  if (!Array.isArray(messages)) return [];
+  const hydrated = await Promise.all(
+    messages.map(async (message) => {
+      const attachments = await signAttachmentUrls(supabase, message?.attachments ?? []);
+      return { ...message, attachments };
+    })
+  );
+  return hydrated;
+}
+
+// Attachments now carry a storage_path that points at an object inside the
+// `feedback-attachments` private bucket. We preserve fileName/mimeType/kind so
+// the client can render a placeholder while the signed URL resolves.
 function normalizeAttachments(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -23,12 +75,23 @@ function normalizeAttachments(value) {
       const fileName = String(item?.file_name ?? item?.fileName ?? "").trim();
       const mimeType = String(item?.mime_type ?? item?.mimeType ?? "").trim();
       const kind = String(item?.kind ?? "").trim();
-      if (!fileName && !mimeType && !kind) return null;
-      return {
+      const storagePath = String(item?.storage_path ?? item?.storagePath ?? "").trim();
+      const width = Number.isFinite(Number(item?.width)) ? Number(item.width) : null;
+      const height = Number.isFinite(Number(item?.height)) ? Number(item.height) : null;
+      const sizeBytes = Number.isFinite(Number(item?.size_bytes ?? item?.sizeBytes))
+        ? Number(item.size_bytes ?? item.sizeBytes)
+        : null;
+      if (!fileName && !mimeType && !kind && !storagePath) return null;
+      const normalized = {
         file_name: fileName,
         mime_type: mimeType,
-        kind: kind || "image",
+        kind: kind || (mimeType.startsWith("video") ? "video" : "image"),
       };
+      if (storagePath) normalized.storage_path = storagePath;
+      if (width !== null) normalized.width = width;
+      if (height !== null) normalized.height = height;
+      if (sizeBytes !== null) normalized.size_bytes = sizeBytes;
+      return normalized;
     })
     .filter(Boolean)
     .slice(0, 4);
@@ -129,11 +192,14 @@ router.get("/feedback", async (req, res) => {
     if (error) {
       if (!isMissingFeedbackTableError(error)) throw error;
       const fallbackItems = await listFeedbackShadowMessages(supabase, userID);
-      return res.json({ items: fallbackItems, storage: "notification_shadow" });
+      const hydratedFallback = await hydrateMessageAttachments(supabase, fallbackItems);
+      return res.json({ items: hydratedFallback, storage: "notification_shadow" });
     }
 
+    const filtered = (data ?? []).filter((row) => !isLegacyAutomatedFeedbackMessage(row));
+    const hydrated = await hydrateMessageAttachments(supabase, filtered);
     return res.json({
-      items: (data ?? []).filter((row) => !isLegacyAutomatedFeedbackMessage(row)),
+      items: hydrated,
       storage: "feedback_table",
     });
   } catch (error) {
@@ -174,14 +240,16 @@ router.post("/feedback", async (req, res) => {
     if (error) {
       if (!isMissingFeedbackTableError(error)) throw error;
       const fallbackItems = await insertFeedbackShadowMessages(supabase, userID, [userMessage]);
+      const hydratedFallback = await hydrateMessageAttachments(supabase, fallbackItems);
       return res.status(201).json({
-        items: fallbackItems,
+        items: hydratedFallback,
         storage: "notification_shadow",
       });
     }
 
+    const hydrated = await hydrateMessageAttachments(supabase, data ?? []);
     return res.status(201).json({
-      items: data ?? [],
+      items: hydrated,
       storage: "feedback_table",
     });
   } catch (error) {

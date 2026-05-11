@@ -2232,6 +2232,78 @@ async function broadcastRecipeImportInvalidation(job, eventName) {
     review_state: job?.review_state ?? null,
     event: eventName,
   });
+
+  // Also drop a row into app_notification_events so the user gets a banner
+  // / APNs push for queue → completed / failed transitions. We only emit for
+  // status transitions, not every event tick.
+  try {
+    await maybeEmitRecipeImportNotification(job, eventName);
+  } catch (cause) {
+    console.warn("[recipe-ingestion] notification emit failed:", cause.message);
+  }
+}
+
+async function maybeEmitRecipeImportNotification(job, eventName) {
+  const userID = normalizeText(job?.user_id);
+  if (!userID) return;
+  const status = normalizeText(job?.status);
+  const jobID = normalizeText(job?.id);
+  if (!jobID) return;
+
+  // Lazy-load the notification helper to avoid a cycle (notification-events
+  // → push-tokens → recipe-ingestion would loop on import resolution).
+  const { createNotificationEvent } = await import("./notification-events.js");
+
+  const title = pickRecipeTitle(job);
+
+  if (status === "queued" && eventName === "queued") {
+    await createNotificationEvent({
+      userId: userID,
+      kind: "recipe_import_queued",
+      dedupeKey: `recipe-import-queued:${jobID}`,
+      title: "Got it — building your recipe",
+      body: title ? `We'll let you know when "${title}" is ready.` : "We'll let you know when your recipe is ready.",
+      recipeId: normalizeText(job?.recipe_id) || null,
+      metadata: { job_id: jobID, status },
+    });
+  } else if (["saved", "draft"].includes(status)) {
+    await createNotificationEvent({
+      userId: userID,
+      kind: "recipe_import_completed",
+      dedupeKey: `recipe-import-completed:${jobID}`,
+      title: title ? `Your recipe is ready` : "Your recipe is ready",
+      body: title ? `"${title}" is now in your cookbook. Tap to take a look.` : "Tap to take a look at your new recipe.",
+      recipeId: normalizeText(job?.recipe_id) || null,
+      actionUrl: job?.recipe_id ? `ounje://recipe/${encodeURIComponent(job.recipe_id)}` : null,
+      actionLabel: "Open recipe",
+      metadata: { job_id: jobID, status },
+    });
+  } else if (status === "failed") {
+    await createNotificationEvent({
+      userId: userID,
+      kind: "recipe_import_failed",
+      dedupeKey: `recipe-import-failed:${jobID}`,
+      title: "Recipe import didn't work",
+      body: title ? `We couldn't build "${title}". Tap to try again.` : "Something went wrong importing your recipe. Tap to try again.",
+      actionUrl: "ounje://cookbook/import",
+      actionLabel: "Try again",
+      metadata: { job_id: jobID, status, error: normalizeText(job?.error_message) || null },
+    });
+  }
+}
+
+function pickRecipeTitle(job) {
+  if (!job) return null;
+  // The job's request_payload sometimes carries a parsed title; fall back to
+  // the source url or null. Avoid throwing on weird shapes.
+  try {
+    const payload = job.request_payload;
+    if (payload && typeof payload === "object") {
+      if (typeof payload.title === "string" && payload.title.trim()) return payload.title.trim();
+      if (typeof payload.parsed_title === "string" && payload.parsed_title.trim()) return payload.parsed_title.trim();
+    }
+  } catch (_) { /* noop */ }
+  return null;
 }
 
 async function findExistingJobForRequest(request, dedupeKey) {

@@ -64,6 +64,12 @@ final class SavedRecipesStore: ObservableObject {
             let staleTombstones = deletedSavedRecipeIDs.filter { !remoteIDSet.contains($0) }
             if !staleTombstones.isEmpty {
                 deletedSavedRecipeIDs.subtract(staleTombstones)
+                // Evict stale-tombstoned IDs from the local cache too. Without this a
+                // recipe that was server-deleted but still lingering in savedRecipes
+                // (e.g. from a previous session before the tombstone system existed) could
+                // sneak back into mergedRecipes via filteredLocal and then get re-upserted
+                // to the server, creating a resurrection loop.
+                savedRecipes.removeAll { staleTombstones.contains($0.id) }
             }
 
             let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)

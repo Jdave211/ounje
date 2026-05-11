@@ -1,8 +1,32 @@
 import { createClient } from "@supabase/supabase-js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
+import { pushToUser } from "./push-tokens.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+// Kinds we deliver as APNs pushes (in addition to writing to the inbox).
+// Stuff like internal feedback thread shadows stays inbox-only so users
+// aren't blasted with notifications about their own messages.
+const PUSH_DELIVERABLE_KINDS = new Set([
+  "meal_prep_ready",
+  "cart_review_required",
+  "checkout_approval_required",
+  "grocery_cart_ready",
+  "grocery_cart_partial",
+  "grocery_order_confirmed",
+  "grocery_delivery_update",
+  "grocery_delivery_arrived",
+  "grocery_issue",
+  "recipe_nudge",
+  "trending_recipe_nudge",
+  "recipe_import_queued",
+  "recipe_import_completed",
+  "recipe_import_failed",
+  "autoshop_started",
+  "autoshop_completed",
+  "autoshop_failed",
+]);
 
 function getSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -78,6 +102,29 @@ export async function createNotificationEvent({
     kind: data?.kind ?? normalizedKind,
     dedupe_key: data?.dedupe_key ?? normalizedDedupeKey,
   });
+
+  // Fire-and-forget APNs push so the user is notified even when the app is
+  // backgrounded or killed. Pushes are intentionally non-blocking: the
+  // inbox row + realtime invalidation must succeed regardless.
+  if (
+    PUSH_DELIVERABLE_KINDS.has(normalizedKind)
+    && !metadata?.hidden_from_notifications
+  ) {
+    pushToUser({
+      userId: normalizedUserId,
+      title: normalizedTitle,
+      body: normalizedBody,
+      subtitle: normalizeString(subtitle) || undefined,
+      userInfo: {
+        event_id: data?.id ?? null,
+        kind: data?.kind ?? normalizedKind,
+        dedupe_key: data?.dedupe_key ?? normalizedDedupeKey,
+        action_url: normalizeString(actionUrl) || null,
+      },
+    }).catch((cause) => {
+      console.warn("[notifications] APNs push failed:", cause.message);
+    });
+  }
 
   return data;
 }
