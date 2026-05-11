@@ -55,14 +55,25 @@ final class SavedRecipesStore: ObservableObject {
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
             )
+
+            // Reconcile tombstones against the actual remote state. If the DB no longer
+            // contains a tombstoned recipe it was truly deleted — clear the tombstone.
+            // If it's still there the delete failed and we must keep the tombstone so
+            // the recipe stays hidden.
+            let remoteIDSet = Set(remoteRecipes.map(\.id))
+            let staleTombstones = deletedSavedRecipeIDs.filter { !remoteIDSet.contains($0) }
+            if !staleTombstones.isEmpty {
+                deletedSavedRecipeIDs.subtract(staleTombstones)
+            }
+
             let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
 
-            if mergedRecipes != savedRecipes {
+            if mergedRecipes != savedRecipes || !staleTombstones.isEmpty {
                 savedRecipes = mergedRecipes
                 persist()
             }
 
-            let remoteIDs = Set(remoteRecipes.map(\.id)).subtracting(deletedSavedRecipeIDs)
+            let remoteIDs = remoteIDSet.subtracting(deletedSavedRecipeIDs)
             let unsyncedLocalRecipes = mergedRecipes.filter { !remoteIDs.contains($0.id) && !deletedSavedRecipeIDs.contains($0.id) }
             if !unsyncedLocalRecipes.isEmpty {
                 try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(

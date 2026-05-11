@@ -148,12 +148,14 @@ final class DiscoverRecipesViewModel: ObservableObject {
             && !appendResults
             && hadExistingRecipes
             && normalizedQuery.isEmpty
+        // Use `recipes.isEmpty` here (not `hadExistingRecipes`) so that a stale stored shelf
+        // applied above keeps recipes visible while the network fetch runs in the background.
         let shouldClearVisibleRecipes = !appendResults
             && !shouldPreserveVisibleRecipes
             && (
                 forceNetwork
                 || isPresetTransition
-                || (responseCache[loadKey] == nil && !hadExistingRecipes)
+                || (responseCache[loadKey] == nil && recipes.isEmpty)
             )
         if shouldClearVisibleRecipes {
             recipes = []
@@ -379,8 +381,8 @@ final class DiscoverRecipesViewModel: ObservableObject {
 
     func prepareForQueryRefresh() {
         isTransitioningFeed = true
-        recipes = []
-        hasResolvedInitialLoad = false
+        // Keep existing recipes visible while the search loads — the server response
+        // will replace them when it arrives. Clearing immediately causes a blank screen.
         hasMoreRecipes = false
         errorMessage = nil
         currentFeedOffset = 0

@@ -3642,19 +3642,6 @@ struct AutoshopLeadSheet: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, 4)
 
-            HStack(alignment: .top) {
-                Button("Cancel", action: onCancel)
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundStyle(OunjePalette.secondaryText)
-
-                Spacer(minLength: 16)
-
-                Button("Save", action: onSave)
-                    .biroHeaderFont(16)
-                    .foregroundStyle(OunjePalette.primaryText)
-            }
-            .padding(.bottom, 2)
-
             VStack(alignment: .leading, spacing: 6) {
                 Text("Autoshop timing")
                     .biroHeaderFont(30)
@@ -3665,6 +3652,7 @@ struct AutoshopLeadSheet: View {
                     .foregroundStyle(OunjePalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.top, 4)
 
             AutoshopLeadChoiceList(selectedLeadDays: $selectedLeadDays)
 
@@ -3675,6 +3663,10 @@ struct AutoshopLeadSheet: View {
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(OunjePalette.background.ignoresSafeArea())
+        // Auto-save and dismiss as soon as the user taps a choice — no Save button needed.
+        .onChange(of: selectedLeadDays) { _ in
+            onSave()
+        }
     }
 }
 

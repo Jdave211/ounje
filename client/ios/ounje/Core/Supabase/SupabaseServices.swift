@@ -650,12 +650,19 @@ final class SupabaseSavedRecipesService {
             throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        // Verify the row was actually deleted (RLS can silently filter without deleting)
+        // Verify the row was actually deleted.
+        // Supabase returns `Content-Range: */N` with Prefer: count=exact.
+        // If N == 0 or the count part is non-numeric ("*"), treat as 0 rows deleted
+        // so the tombstone is kept and the delete is retried on next launch.
         if let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range") {
-            let deletedCount = contentRange.split(separator: "/").last.flatMap { Int($0) } ?? -1
+            let countPart = contentRange.split(separator: "/").last.map(String.init) ?? "*"
+            let deletedCount = Int(countPart) ?? 0
             if deletedCount == 0 {
                 throw SupabaseSavedRecipesError.requestFailed("Recipe bookmark was not found for this account.")
             }
+        } else {
+            // No Content-Range header despite requesting count=exact → treat as 0 deleted.
+            throw SupabaseSavedRecipesError.requestFailed("Recipe bookmark removal could not be confirmed.")
         }
     }
 

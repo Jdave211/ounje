@@ -1270,8 +1270,8 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       return res.json(fallbackPayload);
     }
 
-    // Start lexical anchor fetch immediately with a heuristic query context — it
-    // doesn't need the LLM intent and can run in parallel with the intent+embedding chain.
+    // Start lexical anchor fetch and heuristic embedding immediately — neither needs
+    // LLM intent, so they run fully in parallel with the (optional) intent call.
     const heuristicContext = buildDiscoverQueryContext({ profile, filter, query: trimmedQuery, llmIntent: null });
     const lexicalAnchorPromise = fetchLexicalAnchorRecipes({
       query: trimmedQuery,
@@ -1282,7 +1282,21 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       return [];
     });
 
-    const llmIntent = openai
+    // Start embedding the heuristic semantic query right now so it runs in parallel
+    // with the LLM intent call. For most queries the heuristic query is identical
+    // to the LLM-enhanced one, so we get the embedding "for free".
+    const heuristicEmbeddingPromise = openai
+      ? embedTextCached(heuristicContext.semanticQuery, "text-embedding-3-small").catch(() => null)
+      : Promise.resolve(null);
+
+    // Simple queries (≤3 words, no constraint modifiers) skip the LLM intent call
+    // entirely and use the heuristic context — saves up to 1 second for everyday searches.
+    const isSimpleQuery = (
+      trimmedQuery.split(/\s+/).length <= 3 &&
+      !/\b(under|less than|above|over|at least|without|no |vegan|vegetarian|gluten|dairy|\d+\s*(cal|kcal|min|hour|serving))\b/i.test(trimmedQuery)
+    );
+
+    const llmIntent = (!isSimpleQuery && openai)
       ? await withTimeout(
           inferDiscoverIntentWithLLM({ profile, filter, query: trimmedQuery }),
           1200,
@@ -1292,6 +1306,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
           return null;
         })
       : null;
+
     const {
       filterType,
       semanticQuery,
@@ -1304,13 +1319,17 @@ recipe_router.post("/recipe/discover", async (req, res) => {
 
     if (trimmedQuery.length <= 80) {
       console.log(
-        `[recipe/discover] query="${trimmedQuery}" filter="${filter}" resolvedFilter="${filterType ?? "null"}" maxCookMinutes="${maxCookMinutes ?? "null"}" maxCalories="${parsedQuery?.maxCaloriesKcal ?? "null"}" exactPhrase="${parsedQuery?.exactPhrase ?? "null"}" lexicalQuery="${lexicalQuery}" retrievalPrompt="${llmIntent?.retrievalPrompt ?? parsedQuery?.semanticQuery ?? ""}" intent="${llmIntent?.userIntent ?? "heuristic"}"`
+        `[recipe/discover] query="${trimmedQuery}" filter="${filter}" simple=${isSimpleQuery} resolvedFilter="${filterType ?? "null"}" maxCookMinutes="${maxCookMinutes ?? "null"}" maxCalories="${parsedQuery?.maxCaloriesKcal ?? "null"}" exactPhrase="${parsedQuery?.exactPhrase ?? "null"}" lexicalQuery="${lexicalQuery}" retrievalPrompt="${llmIntent?.retrievalPrompt ?? parsedQuery?.semanticQuery ?? ""}" intent="${llmIntent?.userIntent ?? "heuristic"}"`
       );
     }
 
+    // Use the already-in-flight heuristic embedding when the semantic query matches;
+    // otherwise fire a fresh call for the LLM-upgraded query (usually hits the cache).
     const hybridEmbedding = openai
       ? await withTimeout(
-          embedTextCached(semanticQuery, "text-embedding-3-small"),
+          semanticQuery === heuristicContext.semanticQuery
+            ? heuristicEmbeddingPromise
+            : embedTextCached(semanticQuery, "text-embedding-3-small"),
           3000,
           "discover embedding timed out"
         ).catch((error) => {
@@ -1350,7 +1369,9 @@ recipe_router.post("/recipe/discover", async (req, res) => {
       lexicalAnchorPromise,
     ]);
 
-    const rankedIds = fuseRankedIds([basicMatches, hybridMatches], candidateLimit);
+    // Cap candidates before the DB fetch — we never need more than 3× the window
+    // to have enough after filtering; fetching fewer IDs = smaller payload + faster query.
+    const rankedIds = fuseRankedIds([basicMatches, hybridMatches], candidateLimit).slice(0, Math.max(requestedWindowLimit * 3, 48));
     let recipes = rankedIds.length > 0
       ? await fetchSearchRecipesByIds(rankedIds)
       : [];
@@ -5182,6 +5203,57 @@ async function fetchDbBracketRecipeIds(filter = "All", { forceRefresh = false } 
   return uniqueIds;
 }
 
+// Keyword patterns for supplementing sparse brackets via DB ilike queries.
+const BRACKET_KEYWORD_SUPPLEMENT = {
+  sandwich:   ["sandwich", "wrap", "sub", "hoagie", "baguette", "panini"],
+  drinks:     ["smoothie", "juice", "latte", "coffee", "tea", "lemonade", "spritz", "cocktail", "mocktail", "drink", "shake"],
+  salmon:     ["salmon"],
+  steak:      ["steak", "ribeye", "sirloin", "flank", "brisket", "beef"],
+  breakfast:  ["breakfast", "brunch", "oat", "pancake", "waffle", "granola", "egg", "omelet"],
+  vegan:      ["vegan"],
+  vegetarian: ["vegetarian"],
+  chicken:    ["chicken"],
+  pasta:      ["pasta", "spaghetti", "linguine", "penne", "rigatoni", "noodle", "gnocchi"],
+  fish:       ["fish", "cod", "snapper", "tilapia", "trout", "sea bass", "halibut", "tuna", "shrimp", "prawn", "seafood"],
+  salad:      ["salad"],
+  dessert:    ["dessert", "cake", "cookie", "brownie", "pudding", "pie", "cheesecake", "muffin", "tart"],
+  potatoes:   ["potato", "potatoes", "fries", "hash"],
+  beans:      ["beans", "bean", "lentil", "legume", "chickpea", "hummus"],
+};
+
+const bracketKeywordSupplementCache = new CappedMap(30);
+
+async function fetchBracketKeywordSupplement(bracketKey, { limit = 100 } = {}) {
+  const keywords = BRACKET_KEYWORD_SUPPLEMENT[bracketKey];
+  if (!keywords?.length || !SUPABASE_URL || !SUPABASE_ANON_KEY) return [];
+
+  const cacheKey = `kw-supp:${bracketKey}:${limit}`;
+  const cached = readTimedCache(bracketKeywordSupplementCache, cacheKey, 30 * 60 * 1000);
+  if (cached) return cached;
+
+  // Build OR filter: title.ilike.*keyword* OR ingredients_text.ilike.*keyword*
+  const orTerms = keywords.flatMap((kw) => [
+    `title.ilike.*${kw}*`,
+    `recipe_type.ilike.*${kw}*`,
+  ]).join(",");
+
+  const url = `${SUPABASE_URL}/rest/v1/recipes?select=id&or=(${encodeURIComponent(orTerms)})&limit=${Math.min(limit, 500)}`;
+  try {
+    const response = await fetch(url, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    });
+    const data = await response.json().catch(() => []);
+    if (!response.ok) return [];
+    const ids = Array.isArray(data) ? data.map((r) => String(r?.id ?? "").trim()).filter(Boolean) : [];
+    bracketKeywordSupplementCache.set(cacheKey, { value: ids, createdAt: Date.now() });
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
+const MIN_BRACKET_POOL = 100;
+
 async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "preset", forceRefresh = false }) {
   const preset = getDiscoverPreset(filter);
   if (!preset || preset.key === "all") {
@@ -5195,7 +5267,21 @@ async function fetchPresetBracketRecipes({ filter = "All", limit = 600, seed = "
     if (!isMissingRecipeColumnError(error.message)) {
       throw error;
     }
-    bracketIds = getCachedRecipeIdsForBracket(filter);
+  }
+  // Always merge in the JSON-cached IDs so brackets work even when the DB classify
+  // script hasn't been run yet, or for brackets with very few DB rows.
+  const jsonIds = getCachedRecipeIdsForBracket(filter);
+  if (jsonIds.length > 0) {
+    bracketIds = [...new Set([...bracketIds, ...jsonIds])];
+  }
+
+  // If the bracket pool is still thin, supplement with a broad keyword search against
+  // the full DB so users see a full shelf even before the classify script is run.
+  if (bracketIds.length < MIN_BRACKET_POOL) {
+    const kwIds = await fetchBracketKeywordSupplement(preset.key, { limit: MIN_BRACKET_POOL * 2 }).catch(() => []);
+    if (kwIds.length > 0) {
+      bracketIds = [...new Set([...bracketIds, ...kwIds])];
+    }
   }
 
   if (!bracketIds.length) {
@@ -5234,7 +5320,18 @@ async function fetchPresetBracketRecipePage({ filter = "All", limit = 18, offset
     if (!isMissingRecipeColumnError(error.message)) {
       throw error;
     }
-    bracketIds = getCachedRecipeIdsForBracket(filter);
+  }
+  // Merge JSON-cached IDs so brackets are populated even before the classify script runs.
+  const jsonIdsPage = getCachedRecipeIdsForBracket(filter);
+  if (jsonIdsPage.length > 0) {
+    bracketIds = [...new Set([...bracketIds, ...jsonIdsPage])];
+  }
+  // Supplement thin brackets with a keyword-based DB query.
+  if (bracketIds.length < MIN_BRACKET_POOL) {
+    const kwIdsPage = await fetchBracketKeywordSupplement(preset.key, { limit: MIN_BRACKET_POOL * 2 }).catch(() => []);
+    if (kwIdsPage.length > 0) {
+      bracketIds = [...new Set([...bracketIds, ...kwIdsPage])];
+    }
   }
 
   const safeLimit = Math.max(1, Number(limit) || 18);

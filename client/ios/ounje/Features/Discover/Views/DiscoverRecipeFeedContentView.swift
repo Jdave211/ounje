@@ -18,9 +18,11 @@ struct DiscoverRecipeFeedContentView: View {
     let onLoadMore: () async -> Void
 
     var body: some View {
-        if isSearchRefreshing || !hasResolvedInitialLoad
-            || isLoading
-            || isTransitioningFeed {
+        // Show skeleton placeholders only when there are no recipes to display yet.
+        // When recipes exist and we're transitioning (e.g. search in-flight), keep
+        // them visible at reduced opacity so the user isn't staring at a blank screen.
+        let isActivelyLoading = isSearchRefreshing || !hasResolvedInitialLoad || isLoading || isTransitioningFeed
+        if isActivelyLoading && visibleRecipes.isEmpty {
             LazyVGrid(columns: recipeColumns, spacing: 14) {
                 ForEach(0..<6, id: \.self) { _ in
                     DiscoverRecipeCardLoadingPlaceholder()
@@ -73,6 +75,8 @@ struct DiscoverRecipeFeedContentView: View {
                     }
                 }
             }
+            .opacity(isActivelyLoading ? 0.42 : 1.0)
+            .animation(.easeInOut(duration: 0.2), value: isActivelyLoading)
 
             if isFetchingMore {
                 LazyVGrid(columns: recipeColumns, spacing: 14) {
