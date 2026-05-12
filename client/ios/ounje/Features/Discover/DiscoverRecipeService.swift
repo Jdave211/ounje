@@ -3,6 +3,8 @@ import Foundation
 final class SupabaseDiscoverRecipeService {
     static let shared = SupabaseDiscoverRecipeService()
 
+    private var catalogPoolCache: [Int: [DiscoverRecipeCardData]] = [:]
+
     private init() {}
 
     func fetchRecipes(limit: Int = 30, offset: Int = 0) async throws -> [DiscoverRecipeCardData] {
@@ -57,6 +59,41 @@ final class SupabaseDiscoverRecipeService {
         offset: Int = 0,
         forceRefresh: Bool = false
     ) async throws -> DiscoverRankedRecipesResponse {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
+
+        // The base feed should render from the public catalog immediately.
+        // Waiting on the ranked Render route here can stall first paint and
+        // pull-to-refresh for 20s+ before falling back to the same catalog.
+        if normalizedQuery.isEmpty,
+           normalizedFilter == "all" {
+            do {
+                let directFeed = try await fetchRotatedCatalogFeed(
+                    limit: limit,
+                    offset: offset,
+                    sessionSeed: sessionSeed,
+                    forceRefresh: forceRefresh
+                )
+                debugLogDiscoverFallback(
+                    forceRefresh ? "direct refreshed catalog feed" : "direct catalog feed",
+                    filter: filter,
+                    offset: offset,
+                    recipes: directFeed.recipes.count,
+                    mode: directFeed.rankingMode
+                )
+                return directFeed
+            } catch {
+                debugLogDiscoverFallback(
+                    "fast initial catalog failed; trying render",
+                    filter: filter,
+                    offset: offset,
+                    recipes: 0,
+                    mode: nil,
+                    error: error
+                )
+            }
+        }
+
         var lastError: Error?
         for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
@@ -86,21 +123,25 @@ final class SupabaseDiscoverRecipeService {
                         return fallback
                     }
 
-                    let fallbackRecipes = try await fetchRecipes(limit: limit, offset: offset)
+                    let directFeed = try await fetchRotatedCatalogFeed(
+                        limit: limit,
+                        offset: offset,
+                        sessionSeed: sessionSeed
+                    )
                     debugLogDiscoverFallback(
                         "render empty; feed fallback",
                         filter: filter,
                         offset: offset,
-                        recipes: fallbackRecipes.count,
+                        recipes: directFeed.recipes.count,
                         mode: "supabase_direct_empty_response_fallback"
                     )
                     return DiscoverRankedRecipesResponse(
-                        recipes: fallbackRecipes,
-                        filters: DiscoverPreset.allTitles,
+                        recipes: directFeed.recipes,
+                        filters: directFeed.filters,
                         rankingMode: "supabase_direct_empty_response_fallback",
-                        totalAvailable: fallbackRecipes.count,
-                        hasMore: fallbackRecipes.count >= limit,
-                        nextOffset: fallbackRecipes.count >= limit ? offset + fallbackRecipes.count : nil
+                        totalAvailable: directFeed.totalAvailable,
+                        hasMore: directFeed.hasMore,
+                        nextOffset: directFeed.nextOffset
                     )
                 }
 
@@ -118,9 +159,7 @@ final class SupabaseDiscoverRecipeService {
             }
         }
 
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if normalizedQuery.isEmpty {
-            let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
             if normalizedFilter != "all" {
                 let fallback = try await fetchBracketRecipesFallback(filter: filter, limit: limit, offset: offset)
                 debugLogDiscoverFallback(
@@ -133,25 +172,33 @@ final class SupabaseDiscoverRecipeService {
                 return fallback
             }
 
-            let fallbackRecipes = try await fetchRecipes(limit: limit, offset: offset)
+            let directFeed = try await fetchRotatedCatalogFeed(
+                limit: limit,
+                offset: offset,
+                sessionSeed: sessionSeed
+            )
             debugLogDiscoverFallback(
                 "all render candidates failed; feed fallback",
                 filter: filter,
                 offset: offset,
-                recipes: fallbackRecipes.count,
+                recipes: directFeed.recipes.count,
                 mode: "supabase_direct_fallback"
             )
             return DiscoverRankedRecipesResponse(
-                recipes: fallbackRecipes,
-                filters: DiscoverPreset.allTitles,
+                recipes: directFeed.recipes,
+                filters: directFeed.filters,
                 rankingMode: "supabase_direct_fallback",
-                totalAvailable: fallbackRecipes.count,
-                hasMore: fallbackRecipes.count >= limit,
-                nextOffset: fallbackRecipes.count >= limit ? offset + fallbackRecipes.count : nil
+                totalAvailable: directFeed.totalAvailable,
+                hasMore: directFeed.hasMore,
+                nextOffset: directFeed.nextOffset
             )
         }
 
         throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    func prewarmBaseCatalog(limit: Int = 96) async {
+        _ = try? await fetchCatalogPool(fetchLimit: max(1, limit))
     }
 
     private func fetchRankedRecipes(
@@ -259,6 +306,65 @@ final class SupabaseDiscoverRecipeService {
             hasMore: hasMore,
             nextOffset: hasMore ? offset + pageRecipes.count : nil
         )
+    }
+
+    private func fetchRotatedCatalogFeed(
+        limit: Int,
+        offset: Int,
+        sessionSeed: String,
+        forceRefresh: Bool = false
+    ) async throws -> DiscoverRankedRecipesResponse {
+        let normalizedLimit = max(1, limit)
+        let normalizedOffset = max(0, offset)
+        let fetchLimit = min(max(normalizedOffset + (normalizedLimit * 8), 96), 240)
+        let catalog = try await fetchCatalogPool(fetchLimit: fetchLimit, forceRefresh: forceRefresh)
+
+        guard !catalog.isEmpty else {
+            return DiscoverRankedRecipesResponse(
+                recipes: [],
+                filters: DiscoverPreset.allTitles,
+                rankingMode: "supabase_direct_rotating_catalog",
+                totalAvailable: 0,
+                hasMore: false,
+                nextOffset: nil
+            )
+        }
+
+        let shuffledCatalog = catalog.sorted { lhs, rhs in
+            let leftScore = deterministicCatalogOrderScore(id: lhs.id, seed: sessionSeed)
+            let rightScore = deterministicCatalogOrderScore(id: rhs.id, seed: sessionSeed)
+            if leftScore == rightScore {
+                return lhs.id < rhs.id
+            }
+            return leftScore < rightScore
+        }
+
+        let pageRecipes = Array(shuffledCatalog.dropFirst(normalizedOffset).prefix(normalizedLimit))
+        let hasMore = normalizedOffset + pageRecipes.count < shuffledCatalog.count
+        return DiscoverRankedRecipesResponse(
+            recipes: pageRecipes,
+            filters: DiscoverPreset.allTitles,
+            rankingMode: "supabase_direct_rotating_catalog",
+            totalAvailable: shuffledCatalog.count,
+            hasMore: hasMore,
+            nextOffset: hasMore ? normalizedOffset + pageRecipes.count : nil
+        )
+    }
+
+    private func deterministicCatalogOrderScore(id: String, seed: String) -> UInt64 {
+        "\(seed)|\(id)".utf8.reduce(UInt64(1469598103934665603)) { partial, byte in
+            (partial ^ UInt64(byte)) &* 1099511628211
+        }
+    }
+
+    private func fetchCatalogPool(fetchLimit: Int, forceRefresh: Bool = false) async throws -> [DiscoverRecipeCardData] {
+        if !forceRefresh, let cached = catalogPoolCache[fetchLimit], !cached.isEmpty {
+            return cached
+        }
+
+        let catalog = try await fetchRecipes(limit: fetchLimit, offset: 0)
+        catalogPoolCache[fetchLimit] = catalog
+        return catalog
     }
 
     private func debugLogDiscoverFallback(

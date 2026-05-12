@@ -91,7 +91,7 @@ struct RecipeDetailExperienceView: View {
     private let sectionDivider = OunjePalette.stroke
 
     private var accessToken: String? {
-        store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+        store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken
     }
 
     private var transitionContext: RecipeTransitionContext? {
@@ -124,6 +124,41 @@ struct RecipeDetailExperienceView: View {
 
     private var recipeID: String {
         detail?.id ?? presentedRecipe.id
+    }
+
+    @MainActor
+    private func loadResolvedRecipeDetail() async {
+        guard !isOnboardingDemo else { return }
+        let session = await store.freshUserDataSession()
+        await viewModel.load(
+            for: presentedRecipe.id,
+            similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
+            accessToken: session?.accessToken
+        )
+
+        guard let message = viewModel.errorMessage,
+              isRecipeDetailAuthorizationFailure(message),
+              let refreshedSession = await store.refreshAuthSessionAfterAuthorizationFailure()
+        else {
+            return
+        }
+
+        await viewModel.load(
+            for: presentedRecipe.id,
+            similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
+            accessToken: refreshedSession.accessToken
+        )
+    }
+
+    private func isRecipeDetailAuthorizationFailure(_ message: String) -> Bool {
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("authorization")
+            || normalized.contains("session expired")
+            || normalized.contains("sign in")
+            || normalized.contains("jwt")
+            || normalized.contains("token is expired")
+            || normalized.contains("401")
+            || normalized.contains("403")
     }
 
     private var isInCurrentPrep: Bool {
@@ -367,8 +402,12 @@ struct RecipeDetailExperienceView: View {
         Task { @MainActor in
             defer { isPreparingShareLink = false }
             do {
-                let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID
-                let response = try await RecipeDetailService.shared.createShareLink(recipeID: recipeID, userID: userID, accessToken: accessToken)
+                let session = await store.freshUserDataSession()
+                let response = try await RecipeDetailService.shared.createShareLink(
+                    recipeID: recipeID,
+                    userID: session?.userID ?? store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
+                    accessToken: session?.accessToken ?? accessToken
+                )
                 guard let shareURL = response.shareURL else {
                     throw SupabaseProfileStateError.invalidResponse
                 }
@@ -627,8 +666,7 @@ struct RecipeDetailExperienceView: View {
                                     } else if detailLoadFailed {
                                         RecipeDetailLoadFailedState(message: viewModel.errorMessage ?? "We couldn't load the full recipe.") {
                                             Task {
-                                                let session = await store.refreshAuthSessionIfNeeded()
-                                                await viewModel.load(for: presentedRecipe.id, accessToken: session?.accessToken)
+                                                await loadResolvedRecipeDetail()
                                             }
                                         }
                                     } else {
@@ -854,13 +892,7 @@ struct RecipeDetailExperienceView: View {
                 let loadedCount = presentedRecipe.plannedRecipe?.servings ?? viewModel.detail?.displayServings ?? 4
                 baseServingsCount = max(1, loadedCount)
                 servingsCount = max(1, loadedCount)
-                guard !isOnboardingDemo else { return }
-                let session = await store.refreshAuthSessionIfNeeded()
-                await viewModel.load(
-                    for: presentedRecipe.id,
-                    similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
-                    accessToken: session?.accessToken
-                )
+                await loadResolvedRecipeDetail()
             }
         }
         .background(detailBackground.ignoresSafeArea())
@@ -3062,7 +3094,7 @@ struct RecipeAskSheet: View {
     @State private var isOnboardingGenerating = false
 
     private var accessToken: String? {
-        store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+        store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken
     }
 
     private var canGenerate: Bool {
@@ -3124,7 +3156,15 @@ struct RecipeAskSheet: View {
         switch mode {
         case .live:
             Task {
-                await viewModel.adapt(recipeID: recipeID, userID: userID, prompt: intent.promptSeed, intent: intent, profile: profile, accessToken: accessToken)
+                let session = await store.freshUserDataSession()
+                await viewModel.adapt(
+                    recipeID: recipeID,
+                    userID: session?.userID ?? userID,
+                    prompt: intent.promptSeed,
+                    intent: intent,
+                    profile: profile,
+                    accessToken: session?.accessToken ?? accessToken
+                )
             }
         case let .onboarding(config):
             guard let fixture = onboardingFixtures.first(where: { $0.intent == intent }) else { return }
@@ -3372,7 +3412,12 @@ struct RecipeAskSheet: View {
         }
         .task(id: "\(userID ?? "")::\(recipeID)") {
             guard isLiveMode else { return }
-            await viewModel.loadHistory(recipeID: recipeID, userID: userID, accessToken: accessToken)
+            let session = await store.freshUserDataSession()
+            await viewModel.loadHistory(
+                recipeID: recipeID,
+                userID: session?.userID ?? userID,
+                accessToken: session?.accessToken ?? accessToken
+            )
         }
         .fullScreenCover(item: $presentedAdaptedRecipe) { recipe in
             RecipeDetailExperienceView(

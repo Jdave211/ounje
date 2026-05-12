@@ -67,6 +67,11 @@ struct RecipeImportCompletedItem: Identifiable, Decodable {
     }
 }
 
+struct RecipeImportCompletedPage {
+    let items: [RecipeImportCompletedItem]
+    let totalCount: Int
+}
+
 extension SharedRecipeImportEnvelope {
     var reconciliationKeys: Set<String> {
         var keys: Set<String> = []
@@ -316,7 +321,7 @@ final class RecipeImportAPIService {
         throw lastError ?? RecipeImportServiceError.invalidRequest
     }
 
-    func fetchCompletedImports(userID: String) async throws -> [RecipeImportCompletedItem] {
+    func fetchCompletedImports(userID: String) async throws -> RecipeImportCompletedPage {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
             do {
@@ -389,11 +394,10 @@ final class RecipeImportAPIService {
     private func fetchCompletedImports(
         baseURL: String,
         userID: String
-    ) async throws -> [RecipeImportCompletedItem] {
+    ) async throws -> RecipeImportCompletedPage {
         var components = URLComponents(string: "\(baseURL)/v1/recipe/imports/completed") ?? URLComponents()
         components.queryItems = [
-            URLQueryItem(name: "user_id", value: userID),
-            URLQueryItem(name: "limit", value: "50"),
+            URLQueryItem(name: "user_id", value: userID)
         ]
         guard let url = components.url else {
             throw RecipeImportServiceError.invalidRequest
@@ -413,10 +417,20 @@ final class RecipeImportAPIService {
         struct Payload: Decodable {
             let items: [RecipeImportCompletedItem]
             let count: Int?
+            let totalCount: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case items
+                case count
+                case totalCount = "total_count"
+            }
         }
 
         let payload = try JSONDecoder().decode(Payload.self, from: data)
-        return payload.items
+        return RecipeImportCompletedPage(
+            items: payload.items,
+            totalCount: payload.totalCount ?? payload.count ?? payload.items.count
+        )
     }
 
     private func fetchImportJob(

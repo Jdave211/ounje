@@ -9,10 +9,12 @@ final class SavedRecipesStore: ObservableObject {
     private let legacyKey = "ounje-saved-recipes-v1"
     private let keyPrefix = "ounje-saved-recipes-v2"
     private let deletedKeyPrefix = "ounje-saved-recipes-deleted-v1"
+    private let pendingDeleteKeyPrefix = "ounje-saved-recipes-pending-delete-v1"
     private let toastCenter: AppToastCenter
     private var activeUserID: String?
     private var activeAccessToken: String?
     private var deletedSavedRecipeIDs: Set<String> = []
+    private var pendingRemoteDeleteRecipeIDs: Set<String> = []
     private var hasPendingRemoteSaveRetry = false
     private var lastRemoteSyncUserID: String?
     private var lastRemoteSyncAt: Date?
@@ -47,7 +49,7 @@ final class SavedRecipesStore: ObservableObject {
         }
 
         do {
-            if !deletedSavedRecipeIDs.isEmpty {
+            if !pendingRemoteDeleteRecipeIDs.isEmpty {
                 await reconcilePendingDeletes(userID: authSession.userID)
             }
 
@@ -55,26 +57,11 @@ final class SavedRecipesStore: ObservableObject {
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
             )
-
-            // Reconcile tombstones against the actual remote state. If the DB no longer
-            // contains a tombstoned recipe it was truly deleted — clear the tombstone.
-            // If it's still there the delete failed and we must keep the tombstone so
-            // the recipe stays hidden.
             let remoteIDSet = Set(remoteRecipes.map(\.id))
-            let staleTombstones = deletedSavedRecipeIDs.filter { !remoteIDSet.contains($0) }
-            if !staleTombstones.isEmpty {
-                deletedSavedRecipeIDs.subtract(staleTombstones)
-                // Evict stale-tombstoned IDs from the local cache too. Without this a
-                // recipe that was server-deleted but still lingering in savedRecipes
-                // (e.g. from a previous session before the tombstone system existed) could
-                // sneak back into mergedRecipes via filteredLocal and then get re-upserted
-                // to the server, creating a resurrection loop.
-                savedRecipes.removeAll { staleTombstones.contains($0.id) }
-            }
 
             let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
 
-            if mergedRecipes != savedRecipes || !staleTombstones.isEmpty {
+            if mergedRecipes != savedRecipes {
                 savedRecipes = mergedRecipes
                 persist()
             }
@@ -108,7 +95,7 @@ final class SavedRecipesStore: ObservableObject {
         }
 
         do {
-            if !deletedSavedRecipeIDs.isEmpty {
+            if !pendingRemoteDeleteRecipeIDs.isEmpty {
                 await reconcilePendingDeletes(userID: authSession.userID)
             }
 
@@ -132,12 +119,14 @@ final class SavedRecipesStore: ObservableObject {
 
         if shouldSave {
             deletedSavedRecipeIDs.remove(recipe.id)
+            pendingRemoteDeleteRecipeIDs.remove(recipe.id)
             savedRecipes.removeAll { $0.id == recipe.id }
             savedRecipes.insert(recipe, at: 0)
             toastCenter.showSavedRecipe(recipe)
         } else {
             savedRecipes.removeAll { $0.id == recipe.id }
             deletedSavedRecipeIDs.insert(recipe.id)
+            pendingRemoteDeleteRecipeIDs.insert(recipe.id)
             toastCenter.showUnsavedRecipe(
                 title: recipe.title,
                 thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString,
@@ -173,7 +162,7 @@ final class SavedRecipesStore: ObservableObject {
                         accessToken: remoteSession.accessToken ?? accessToken
                     )
                     await MainActor.run {
-                        self.deletedSavedRecipeIDs.remove(recipe.id)
+                        self.pendingRemoteDeleteRecipeIDs.remove(recipe.id)
                         self.persist()
                     }
                 }
@@ -204,6 +193,7 @@ final class SavedRecipesStore: ObservableObject {
         let existing = savedRecipes.first(where: { $0.id == recipe.id })
         let resolved = mergeRecipeCards(primary: recipe, fallback: existing)
         deletedSavedRecipeIDs.remove(recipe.id)
+        pendingRemoteDeleteRecipeIDs.remove(recipe.id)
         savedRecipes.removeAll { $0.id == recipe.id }
         savedRecipes.insert(resolved, at: 0)
         persist()
@@ -237,6 +227,7 @@ final class SavedRecipesStore: ObservableObject {
 
     private func restoreSavedRecipe(_ recipe: DiscoverRecipeCardData) {
         deletedSavedRecipeIDs.remove(recipe.id)
+        pendingRemoteDeleteRecipeIDs.remove(recipe.id)
         savedRecipes.removeAll { $0.id == recipe.id }
         savedRecipes.insert(recipe, at: 0)
         persist()
@@ -272,17 +263,22 @@ final class SavedRecipesStore: ObservableObject {
         if let deletedData = try? JSONEncoder().encode(Array(deletedSavedRecipeIDs)) {
             UserDefaults.standard.set(deletedData, forKey: deletedStorageKey(for: activeUserID))
         }
+        if let pendingDeleteData = try? JSONEncoder().encode(Array(pendingRemoteDeleteRecipeIDs)) {
+            UserDefaults.standard.set(pendingDeleteData, forKey: pendingDeleteStorageKey(for: activeUserID))
+        }
     }
 
     private func load(for userID: String?) {
         let defaults = UserDefaults.standard
         let primaryKey = storageKey(for: userID)
         let deletedKey = deletedStorageKey(for: userID)
+        let pendingDeleteKey = pendingDeleteStorageKey(for: userID)
         let fallbackKey = userID == nil ? legacyKey : nil
 
         let data = defaults.data(forKey: primaryKey)
             ?? fallbackKey.flatMap { defaults.data(forKey: $0) }
         let deletedData = defaults.data(forKey: deletedKey)
+        let pendingDeleteData = defaults.data(forKey: pendingDeleteKey)
 
         let primaryRecipes = data
             .flatMap { try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: $0) } ?? []
@@ -291,10 +287,12 @@ final class SavedRecipesStore: ObservableObject {
         guard !decoded.isEmpty else {
             savedRecipes = []
             deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
+            pendingRemoteDeleteRecipeIDs = loadDeletedRecipeIDs(from: pendingDeleteData)
             return
         }
 
         deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
+        pendingRemoteDeleteRecipeIDs = loadDeletedRecipeIDs(from: pendingDeleteData)
         savedRecipes = deduplicated(decoded.filter { !deletedSavedRecipeIDs.contains($0.id) })
 
         if let mergedData = try? JSONEncoder().encode(savedRecipes),
@@ -309,6 +307,10 @@ final class SavedRecipesStore: ObservableObject {
 
     private func deletedStorageKey(for userID: String?) -> String {
         "\(deletedKeyPrefix)-\(userID ?? "guest")"
+    }
+
+    private func pendingDeleteStorageKey(for userID: String?) -> String {
+        "\(pendingDeleteKeyPrefix)-\(userID ?? "guest")"
     }
 
     private func loadDeletedRecipeIDs(from data: Data?) -> Set<String> {
@@ -344,7 +346,7 @@ final class SavedRecipesStore: ObservableObject {
 
     private func shouldSkipRemoteSync(for userID: String) -> Bool {
         guard !hasPendingRemoteSaveRetry,
-              deletedSavedRecipeIDs.isEmpty,
+              pendingRemoteDeleteRecipeIDs.isEmpty,
               lastRemoteSyncUserID == userID,
               let lastRemoteSyncAt else {
             return false
@@ -381,7 +383,7 @@ final class SavedRecipesStore: ObservableObject {
     }
 
     private func reconcilePendingDeletes(userID: String) async {
-        let pending = deletedSavedRecipeIDs
+        let pending = pendingRemoteDeleteRecipeIDs
         guard !pending.isEmpty else { return }
 
         for recipeID in pending {
@@ -392,9 +394,9 @@ final class SavedRecipesStore: ObservableObject {
                     recipeID: recipeID,
                     accessToken: remoteSession.accessToken
                 )
-                deletedSavedRecipeIDs.remove(recipeID)
+                pendingRemoteDeleteRecipeIDs.remove(recipeID)
             } catch {
-                // Keep the tombstone locally so the recipe does not resurrect on relaunch.
+                // Keep the explicit unsave tombstone and retry the remote delete later.
             }
         }
 

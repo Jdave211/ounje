@@ -683,11 +683,14 @@ struct ProfileSettingsPage: View {
                         trailingValue: instacartConnectionSummary,
                         trailingTint: instacartConnectionTint,
                         action: {
-                            providersViewModel.loadProviders(
-                                userId: store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
-                                accessToken: store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
-                            )
-                            isProvidersPresented = true
+                            Task {
+                                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+                                providersViewModel.loadProviders(
+                                    userId: session?.userID,
+                                    accessToken: session?.accessToken
+                                )
+                                isProvidersPresented = true
+                            }
                         }
                     )
                 ]
@@ -828,9 +831,10 @@ struct ProfileSettingsPage: View {
             .toolbar(.hidden, for: .navigationBar)
             .preferredColorScheme(.dark)
             .task {
+                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
                 providersViewModel.loadProviders(
-                    userId: store.resolvedTrackingSession?.userID ?? store.authSession?.userID,
-                    accessToken: store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+                    userId: session?.userID,
+                    accessToken: session?.accessToken
                 )
             }
             .confirmationDialog("Call founders", isPresented: $isFoundersCallDialogPresented, titleVisibility: .visible) {
@@ -2125,11 +2129,13 @@ struct FeedbackSheet: View {
     private func submitFeedback() async {
         guard canSubmit, !isSubmittingFeedback else { return }
 
-        guard let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID else {
-            feedbackErrorMessage = "Feedback is unavailable until your session is live."
+        guard let session = await feedbackSession(),
+              let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !accessToken.isEmpty else {
+            feedbackErrorMessage = "Your Ounje session is still refreshing. Try again in a moment."
             return
         }
-        let accessToken = store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+        let userID = session.userID
 
         UINotificationFeedbackGenerator().notificationOccurred(.success)
         let draftBody = trimmedFeedbackDraft
@@ -2144,34 +2150,24 @@ struct FeedbackSheet: View {
             // feedback row. This way the row never references a path that
             // doesn't exist. Uploads run in parallel so 4 photos don't block.
             var attachmentMetadata: [AppFeedbackMessageAttachment] = []
-            if !outgoingPhotos.isEmpty, let token = accessToken, !token.isEmpty {
-                try await withThrowingTaskGroup(of: FeedbackUploadedAttachment.self) { group in
-                    for draft in outgoingPhotos {
-                        group.addTask {
-                            try await FeedbackAttachmentStorageService.shared.upload(
-                                data: draft.data,
-                                userID: userID,
-                                messageID: messageID,
-                                fileName: draft.fileName,
-                                mimeType: draft.mimeType,
-                                kind: draft.kind.serverValue,
-                                dimensions: draft.pixelSize,
-                                accessToken: token
-                            )
-                        }
+            if !outgoingPhotos.isEmpty {
+                do {
+                    attachmentMetadata = try await uploadFeedbackAttachments(
+                        outgoingPhotos,
+                        userID: userID,
+                        messageID: messageID,
+                        accessToken: accessToken
+                    )
+                } catch let uploadError where isFeedbackAuthorizationFailure(uploadError) {
+                    guard let refreshedToken = await store.refreshAuthSessionAfterAuthorizationFailure()?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !refreshedToken.isEmpty else {
+                        throw uploadError
                     }
-                    for try await uploaded in group {
-                        attachmentMetadata.append(uploaded.metadata)
-                    }
-                }
-            } else if !outgoingPhotos.isEmpty {
-                // No access token — fall back to metadata-only so the message
-                // still goes through. The bytes simply won't be uploaded.
-                attachmentMetadata = outgoingPhotos.map { draft in
-                    AppFeedbackMessageAttachment(
-                        fileName: draft.fileName,
-                        mimeType: draft.mimeType,
-                        kind: draft.kind.serverValue
+                    attachmentMetadata = try await uploadFeedbackAttachments(
+                        outgoingPhotos,
+                        userID: userID,
+                        messageID: messageID,
+                        accessToken: refreshedToken
                     )
                 }
             }
@@ -2182,9 +2178,10 @@ struct FeedbackSheet: View {
                 attachments: attachmentMetadata,
                 accessToken: accessToken,
                 refreshAccessToken: { [weak store] in
-                    // Refresh the Supabase session on 401 and hand back the new
-                    // access token so the service can retry the request once.
-                    await store?.refreshAuthSessionIfNeeded()?.accessToken
+                    // Force-refresh after the backend rejects a token. A normal
+                    // near-expiry check can return the same token the server
+                    // already refused.
+                    await store?.refreshAuthSessionAfterAuthorizationFailure()?.accessToken
                 }
             )
 
@@ -2198,6 +2195,50 @@ struct FeedbackSheet: View {
         } catch {
             feedbackErrorMessage = (error as? FeedbackServiceError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    private func uploadFeedbackAttachments(
+        _ drafts: [FeedbackPhotoAttachment],
+        userID: String,
+        messageID: UUID,
+        accessToken: String
+    ) async throws -> [AppFeedbackMessageAttachment] {
+        var attachmentMetadata: [AppFeedbackMessageAttachment] = []
+        try await withThrowingTaskGroup(of: FeedbackUploadedAttachment.self) { group in
+            for draft in drafts {
+                group.addTask {
+                    try await FeedbackAttachmentStorageService.shared.upload(
+                        data: draft.data,
+                        userID: userID,
+                        messageID: messageID,
+                        fileName: draft.fileName,
+                        mimeType: draft.mimeType,
+                        kind: draft.kind.serverValue,
+                        dimensions: draft.pixelSize,
+                        accessToken: accessToken
+                    )
+                }
+            }
+            for try await uploaded in group {
+                attachmentMetadata.append(uploaded.metadata)
+            }
+        }
+        return attachmentMetadata
+    }
+
+    private func isFeedbackAuthorizationFailure(_ error: Error) -> Bool {
+        if case FeedbackAttachmentStorageError.unauthorized = error {
+            return true
+        }
+        if let feedbackError = error as? FeedbackServiceError,
+           (feedbackError.errorDescription ?? "").localizedCaseInsensitiveContains("session expired") {
+            return true
+        }
+        let message = error.localizedDescription
+        return message.localizedCaseInsensitiveContains("authorization expired")
+            || message.localizedCaseInsensitiveContains("invalid jwt")
+            || message.localizedCaseInsensitiveContains("token is expired")
+            || message.localizedCaseInsensitiveContains("permission denied")
     }
 
     private func preparePhotoAttachments(from items: [PhotosPickerItem]) async {
@@ -2279,8 +2320,13 @@ struct FeedbackSheet: View {
     }
 
     private func loadFeedbackThread() async {
-        guard let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID else { return }
-        let accessToken = store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+        guard let session = await feedbackSession(),
+              let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !accessToken.isEmpty else {
+            feedbackErrorMessage = "Your Ounje session is still refreshing. Try again in a moment."
+            return
+        }
+        let userID = session.userID
         isLoadingMessages = true
         defer { isLoadingMessages = false }
 
@@ -2289,7 +2335,7 @@ struct FeedbackSheet: View {
                 userID: userID,
                 accessToken: accessToken,
                 refreshAccessToken: { [weak store] in
-                    await store?.refreshAuthSessionIfNeeded()?.accessToken
+                    await store?.refreshAuthSessionAfterAuthorizationFailure()?.accessToken
                 }
             )
             threadMessages = mergedThreadMessages(fetched)
@@ -2297,6 +2343,18 @@ struct FeedbackSheet: View {
         } catch {
             feedbackErrorMessage = (error as? FeedbackServiceError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    private func feedbackSession() async -> AuthSession? {
+        if let session = await store.freshUserDataSession(),
+           session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return session
+        }
+        if let refreshed = await store.refreshAuthSessionAfterAuthorizationFailure(),
+           refreshed.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return refreshed
+        }
+        return nil
     }
 
     private func mergedThreadMessages(_ messages: [AppFeedbackMessage]) -> [AppFeedbackMessage] {
@@ -2872,18 +2930,18 @@ struct GroceryProvidersCard: View {
         }
         .onAppear {
             Task {
-                let session = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
                 viewModel.loadProviders(userId: session?.userID, accessToken: session?.accessToken)
             }
         }
         .sheet(item: $selectedProvider) { provider in
             GroceryProviderConnectSheet(
                 provider: provider,
-                userId: store.resolvedTrackingSession?.userID ?? store.authSession?.userID ?? "",
-                accessToken: store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken,
+                userId: store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "",
+                accessToken: store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken,
                 onConnected: {
                     Task {
-                        let session = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+                        let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
                         viewModel.loadProviders(userId: session?.userID, accessToken: session?.accessToken)
                         await store.refreshProviderConnectionState()
                     }

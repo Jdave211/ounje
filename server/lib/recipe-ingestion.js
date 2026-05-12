@@ -1837,6 +1837,32 @@ async function fetchRows(table, select, { filters = [], order = [], limit = null
   return Array.isArray(rows) ? rows : [];
 }
 
+async function countRows(table, { filters = [] } = {}) {
+  assertSupabaseConfig();
+  let pathname = `/rest/v1/${table}?select=id&limit=1`;
+  for (const filter of filters) {
+    if (filter) pathname += `&${filter}`;
+  }
+
+  const url = `${SUPABASE_URL}${pathname}`;
+  const supabaseRestKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+  const response = await fetch(url, {
+    method: "HEAD",
+    headers: {
+      apikey: supabaseRestKey,
+      Authorization: `Bearer ${supabaseRestKey}`,
+      Prefer: "count=exact",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`HEAD ${pathname} failed`);
+  }
+
+  const contentRange = response.headers.get("content-range") ?? "";
+  const total = Number.parseInt(contentRange.split("/").pop() ?? "", 10);
+  return Number.isFinite(total) ? total : 0;
+}
+
 async function fetchOneRow(table, select, filters = []) {
   const rows = await fetchRows(table, select, { filters, limit: 1 });
   return rows[0] ?? null;
@@ -2179,7 +2205,7 @@ function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
   };
 }
 
-export async function listCompletedRecipeImportItems({ userID = null, limit = 50 } = {}) {
+export async function listCompletedRecipeImportItems({ userID = null, limit = null } = {}) {
   const filters = [
     `status=in.${buildInClause(["saved", "needs_review", "draft"])}`,
   ];
@@ -2194,6 +2220,18 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = 50
 
   let rows = [];
   let lastError = null;
+  let totalCount = 0;
+  try {
+    totalCount = await countRows("recipe_ingestion_jobs", { filters });
+  } catch {
+    totalCount = 0;
+  }
+
+  const parsedLimit = Number.parseInt(String(limit ?? ""), 10);
+  const resolvedLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
+    ? Math.min(parsedLimit, 500)
+    : null;
+
   for (const select of selectVariants) {
     try {
       rows = await fetchRows(
@@ -2202,7 +2240,7 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = 50
         {
           filters,
           order: ["completed_at.desc", "updated_at.desc", "created_at.desc"],
-          limit: Math.max(1, Math.min(Number(limit) || 20, 50)),
+          limit: resolvedLimit,
         }
       );
       lastError = null;
@@ -2227,7 +2265,11 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = 50
     })
   );
 
-  return rows.map((row, index) => summarizeCompletedImportJob(row, projections[index] ?? null));
+  const items = rows.map((row, index) => summarizeCompletedImportJob(row, projections[index] ?? null));
+  return {
+    items,
+    totalCount: totalCount || items.length,
+  };
 }
 
 async function appendJobEvent(jobID, eventName, details = {}, patch = {}) {

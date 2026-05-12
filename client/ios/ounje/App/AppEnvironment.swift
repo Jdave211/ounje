@@ -321,7 +321,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     @discardableResult
-    private func freshUserDataSession() async -> AuthSession? {
+    func freshUserDataSession() async -> AuthSession? {
         guard let session = await refreshAuthSessionIfNeeded() else { return nil }
         let token = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return token.isEmpty ? nil : session
@@ -468,12 +468,29 @@ final class MealPlanningAppStore: ObservableObject {
     @discardableResult
     func refreshAuthSessionIfNeeded() async -> AuthSession? {
         guard let currentSession = authSession else { return nil }
-        let refreshedSession = await refreshAuthSessionIfPossible(currentSession)
-        if refreshedSession != currentSession {
+        let token = currentSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !shouldRefreshAccessToken(token) {
+            return currentSession
+        }
+
+        if let refreshedSession = await refreshAuthSession(currentSession) {
             authSession = refreshedSession
             saveAuthSession(refreshedSession)
+            return refreshedSession
         }
-        return authSession
+
+        // Keep using a still-valid token if refresh fails. Expired persisted tokens
+        // make the app look signed in while every remote-backed screen fails.
+        return isAccessTokenUsable(token) ? currentSession : nil
+    }
+
+    @discardableResult
+    func refreshAuthSessionAfterAuthorizationFailure() async -> AuthSession? {
+        guard let currentSession = authSession else { return nil }
+        guard let refreshedSession = await refreshAuthSession(currentSession) else { return nil }
+        authSession = refreshedSession
+        saveAuthSession(refreshedSession)
+        return refreshedSession
     }
 
     func completeOnboarding(with profile: UserProfile, lastStep: Int) async {
@@ -544,7 +561,14 @@ final class MealPlanningAppStore: ObservableObject {
             }
         }
 
-        guard let session = await freshUserDataSession() else { return }
+        guard let session = await freshUserDataSession() else {
+            let accessToken = authSession?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let refreshToken = authSession?.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if refreshToken.isEmpty, !isAccessTokenUsable(accessToken) {
+                resetAll()
+            }
+            return
+        }
         guard authStateRevision == bootstrapRevision else { return }
         cachedLiveUserID = authSession?.userID ?? cachedLiveUserID
 
@@ -685,9 +709,9 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    private func refreshAuthSessionIfPossible(_ session: AuthSession) async -> AuthSession {
+    private func refreshAuthSession(_ session: AuthSession) async -> AuthSession? {
         let refreshToken = session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !refreshToken.isEmpty else { return session }
+        guard !refreshToken.isEmpty else { return nil }
 
         do {
             let tokenResponse = try await SupabaseAuthSessionRefreshService.shared.refreshSession(refreshToken: refreshToken)
@@ -701,8 +725,41 @@ final class MealPlanningAppStore: ObservableObject {
                 refreshToken: tokenResponse.refreshToken ?? session.refreshToken
             )
         } catch {
-            return session
+            return nil
         }
+    }
+
+    private func shouldRefreshAccessToken(_ token: String) -> Bool {
+        guard !token.isEmpty else { return true }
+        guard let expiration = accessTokenExpirationDate(token) else { return true }
+        return expiration.timeIntervalSinceNow <= 300
+    }
+
+    private func isAccessTokenUsable(_ token: String) -> Bool {
+        guard !token.isEmpty else { return false }
+        guard let expiration = accessTokenExpirationDate(token) else { return false }
+        return expiration.timeIntervalSinceNow > 15
+    }
+
+    private func accessTokenExpirationDate(_ token: String) -> Date? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var payload = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = (4 - payload.count % 4) % 4
+        if padding > 0 {
+            payload.append(String(repeating: "=", count: padding))
+        }
+        guard let data = Data(base64Encoded: payload),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        let rawExp = object["exp"]
+        let exp = (rawExp as? TimeInterval) ?? (rawExp as? NSNumber)?.doubleValue
+        guard let exp else { return nil }
+        return Date(timeIntervalSince1970: exp)
     }
 
     private func syncProfilePricingTierToEntitlement() {
@@ -816,9 +873,15 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func hydratedPlannedRecipesForCart(_ recipes: [PlannedRecipe], accessToken: String? = nil) async -> [PlannedRecipe] {
-        await PlannedRecipeRefreshService.shared.refreshedPlannedRecipes(
+        let token: String?
+        if let accessToken {
+            token = accessToken
+        } else {
+            token = await freshUserDataSession()?.accessToken
+        }
+        return await PlannedRecipeRefreshService.shared.refreshedPlannedRecipes(
             from: recipes,
-            accessToken: accessToken ?? authSession?.accessToken
+            accessToken: token
         )
     }
 
@@ -2053,11 +2116,12 @@ final class MealPlanningAppStore: ObservableObject {
         defer { isRefreshingMainShopSnapshot = false }
 
         do {
+            let session = await freshUserDataSession()
             let snapshot = try await MainShopSnapshotBuilder.buildSnapshot(
                 for: latestPlan,
                 profile: profile,
                 refreshToken: forceRebuild ? UUID().uuidString : nil,
-                accessToken: resolvedTrackingSession?.accessToken ?? authSession?.accessToken
+                accessToken: session?.accessToken
             )
             guard let currentPlan = self.latestPlan, currentPlan.id == latestPlan.id else { return false }
             updateLatestPlanMainShopSnapshot(snapshot, for: currentPlan.id)
@@ -4137,15 +4201,15 @@ final class MealPlanningAppStore: ObservableObject {
             return keychainData
         }
 
-        if let sharedData = sharedDefaults?.data(forKey: sharedAuthSessionKey) {
-            return sharedData
-        }
-
         if let defaultsData = UserDefaults.standard.data(forKey: authSessionKey) {
             return defaultsData
         }
 
-        return sharedDefaults?.data(forKey: authSessionKey)
+        if let sharedData = sharedDefaults?.data(forKey: authSessionKey) {
+            return sharedData
+        }
+
+        return nil
     }
 
     private func saveAuthSessionToKeychain(_ data: Data) {

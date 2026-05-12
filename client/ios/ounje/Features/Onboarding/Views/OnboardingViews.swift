@@ -645,8 +645,8 @@ struct FirstLoginOnboardingView: View {
         .sheet(item: $selectedOnboardingProvider) { provider in
             GroceryProviderConnectSheet(
                 provider: provider,
-                userId: store.resolvedTrackingSession?.userID ?? store.authSession?.userID ?? "",
-                accessToken: store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken,
+                userId: store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "",
+                accessToken: store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken,
                 onConnected: {
                     loadOnboardingProviders()
                     selectedOnboardingProvider = nil
@@ -1371,8 +1371,9 @@ struct FirstLoginOnboardingView: View {
         defer { isSubmittingShareImport = false }
         isShareImportFieldFocused = false
 
-        let userID = store.resolvedTrackingSession?.userID ?? store.authSession?.userID
-        let accessToken = store.resolvedTrackingSession?.accessToken ?? store.authSession?.accessToken
+        let session = await store.freshUserDataSession()
+        let userID = session?.userID
+        let accessToken = session?.accessToken
 
         do {
             _ = try await RecipeImportAPIService.shared.importRecipe(
@@ -2950,7 +2951,7 @@ struct FirstLoginOnboardingView: View {
 
     private func loadOnboardingProviders() {
         Task {
-            let session = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+            let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
             onboardingProvidersViewModel.loadProviders(
                 userId: session?.userID,
                 accessToken: session?.accessToken
@@ -2959,8 +2960,11 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func openOnboardingInstacartConnection() {
-        selectedOnboardingProvider = onboardingInstacartProvider
-            ?? GroceryProviderInfo(id: "instacart", name: "Instacart", connected: false)
+        Task {
+            _ = await store.freshUserDataSession()
+            selectedOnboardingProvider = onboardingInstacartProvider
+                ?? GroceryProviderInfo(id: "instacart", name: "Instacart", connected: false)
+        }
     }
 
     private var parsedExtraFavoriteFoods: [String] {

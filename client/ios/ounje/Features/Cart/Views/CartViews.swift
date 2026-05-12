@@ -284,8 +284,8 @@ struct CartTabView: View {
             InstacartRunLogsSheet(
                 store: instacartRunLogsStore,
                 mealStore: store,
-                userID: store.resolvedTrackingSession?.userID,
-                accessToken: store.resolvedTrackingSession?.accessToken,
+                userID: store.authSession?.userID ?? store.resolvedTrackingSession?.userID,
+                accessToken: store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken,
                 onRerun: {
                     await performCartBuyNowRun(trigger: "instacart_runs_rerun")
                 }
@@ -485,9 +485,10 @@ struct CartTabView: View {
     private func openInstacartRunsSheet() {
         isRunLogsPresented = true
         Task {
+            let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
             await instacartRunLogsStore.refresh(
-                userID: store.resolvedTrackingSession?.userID,
-                accessToken: store.resolvedTrackingSession?.accessToken
+                userID: session?.userID,
+                accessToken: session?.accessToken
             )
         }
     }
@@ -799,9 +800,10 @@ struct CartTabView: View {
                         onOpenRuns: {
                             isRunLogsPresented = true
                             Task {
+                                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
                                 await instacartRunLogsStore.refresh(
-                                    userID: store.resolvedTrackingSession?.userID,
-                                    accessToken: store.resolvedTrackingSession?.accessToken
+                                    userID: session?.userID,
+                                    accessToken: session?.accessToken
                                 )
                             }
                         }

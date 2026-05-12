@@ -91,23 +91,17 @@ struct RootView: View {
             StatusBarShield()
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
-            // Critical-path bootstrap (profile, prep state, plan): blocks the
-            // splash via `shouldHoldPlannerSplash` / `shouldShowBootstrapLoadingView`.
-            await store.bootstrapFromSupabaseIfNeeded()
-
-            // Membership refresh + notification sync are not on the critical
-            // path to a useful Discover/Planner shell — they only gate paywall
-            // routing (which has its own splash via `membershipEntitlementResolved`)
-            // and the notification bell badge. Running them in parallel + as
-            // detached child tasks lets the rest of the UI (Discover prefetch,
-            // tab interactions) start immediately while these complete in the
-            // background.
+            // Run profile/prep bootstrap, membership entitlement, and notification
+            // sync in parallel. Serializing StoreKit/product fetch behind remote
+            // Supabase bootstrap is what made first-install Discover feel blocked.
+            async let bootstrap: Void = store.bootstrapFromSupabaseIfNeeded()
             async let membershipRefresh: Void = store.refreshMembershipEntitlement(trigger: "root-bootstrap")
+            async let discoverCatalogPrewarm: Void = SupabaseDiscoverRecipeService.shared.prewarmBaseCatalog()
             async let notificationSync: Void = {
                 let session = await currentNotificationSession()
                 await notificationCenter.syncForCurrentSession(session, force: true)
             }()
-            _ = await (membershipRefresh, notificationSync)
+            _ = await (bootstrap, membershipRefresh, discoverCatalogPrewarm, notificationSync)
         }
         .onChange(of: scenePhase) { newPhase in
             guard newPhase == .active else {
@@ -157,7 +151,7 @@ struct RootView: View {
 
     @MainActor
     private func currentNotificationSession() async -> AuthSession? {
-        if let refreshedSession = await store.refreshAuthSessionIfNeeded() {
+        if let refreshedSession = await store.freshUserDataSession() {
             return refreshedSession
         }
         return store.resolvedTrackingSession
@@ -574,21 +568,23 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
 @MainActor
 private final class RecipeImportHistoryStore: ObservableObject {
     @Published private(set) var completedItems: [RecipeImportCompletedItem] = []
+    @Published private(set) var totalCompletedCount: Int = 0
     private var lastRefreshUserID: String?
     private var lastRefreshAt: Date?
     private let passiveRefreshTTL: TimeInterval = 45
 
     var badgeCount: Int {
-        completedItems.count
+        totalCompletedCount
     }
 
     var completedCount: Int {
-        completedItems.count
+        totalCompletedCount
     }
 
     func refresh(userID: String?, force: Bool = false) async {
         guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             completedItems = []
+            totalCompletedCount = 0
             lastRefreshUserID = nil
             lastRefreshAt = nil
             return
@@ -599,7 +595,13 @@ private final class RecipeImportHistoryStore: ObservableObject {
            Date().timeIntervalSince(lastRefreshAt) < passiveRefreshTTL {
             return
         }
-        completedItems = (try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID)) ?? []
+        if let page = try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID) {
+            completedItems = page.items
+            totalCompletedCount = page.totalCount
+        } else {
+            completedItems = []
+            totalCompletedCount = 0
+        }
         lastRefreshUserID = userID
         lastRefreshAt = .now
     }
@@ -1699,16 +1701,16 @@ private struct MealPlannerShellView: View {
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
             savedStore.configureAuthSessionProvider {
-                await store.refreshAuthSessionIfNeeded()
+                await savedRecipesSession()
             }
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
             syncedCompletedImportIDs.removeAll()
             prewarmedCompletedImportIDs.removeAll()
-            await savedStore.refreshFromRemote(authSession: store.authSession, force: true)
+            await savedStore.refreshFromRemote(authSession: await savedRecipesSession(), force: true)
         }
         .task(id: savedStoreAuthKey) {
-            await savedStore.bootstrap(authSession: store.authSession)
+            await savedStore.bootstrap(authSession: await savedRecipesSession())
         }
         .task(id: "fresh-plan::\(store.authSession?.userID ?? "signed-out")") {
             await store.ensureFreshPlanIfNeeded()
@@ -1963,12 +1965,13 @@ private struct MealPlannerShellView: View {
         defer { isProcessingPrepPhotoImport = false }
 
         do {
+            let session = await store.freshUserDataSession()
             var drafts: [RecipeImportMediaDraft] = []
             for item in selectedItems {
                 if let draft = try await RecipeImportMediaDraft.load(
                     from: item,
-                    userID: store.authSession?.userID,
-                    accessToken: store.authSession?.accessToken
+                    userID: session?.userID,
+                    accessToken: session?.accessToken
                 ) {
                     drafts.append(draft)
                 }
@@ -1998,10 +2001,11 @@ private struct MealPlannerShellView: View {
         defer { isProcessingPrepPhotoImport = false }
 
         do {
+            let session = await store.freshUserDataSession()
             let draft = try await RecipeImportMediaDraft.loadCapturedImage(
                 image,
-                userID: store.authSession?.userID,
-                accessToken: store.authSession?.accessToken
+                userID: session?.userID,
+                accessToken: session?.accessToken
             )
             await finishFoodPhotoImportToPrep(drafts: [draft], sourceApp: "Ounje Camera")
         } catch {
@@ -2061,9 +2065,10 @@ private struct MealPlannerShellView: View {
                 }
             }
 
+            let session = await store.freshUserDataSession()
             let response = try await RecipeImportAPIService.shared.importRecipe(
-                userID: store.authSession?.userID,
-                accessToken: store.authSession?.accessToken,
+                userID: session?.userID,
+                accessToken: session?.accessToken,
                 sourceURL: nil,
                 sourceText: "",
                 targetState: "prepped",
@@ -2191,7 +2196,7 @@ private struct MealPlannerShellView: View {
     }
 
     private func prewarmCompletedImportDetails() async {
-        let accessToken = await store.refreshAuthSessionIfNeeded()?.accessToken
+        let accessToken = await store.freshUserDataSession()?.accessToken
         let recipeIDs = recipeImportHistory.completedItems.compactMap { item -> String? in
             guard let id = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
                 return nil
@@ -2205,6 +2210,11 @@ private struct MealPlannerShellView: View {
                 _ = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
             }
         }
+    }
+
+    @MainActor
+    private func savedRecipesSession() async -> AuthSession? {
+        await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
     }
 
     @MainActor
@@ -2384,7 +2394,10 @@ private struct MealPlannerShellView: View {
 
     @MainActor
     private func processPendingSharedImports(scope: SharedImportProcessingScope = .queued) async {
-        guard !isProcessingSharedImports, let userID = store.authSession?.userID else { return }
+        guard !isProcessingSharedImports,
+              let session = await store.freshUserDataSession() else { return }
+        let userID = session.userID
+        let accessToken = session.accessToken
 
         let envelopes: [SharedRecipeImportEnvelope]
         do {
@@ -2453,7 +2466,7 @@ private struct MealPlannerShellView: View {
                     let attachments = try await sharedImportAttachmentPayloads(from: envelope.attachments)
                     response = try await RecipeImportAPIService.shared.importRecipe(
                         userID: userID,
-                        accessToken: store.authSession?.accessToken,
+                        accessToken: accessToken,
                         sourceURL: envelope.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
                         sourceText: envelope.resolvedSourceText,
                         targetState: envelope.targetState,
@@ -2462,7 +2475,14 @@ private struct MealPlannerShellView: View {
                 }
 
                 if let importedRecipe = response.recipe {
-                    savedStore.saveImportedRecipe(importedRecipe, showToast: false, respectUnsave: true)
+                    let isExplicitSavedImport = envelope.targetState
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .localizedCaseInsensitiveCompare("saved") == .orderedSame
+                    savedStore.saveImportedRecipe(
+                        importedRecipe,
+                        showToast: false,
+                        respectUnsave: !isExplicitSavedImport
+                    )
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
                 let backendProcessingState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -3144,7 +3164,7 @@ private struct CookbookTabView: View {
         }
         .task(id: selectedSection == .saved ? (store.authSession?.userID ?? "guest") : "cookbook-idle") {
             guard selectedSection == .saved else { return }
-            await savedStore.bootstrap(authSession: store.authSession)
+            await savedStore.bootstrap(authSession: await savedRecipesSession())
         }
         .task(id: "recipe-import-history::\(store.authSession?.userID ?? "signed-out")") {
             await onRefreshSharedImports()
@@ -3492,7 +3512,12 @@ private struct CookbookTabView: View {
 
     private func refreshSavedCookbookFeed() async {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        await savedStore.refreshFromRemote(authSession: store.authSession, force: true)
+        await savedStore.refreshFromRemote(authSession: await savedRecipesSession(), force: true)
+    }
+
+    @MainActor
+    private func savedRecipesSession() async -> AuthSession? {
+        await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
     }
 
     @ViewBuilder
@@ -7310,6 +7335,7 @@ private struct DiscoverComposerSheet: View {
 
         Task {
             do {
+                let session = await store.freshUserDataSession()
                 let localEnvelope = SharedRecipeImportEnvelope(
                     id: UUID().uuidString,
                     createdAt: Date(),
@@ -7330,8 +7356,8 @@ private struct DiscoverComposerSheet: View {
                 await sharedImportInbox.refresh()
 
                 let response = try await RecipeImportAPIService.shared.importRecipe(
-                    userID: store.authSession?.userID,
-                    accessToken: store.authSession?.accessToken,
+                    userID: session?.userID,
+                    accessToken: session?.accessToken,
                     sourceURL: detectedLinks.first,
                     sourceText: trimmedDraftText,
                     targetState: context == .prepped ? "prepped" : "saved",
@@ -7342,7 +7368,11 @@ private struct DiscoverComposerSheet: View {
                 await MainActor.run {
                     let importedRecipe = response.recipe
                     if let importedRecipe {
-                        savedStore.saveImportedRecipe(importedRecipe, showToast: context == .saved, respectUnsave: true)
+                        savedStore.saveImportedRecipe(
+                            importedRecipe,
+                            showToast: context == .saved,
+                            respectUnsave: context != .saved
+                        )
                     }
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
@@ -7494,12 +7524,13 @@ private struct DiscoverComposerSheet: View {
         }
 
         do {
+            let session = await store.freshUserDataSession()
             var drafts: [RecipeImportMediaDraft] = []
             for item in items.prefix(4) {
                 if let draft = try await RecipeImportMediaDraft.load(
                     from: item,
-                    userID: store.authSession?.userID,
-                    accessToken: store.authSession?.accessToken
+                    userID: session?.userID,
+                    accessToken: session?.accessToken
                 ) {
                     drafts.append(draft)
                 }

@@ -132,7 +132,7 @@ struct FeedbackSubmissionResponse: Decodable {
 
 /// Closure that returns a fresh Supabase access token, refreshing the session
 /// if the cached token is near expiry. The feedback service calls this when it
-/// receives a 401 so it can retry once with a non-stale token rather than
+/// receives an auth failure so it can retry once with a non-stale token rather than
 /// surfacing a confusing "Authorization expired or invalid" error to the user.
 typealias FreshAccessTokenProvider = () async -> String?
 
@@ -182,7 +182,10 @@ final class OunjeFeedbackService {
             if Self.isMissingFeedbackTable(errorPayload?.message ?? errorPayload?.error ?? "") {
                 return []
             }
-            throw FeedbackServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? "Feedback could not be loaded (\(httpResponse.statusCode)).")
+            let fallback = "Feedback could not be loaded (\(httpResponse.statusCode))."
+            throw FeedbackServiceError.requestFailed(
+                SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: errorPayload?.message ?? errorPayload?.error ?? fallback)
+            )
         }
 
         let decoder = JSONDecoder()
@@ -232,7 +235,9 @@ final class OunjeFeedbackService {
             if Self.isMissingFeedbackTable(message) {
                 return Self.localFallbackSubmission(body: body, attachments: attachments)
             }
-            throw FeedbackServiceError.requestFailed(message)
+            throw FeedbackServiceError.requestFailed(
+                SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: message)
+            )
         }
 
         let decoder = JSONDecoder()
@@ -242,8 +247,8 @@ final class OunjeFeedbackService {
         return result
     }
 
-    /// Performs the HTTP request with an automatic one-shot retry on 401.
-    /// When the server responds with 401 ("Authorization expired or invalid"),
+    /// Performs the HTTP request with an automatic one-shot retry on auth failure.
+    /// When the server responds with 401/403 or a JWT/permission auth message,
     /// we ask the caller for a freshly refreshed access token and retry the
     /// request once. This eliminates spurious auth errors that show up after
     /// the app has been backgrounded long enough for the cached JWT to expire.
@@ -271,10 +276,9 @@ final class OunjeFeedbackService {
             throw FeedbackServiceError.invalidResponse
         }
 
-        // Retry once on 401 with a freshly refreshed token. Skip retry if we
-        // never had a token to begin with (refresh wouldn't help) or no
-        // refresher was supplied.
-        guard httpResponse.statusCode == 401,
+        // Retry once on auth failure with a freshly refreshed token. Skip retry
+        // if refresh cannot produce a different non-empty token.
+        guard Self.isAuthorizationFailure(statusCode: httpResponse.statusCode, data: data),
               let refreshAccessToken,
               let refreshedToken = await refreshAccessToken(),
               !refreshedToken.isEmpty,
@@ -306,6 +310,17 @@ final class OunjeFeedbackService {
         let normalized = message.lowercased()
         return normalized.contains("app_feedback_messages")
             && (normalized.contains("schema cache") || normalized.contains("does not exist"))
+    }
+
+    private static func isAuthorizationFailure(statusCode: Int, data: Data) -> Bool {
+        guard statusCode == 401 || statusCode == 403 else {
+            let raw = String(data: data, encoding: .utf8)?.lowercased() ?? ""
+            return raw.contains("authorization expired")
+                || raw.contains("invalid jwt")
+                || raw.contains("token is expired")
+                || raw.contains("permission denied")
+        }
+        return true
     }
 
     private static func localFallbackSubmission(body: String, attachments: [AppFeedbackMessageAttachment]) -> FeedbackSubmissionResponse {

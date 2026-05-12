@@ -1123,11 +1123,13 @@ recipe_router.post("/recipe/imports", async (req, res) => {
 recipe_router.get("/recipe/imports/completed", async (req, res) => {
   try {
     const userID = String(req.query.user_id ?? req.query.userID ?? "").trim() || null;
-    const limit = Number.parseInt(String(req.query.limit ?? "50"), 10) || 50;
-    const items = await listCompletedRecipeImportItems({ userID, limit });
+    const rawLimit = req.query.limit ?? null;
+    const limit = rawLimit == null ? null : Number.parseInt(String(rawLimit), 10);
+    const { items, totalCount } = await listCompletedRecipeImportItems({ userID, limit });
     return res.json({
       items,
       count: items.length,
+      total_count: totalCount,
     });
   } catch (error) {
     console.error("[recipe/imports/completed] failed:", error.message);

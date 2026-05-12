@@ -1432,7 +1432,14 @@ actor RecipeDetailService {
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
             let fallback = "Failed to load recipe detail (\(httpResponse.statusCode))."
-            throw SupabaseProfileStateError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+            let rawMessage = errorPayload?.message ?? errorPayload?.error
+            throw SupabaseProfileStateError.requestFailed(
+                SupabaseUserDataRequest.message(
+                    from: data,
+                    statusCode: httpResponse.statusCode,
+                    fallback: rawMessage ?? fallback
+                )
+            )
         }
 
         let decoded = try JSONDecoder().decode(RecipeDetailResponse.self, from: data)
