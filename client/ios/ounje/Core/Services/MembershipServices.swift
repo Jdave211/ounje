@@ -86,9 +86,16 @@ final class StoreKitMembershipBillingService {
         let result = try await product.purchase(options: options)
         switch result {
         case .success(let verificationResult):
-            let transaction = try verifiedTransaction(from: verificationResult)
+            let verified = try verifiedTransactionSnapshot(from: verificationResult)
+            let transaction = verified.transaction
             await transaction.finish()
-            return entitlement(from: transaction, plan: plan, status: .active, userID: userID)
+            return entitlement(
+                from: transaction,
+                plan: plan,
+                status: .active,
+                userID: userID,
+                signedTransactionInfo: verified.signedTransactionInfo
+            )
         case .pending:
             throw StoreBillingError.purchasePending
         case .userCancelled:
@@ -107,13 +114,15 @@ final class StoreKitMembershipBillingService {
         var resolved: AppUserEntitlement?
 
         for await verificationResult in StoreKit.Transaction.currentEntitlements {
-            let transaction = try verifiedTransaction(from: verificationResult)
+            let verified = try verifiedTransactionSnapshot(from: verificationResult)
+            let transaction = verified.transaction
             guard let plan = plan(for: transaction.productID) else { continue }
             let candidate = entitlement(
                 from: transaction,
                 plan: plan,
                 status: transaction.revocationDate == nil ? .active : .revoked,
-                userID: userID
+                userID: userID,
+                signedTransactionInfo: verified.signedTransactionInfo
             )
             if shouldPrefer(candidate, over: resolved) {
                 resolved = candidate
@@ -127,16 +136,22 @@ final class StoreKitMembershipBillingService {
         productIDsByPlan.first(where: { $0.value == productID })?.key
     }
 
-    private func verifiedTransaction(from verificationResult: VerificationResult<StoreKit.Transaction>) throws -> StoreKit.Transaction {
+    private func verifiedTransactionSnapshot(from verificationResult: VerificationResult<StoreKit.Transaction>) throws -> (transaction: StoreKit.Transaction, signedTransactionInfo: String) {
         switch verificationResult {
         case .verified(let transaction):
-            return transaction
+            return (transaction, verificationResult.jwsRepresentation)
         case .unverified:
             throw StoreBillingError.purchaseUnverified
         }
     }
 
-    private func entitlement(from transaction: StoreKit.Transaction, plan: OunjeMembershipPlan, status: AppEntitlementStatus, userID: String?) -> AppUserEntitlement {
+    private func entitlement(
+        from transaction: StoreKit.Transaction,
+        plan: OunjeMembershipPlan,
+        status: AppEntitlementStatus,
+        userID: String?,
+        signedTransactionInfo: String?
+    ) -> AppUserEntitlement {
         var meta: [String: String] = [
             "environment": String(describing: transaction.environment),
             "ownership_type": String(describing: transaction.ownershipType),
@@ -159,7 +174,8 @@ final class StoreKitMembershipBillingService {
             originalTransactionID: String(transaction.originalID),
             expiresAt: transaction.expirationDate,
             updatedAt: Date(),
-            metadata: meta
+            metadata: meta,
+            signedTransactionInfo: signedTransactionInfo
         )
     }
 
@@ -291,6 +307,7 @@ final class SupabaseEntitlementService {
             let originalTransactionID: String?
             let expiresAt: String?
             let metadata: [String: String]
+            let signedTransactionInfo: String?
 
             enum CodingKeys: String, CodingKey {
                 case tier
@@ -301,6 +318,7 @@ final class SupabaseEntitlementService {
                 case originalTransactionID = "original_transaction_id"
                 case expiresAt = "expires_at"
                 case metadata
+                case signedTransactionInfo = "signed_transaction_info"
             }
         }
 
@@ -325,7 +343,8 @@ final class SupabaseEntitlementService {
                         transactionID: snapshot.transactionID,
                         originalTransactionID: snapshot.originalTransactionID,
                         expiresAt: snapshot.expiresAt?.ISO8601Format(),
-                        metadata: snapshot.metadata
+                        metadata: snapshot.metadata,
+                        signedTransactionInfo: snapshot.signedTransactionInfo
                     )
                 )
                 let (data, response) = try await URLSession.shared.data(for: request)

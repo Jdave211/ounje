@@ -7567,6 +7567,28 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     normalized = coerceStructuredRecipeCandidate(buildConceptFallbackRecipe(source), source);
   }
   normalized = await enrichRecipeLowRiskFields(normalized, source);
+  if (source.source_type === "concept_prompt") {
+    normalized = await repairSparseImportedRecipe(normalized, source);
+    normalized = await enrichRecipeLowRiskFields(normalized, source);
+    const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
+    normalized = completion.recipe;
+    modelResult.quality_flags = uniqueStrings([
+      ...(modelResult.quality_flags ?? []),
+      ...(completion.quality_flags ?? []),
+      ...(completion.applied ? ["import_completion_applied"] : []),
+    ]);
+    modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    const secondaryFill = await enrichRecipeSecondaryFields(normalized, source);
+    normalized = secondaryFill.recipe;
+    secondaryFillApplied = secondaryFill.applied;
+    const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
+    normalized = finalValidation.recipe;
+    modelResult.quality_flags = uniqueStrings([
+      ...(modelResult.quality_flags ?? []),
+      ...(finalValidation.quality_flags ?? []),
+    ]);
+    modelResult.review_reason = finalValidation.review_reason ?? modelResult.review_reason ?? null;
+  }
   if (source.source_type !== "concept_prompt" && source.source_type !== "media_image") {
     normalized = await repairSparseImportedRecipe(normalized, source);
     normalized = await enrichRecipeLowRiskFields(normalized, source);

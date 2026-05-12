@@ -1054,6 +1054,7 @@ struct AppUserEntitlement: Codable, Hashable {
     var expiresAt: Date?
     var updatedAt: Date?
     var metadata: [String: String]
+    var signedTransactionInfo: String?
 
     enum CodingKeys: String, CodingKey {
         case userID = "user_id"
@@ -1066,10 +1067,14 @@ struct AppUserEntitlement: Codable, Hashable {
         case expiresAt = "expires_at"
         case updatedAt = "updated_at"
         case metadata
+        case signedTransactionInfo = "signed_transaction_info"
     }
 
     var isActive: Bool {
         guard status == .active else { return false }
+        if source == .appStore, expiresAt == nil {
+            return false
+        }
         guard let expiresAt else { return true }
         return expiresAt > Date()
     }

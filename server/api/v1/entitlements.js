@@ -1,6 +1,11 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { resolveAuthenticatedUserID } from "../../lib/instacart-run-logs.js";
+import {
+  APP_STORE_PRODUCT_IDS_BY_TIER,
+  deriveEntitlementFromAppStoreNotification,
+  verifyAppStoreTransactionInfo,
+} from "../../lib/app-store-notifications.js";
 
 const router = express.Router();
 
@@ -10,11 +15,6 @@ const ENTITLEMENTS_TABLE = "app_user_entitlements";
 const ALLOWED_TIERS = new Set(["free", "plus", "autopilot", "foundingLifetime"]);
 const ALLOWED_STATUSES = new Set(["active", "expired", "revoked", "inactive"]);
 const ALLOWED_SOURCES = new Set(["app_store", "manual", "system"]);
-const PRODUCT_IDS_BY_TIER = {
-  plus: new Set(["net.ounje.plus.monthly", "net.ounje.plus.annually", "net.ounje.plus.yearly"]),
-  autopilot: new Set(["net.ounje.autopilot.monthly", "net.ounje.autopilot.yearly"]),
-};
-
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
@@ -66,9 +66,10 @@ function normalizeTimestamp(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-function isEntitlementActive(status, expiresAt) {
+function isEntitlementActive(status, expiresAt, source) {
   if (status !== "active") return false;
   const normalizedExpiry = normalizeTimestamp(expiresAt);
+  if (normalizeSource(source) === "app_store" && !normalizedExpiry) return false;
   if (!normalizedExpiry) return true;
   return new Date(normalizedExpiry).getTime() > Date.now();
 }
@@ -83,7 +84,8 @@ function entitlementToResponse(row = null) {
 
   const tier = normalizeTier(row.tier);
   const status = normalizeStatus(row.status);
-  const isActive = isEntitlementActive(status, row.expires_at);
+  const source = normalizeSource(row.source);
+  const isActive = isEntitlementActive(status, row.expires_at, source);
   const metadata = row?.metadata && typeof row.metadata === "object"
     ? Object.fromEntries(
       Object.entries(row.metadata).map(([key, value]) => [key, normalizeText(value)])
@@ -95,7 +97,7 @@ function entitlementToResponse(row = null) {
       user_id: normalizeText(row.user_id),
       tier,
       status,
-      source: normalizeSource(row.source),
+      source,
       product_id: normalizeText(row.product_id) || null,
       transaction_id: normalizeText(row.transaction_id) || null,
       original_transaction_id: normalizeText(row.original_transaction_id) || null,
@@ -169,7 +171,7 @@ router.post("/entitlements/sync", async (req, res) => {
     const incomingStatus = normalizeStatus(req.body?.status);
     const incomingSource = normalizeSource(req.body?.source || "app_store");
     const expiresAt = normalizeTimestamp(req.body?.expires_at ?? req.body?.expiresAt);
-    const payload = {
+    let payload = {
       user_id: userID,
       tier: incomingTier,
       status: incomingStatus,
@@ -181,11 +183,53 @@ router.post("/entitlements/sync", async (req, res) => {
       metadata: req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {},
     };
 
-    if (incomingSource === "app_store" && incomingStatus === "active") {
+    const signedTransactionInfo = normalizeText(req.body?.signed_transaction_info ?? req.body?.signedTransactionInfo);
+    if (incomingSource === "app_store" && signedTransactionInfo) {
+      const verifiedTransaction = await verifyAppStoreTransactionInfo(signedTransactionInfo);
+      const appAccountToken = normalizeText(verifiedTransaction?.appAccountToken);
+      if (!appAccountToken || appAccountToken !== userID) {
+        return res.status(403).json({ error: "Verified App Store transaction does not belong to the authenticated user." });
+      }
+
+      const verifiedState = deriveEntitlementFromAppStoreNotification({
+        notification: {
+          notificationType: "CLIENT_SYNC",
+          signedDate: verifiedTransaction?.signedDate,
+          data: {
+            environment: verifiedTransaction?.environment,
+            bundleId: verifiedTransaction?.bundleId,
+            status: verifiedTransaction?.revocationDate ? 5 : undefined,
+          },
+        },
+        transactionInfo: verifiedTransaction,
+        renewalInfo: null,
+      });
+
+      payload = {
+        user_id: userID,
+        tier: verifiedState.tier,
+        status: verifiedState.status,
+        source: "app_store",
+        product_id: verifiedState.productID || null,
+        transaction_id: verifiedState.transactionID || null,
+        original_transaction_id: verifiedState.originalTransactionID || null,
+        expires_at: verifiedState.expiresAt,
+        metadata: {
+          ...verifiedState.metadata,
+          sync_source: "client_signed_transaction",
+        },
+      };
+    } else if (incomingSource === "app_store"
+        && incomingStatus === "active"
+        && normalizeText(process.env.APP_STORE_ALLOW_UNSIGNED_CLIENT_SYNC) !== "1") {
+      return res.status(400).json({ error: "Active App Store entitlement sync requires signed_transaction_info." });
+    }
+
+    if (payload.source === "app_store" && payload.status === "active") {
       if (!payload.product_id || !payload.transaction_id) {
         return res.status(400).json({ error: "Active App Store entitlements require product_id and transaction_id." });
       }
-      const expectedProductIDs = PRODUCT_IDS_BY_TIER[incomingTier];
+      const expectedProductIDs = APP_STORE_PRODUCT_IDS_BY_TIER[payload.tier];
       if (!expectedProductIDs?.has(payload.product_id)) {
         return res.status(400).json({ error: "product_id does not match the requested tier." });
       }

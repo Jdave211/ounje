@@ -382,7 +382,12 @@ final class MealPlanningAppStore: ObservableObject {
                 userID: session.userID,
                 accessToken: session.accessToken
             )
-            membershipEntitlement = remoteEntitlement
+            if localSnapshot == nil,
+               remoteEntitlement?.source == .appStore {
+                membershipEntitlement = nil
+            } else {
+                membershipEntitlement = remoteEntitlement
+            }
             syncProfilePricingTierToEntitlement()
             billingStatusMessage = nil
         } catch {
