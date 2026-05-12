@@ -66,6 +66,13 @@ function normalizeTimestamp(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function isEntitlementActive(status, expiresAt) {
+  if (status !== "active") return false;
+  const normalizedExpiry = normalizeTimestamp(expiresAt);
+  if (!normalizedExpiry) return true;
+  return new Date(normalizedExpiry).getTime() > Date.now();
+}
+
 function entitlementToResponse(row = null) {
   if (!row) {
     return {
@@ -76,6 +83,7 @@ function entitlementToResponse(row = null) {
 
   const tier = normalizeTier(row.tier);
   const status = normalizeStatus(row.status);
+  const isActive = isEntitlementActive(status, row.expires_at);
   const metadata = row?.metadata && typeof row.metadata === "object"
     ? Object.fromEntries(
       Object.entries(row.metadata).map(([key, value]) => [key, normalizeText(value)])
@@ -95,7 +103,7 @@ function entitlementToResponse(row = null) {
       updated_at: row.updated_at ?? null,
       metadata,
     },
-    effectiveTier: status === "active" ? tier : "free",
+    effectiveTier: isActive ? tier : "free",
   };
 }
 

@@ -1069,7 +1069,9 @@ struct AppUserEntitlement: Codable, Hashable {
     }
 
     var isActive: Bool {
-        status == .active
+        guard status == .active else { return false }
+        guard let expiresAt else { return true }
+        return expiresAt > Date()
     }
 
     var effectiveTier: OunjePricingTier {

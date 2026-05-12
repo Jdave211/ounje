@@ -1243,22 +1243,16 @@ struct MembershipSettingsSheet: View {
         store.membershipEntitlement?.metadata["is_on_trial"] == "true"
     }
 
-    private var annualSavingsText: String? {
-        let yearlyPlan = OunjeMembershipPlan(tier: currentTier, cadence: .yearly)
-        return yearlyPlan.savingsText
-    }
-
-    private var benefits: [(String, String)] {
+    private var membershipRows: [(String, String)] {
         let entitlement = store.membershipEntitlement
         let cadence = currentCadence?.title ?? "Managed by Apple"
         let expiryLabel = isOnTrial ? "Trial ends" : "Renews"
         let renewalText = entitlement?.expiresAt.map {
             $0.formatted(date: .abbreviated, time: .omitted)
-        } ?? "Apple subscription settings"
+        } ?? "Open Apple subscriptions"
 
         return [
-            ("Membership", isOnTrial ? "\(currentPlanTitle) · Trial" : currentPlanTitle),
-            ("Access", currentTier.subtitle),
+            ("Plan", isOnTrial ? "\(currentPlanTitle) · Trial" : currentPlanTitle),
             ("Billing", cadence),
             (expiryLabel, renewalText)
         ]
@@ -1299,91 +1293,76 @@ struct MembershipSettingsSheet: View {
                 OunjePalette.background.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Membership")
-                                .font(.system(size: 28, weight: .bold))
+                                .font(.system(size: 30, weight: .bold))
                                 .foregroundStyle(OunjePalette.primaryText)
-                            Text("Change your plan, cancel renewal, or update billing through Apple subscriptions.")
-                                .font(.system(size: 14, weight: .medium))
+                            Text("Plan status, billing, and cancellation are managed through Apple.")
+                                .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(OunjePalette.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(benefits.enumerated()), id: \.offset) { index, item in
-                                HStack(alignment: .top, spacing: 14) {
-                                    Text(item.0)
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack(alignment: .center, spacing: 12) {
+                                Circle()
+                                    .fill((store.membershipEntitlement?.isActive == true ? OunjePalette.accent : OunjePalette.secondaryText).opacity(0.16))
+                                    .frame(width: 42, height: 42)
+                                    .overlay {
+                                        Image(systemName: store.membershipEntitlement?.isActive == true ? "checkmark.seal.fill" : "exclamationmark.circle.fill")
+                                            .font(.system(size: 18, weight: .semibold))
+                                            .foregroundStyle(store.membershipEntitlement?.isActive == true ? OunjePalette.accent : OunjePalette.secondaryText)
+                                    }
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(store.membershipEntitlement?.isActive == true ? "Active membership" : "Membership inactive")
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundStyle(OunjePalette.primaryText)
+                                    Text(currentPlanTitle)
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundStyle(OunjePalette.secondaryText)
-                                        .frame(width: 72, alignment: .leading)
-
-                                    Text(item.1)
-                                        .font(.system(size: 14.5, weight: .semibold))
-                                        .foregroundStyle(OunjePalette.primaryText)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    Spacer(minLength: 0)
                                 }
-                                .padding(.vertical, 14)
+                                Spacer(minLength: 0)
+                            }
 
-                                if index < benefits.count - 1 {
-                                    Divider()
-                                        .overlay(OunjePalette.stroke.opacity(0.8))
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(Array(membershipRows.enumerated()), id: \.offset) { index, item in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(item.0)
+                                            .font(.system(size: 11, weight: .bold))
+                                            .textCase(.uppercase)
+                                            .tracking(0.6)
+                                            .foregroundStyle(OunjePalette.secondaryText)
+
+                                        Text(item.1)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundStyle(OunjePalette.primaryText)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+
+                                    if index < membershipRows.count - 1 {
+                                        Divider()
+                                            .overlay(OunjePalette.stroke.opacity(0.55))
+                                    }
                                 }
                             }
                         }
-                        .padding(.horizontal, 16)
+                        .padding(16)
                         .background(
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(OunjePalette.panel.opacity(0.85))
+                                .fill(OunjePalette.panel.opacity(0.72))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                                        .stroke(OunjePalette.stroke.opacity(0.8), lineWidth: 1)
                                 )
                         )
 
-                        if currentCadence == .monthly && currentTier != .free,
-                           let yearlySavings = annualSavingsText {
-                            Button {
-                                Task { await openSubscriptionManager() }
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "arrow.up.circle.fill")
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundStyle(OunjePalette.accent)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Switch to Annual · \(yearlySavings)")
-                                            .font(.system(size: 14, weight: .bold))
-                                            .foregroundStyle(OunjePalette.primaryText)
-                                        Text("Upgrade in Apple subscriptions — prorated automatically.")
-                                            .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(OunjePalette.secondaryText)
-                                    }
-                                    Spacer(minLength: 0)
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 11, weight: .bold))
-                                        .foregroundStyle(OunjePalette.secondaryText)
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 14)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(OunjePalette.accent.opacity(0.08))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                .stroke(OunjePalette.accent.opacity(0.28), lineWidth: 1)
-                                        )
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
                             Text("Manage membership")
                                 .font(.system(size: 17, weight: .semibold))
                                 .foregroundStyle(OunjePalette.primaryText)
-                            Text("Apple handles subscription changes. You can switch monthly or annual, cancel renewal, and update payment there.")
+                            Text("Open Apple subscriptions to change your plan, cancel renewal, or update payment.")
                                 .font(.system(size: 13.5, weight: .medium))
                                 .foregroundStyle(OunjePalette.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1454,7 +1433,7 @@ struct MembershipSettingsSheet: View {
                                 Text("Pause membership")
                                     .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(OunjePalette.primaryText)
-                                Text("App Store subscriptions do not support an app-side pause. Cancel renewal instead; your access stays active until Apple’s expiry date.")
+                                Text("App Store subscriptions do not support an app-side pause. Cancel renewal instead; your membership remains active until Apple’s expiry date.")
                                     .font(.system(size: 12.5, weight: .medium))
                                     .foregroundStyle(OunjePalette.secondaryText)
                                     .fixedSize(horizontal: false, vertical: true)

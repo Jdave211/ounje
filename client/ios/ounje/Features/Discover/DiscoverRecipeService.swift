@@ -3,30 +3,50 @@ import Foundation
 final class SupabaseDiscoverRecipeService {
     static let shared = SupabaseDiscoverRecipeService()
 
-    private var catalogPoolCache: [Int: [DiscoverRecipeCardData]] = [:]
+    private struct CatalogPoolResult {
+        let recipes: [DiscoverRecipeCardData]
+        let totalCount: Int
+        let windowsFetched: Int
+    }
+
+    private static let recipeSelect = [
+        "id",
+        "title",
+        "description",
+        "author_name",
+        "author_handle",
+        "category",
+        "recipe_type",
+        "cook_time_text",
+        "cook_time_minutes",
+        "published_date",
+        "discover_card_image_url",
+        "hero_image_url",
+        "recipe_url",
+        "source",
+        "discover_brackets"
+    ].joined(separator: ",")
+
+    private var catalogPoolCache: [String: CatalogPoolResult] = [:]
+    private var recipeCountCache: (count: Int, fetchedAt: Date)?
+    private let recipeCountCacheTTL: TimeInterval = 10 * 60
 
     private init() {}
 
     func fetchRecipes(limit: Int = 30, offset: Int = 0) async throws -> [DiscoverRecipeCardData] {
-        let select = [
-            "id",
-            "title",
-            "description",
-            "author_name",
-            "author_handle",
-            "category",
-            "recipe_type",
-            "cook_time_text",
-            "cook_time_minutes",
-            "published_date",
-            "discover_card_image_url",
-            "hero_image_url",
-            "recipe_url",
-            "source",
-            "discover_brackets"
-        ].joined(separator: ",")
+        try await fetchRecipes(
+            limit: limit,
+            offset: offset,
+            orderClause: "updated_at.desc.nullslast,published_date.desc.nullslast"
+        )
+    }
 
-        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(select)&order=updated_at.desc.nullslast,published_date.desc.nullslast&limit=\(limit)&offset=\(max(0, offset))") else {
+    private func fetchRecipes(
+        limit: Int,
+        offset: Int,
+        orderClause: String
+    ) async throws -> [DiscoverRecipeCardData] {
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(Self.recipeSelect)&order=\(orderClause)&limit=\(max(1, limit))&offset=\(max(0, offset))") else {
             throw SupabaseProfileStateError.invalidRequest
         }
 
@@ -198,7 +218,12 @@ final class SupabaseDiscoverRecipeService {
     }
 
     func prewarmBaseCatalog(limit: Int = 96) async {
-        _ = try? await fetchCatalogPool(fetchLimit: max(1, limit))
+        _ = try? await fetchRecipeCount()
+        _ = try? await fetchFullCatalogPool(
+            fetchLimit: max(1, limit),
+            sessionSeed: "prewarm",
+            forceRefresh: false
+        )
     }
 
     private func fetchRankedRecipes(
@@ -316,8 +341,13 @@ final class SupabaseDiscoverRecipeService {
     ) async throws -> DiscoverRankedRecipesResponse {
         let normalizedLimit = max(1, limit)
         let normalizedOffset = max(0, offset)
-        let fetchLimit = min(max(normalizedOffset + (normalizedLimit * 8), 96), 240)
-        let catalog = try await fetchCatalogPool(fetchLimit: fetchLimit, forceRefresh: forceRefresh)
+        let fetchLimit = max(normalizedOffset + (normalizedLimit * 10), 144)
+        let catalogResult = try await fetchFullCatalogPool(
+            fetchLimit: fetchLimit,
+            sessionSeed: sessionSeed,
+            forceRefresh: forceRefresh
+        )
+        let catalog = catalogResult.recipes
 
         guard !catalog.isEmpty else {
             return DiscoverRankedRecipesResponse(
@@ -330,22 +360,14 @@ final class SupabaseDiscoverRecipeService {
             )
         }
 
-        let shuffledCatalog = catalog.sorted { lhs, rhs in
-            let leftScore = deterministicCatalogOrderScore(id: lhs.id, seed: sessionSeed)
-            let rightScore = deterministicCatalogOrderScore(id: rhs.id, seed: sessionSeed)
-            if leftScore == rightScore {
-                return lhs.id < rhs.id
-            }
-            return leftScore < rightScore
-        }
-
-        let pageRecipes = Array(shuffledCatalog.dropFirst(normalizedOffset).prefix(normalizedLimit))
-        let hasMore = normalizedOffset + pageRecipes.count < shuffledCatalog.count
+        let pageRecipes = Array(catalog.dropFirst(normalizedOffset).prefix(normalizedLimit))
+        let totalAvailable = max(catalogResult.totalCount, catalog.count)
+        let hasMore = !pageRecipes.isEmpty && normalizedOffset + pageRecipes.count < totalAvailable
         return DiscoverRankedRecipesResponse(
             recipes: pageRecipes,
             filters: DiscoverPreset.allTitles,
-            rankingMode: "supabase_direct_rotating_catalog",
-            totalAvailable: shuffledCatalog.count,
+            rankingMode: "supabase_direct_full_catalog_sample",
+            totalAvailable: totalAvailable,
             hasMore: hasMore,
             nextOffset: hasMore ? normalizedOffset + pageRecipes.count : nil
         )
@@ -357,14 +379,138 @@ final class SupabaseDiscoverRecipeService {
         }
     }
 
-    private func fetchCatalogPool(fetchLimit: Int, forceRefresh: Bool = false) async throws -> [DiscoverRecipeCardData] {
-        if !forceRefresh, let cached = catalogPoolCache[fetchLimit], !cached.isEmpty {
+    private func deterministicUnitInterval(seed: String) -> Double {
+        let score = seed.utf8.reduce(UInt64(1469598103934665603)) { partial, byte in
+            (partial ^ UInt64(byte)) &* 1099511628211
+        }
+        return Double(score % 1_000_000) / 1_000_000.0
+    }
+
+    private func fetchRecipeCount(forceRefresh: Bool = false) async throws -> Int {
+        if !forceRefresh,
+           let cached = recipeCountCache,
+           Date().timeIntervalSince(cached.fetchedAt) < recipeCountCacheTTL {
+            return cached.count
+        }
+
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=id&limit=1") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("count=planned", forHTTPHeaderField: "Prefer")
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw SupabaseProfileStateError.requestFailed("Failed to count recipes (\(httpResponse.statusCode)).")
+        }
+
+        let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range") ?? ""
+        let total = Int(contentRange.split(separator: "/").last ?? "") ?? 0
+        recipeCountCache = (count: total, fetchedAt: Date())
+        return total
+    }
+
+    private func fetchFullCatalogPool(
+        fetchLimit: Int,
+        sessionSeed: String,
+        forceRefresh: Bool = false
+    ) async throws -> CatalogPoolResult {
+        let normalizedFetchLimit = max(1, fetchLimit)
+        let cacheKey = sessionSeed
+        if !forceRefresh,
+           let cached = catalogPoolCache[cacheKey],
+           cached.recipes.count >= normalizedFetchLimit {
             return cached
         }
 
-        let catalog = try await fetchRecipes(limit: fetchLimit, offset: 0)
-        catalogPoolCache[fetchLimit] = catalog
-        return catalog
+        let totalCount = try await fetchRecipeCount(forceRefresh: forceRefresh)
+        if totalCount <= normalizedFetchLimit {
+            let recipes = try await fetchRecipes(limit: max(totalCount, normalizedFetchLimit), offset: 0)
+            let result = CatalogPoolResult(
+                recipes: deduplicatedRecipes(recipes),
+                totalCount: max(totalCount, recipes.count),
+                windowsFetched: 0
+            )
+            catalogPoolCache[cacheKey] = result
+            return result
+        }
+
+        let cached = forceRefresh ? nil : catalogPoolCache[cacheKey]
+        let existingRecipes = cached?.recipes ?? []
+        if !existingRecipes.isEmpty, existingRecipes.count >= totalCount {
+            let result = CatalogPoolResult(
+                recipes: existingRecipes,
+                totalCount: totalCount,
+                windowsFetched: cached?.windowsFetched ?? 0
+            )
+            catalogPoolCache[cacheKey] = result
+            return result
+        }
+
+        let windowSize = min(max(normalizedFetchLimit / 4, 36), 60)
+        let startWindowIndex = cached?.windowsFetched ?? 0
+        let requestedWindowCount = max(4, Int(ceil(Double(normalizedFetchLimit) / Double(windowSize))))
+        let targetWindowCount = min(max(requestedWindowCount, startWindowIndex + 4), 30)
+        let maxOffset = max(0, totalCount - windowSize)
+        var windows: [[DiscoverRecipeCardData]] = []
+
+        try await withThrowingTaskGroup(of: [DiscoverRecipeCardData].self) { group in
+            for index in startWindowIndex..<targetWindowCount {
+                let windowOffset = Int(
+                    floor(deterministicUnitInterval(seed: "\(sessionSeed)|window|\(index)") * Double(maxOffset + 1))
+                )
+                group.addTask {
+                    try await self.fetchRecipes(
+                        limit: windowSize,
+                        offset: windowOffset,
+                        orderClause: "id.asc"
+                    )
+                }
+            }
+
+            for try await recipes in group {
+                windows.append(recipes)
+            }
+        }
+
+        let orderedNewRecipes = windows.flatMap { $0 }.sorted { lhs, rhs in
+            let leftScore = deterministicCatalogOrderScore(id: lhs.id, seed: sessionSeed)
+            let rightScore = deterministicCatalogOrderScore(id: rhs.id, seed: sessionSeed)
+            if leftScore == rightScore {
+                return lhs.id < rhs.id
+            }
+            return leftScore < rightScore
+        }
+        let sampledRecipes = deduplicatedRecipes(existingRecipes + orderedNewRecipes)
+        let recipes: [DiscoverRecipeCardData]
+        if sampledRecipes.isEmpty {
+            recipes = try await fetchRecipes(limit: min(normalizedFetchLimit, max(totalCount, 1)), offset: 0)
+        } else {
+            recipes = sampledRecipes
+        }
+
+        let result = CatalogPoolResult(
+            recipes: recipes,
+            totalCount: totalCount,
+            windowsFetched: max(cached?.windowsFetched ?? 0, targetWindowCount)
+        )
+        catalogPoolCache[cacheKey] = result
+        return result
+    }
+
+    private func deduplicatedRecipes(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
+        var seen = Set<String>()
+        return recipes.filter { recipe in
+            seen.insert(recipe.id).inserted
+        }
     }
 
     private func debugLogDiscoverFallback(

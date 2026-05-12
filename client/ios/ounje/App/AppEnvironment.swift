@@ -177,11 +177,18 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     var effectivePricingTier: OunjePricingTier {
-        membershipEntitlement?.effectiveTier ?? profile?.pricingTier ?? .free
+        if OunjeLaunchFlags.paywallsEnabled {
+            return membershipEntitlement?.effectiveTier ?? .free
+        }
+        return membershipEntitlement?.effectiveTier ?? profile?.pricingTier ?? .free
     }
 
     var hasActivePaidEntitlement: Bool {
-        effectivePricingTier != .free
+        guard OunjeLaunchFlags.paywallsEnabled else {
+            return effectivePricingTier != .free
+        }
+        return membershipEntitlement?.isActive == true
+            && membershipEntitlement?.effectiveTier != .free
     }
 
     var isAuthenticated: Bool {
