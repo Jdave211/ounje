@@ -37,6 +37,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
     private var lastLoadKey: String?
     private var responseCache: [String: InMemoryDiscoverCacheEntry] = [:]
     private var activeRequestID: UUID?
+    private var inFlightLoadKey: String?
     private let sessionSeed = String(UUID().uuidString.prefix(8))
     private let filterShuffleSeed = UUID().uuidString
     private var baseFeedRotationIndex = 0
@@ -44,8 +45,8 @@ final class DiscoverRecipesViewModel: ObservableObject {
     private var lastBaseRotationAt: Date?
     private var lastLoadedFilter = DiscoverPreset.all.title
     private var feedbackRevision = 0
-    private let stagedPageSize = 18
-    private var currentFeedLimit = 18
+    private let stagedPageSize = 12
+    private var currentFeedLimit = 12
     private var currentFeedOffset = 0
     private let shelfCacheTTL: TimeInterval = 12 * 60 * 60
     private let shelfCacheStoreKey = "ounje-discover-shelf-cache-v2"
@@ -73,6 +74,11 @@ final class DiscoverRecipesViewModel: ObservableObject {
             offset: 0
         )
         guard lastLoadKey != loadKey else {
+            isLoading = false
+            isTransitioningFeed = false
+            return
+        }
+        guard inFlightLoadKey != loadKey else {
             isLoading = false
             isTransitioningFeed = false
             return
@@ -107,6 +113,11 @@ final class DiscoverRecipesViewModel: ObservableObject {
         currentFeedOffset = requestedOffset
         let loadKey = cacheKey(profile: profile, behaviorSeeds: behaviorSeeds, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext, limit: requestedLimit, offset: requestedOffset)
         let shelfKey = persistentShelfKey(profile: profile, behaviorSeeds: behaviorSeeds, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
+
+        if !forceNetwork, inFlightLoadKey == loadKey {
+            return
+        }
+        inFlightLoadKey = loadKey
 
         if !forceNetwork,
            let cachedEntry = responseCache[loadKey],
@@ -161,6 +172,9 @@ final class DiscoverRecipesViewModel: ObservableObject {
             recipes = []
         }
         defer {
+            if inFlightLoadKey == loadKey {
+                inFlightLoadKey = nil
+            }
             if activeRequestID == requestID {
                 isLoading = false
                 isTransitioningFeed = false

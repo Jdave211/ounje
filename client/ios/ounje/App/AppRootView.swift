@@ -104,7 +104,7 @@ struct RootView: View {
             // background.
             async let membershipRefresh: Void = store.refreshMembershipEntitlement(trigger: "root-bootstrap")
             async let notificationSync: Void = {
-                let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
+                let session = await currentNotificationSession()
                 await notificationCenter.syncForCurrentSession(session, force: true)
             }()
             _ = await (membershipRefresh, notificationSync)
@@ -116,7 +116,7 @@ struct RootView: View {
             }
             Task {
                 await store.refreshMembershipEntitlement(trigger: "scene-active")
-                let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
+                let session = await currentNotificationSession()
                 realtimeCoordinator.connect(session: session) { event in
                     await handleRealtimeInvalidation(event)
                 }
@@ -129,12 +129,12 @@ struct RootView: View {
                 realtimeCoordinator.disconnect()
                 return
             }
-            let initialSession = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
+            let initialSession = await currentNotificationSession()
             realtimeCoordinator.connect(session: initialSession) { event in
                 await handleRealtimeInvalidation(event)
             }
             while !Task.isCancelled {
-                let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
+                let session = await currentNotificationSession()
                 realtimeCoordinator.connect(session: session) { event in
                     await handleRealtimeInvalidation(event)
                 }
@@ -156,16 +156,28 @@ struct RootView: View {
     }
 
     @MainActor
+    private func currentNotificationSession() async -> AuthSession? {
+        if let refreshedSession = await store.refreshAuthSessionIfNeeded() {
+            return refreshedSession
+        }
+        return store.resolvedTrackingSession
+    }
+
+    @MainActor
     private func handleRealtimeInvalidation(_ event: AppRealtimeInvalidationEvent) async {
         switch event.name {
         case "recipe_import.updated", "recipe_import.completed", "recipe_import.failed":
             NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: event)
+            let session = await currentNotificationSession()
+            await notificationCenter.syncForCurrentSession(session, force: true)
 
         case "instacart_run.updated", "grocery_order.updated":
             await store.refreshRealtimeTrackingState(
                 runID: event.string("run_id"),
                 groceryOrderID: event.uuid("grocery_order_id")
             )
+            let session = await currentNotificationSession()
+            await notificationCenter.syncForCurrentSession(session, force: true)
 
         case "main_shop_snapshot.updated", "meal_prep_cycle.updated":
             await store.refreshRealtimeMealPrepState(trigger: event.name)
@@ -178,7 +190,7 @@ struct RootView: View {
             }
 
         case "notification.updated":
-            let session = await store.refreshAuthSessionIfNeeded() ?? store.resolvedTrackingSession
+            let session = await currentNotificationSession()
             await notificationCenter.syncForCurrentSession(session, force: true)
 
         case "entitlement.updated":
@@ -698,7 +710,7 @@ final class InstacartRunLogsStore: ObservableObject {
         persistCachedRuns(payload, for: currentUserID, status: currentStatus, query: currentQuery)
     }
 
-    func refresh(userID: String?, accessToken: String?, query: String = "", status: String = "all") async {
+    func refresh(userID: String?, accessToken: String?, query: String = "", status: String = "all", force: Bool = false) async {
         currentUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines)
         currentAccessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         currentQuery = query
@@ -716,7 +728,8 @@ final class InstacartRunLogsStore: ObservableObject {
             loadCachedRuns(for: currentUserID, status: currentStatus, query: currentQuery)
         }
 
-        if let lastRefreshSignature,
+        if !force,
+           let lastRefreshSignature,
            lastRefreshSignature == refreshSignature,
            let lastRefreshAt,
            Date().timeIntervalSince(lastRefreshAt) < 12,
@@ -1723,13 +1736,8 @@ private struct MealPlannerShellView: View {
             await sharedImportInbox.refresh()
         }
         .task(id: "recipe-import-history::\(store.authSession?.userID ?? "signed-out")") {
-            await recipeImportHistory.refresh(userID: store.authSession?.userID)
-            await sharedImportInbox.reconcileCompletedImports(
-                recipeImportHistory.completedItems,
-                onCompletedPreppedImport: { response in
-                    await handleCompletedPreppedImport(response)
-                }
-            )
+            await refreshSharedImportState(force: true)
+            lastSharedImportRefreshAt = .now
         }
         .onReceive(NotificationCenter.default.publisher(for: .recipeImportHistoryNeedsRefresh)) { _ in
             Task {
@@ -1744,7 +1752,14 @@ private struct MealPlannerShellView: View {
                 await sharedImportInbox.refresh()
 
                 let hasQueuedWork = hasQueuedSharedImportWork
-                guard hasQueuedWork || hasLiveSharedImportWork else {
+                let hasLiveImport = hasLiveSharedImportWork
+                let refreshInterval: TimeInterval = hasLiveImport ? 10 : (realtimeCoordinator.isRunning ? 60 : 30)
+                if Date().timeIntervalSince(lastSharedImportRefreshAt) >= refreshInterval {
+                    await refreshSharedImportState(force: hasLiveImport)
+                    lastSharedImportRefreshAt = .now
+                }
+
+                guard hasQueuedWork || hasLiveImport else {
                     let idleSleep: UInt64 = realtimeCoordinator.isRunning ? 90_000_000_000 : 30_000_000_000
                     try? await Task.sleep(nanoseconds: idleSleep)
                     continue
@@ -1754,7 +1769,6 @@ private struct MealPlannerShellView: View {
                     await processPendingSharedImports(scope: .queued)
                 }
 
-                let hasLiveImport = hasLiveSharedImportWork
                 let shouldRefreshSharedState = hasLiveImport || Date().timeIntervalSince(lastSharedImportRefreshAt) >= 30
                 if shouldRefreshSharedState {
                     await refreshSharedImportState(force: hasLiveImport)
@@ -1776,9 +1790,9 @@ private struct MealPlannerShellView: View {
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
             Task {
-                await prewarmBaseDiscoverFeed()
                 await store.runAutomationPassIfNeeded(trigger: "scene_active")
-                await sharedImportInbox.refresh()
+                await refreshSharedImportState(force: false)
+                lastSharedImportRefreshAt = .now
                 if hasQueuedSharedImportWork || hasLiveSharedImportWork {
                     await processPendingSharedImports(scope: .queued)
                     await refreshSharedImportState(force: true)
@@ -1900,7 +1914,7 @@ private struct MealPlannerShellView: View {
             CartTabView(selectedTab: $selectedTab, focusedRecipeID: $focusedCartRecipeID)
         case .profile:
             ProfileTabView(
-                importedRecipeCount: recipeImportHistory.completedCount,
+                importedRecipeCount: profileImportedRecipeCount,
                 aiEditCount: profileAIEditsCount
             )
         }
@@ -2064,7 +2078,7 @@ private struct MealPlannerShellView: View {
             NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
 
             if let importedRecipe = response.recipe {
-                savedStore.saveImportedRecipe(importedRecipe, showToast: false)
+                savedStore.saveImportedRecipe(importedRecipe, showToast: false, respectUnsave: true)
             }
             if let detail = response.recipeDetail {
                 await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
@@ -2341,6 +2355,22 @@ private struct MealPlannerShellView: View {
         return ids.count
     }
 
+    private var profileImportedRecipeCount: Int {
+        var ids = Set<String>()
+        for item in recipeImportHistory.completedItems {
+            let recipeID = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            ids.insert(recipeID.isEmpty ? item.id : recipeID)
+        }
+        for recipe in savedStore.savedRecipes {
+            let recipeID = recipe.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !recipeID.isEmpty else { continue }
+            if recipeID.hasPrefix("uir_") {
+                ids.insert(recipeID)
+            }
+        }
+        return ids.count
+    }
+
     private var hasLiveSharedImportWork: Bool {
         sharedImportInbox.envelopes.contains { envelope in
             switch envelope.normalizedProcessingState {
@@ -2432,7 +2462,7 @@ private struct MealPlannerShellView: View {
                 }
 
                 if let importedRecipe = response.recipe {
-                    savedStore.saveImportedRecipe(importedRecipe, showToast: false)
+                    savedStore.saveImportedRecipe(importedRecipe, showToast: false, respectUnsave: true)
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
                 let backendProcessingState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -3117,7 +3147,7 @@ private struct CookbookTabView: View {
             await savedStore.bootstrap(authSession: store.authSession)
         }
         .task(id: "recipe-import-history::\(store.authSession?.userID ?? "signed-out")") {
-            await recipeImportHistory.refresh(userID: store.authSession?.userID)
+            await onRefreshSharedImports()
         }
         .onReceive(NotificationCenter.default.publisher(for: .recipeImportHistoryNeedsRefresh)) { _ in
             Task {
@@ -3932,9 +3962,10 @@ struct InstacartRunLogsSheet: View {
     @ObservedObject var mealStore: MealPlanningAppStore
     let userID: String?
     let accessToken: String?
-    let onRerun: () -> Void
+    let onRerun: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var historyView: InstacartRunHistoryView = .current
+    @State private var isRerunRequested = false
 
     private var titleLine: String {
         if store.isLoading && store.runs.isEmpty {
@@ -4031,6 +4062,14 @@ struct InstacartRunLogsSheet: View {
             $0.normalizedStatusKind == "running"
                 || ["queued", "running"].contains($0.normalizedRetryState)
                 || $0.normalizedStatusKind == "partial"
+        }
+    }
+
+    private var currentPrepHasQueuedOrRunningRun: Bool {
+        currentPrepRuns.contains {
+            $0.normalizedStatusKind == "running"
+                || $0.normalizedStatusKind == "queued"
+                || ["queued", "running"].contains($0.normalizedRetryState)
         }
     }
 
@@ -4280,14 +4319,16 @@ struct InstacartRunLogsSheet: View {
                             .foregroundStyle(OunjePalette.primaryText)
                         Spacer(minLength: 0)
                         Button {
-                            onRerun()
                             Task {
+                                isRerunRequested = true
+                                await onRerun()
                                 try? await Task.sleep(nanoseconds: 650_000_000)
-                                await refreshLogs()
+                                await refreshLogs(force: true)
+                                isRerunRequested = false
                             }
                         } label: {
                             HStack(spacing: 6) {
-                                if mealStore.isManualAutoshopRunning {
+                                if mealStore.isManualAutoshopRunning || isRerunRequested {
                                     ProgressView()
                                         .controlSize(.small)
                                         .tint(OunjePalette.background)
@@ -4296,7 +4337,7 @@ struct InstacartRunLogsSheet: View {
                                         .font(.system(size: 11, weight: .bold))
                                 }
 
-                                Text(mealStore.isManualAutoshopRunning ? "Rerunning" : "Rerun")
+                                Text((mealStore.isManualAutoshopRunning || isRerunRequested) ? "Rerunning" : "Rerun")
                                     .font(.system(size: 12, weight: .bold))
                             }
                             .foregroundStyle(.white)
@@ -4308,8 +4349,8 @@ struct InstacartRunLogsSheet: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        .disabled(mealStore.isManualAutoshopRunning || currentPrepHasLiveRun)
-                        .opacity((mealStore.isManualAutoshopRunning || currentPrepHasLiveRun) ? 0.58 : 1)
+                        .disabled(mealStore.isManualAutoshopRunning || isRerunRequested || currentPrepHasQueuedOrRunningRun)
+                        .opacity((mealStore.isManualAutoshopRunning || isRerunRequested || currentPrepHasQueuedOrRunningRun) ? 0.58 : 1)
                     }
 
                     HStack(spacing: 8) {
@@ -4490,7 +4531,7 @@ struct InstacartRunLogsSheet: View {
         return InstacartRunDateParser.parse(raw) ?? .distantPast
     }
 
-    private func refreshLogs() async {
+    private func refreshLogs(force: Bool = false) async {
         guard let userID = userID?.trimmingCharacters(in: .whitespacesAndNewlines),
               !userID.isEmpty else {
             await MainActor.run {
@@ -4504,7 +4545,8 @@ struct InstacartRunLogsSheet: View {
             userID: userID,
             accessToken: token,
             query: "",
-            status: "all"
+            status: "all",
+            force: force
         )
     }
 
@@ -7300,7 +7342,7 @@ private struct DiscoverComposerSheet: View {
                 await MainActor.run {
                     let importedRecipe = response.recipe
                     if let importedRecipe {
-                        savedStore.saveImportedRecipe(importedRecipe, showToast: context == .saved)
+                        savedStore.saveImportedRecipe(importedRecipe, showToast: context == .saved, respectUnsave: true)
                     }
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)

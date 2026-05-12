@@ -72,8 +72,8 @@ const RECIPE_IMPORT_MEDIA_BUCKET = process.env.RECIPE_IMPORT_MEDIA_BUCKET ?? "re
 const RECIPE_IMPORT_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 const DISCOVER_BASE_SHELF_MAX = 360;
 const DISCOVER_PRESET_SHELF_MAX = 240;
-const DISCOVER_BASE_PAGE_BUFFER = 24;
-const DISCOVER_BASE_PAGE_MIN = 36;
+const DISCOVER_BASE_PAGE_BUFFER = 12;
+const DISCOVER_BASE_PAGE_MIN = 24;
 const DISCOVER_BASE_PAGE_MAX = 84;
 
 class CappedMap extends Map {
@@ -1123,7 +1123,7 @@ recipe_router.post("/recipe/imports", async (req, res) => {
 recipe_router.get("/recipe/imports/completed", async (req, res) => {
   try {
     const userID = String(req.query.user_id ?? req.query.userID ?? "").trim() || null;
-    const limit = Number.parseInt(String(req.query.limit ?? "20"), 10) || 20;
+    const limit = Number.parseInt(String(req.query.limit ?? "50"), 10) || 50;
     const items = await listCompletedRecipeImportItems({ userID, limit });
     return res.json({
       items,
@@ -7634,9 +7634,18 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
 
   try {
     let accessToken = null;
-    try {
-      ({ accessToken } = await resolveAuthorizedUserID(req));
-    } catch {}
+    const isUserImport = recipeId.startsWith("uir_");
+    if (isUserImport) {
+      try {
+        ({ accessToken } = await resolveAuthorizedUserID(req));
+      } catch (error) {
+        return sendAuthError(res, error, "recipe/enrich-macros");
+      }
+    } else {
+      try {
+        ({ accessToken } = await resolveAuthorizedUserID(req));
+      } catch {}
+    }
 
     const recipe = await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
@@ -7660,19 +7669,40 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
       });
     }
 
-    const recipeIngredients = await fetchRecipeIngredientRows(recipeId, accessToken);
-    const ingredientSummary = recipeIngredients
-      .map((i) => [i.quantity_text, i.display_name].filter(Boolean).join(" "))
+    const [recipeIngredients, recipeSteps] = await Promise.all([
+      fetchRecipeIngredientRows(recipeId, accessToken),
+      fetchRecipeStepRows(recipeId, accessToken),
+    ]);
+    const stepIngredients = recipeSteps.length
+      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
+      : [];
+    const normalizedDetail = normalizeRecipeDetail(recipe, {
+      recipeIngredients,
+      recipeSteps,
+      stepIngredients,
+    });
+
+    const ingredientSummary = (normalizedDetail.ingredients ?? [])
+      .map((ingredient) => [ingredient.quantity_text, ingredient.display_name ?? ingredient.name].filter(Boolean).join(" "))
       .filter(Boolean)
+      .slice(0, 80)
       .join(", ");
+    const stepSummary = (normalizedDetail.steps ?? [])
+      .map((step) => String(step.text ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 10)
+      .join(" ");
 
     const context = [
       `Title: ${recipe.title ?? "Unknown dish"}`,
-      recipe.servings_text ? `Servings: ${recipe.servings_text}` : null,
-      recipe.servings_count ? `Serving count: ${recipe.servings_count}` : null,
+      recipe.description ? `Description: ${recipe.description}` : null,
+      normalizedDetail.servings_text ? `Servings: ${normalizedDetail.servings_text}` : null,
+      normalizedDetail.servings_count ? `Serving count: ${normalizedDetail.servings_count}` : null,
+      normalizedDetail.cook_time_text ? `Cook time: ${normalizedDetail.cook_time_text}` : null,
       ingredientSummary ? `Ingredients: ${ingredientSummary}` : null,
-      recipe.recipe_type ? `Type: ${recipe.recipe_type}` : null,
-      recipe.category ? `Category: ${recipe.category}` : null,
+      stepSummary ? `Method: ${stepSummary}` : null,
+      normalizedDetail.recipe_type ? `Type: ${normalizedDetail.recipe_type}` : null,
+      normalizedDetail.category ? `Category: ${normalizedDetail.category}` : null,
       // Pass any already-known macros so the model fills only what's missing.
       recipe.calories_kcal != null ? `Known calories_kcal: ${recipe.calories_kcal}` : null,
       recipe.protein_g != null ? `Known protein_g: ${recipe.protein_g}` : null,
@@ -7688,10 +7718,12 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
           role: "system",
           content: [
             "You are a nutrition estimator. Estimate per-serving macros for a recipe based on its title and ingredient list.",
-            "Return conservative, realistic estimates — not lab-accurate, but reasonable for app display.",
+            "Use serving count, ingredients, method, cooking time, category, and title to infer a good per-serving estimate.",
+            "Return conservative, realistic estimates - not lab-accurate, but reasonable for app display.",
             "If 'Known' values are supplied for a field, return those exact values unchanged.",
+            "Do not leave a macro null when recipe context is available; infer a practical estimate instead.",
             "Return only valid JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (string like '420 kcal per serving').",
-            "If you truly cannot estimate a field, return null for that field only.",
+            "Only return null for a field if there is no usable title, serving, ingredient, or method context.",
           ].join("\n"),
         },
         {
@@ -7708,24 +7740,36 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
     const fatG = Number.isFinite(Number(parsed?.fat_g)) ? Number(parsed.fat_g) : null;
     const estCaloriesText = typeof parsed?.est_calories_text === "string" ? parsed.est_calories_text.trim() : null;
 
+    const existingCaloriesKcal = Number.isFinite(Number(recipe.calories_kcal)) ? Number(recipe.calories_kcal) : null;
+    const existingProteinG = Number.isFinite(Number(recipe.protein_g)) ? Number(recipe.protein_g) : null;
+    const existingCarbsG = Number.isFinite(Number(recipe.carbs_g)) ? Number(recipe.carbs_g) : null;
+    const existingFatG = Number.isFinite(Number(recipe.fat_g)) ? Number(recipe.fat_g) : null;
+    const finalCaloriesKcal = existingCaloriesKcal ?? caloriesKcal;
+    const finalProteinG = existingProteinG ?? proteinG;
+    const finalCarbsG = existingCarbsG ?? carbsG;
+    const finalFatG = existingFatG ?? fatG;
+    const finalEstCaloriesText = recipe.est_calories_text
+      ?? estCaloriesText
+      ?? (finalCaloriesKcal != null ? `${Math.round(finalCaloriesKcal)} kcal per serving` : null);
+
     if (caloriesKcal != null || proteinG != null || carbsG != null || fatG != null) {
       const patch = {};
-      if (caloriesKcal != null) patch.calories_kcal = caloriesKcal;
-      if (proteinG != null) patch.protein_g = proteinG;
-      if (carbsG != null) patch.carbs_g = carbsG;
-      if (fatG != null) patch.fat_g = fatG;
-      if (estCaloriesText) patch.est_calories_text = estCaloriesText;
+      if (existingCaloriesKcal == null && caloriesKcal != null) patch.calories_kcal = caloriesKcal;
+      if (existingProteinG == null && proteinG != null) patch.protein_g = proteinG;
+      if (existingCarbsG == null && carbsG != null) patch.carbs_g = carbsG;
+      if (existingFatG == null && fatG != null) patch.fat_g = fatG;
+      if (!recipe.est_calories_text && finalEstCaloriesText) patch.est_calories_text = finalEstCaloriesText;
       await patchRecipeRow(recipeId, patch).catch((err) => {
         console.warn("[recipe/enrich-macros] DB patch failed:", err.message);
       });
     }
 
     return res.json({
-      calories_kcal: caloriesKcal,
-      protein_g: proteinG,
-      carbs_g: carbsG,
-      fat_g: fatG,
-      est_calories_text: estCaloriesText,
+      calories_kcal: finalCaloriesKcal,
+      protein_g: finalProteinG,
+      carbs_g: finalCarbsG,
+      fat_g: finalFatG,
+      est_calories_text: finalEstCaloriesText,
       cached: false,
     });
   } catch (error) {

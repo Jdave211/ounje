@@ -287,7 +287,7 @@ struct CartTabView: View {
                 userID: store.resolvedTrackingSession?.userID,
                 accessToken: store.resolvedTrackingSession?.accessToken,
                 onRerun: {
-                    startCartBuyNowRun(trigger: "instacart_runs_rerun")
+                    await performCartBuyNowRun(trigger: "instacart_runs_rerun")
                 }
             )
             .presentationDetents([.medium, .large])
@@ -1051,15 +1051,19 @@ struct CartTabView: View {
     }
 
     private func startCartBuyNowRun(trigger: String = "cart_buy_now") {
+        Task {
+            await performCartBuyNowRun(trigger: trigger)
+        }
+    }
+
+    private func performCartBuyNowRun(trigger: String = "cart_buy_now") async {
         let allowedKeys = visibleMainShopKeysForAutoshop
         let quantityOverrides = visibleMainShopQuantityOverridesForAutoshop
-        Task {
-            await store.rerunInstacartShopping(
-                trigger: trigger,
-                allowedMainShopItemKeys: allowedKeys,
-                quantityOverridesByMainShopKey: quantityOverrides
-            )
-        }
+        await store.rerunInstacartShopping(
+            trigger: trigger,
+            allowedMainShopItemKeys: allowedKeys,
+            quantityOverridesByMainShopKey: quantityOverrides
+        )
     }
 
     private func shouldShowMainShopDemarcation(

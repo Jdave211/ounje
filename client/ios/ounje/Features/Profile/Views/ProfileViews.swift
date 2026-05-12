@@ -200,7 +200,7 @@ struct ProfileTabView: View {
                 action: { isRecurringRecipesPresented = true }
             ),
             .init(
-                title: "Delivery schedule",
+                title: "Shop schedule",
                 detail: "\(profile.cadenceScheduleSummary) · \(profile.deliveryTimeText)",
                 value: "Edit",
                 action: {

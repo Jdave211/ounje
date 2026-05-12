@@ -840,7 +840,7 @@ final class MealPlanningAppStore: ObservableObject {
             manualAutoshopErrorMessage = "Refresh your profile before running Autoshop."
             return
         }
-        if hasBlockingInstacartActivity {
+        if hasQueuedOrRunningInstacartActivity {
             manualAutoshopErrorMessage = "A cart run is already in progress."
             await loadLatestInstacartRun()
             await loadLatestGroceryOrder()
@@ -1122,7 +1122,7 @@ final class MealPlanningAppStore: ObservableObject {
             }
         }
         if latestPlan?.recipes.isEmpty != false {
-            await generatePlan()
+            await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
         }
     }
 
@@ -1368,7 +1368,7 @@ final class MealPlanningAppStore: ObservableObject {
         // membership refresh should not serialize behind it.
         async let membershipRefresh: Void = refreshMembershipEntitlement(trigger: "post-onboarding")
         if profile.isPlanningReady {
-            await generatePlan()
+            await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
         }
         await membershipRefresh
 
@@ -1394,6 +1394,30 @@ final class MealPlanningAppStore: ObservableObject {
             await instacartLoad
             await groceryLoad
         }
+    }
+
+    private func onboardingPrepGenerationOptions(for profile: UserProfile) -> PrepGenerationOptions {
+        let topSignals = [
+            profile.trimmedPreferredName,
+            profile.userFacingCuisineTitles.first,
+            profile.favoriteFoods.prefix(3).joined(separator: ", "),
+            profile.dietaryPatterns.joined(separator: ", "),
+            profile.budgetSummary
+        ]
+        .compactMap { signal -> String? in
+            let trimmed = signal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        let userPrompt = topSignals.isEmpty
+            ? nil
+            : "Seed the first prep from onboarding signals: \(topSignals.joined(separator: "; ")). Keep it to three recipes."
+
+        return PrepGenerationOptions(
+            focus: .balanced,
+            targetRecipeCount: 3,
+            userPrompt: userPrompt
+        )
     }
 
     private func persistCompletedOnboardingState(
@@ -2544,7 +2568,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func processQueuedInstacartRerunIfNeeded() async {
         guard manualInstacartRerunQueuedAt != nil || pendingCartSyncIntent != nil else { return }
-        guard !hasBlockingInstacartActivity else { return }
+        guard !hasQueuedOrRunningInstacartActivity else { return }
 
         if pendingCartSyncIntent != nil {
             // Forward to maybeStartInstacartRunIfNeeded with force=true — it reads
@@ -2587,6 +2611,18 @@ final class MealPlanningAppStore: ObservableObject {
             }
         }
 
+        return false
+    }
+
+    private var hasQueuedOrRunningInstacartActivity: Bool {
+        for run in [latestInstacartRun, latestBlockingInstacartRun].compactMap({ $0 }) {
+            if ["queued", "running"].contains(run.normalizedRetryState) {
+                return true
+            }
+            if ["queued", "running"].contains(run.normalizedStatusKind) {
+                return true
+            }
+        }
         return false
     }
 

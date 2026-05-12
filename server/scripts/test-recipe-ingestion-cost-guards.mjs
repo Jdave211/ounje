@@ -33,7 +33,7 @@ assert.equal(shouldProcessImportInline({ source_url: "https://vt.tiktok.com/exam
 
 assert.equal(isCanonicalCacheableSource("tiktok", "https://vt.tiktok.com/example"), true);
 assert.equal(isCanonicalCacheableSource("instagram", "https://www.instagram.com/reel/example"), true);
-assert.equal(isCanonicalCacheableSource("web", "https://example.com/recipe"), false);
+assert.equal(isCanonicalCacheableSource("web", "https://example.com/recipe"), true);
 
 assert.equal(isOpenAITerminalModelError({ status: 400, message: "The model does not exist" }), true);
 assert.equal(isOpenAITerminalModelError({ status: 429, message: "rate limit" }), false);

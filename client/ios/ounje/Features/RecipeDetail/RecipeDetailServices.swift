@@ -864,6 +864,8 @@ final class RecipeDetailViewModel: ObservableObject {
            detail.id == recipeID || detail.id == initialDetailID {
             let fallbackID = similarFallbackRecipeID ?? (detail.id == recipeID ? nil : recipeID)
             scheduleSimilarRecipesLoad(for: detail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
+            scheduleMacroEnrichmentIfNeeded(for: detail, accessToken: accessToken)
+            scheduleImageEnrichmentIfNeeded(for: detail, accessToken: accessToken)
             return
         }
 
@@ -962,29 +964,49 @@ final class RecipeDetailViewModel: ObservableObject {
                   let heroURL = enriched.heroImageURLString, !heroURL.isEmpty else { return }
             guard let current = self.detail, current.id == fetchedDetail.id else { return }
             self.detail = RecipeDetailData(
-                id: current.id, title: current.title, description: current.description,
-                authorName: current.authorName, authorHandle: current.authorHandle,
-                authorURLString: current.authorURLString, source: current.source,
-                sourcePlatform: current.sourcePlatform, category: current.category,
-                subcategory: current.subcategory, recipeType: current.recipeType,
-                skillLevel: current.skillLevel, cookTimeText: current.cookTimeText,
-                servingsText: current.servingsText, servingSizeText: current.servingSizeText,
-                dailyDietText: current.dailyDietText, estCostText: current.estCostText,
-                estCaloriesText: current.estCaloriesText, carbsText: current.carbsText,
-                proteinText: current.proteinText, fatsText: current.fatsText,
-                caloriesKcal: current.caloriesKcal, proteinG: current.proteinG,
-                carbsG: current.carbsG, fatG: current.fatG,
-                prepTimeMinutes: current.prepTimeMinutes, cookTimeMinutes: current.cookTimeMinutes,
+                id: current.id,
+                title: current.title,
+                description: current.description,
+                authorName: current.authorName,
+                authorHandle: current.authorHandle,
+                authorURLString: current.authorURLString,
+                source: current.source,
+                sourcePlatform: current.sourcePlatform,
+                category: current.category,
+                subcategory: current.subcategory,
+                recipeType: current.recipeType,
+                skillLevel: current.skillLevel,
+                cookTimeText: current.cookTimeText,
+                servingsText: current.servingsText,
+                servingSizeText: current.servingSizeText,
+                dailyDietText: current.dailyDietText,
+                estCostText: current.estCostText,
+                estCaloriesText: current.estCaloriesText,
+                carbsText: current.carbsText,
+                proteinText: current.proteinText,
+                fatsText: current.fatsText,
+                caloriesKcal: current.caloriesKcal,
+                proteinG: current.proteinG,
+                carbsG: current.carbsG,
+                fatG: current.fatG,
+                prepTimeMinutes: current.prepTimeMinutes,
+                cookTimeMinutes: current.cookTimeMinutes,
                 heroImageURLString: enriched.heroImageURLString ?? current.heroImageURLString,
                 discoverCardImageURLString: enriched.discoverCardImageURLString ?? enriched.heroImageURLString ?? current.discoverCardImageURLString,
-                recipeURLString: current.recipeURLString, originalRecipeURLString: current.originalRecipeURLString,
-                attachedVideoURLString: current.attachedVideoURLString, detailFootnote: current.detailFootnote,
-                imageCaption: current.imageCaption, sourcePlatformDisplayName: current.sourcePlatformDisplayName,
-                dietaryTags: current.dietaryTags, flavorTags: current.flavorTags,
-                cuisineTags: current.cuisineTags, occasionTags: current.occasionTags,
-                mainProtein: current.mainProtein, cookMethod: current.cookMethod,
-                publishedDate: current.publishedDate, discoverBrackets: current.discoverBrackets,
-                ingredients: current.ingredients, steps: current.steps, servingsCount: current.servingsCount
+                recipeURLString: current.recipeURLString,
+                originalRecipeURLString: current.originalRecipeURLString,
+                attachedVideoURLString: current.attachedVideoURLString,
+                detailFootnote: current.detailFootnote,
+                imageCaption: current.imageCaption,
+                dietaryTags: current.dietaryTags,
+                flavorTags: current.flavorTags,
+                cuisineTags: current.cuisineTags,
+                occasionTags: current.occasionTags,
+                mainProtein: current.mainProtein,
+                cookMethod: current.cookMethod,
+                ingredients: current.ingredients,
+                steps: current.steps,
+                servingsCount: current.servingsCount
             )
         }
     }

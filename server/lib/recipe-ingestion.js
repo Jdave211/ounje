@@ -737,7 +737,7 @@ function buildDedupeKey({ sourceUrl = null, canonicalUrl = null, sourceText = nu
   return crypto.createHash("sha256").update(candidate).digest("hex");
 }
 
-function isCanonicalCacheableSource(sourceType, sourceURL) {
+function isSocialRecipeSource(sourceType, sourceURL) {
   const host = hostForURL(sourceURL);
   const type = normalizeText(sourceType).toLowerCase();
   return ["tiktok", "instagram", "youtube"].includes(type)
@@ -745,6 +745,10 @@ function isCanonicalCacheableSource(sourceType, sourceURL) {
     || host.includes("instagram.com")
     || host.includes("youtube.com")
     || host.includes("youtu.be");
+}
+
+function isCanonicalCacheableSource(sourceType, sourceURL) {
+  return isSocialRecipeSource(sourceType, sourceURL) || Boolean(hostForURL(sourceURL));
 }
 
 function isOpenAITerminalModelError(error) {
@@ -760,7 +764,7 @@ function isOpenAITerminalModelError(error) {
 
 function isResumableIngestionJob(job) {
   if (!job || job.status !== "failed") return false;
-  if (!isCanonicalCacheableSource(job.source_type, job.canonical_url ?? job.source_url)) return false;
+  if (!isSocialRecipeSource(job.source_type, job.canonical_url ?? job.source_url)) return false;
   return Boolean(job.normalized_at || job.fetched_at || job.evidence_bundle_id);
 }
 
@@ -2175,7 +2179,7 @@ function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
   };
 }
 
-export async function listCompletedRecipeImportItems({ userID = null, limit = 20 } = {}) {
+export async function listCompletedRecipeImportItems({ userID = null, limit = 50 } = {}) {
   const filters = [
     `status=in.${buildInClause(["saved", "needs_review", "draft"])}`,
   ];
@@ -2387,9 +2391,14 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
     : "user_id=is.null";
 
   const sourceFilters = [];
-  if (cacheableURL) {
-    sourceFilters.push(`canonical_url.eq.${encodeURIComponent(cacheableURL)}`);
-    sourceFilters.push(`source_url.eq.${encodeURIComponent(cacheableURL)}`);
+  const candidateURLs = uniqueStrings([
+    cacheableURL,
+    cleanURL(request.canonical_url ?? null),
+    cleanURL(request.source_url ?? null),
+  ]).filter(Boolean);
+  for (const url of candidateURLs) {
+    sourceFilters.push(`canonical_url.eq.${encodeURIComponent(url)}`);
+    sourceFilters.push(`source_url.eq.${encodeURIComponent(url)}`);
   }
   if (cacheDedupeKey) {
     sourceFilters.push(`dedupe_key.eq.${encodeURIComponent(cacheDedupeKey)}`);
@@ -2423,6 +2432,52 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
   return result;
 }
 
+async function findExistingUserImportedRecipeForRequest(request, { canonicalURL = null, dedupeKey = null } = {}) {
+  const userID = normalizeText(request?.user_id ?? "");
+  if (!userID) return null;
+
+  if (dedupeKey) {
+    const rows = await fetchRows(
+      USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key",
+      {
+        filters: [
+          `user_id=eq.${encodeURIComponent(userID)}`,
+          `dedupe_key=eq.${encodeURIComponent(dedupeKey)}`,
+        ],
+        order: ["updated_at.desc", "created_at.desc"],
+        limit: 1,
+      }
+    );
+    if (rows[0]) return rows[0];
+  }
+
+  const candidateURLs = uniqueStrings([
+    cleanURL(canonicalURL ?? null),
+    cleanURL(request?.canonical_url ?? null),
+    cleanURL(request?.source_url ?? null),
+  ]).filter(Boolean);
+  if (!candidateURLs.length) return null;
+
+  for (const column of ["recipe_url", "original_recipe_url", "attached_video_url"]) {
+    const rows = await fetchRows(
+      USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key",
+      {
+        filters: [
+          `user_id=eq.${encodeURIComponent(userID)}`,
+          `${column}=in.${buildInClause(candidateURLs)}`,
+        ],
+        order: ["updated_at.desc", "created_at.desc"],
+        limit: 1,
+      }
+    );
+    if (rows[0]) return rows[0];
+  }
+
+  return null;
+}
+
 async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, canonicalURL = null } = {}) {
   if (!cachedJob?.recipe_id) return null;
   const now = nowIso();
@@ -2449,6 +2504,81 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
     recipe,
     recipe_detail: recipeDetail,
   });
+}
+
+async function completeJobFromExistingImportedRecipe(job, recipeRow, { workerID, canonicalURL = null, dedupeKey = null } = {}) {
+  const recipeID = normalizeText(recipeRow?.id ?? "");
+  if (!recipeID) return null;
+  const now = nowIso();
+  const completed = await appendJobEvent(job.id, "existing_import_cache_hit", {
+    worker_id: workerID,
+    recipe_id: recipeID,
+  }, {
+    status: "saved",
+    canonical_url: canonicalURL ?? job.canonical_url ?? job.source_url ?? null,
+    dedupe_key: dedupeKey ?? job.dedupe_key ?? recipeRow?.dedupe_key ?? null,
+    dedupe_recipe_id: recipeID,
+    recipe_id: recipeID,
+    review_state: "approved",
+    confidence_score: job.confidence_score ?? 0.98,
+    quality_flags: uniqueStrings([...(job.quality_flags ?? []), "existing_import_cache_hit"]),
+    review_reason: null,
+    error_message: null,
+    saved_at: job.saved_at ?? now,
+    completed_at: now,
+  });
+  _setCanonicalImportCache(job.user_id, completed.canonical_url ?? canonicalURL ?? null, completed.dedupe_key ?? null, completed);
+  const recipe = await fetchRecipeCardProjection(recipeID).catch(() => null);
+  const recipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
+  return formatJobResponse(completed, {
+    recipe,
+    recipe_detail: recipeDetail,
+  });
+}
+
+async function createCompletedJobRowFromExistingImportedRecipe(request, recipeRow, { dedupeKey = null, canonicalURL = null } = {}) {
+  const recipeID = normalizeText(recipeRow?.id ?? "");
+  if (!recipeID) return null;
+  const now = nowIso();
+  const completed = await insertRecipeIngestionJobRow({
+    id: `ri_${nanoid(14)}`,
+    user_id: request.user_id,
+    target_state: request.target_state,
+    source_type: request.source_type,
+    source_url: request.source_url,
+    canonical_url: canonicalURL ?? request.canonical_url ?? request.source_url ?? null,
+    input_text: request.source_text || null,
+    request_payload: {
+      source_url: request.source_url,
+      canonical_url: canonicalURL ?? request.canonical_url ?? request.source_url ?? null,
+      source_text: request.source_text || null,
+      attachments: request.attachments ?? [],
+      photo_context: request.photo_context ?? null,
+      target_state: request.target_state,
+    },
+    dedupe_key: dedupeKey ?? recipeRow?.dedupe_key ?? null,
+    dedupe_recipe_id: recipeID,
+    recipe_id: recipeID,
+    status: "saved",
+    review_state: "approved",
+    confidence_score: 0.98,
+    quality_flags: ["existing_import_cache_hit"],
+    review_reason: null,
+    error_message: null,
+    saved_at: now,
+    completed_at: now,
+    event_log: [
+      {
+        event: "existing_import_cache_hit",
+        at: now,
+        recipe_id: recipeID,
+        source_type: request.source_type,
+        target_state: request.target_state,
+      },
+    ],
+  });
+  _setCanonicalImportCache(request.user_id, completed.canonical_url ?? null, completed.dedupe_key ?? null, completed);
+  return completed;
 }
 
 async function createJobRow(request) {
@@ -2482,6 +2612,18 @@ async function createJobRow(request) {
   });
   if (completedCanonical) {
     return completedCanonical;
+  }
+
+  const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(request, {
+    canonicalURL: request.canonical_url ?? request.source_url ?? null,
+    dedupeKey,
+  });
+  if (existingImportedRecipe) {
+    const completed = await createCompletedJobRowFromExistingImportedRecipe(request, existingImportedRecipe, {
+      dedupeKey,
+      canonicalURL: request.canonical_url ?? request.source_url ?? null,
+    });
+    if (completed) return completed;
   }
 
   const created = await insertRecipeIngestionJobRow({
@@ -7581,7 +7723,10 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     if (processInline) {
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
     } else {
-      results.push(formatJobResponse(job, { processing_mode: "queued" }));
+      const processingMode = ["saved", "draft", "needs_review"].includes(normalizeText(job.status))
+        ? "cached"
+        : "queued";
+      results.push(formatJobResponse(job, { processing_mode: processingMode }));
     }
   }
 
@@ -7706,6 +7851,18 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       return await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
         workerID,
         canonicalURL: requestPayload.source_url,
+      });
+    }
+
+    const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(requestPayload, {
+      canonicalURL: requestPayload.source_url,
+      dedupeKey: canonicalDedupeKey,
+    });
+    if (existingImportedRecipe) {
+      return await completeJobFromExistingImportedRecipe(existingJob, existingImportedRecipe, {
+        workerID,
+        canonicalURL: requestPayload.source_url,
+        dedupeKey: canonicalDedupeKey,
       });
     }
 

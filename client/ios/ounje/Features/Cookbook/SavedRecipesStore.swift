@@ -190,15 +190,15 @@ final class SavedRecipesStore: ObservableObject {
         }
     }
 
-    /// Saves an imported recipe. When `respectUnsave` is true (the default for
-    /// background auto-sync) the call is silently skipped if the user has
-    /// explicitly unsaved this recipe, so the tombstone is never cleared by a
-    /// background job re-syncing historical imports.
-    /// Pass `respectUnsave: false` only when the user directly triggers the import.
+    /// Saves an imported recipe. When `respectUnsave` is true the call is silently
+    /// skipped if the user has explicitly unsaved this recipe, so background sync
+    /// and repeated import refreshes never resurrect tombstoned items.
+    /// Pass `respectUnsave: false` only for an explicit user action that should
+    /// override the tombstone.
     func saveImportedRecipe(
         _ recipe: DiscoverRecipeCardData,
         showToast: Bool = true,
-        respectUnsave: Bool = false
+        respectUnsave: Bool = true
     ) {
         if respectUnsave, deletedSavedRecipeIDs.contains(recipe.id) { return }
         let existing = savedRecipes.first(where: { $0.id == recipe.id })
@@ -279,29 +279,22 @@ final class SavedRecipesStore: ObservableObject {
         let primaryKey = storageKey(for: userID)
         let deletedKey = deletedStorageKey(for: userID)
         let fallbackKey = userID == nil ? legacyKey : nil
-        let guestKey = userID == nil ? nil : storageKey(for: nil)
 
         let data = defaults.data(forKey: primaryKey)
             ?? fallbackKey.flatMap { defaults.data(forKey: $0) }
-        let guestData = guestKey.flatMap { defaults.data(forKey: $0) }
         let deletedData = defaults.data(forKey: deletedKey)
-        let guestDeletedData = userID == nil ? nil : defaults.data(forKey: deletedStorageKey(for: nil))
 
         let primaryRecipes = data
             .flatMap { try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: $0) } ?? []
-        let guestRecipes = guestData
-            .flatMap { try? JSONDecoder().decode([DiscoverRecipeCardData].self, from: $0) } ?? []
-        let decoded = deduplicated(primaryRecipes + guestRecipes)
+        let decoded = deduplicated(primaryRecipes)
 
         guard !decoded.isEmpty else {
             savedRecipes = []
             deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
-                .union(loadDeletedRecipeIDs(from: guestDeletedData))
             return
         }
 
         deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
-            .union(loadDeletedRecipeIDs(from: guestDeletedData))
         savedRecipes = deduplicated(decoded.filter { !deletedSavedRecipeIDs.contains($0.id) })
 
         if let mergedData = try? JSONEncoder().encode(savedRecipes),

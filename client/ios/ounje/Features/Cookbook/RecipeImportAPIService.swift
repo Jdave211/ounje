@@ -393,7 +393,7 @@ final class RecipeImportAPIService {
         var components = URLComponents(string: "\(baseURL)/v1/recipe/imports/completed") ?? URLComponents()
         components.queryItems = [
             URLQueryItem(name: "user_id", value: userID),
-            URLQueryItem(name: "limit", value: "24"),
+            URLQueryItem(name: "limit", value: "50"),
         ]
         guard let url = components.url else {
             throw RecipeImportServiceError.invalidRequest
