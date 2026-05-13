@@ -2,6 +2,7 @@ import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
+import { invalidateUserBootstrapCache } from "../../lib/user-bootstrap-cache.js";
 
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
@@ -128,6 +129,7 @@ router.post("/account/deactivate", async (req, res) => {
       status: "deactivated",
       deactivated_at: now,
     }).catch(() => {});
+    invalidateUserBootstrapCache(userID);
 
     return res.json({
       ok: true,

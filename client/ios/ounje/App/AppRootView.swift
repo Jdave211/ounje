@@ -19,6 +19,7 @@ typealias Alignment = SwiftUI.Alignment
 
 struct OunjeAppScene: View {
     @StateObject private var store = MealPlanningAppStore()
+    @StateObject private var runtimeStore = UserRuntimeStore()
     @StateObject private var toastCenter = AppToastCenter()
     @StateObject private var notificationCenter = AppNotificationCenterManager()
     @StateObject private var realtimeCoordinator = AppRealtimeInvalidationCoordinator()
@@ -26,6 +27,7 @@ struct OunjeAppScene: View {
     var body: some View {
         AppRootView()
             .environmentObject(store)
+            .environmentObject(runtimeStore)
             .environmentObject(toastCenter)
             .environmentObject(notificationCenter)
             .environmentObject(realtimeCoordinator)
@@ -53,6 +55,7 @@ struct AppRootView: View {
 
 struct RootView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var runtimeStore: UserRuntimeStore
     @EnvironmentObject private var toastCenter: AppToastCenter
     @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
     @EnvironmentObject private var realtimeCoordinator: AppRealtimeInvalidationCoordinator
@@ -97,11 +100,22 @@ struct RootView: View {
         .overlay(alignment: .top) {
             StatusBarShield()
         }
+        .onAppear {
+            store.onRuntimeProfileStateChanged = { userID, profile, onboarded, lastStep, entitlement in
+                runtimeStore.updateProfileState(
+                    userID: userID,
+                    profile: profile,
+                    onboarded: onboarded,
+                    lastOnboardingStep: lastStep,
+                    entitlement: entitlement
+                )
+            }
+        }
         .task(id: store.authSession?.userID ?? "signed-out") {
             // Run profile/prep bootstrap, membership entitlement, and notification
             // sync in parallel. Serializing StoreKit/product fetch behind remote
             // Supabase bootstrap is what made first-install Discover feel blocked.
-            async let bootstrap: Void = store.bootstrapFromSupabaseIfNeeded()
+            async let bootstrap: Void = runUserRuntimeBootstrap()
             async let membershipRefresh: Void = store.refreshMembershipEntitlement(trigger: "root-bootstrap")
             async let discoverCatalogPrewarm: Void = SupabaseDiscoverRecipeService.shared.prewarmBaseCatalog()
             async let notificationSync: Void = {
@@ -154,6 +168,26 @@ struct RootView: View {
                 try? await Task.sleep(nanoseconds: sleepInterval)
             }
         }
+    }
+
+    @MainActor
+    private func runUserRuntimeBootstrap() async {
+        if let cached = runtimeStore.loadCachedSnapshot(userID: store.resolvedLiveUserID ?? store.authSession?.userID) {
+            store.applyRuntimeSnapshot(cached, source: .disk)
+        }
+
+        guard let session = await store.freshUserDataSession() else {
+            await store.bootstrapFromSupabaseIfNeeded()
+            return
+        }
+
+        guard let snapshot = await runtimeStore.refresh(session: session) else {
+            await store.bootstrapFromSupabaseIfNeeded()
+            return
+        }
+
+        store.applyRuntimeSnapshot(snapshot, source: .remote)
+        await store.refreshPostRuntimeBootstrapDetails(session: session)
     }
 
     private var shouldShowSubscriptionGate: Bool {
@@ -1592,6 +1626,7 @@ private struct WelcomeQuickTourPage {
 private struct MealPlannerShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var runtimeStore: UserRuntimeStore
     @EnvironmentObject private var realtimeCoordinator: AppRealtimeInvalidationCoordinator
     @ObservedObject private var toastCenter: AppToastCenter
     @StateObject private var sharedImportInbox = SharedRecipeImportInboxStore()
@@ -1740,6 +1775,17 @@ private struct MealPlannerShellView: View {
             savedStore.configureAuthSessionProvider {
                 await savedRecipesSession()
             }
+            savedStore.onSavedRecipesChanged = { userID, recipes in
+                runtimeStore.updateSavedRecipes(userID: userID, recipes: recipes)
+            }
+            if let snapshot = runtimeStore.snapshot {
+                savedStore.applyRuntimeSnapshot(snapshot)
+            }
+        }
+        .task(id: runtimeSavedSnapshotSeedKey) {
+            if let snapshot = runtimeStore.snapshot {
+                savedStore.applyRuntimeSnapshot(snapshot)
+            }
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
             prewarmedCompletedImportIDs.removeAll()
@@ -1753,14 +1799,9 @@ private struct MealPlannerShellView: View {
         }
         .task(id: discoverPrewarmKey) {
             guard scenePhase == .active else { return }
-            // Wait for profile bootstrap to finish before firing the prewarm.
-            // Without this gate the task fires twice on cold launch (once with
-            // profile=nil and a default-context cache key, once with profile
-            // loaded and the real key), wasting a network round-trip and
-            // delaying the real prefetch. With the gate we get a single
-            // request with the correct cache key, so the Discover tab's own
-            // `.task` short-circuits via `lastLoadKey` when the user lands.
-            guard store.profile != nil else { return }
+            // The default Discover feed is now keyed independently of profile
+            // and location, so prewarm it as soon as launch starts instead of
+            // waiting for bootstrap/profile hydration.
             await prewarmBaseDiscoverFeed()
         }
         .task(id: cartSupportWarmupKey) {
@@ -1884,6 +1925,11 @@ private struct MealPlannerShellView: View {
                 identity: DirectionalSurfaceRevealModifier()
             )
         )
+    }
+
+    private var runtimeSavedSnapshotSeedKey: String {
+        guard let snapshot = runtimeStore.snapshot else { return "runtime-saved::empty" }
+        return "runtime-saved::\(snapshot.userID)::\(snapshot.updatedAt.timeIntervalSince1970)"
     }
 
     @ViewBuilder
@@ -2360,17 +2406,8 @@ private struct MealPlannerShellView: View {
 
     private var discoverPrewarmKey: String {
         let userKey = store.authSession?.userID ?? "signed-out"
-        let profile = store.profile
-        let preferredName = profile?.preferredName ?? ""
-        let cuisines = profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
-        let dietaryPatterns = profile?.dietaryPatterns.joined(separator: ",") ?? ""
-        let city = profile?.deliveryAddress.city ?? ""
-        let region = profile?.deliveryAddress.region ?? ""
-        let postalCode = profile?.deliveryAddress.postalCode ?? ""
-        let profileKey = [preferredName, cuisines, dietaryPatterns, city, region, postalCode]
-            .joined(separator: "|")
         let activeKey = scenePhase == .active ? "active" : "inactive"
-        return "discover-prewarm::\(userKey)::\(profileKey)::feedback:\(discoverFeedbackRevision)::\(activeKey)"
+        return "discover-prewarm::\(userKey)::feedback:\(discoverFeedbackRevision)::\(activeKey)"
     }
 
     private var discoverFeedbackRevision: Int {

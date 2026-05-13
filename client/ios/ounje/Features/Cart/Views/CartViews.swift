@@ -310,7 +310,7 @@ struct CartTabView: View {
         .task(id: cartReloadKey) {
             await reloadCartIngredients(forceRebuild: false)
         }
-        .task(id: store.resolvedTrackingSession?.userID ?? "signed-out") {
+        .task(id: cartTrackingReloadKey) {
             await store.refreshLiveTrackingState()
         }
     }
@@ -580,6 +580,12 @@ struct CartTabView: View {
             "\(snapshot.signature)::\(snapshot.generatedAt.timeIntervalSince1970)"
         } ?? "no-snapshot"
         return [recipeKey, groceryKey, snapshotKey].joined(separator: "::")
+    }
+
+    private var cartTrackingReloadKey: String {
+        let userKey = store.authSession?.userID ?? "signed-out"
+        let tokenKey = store.authSession?.accessToken?.suffix(18) ?? "no-token"
+        return "cart-tracking::\(userKey)::\(tokenKey)"
     }
 
     private var shouldShowEmptyCartState: Bool {

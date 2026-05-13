@@ -228,7 +228,7 @@ struct DiscoverRemoteRecipeCard: View {
     let typographyStyleOverride: RecipeTypographyStyle?
     let layout: DiscoverRemoteRecipeCardLayout
     @EnvironmentObject private var savedStore: SavedRecipesStore
-    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
     private var resolvedTypographyStyle: RecipeTypographyStyle {
         typographyStyleOverride ?? RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)

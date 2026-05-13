@@ -29,6 +29,7 @@ final class SupabaseDiscoverRecipeService {
 
     private var catalogPoolCache: [String: CatalogPoolResult] = [:]
     private var recipeCountCache: (count: Int, fetchedAt: Date)?
+    private let baseCatalogPoolCacheKey = "base-catalog-pool-v2"
     private let recipeCountCacheTTL: TimeInterval = 10 * 60
 
     private init() {}
@@ -341,13 +342,20 @@ final class SupabaseDiscoverRecipeService {
     ) async throws -> DiscoverRankedRecipesResponse {
         let normalizedLimit = max(1, limit)
         let normalizedOffset = max(0, offset)
-        let fetchLimit = max(normalizedOffset + (normalizedLimit * 10), 144)
+        let fetchLimit = max(normalizedOffset + (normalizedLimit * 4), normalizedLimit * 4)
         let catalogResult = try await fetchFullCatalogPool(
             fetchLimit: fetchLimit,
             sessionSeed: sessionSeed,
             forceRefresh: forceRefresh
         )
-        let catalog = catalogResult.recipes
+        let catalog = catalogResult.recipes.sorted { lhs, rhs in
+            let leftScore = deterministicCatalogOrderScore(id: lhs.id, seed: sessionSeed)
+            let rightScore = deterministicCatalogOrderScore(id: rhs.id, seed: sessionSeed)
+            if leftScore == rightScore {
+                return lhs.id < rhs.id
+            }
+            return leftScore < rightScore
+        }
 
         guard !catalog.isEmpty else {
             return DiscoverRankedRecipesResponse(
@@ -424,7 +432,7 @@ final class SupabaseDiscoverRecipeService {
         forceRefresh: Bool = false
     ) async throws -> CatalogPoolResult {
         let normalizedFetchLimit = max(1, fetchLimit)
-        let cacheKey = sessionSeed
+        let cacheKey = baseCatalogPoolCacheKey
         if !forceRefresh,
            let cached = catalogPoolCache[cacheKey],
            cached.recipes.count >= normalizedFetchLimit {
@@ -457,15 +465,17 @@ final class SupabaseDiscoverRecipeService {
 
         let windowSize = min(max(normalizedFetchLimit / 4, 36), 60)
         let startWindowIndex = cached?.windowsFetched ?? 0
-        let requestedWindowCount = max(4, Int(ceil(Double(normalizedFetchLimit) / Double(windowSize))))
-        let targetWindowCount = min(max(requestedWindowCount, startWindowIndex + 4), 30)
+        let requestedWindowCount = max(2, Int(ceil(Double(normalizedFetchLimit) / Double(windowSize))))
+        let minimumNewWindowCount = existingRecipes.isEmpty ? 2 : 1
+        let targetWindowCount = min(max(requestedWindowCount, startWindowIndex + minimumNewWindowCount), 30)
         let maxOffset = max(0, totalCount - windowSize)
         var windows: [[DiscoverRecipeCardData]] = []
+        let windowSeed = forceRefresh ? sessionSeed : cacheKey
 
         try await withThrowingTaskGroup(of: [DiscoverRecipeCardData].self) { group in
             for index in startWindowIndex..<targetWindowCount {
                 let windowOffset = Int(
-                    floor(deterministicUnitInterval(seed: "\(sessionSeed)|window|\(index)") * Double(maxOffset + 1))
+                    floor(deterministicUnitInterval(seed: "\(windowSeed)|window|\(index)") * Double(maxOffset + 1))
                 )
                 group.addTask {
                     try await self.fetchRecipes(
@@ -481,14 +491,7 @@ final class SupabaseDiscoverRecipeService {
             }
         }
 
-        let orderedNewRecipes = windows.flatMap { $0 }.sorted { lhs, rhs in
-            let leftScore = deterministicCatalogOrderScore(id: lhs.id, seed: sessionSeed)
-            let rightScore = deterministicCatalogOrderScore(id: rhs.id, seed: sessionSeed)
-            if leftScore == rightScore {
-                return lhs.id < rhs.id
-            }
-            return leftScore < rightScore
-        }
+        let orderedNewRecipes = windows.flatMap { $0 }.sorted { $0.id < $1.id }
         let sampledRecipes = deduplicatedRecipes(existingRecipes + orderedNewRecipes)
         let recipes: [DiscoverRecipeCardData]
         if sampledRecipes.isEmpty {

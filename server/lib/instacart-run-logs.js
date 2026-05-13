@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
+import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
@@ -603,6 +604,7 @@ async function persistInstacartRunLog(trace, { accessToken = null } = {}) {
     meal_plan_id: trace?.mealPlanId ?? trace?.meal_plan_id ?? null,
     grocery_order_id: trace?.groceryOrderID ?? trace?.grocery_order_id ?? null,
   });
+  invalidateUserBootstrapCache(record.user_id);
 
   return record.run_id;
 }

@@ -1403,7 +1403,7 @@ struct RecipeDetailExperienceView: View {
 struct RecipeModalTitle: View {
     let text: String
     var isAdapted = false
-    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {

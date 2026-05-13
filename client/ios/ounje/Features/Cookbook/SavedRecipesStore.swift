@@ -20,6 +20,7 @@ final class SavedRecipesStore: ObservableObject {
     private var lastRemoteSyncAt: Date?
     private let remoteSyncTTL: TimeInterval = 15 * 60
     private var authSessionProvider: (() async -> AuthSession?)?
+    var onSavedRecipesChanged: ((String?, [DiscoverRecipeCardData]) -> Void)?
 
     init(toastCenter: AppToastCenter) {
         self.toastCenter = toastCenter
@@ -32,6 +33,22 @@ final class SavedRecipesStore: ObservableObject {
 
     func configureAuthSessionProvider(_ provider: @escaping () async -> AuthSession?) {
         authSessionProvider = provider
+    }
+
+    func applyRuntimeSnapshot(_ snapshot: UserRuntimeSnapshot) {
+        if activeUserID != snapshot.userID {
+            activeUserID = snapshot.userID
+            load(for: snapshot.userID)
+        }
+
+        let remoteRecipes = snapshot.savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
+        let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
+        if mergedRecipes != savedRecipes {
+            savedRecipes = mergedRecipes
+            persist(notifyRuntime: false)
+        }
+        lastRemoteSyncUserID = snapshot.userID
+        lastRemoteSyncAt = snapshot.updatedAt
     }
 
     func bootstrap(authSession: AuthSession?) async {
@@ -150,6 +167,10 @@ final class SavedRecipesStore: ObservableObject {
                         recipes: [recipe],
                         accessToken: remoteSession.accessToken ?? accessToken
                     )
+                    await SupabaseUserBootstrapService.shared.invalidateServerCache(
+                        userID: remoteSession.userID,
+                        accessToken: remoteSession.accessToken ?? accessToken
+                    )
                     await MainActor.run {
                         self.hasPendingRemoteSaveRetry = false
                         self.markRemoteSyncComplete(for: remoteSession.userID)
@@ -158,6 +179,10 @@ final class SavedRecipesStore: ObservableObject {
                     try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
                         userID: remoteSession.userID,
                         recipeID: recipe.id,
+                        accessToken: remoteSession.accessToken ?? accessToken
+                    )
+                    await SupabaseUserBootstrapService.shared.invalidateServerCache(
+                        userID: remoteSession.userID,
                         accessToken: remoteSession.accessToken ?? accessToken
                     )
                     await MainActor.run {
@@ -211,6 +236,10 @@ final class SavedRecipesStore: ObservableObject {
                     recipes: [resolved],
                     accessToken: remoteSession.accessToken ?? accessToken
                 )
+                await SupabaseUserBootstrapService.shared.invalidateServerCache(
+                    userID: remoteSession.userID,
+                    accessToken: remoteSession.accessToken ?? accessToken
+                )
                 await MainActor.run {
                     self.hasPendingRemoteSaveRetry = false
                     self.markRemoteSyncComplete(for: remoteSession.userID)
@@ -242,6 +271,10 @@ final class SavedRecipesStore: ObservableObject {
                     recipes: [recipe],
                     accessToken: remoteSession.accessToken ?? accessToken
                 )
+                await SupabaseUserBootstrapService.shared.invalidateServerCache(
+                    userID: remoteSession.userID,
+                    accessToken: remoteSession.accessToken ?? accessToken
+                )
                 await MainActor.run {
                     self.hasPendingRemoteSaveRetry = false
                     self.markRemoteSyncComplete(for: remoteSession.userID)
@@ -255,7 +288,7 @@ final class SavedRecipesStore: ObservableObject {
         }
     }
 
-    private func persist() {
+    private func persist(notifyRuntime: Bool = true) {
         if let data = try? JSONEncoder().encode(savedRecipes) {
             UserDefaults.standard.set(data, forKey: storageKey(for: activeUserID))
         }
@@ -264,6 +297,9 @@ final class SavedRecipesStore: ObservableObject {
         }
         if let pendingDeleteData = try? JSONEncoder().encode(Array(pendingRemoteDeleteRecipeIDs)) {
             UserDefaults.standard.set(pendingDeleteData, forKey: pendingDeleteStorageKey(for: activeUserID))
+        }
+        if notifyRuntime {
+            onSavedRecipesChanged?(activeUserID, savedRecipes)
         }
     }
 
@@ -395,6 +431,10 @@ final class SavedRecipesStore: ObservableObject {
                 try await SupabaseSavedRecipesService.shared.deleteSavedRecipe(
                     userID: remoteSession.userID,
                     recipeID: recipeID,
+                    accessToken: remoteSession.accessToken
+                )
+                await SupabaseUserBootstrapService.shared.invalidateServerCache(
+                    userID: remoteSession.userID,
                     accessToken: remoteSession.accessToken
                 )
                 pendingRemoteDeleteRecipeIDs.remove(recipeID)

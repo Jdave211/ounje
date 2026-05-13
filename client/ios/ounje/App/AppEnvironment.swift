@@ -150,6 +150,11 @@ final class MealPlanningAppStore: ObservableObject {
         case transientFailure
     }
 
+    private struct PersistedAuthSessionCandidate {
+        let session: AuthSession
+        let sourcePriority: Int
+    }
+
     private var authRefreshTask: Task<AuthSessionRefreshOutcome, Never>?
     private var cachedAuthenticatedEntryRoute: CachedAuthenticatedEntryRoute?
     private var hasPersistedOnboardingState = false
@@ -164,6 +169,7 @@ final class MealPlanningAppStore: ObservableObject {
     @Published private(set) var hiddenMainShopItemKeys: Set<String> = []
     private var hiddenMainShopPlanID: UUID?
     private var cachedLiveUserID: String?
+    var onRuntimeProfileStateChanged: ((String?, UserProfile?, Bool, Int, AppUserEntitlement?) -> Void)?
     private var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: SharedRecipeImportConstants.appGroupID)
     }
@@ -325,6 +331,137 @@ final class MealPlanningAppStore: ObservableObject {
         saveAuthSession(session)
     }
 
+    func applyRuntimeSnapshot(_ snapshot: UserRuntimeSnapshot, source: UserRuntimeSnapshotSource) {
+        let snapshotUserID = snapshot.userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !snapshotUserID.isEmpty else { return }
+
+        let currentUserID = resolvedLiveUserID ?? authSession?.userID
+        if let currentUserID,
+           !currentUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           currentUserID != snapshotUserID {
+            return
+        }
+
+        if snapshot.profileState?.isDeactivated == true {
+            resetAll()
+            return
+        }
+
+        if activeHistoryUserID != snapshotUserID {
+            loadHistory(for: snapshotUserID)
+            loadCompletedMealPrepCycleCache(for: snapshotUserID)
+            loadAutomationStateCache(for: snapshotUserID)
+            loadPendingCartSyncIntentCache(for: snapshotUserID)
+            loadPrepRecipeOverridesCache(for: snapshotUserID)
+            loadRecurringPrepRecipesCache(for: snapshotUserID)
+        }
+
+        cachedLiveUserID = snapshotUserID
+        saveLiveUserID(snapshotUserID)
+
+        if let state = snapshot.profileState {
+            isOnboarded = shouldForceOnboardingIncomplete ? false : state.onboarded && snapshot.profile != nil
+            lastOnboardingStep = shouldForceOnboardingIncomplete ? 0 : max(0, state.lastOnboardingStep)
+            hasPersistedOnboardingState = true
+            if source == .remote || snapshot.profile != nil {
+                bootstrapDidConfirmOnboardingState = true
+            }
+            cacheAuthenticatedEntryRoute(isOnboarded ? .planner : .onboarding)
+            saveOnboardingState()
+            saveOnboardingStep()
+
+            if let authSession {
+                self.authSession = AuthSession(
+                    provider: state.authProvider ?? authSession.provider,
+                    userID: snapshotUserID,
+                    email: state.email ?? authSession.email,
+                    displayName: state.displayName ?? authSession.displayName,
+                    signedInAt: authSession.signedInAt,
+                    accessToken: authSession.accessToken,
+                    refreshToken: authSession.refreshToken
+                )
+                if let updatedSession = self.authSession {
+                    saveAuthSession(updatedSession)
+                }
+            }
+        }
+
+        if shouldForceOnboardingIncomplete {
+            profile = .starter
+        } else if let runtimeProfile = snapshot.profile {
+            profile = runtimeProfile
+        } else if !isOnboarded, profile == nil {
+            profile = .starter
+        }
+        if profile != nil {
+            saveProfile()
+        }
+        if let selectedStyle = snapshot.selectedRecipeTypographyStyle {
+            RecipeTypographyPreferenceStore.persist(selectedStyle)
+        } else {
+            RecipeTypographyPreferenceStore.persistFromProfile(profile)
+        }
+
+        membershipEntitlement = snapshot.entitlement
+        syncProfilePricingTierToEntitlement()
+        if source == .remote || snapshot.entitlement?.isActive == true {
+            membershipEntitlementResolved = true
+            billingStatusMessage = nil
+        }
+
+        if let latestPlan = snapshot.latestPlan, !latestPlan.recipes.isEmpty {
+            updateCurrentPlanCache(with: latestPlan, persistRemote: false)
+            let count = max(1, snapshot.prepSummary.historyCount ?? 1)
+            remoteMealPrepCycleLoadState = .loaded(count)
+            isRefreshingPrepRecipes = false
+        } else if source == .remote, snapshot.prepSummary.historyCount == 0 {
+            remoteMealPrepCycleLoadState = .empty
+        }
+
+        hasResolvedInitialState = true
+        isHydratingRemoteState = false
+    }
+
+    func refreshPostRuntimeBootstrapDetails(session: AuthSession) async {
+        guard authSession?.userID == session.userID || resolvedLiveUserID == session.userID else { return }
+        guard isOnboarded else { return }
+
+        let shouldLoadRemotePlan = latestPlan?.recipes.isEmpty != false
+        if shouldLoadRemotePlan {
+            isRefreshingPrepRecipes = true
+        }
+
+        async let overridesLoad: Void = loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
+        async let recurringLoad: Void = loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
+        let remotePlanLoadState: RemoteMealPrepCycleLoadState? = shouldLoadRemotePlan
+            ? await loadMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            : nil
+        _ = await overridesLoad
+        _ = await recurringLoad
+
+        if let remotePlanLoadState {
+            await repairRemotePrepStateIfNeeded(session: session, remotePlanLoadState: remotePlanLoadState)
+        }
+        await reconcileLatestPlanWithPrepOverrides()
+        isRefreshingPrepRecipes = false
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            async let completedCyclesLoad: Void = self.loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+            async let automationLoad: Void = self.loadAutomationState(userID: session.userID, accessToken: session.accessToken)
+            async let cartRepairLoad: Void = self.repairRemoteCartStateIfNeeded(session: session)
+            async let instacartLoad: Void = self.loadLatestInstacartRun()
+            async let groceryLoad: Void = self.loadLatestGroceryOrder()
+            async let providerLoad: Void = self.refreshProviderConnectionState()
+            _ = await completedCyclesLoad
+            _ = await automationLoad
+            _ = await cartRepairLoad
+            _ = await instacartLoad
+            _ = await groceryLoad
+            _ = await providerLoad
+        }
+    }
+
     func setInstacartProviderConnected(_ isConnected: Bool, for userID: String? = nil) {
         isInstacartProviderConnected = isConnected
         savePersistedProviderConnectionState(isConnected, for: userID ?? resolvedLiveUserID ?? authSession?.userID)
@@ -385,6 +522,7 @@ final class MealPlanningAppStore: ObservableObject {
             }
             syncProfilePricingTierToEntitlement()
             membershipEntitlementResolved = true
+            onRuntimeProfileStateChanged?(authSession?.userID ?? cachedLiveUserID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
             return
         }
 
@@ -408,6 +546,7 @@ final class MealPlanningAppStore: ObservableObject {
                 membershipEntitlementResolved = false
             }
         }
+        onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
 
         // ── Phase 2: Server sync (best-effort, non-blocking for UI) ─────────────
         // Keep the server's entitlement record up to date and pull the authoritative
@@ -438,6 +577,7 @@ final class MealPlanningAppStore: ObservableObject {
             syncProfilePricingTierToEntitlement()
             billingStatusMessage = nil
             membershipEntitlementResolved = true
+            onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
         } catch {
             // Server unreachable — keep the local StoreKit snapshot.
             if localSnapshot == nil, previousEntitlement?.isActive != true {
@@ -446,6 +586,7 @@ final class MealPlanningAppStore: ObservableObject {
             }
             billingStatusMessage = "[\(trigger)] \(error.localizedDescription)"
             membershipEntitlementResolved = true
+            onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
         }
 
         // Products are for paywall display only. Do not block entitlement gating
@@ -498,8 +639,10 @@ final class MealPlanningAppStore: ObservableObject {
                 )
                 membershipEntitlement = remoteEntitlement ?? snapshot
                 syncProfilePricingTierToEntitlement()
+                onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
             } catch {
                 print("[Membership] Post-purchase entitlement sync failed:", error.localizedDescription)
+                onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
             }
 
             return true
@@ -567,6 +710,7 @@ final class MealPlanningAppStore: ObservableObject {
         syncProfilePricingTierToEntitlement()
         membershipEntitlementResolved = true
         billingStatusMessage = nil
+        onRuntimeProfileStateChanged?(userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
         return true
     }
 
@@ -639,6 +783,7 @@ final class MealPlanningAppStore: ObservableObject {
         saveProfile()
         saveOnboardingState()
         saveOnboardingStep()
+        onRuntimeProfileStateChanged?(resolvedLiveUserID ?? authSession?.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
 
         await finalizeCompletedOnboarding(with: profile, lastStep: lastStep)
         isCompletingOnboarding = false
@@ -647,6 +792,7 @@ final class MealPlanningAppStore: ObservableObject {
     func updateProfile(_ updated: UserProfile) {
         profile = updated
         saveProfile()
+        onRuntimeProfileStateChanged?(resolvedLiveUserID ?? authSession?.userID, updated, isOnboarded, lastOnboardingStep, membershipEntitlement)
 
         guard authSession != nil else { return }
         Task(priority: .utility) {
@@ -1823,12 +1969,12 @@ final class MealPlanningAppStore: ObservableObject {
     private func loadState() {
         let decoder = JSONDecoder()
 
-        if let authData = loadAuthSessionData(),
-           let decodedAuth = try? decoder.decode(AuthSession.self, from: authData) {
+        if let decodedAuth = loadBestPersistedAuthSession() {
             if shouldDiscardLocalOnlyAuthSession(decodedAuth) {
                 clearPersistedAuthIdentity()
             } else {
                 authSession = decodedAuth
+                saveAuthSession(decodedAuth)
             }
         }
 
@@ -1846,6 +1992,7 @@ final class MealPlanningAppStore: ObservableObject {
         if let profileData = UserDefaults.standard.data(forKey: profileKey),
            let decodedProfile = try? decoder.decode(UserProfile.self, from: profileData) {
             profile = decodedProfile
+            RecipeTypographyPreferenceStore.persistFromProfile(decodedProfile)
         }
 
         loadHistory(for: resolvedUserID)
@@ -3913,6 +4060,7 @@ final class MealPlanningAppStore: ObservableObject {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(profile) else { return }
         UserDefaults.standard.set(data, forKey: profileKey)
+        RecipeTypographyPreferenceStore.persistFromProfile(profile)
     }
 
     private func saveAuthSession(_ authSession: AuthSession) {
@@ -4403,20 +4551,61 @@ final class MealPlanningAppStore: ObservableObject {
         return unique
     }
 
-    private func loadAuthSessionData() -> Data? {
-        if let keychainData = loadAuthSessionFromKeychain() {
-            return keychainData
+    private func loadBestPersistedAuthSession() -> AuthSession? {
+        let decoder = JSONDecoder()
+        let rawCandidates: [(Data, Int)] = [
+            loadAuthSessionFromKeychain().map { ($0, 0) },
+            UserDefaults.standard.data(forKey: authSessionKey).map { ($0, 1) },
+            sharedDefaults?.data(forKey: authSessionKey).map { ($0, 2) },
+        ].compactMap { $0 }
+
+        return rawCandidates
+            .compactMap { data, sourcePriority -> PersistedAuthSessionCandidate? in
+                guard let session = try? decoder.decode(AuthSession.self, from: data) else {
+                    return nil
+                }
+                return PersistedAuthSessionCandidate(session: session, sourcePriority: sourcePriority)
+            }
+            .sorted(by: isBetterPersistedAuthSession)
+            .first?
+            .session
+    }
+
+    private func isBetterPersistedAuthSession(
+        _ lhs: PersistedAuthSessionCandidate,
+        than rhs: PersistedAuthSessionCandidate
+    ) -> Bool {
+        let lhsRefresh = hasRefreshToken(lhs.session)
+        let rhsRefresh = hasRefreshToken(rhs.session)
+        if lhsRefresh != rhsRefresh {
+            return lhsRefresh
         }
 
-        if let defaultsData = UserDefaults.standard.data(forKey: authSessionKey) {
-            return defaultsData
+        let lhsUsableAccess = isAccessTokenUsable(accessTokenString(for: lhs.session))
+        let rhsUsableAccess = isAccessTokenUsable(accessTokenString(for: rhs.session))
+        if lhsUsableAccess != rhsUsableAccess {
+            return lhsUsableAccess
         }
 
-        if let sharedData = sharedDefaults?.data(forKey: authSessionKey) {
-            return sharedData
+        let lhsHasAccess = !accessTokenString(for: lhs.session).isEmpty
+        let rhsHasAccess = !accessTokenString(for: rhs.session).isEmpty
+        if lhsHasAccess != rhsHasAccess {
+            return lhsHasAccess
         }
 
-        return nil
+        if lhs.session.signedInAt != rhs.session.signedInAt {
+            return lhs.session.signedInAt > rhs.session.signedInAt
+        }
+
+        return lhs.sourcePriority < rhs.sourcePriority
+    }
+
+    private func hasRefreshToken(_ session: AuthSession) -> Bool {
+        !(session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+    }
+
+    private func accessTokenString(for session: AuthSession) -> String {
+        session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
     private func saveAuthSessionToKeychain(_ data: Data) {

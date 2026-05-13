@@ -24,6 +24,7 @@ import {
   fetchOrderingAutonomy,
   fetchOrderingGuardrails,
 } from "./notification-events.js";
+import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
@@ -266,6 +267,7 @@ export async function createOrder({
     .single();
 
   if (error) throw error;
+  invalidateUserBootstrapCache(userId);
 
   return order;
 }
@@ -1130,7 +1132,7 @@ async function updateOrderStatus(orderId, newStatus, extraFields = {}, stepLogEx
 
   const { data: order } = await supabase
     .from("grocery_orders")
-    .select("status")
+    .select("status,user_id,step_log")
     .eq("id", orderId)
     .single();
 
@@ -1140,12 +1142,6 @@ async function updateOrderStatus(orderId, newStatus, extraFields = {}, stepLogEx
       throw new Error(`Invalid transition: ${order.status} → ${newStatus}`);
     }
   }
-
-  const { data: currentOrder } = await supabase
-    .from("grocery_orders")
-    .select("step_log")
-    .eq("id", orderId)
-    .single();
 
   const fallbackTrackingCopy = (() => {
     switch (newStatus) {
@@ -1218,7 +1214,7 @@ async function updateOrderStatus(orderId, newStatus, extraFields = {}, stepLogEx
     ...stepLogExtra,
   };
 
-  const existingStepLog = Array.isArray(currentOrder?.step_log) ? currentOrder.step_log : [];
+  const existingStepLog = Array.isArray(order?.step_log) ? order.step_log : [];
   const { error } = await supabase
     .from("grocery_orders")
     .update({
@@ -1232,6 +1228,7 @@ async function updateOrderStatus(orderId, newStatus, extraFields = {}, stepLogEx
     .eq("id", orderId);
 
   if (error) throw error;
+  invalidateUserBootstrapCache(order?.user_id);
 }
 
 async function failOrder(orderId, errorMessage) {
@@ -1256,6 +1253,7 @@ async function failOrder(orderId, errorMessage) {
     .eq("id", orderId);
 
   if (order?.user_id) {
+    invalidateUserBootstrapCache(order.user_id);
     const friendlyBody = (() => {
       const text = normalizeText(errorMessage).toLowerCase();
       if (text.includes("invalid transition")) {

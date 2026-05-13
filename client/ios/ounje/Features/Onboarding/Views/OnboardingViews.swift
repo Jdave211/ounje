@@ -5,7 +5,7 @@ struct FirstLoginOnboardingView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var toastCenter: AppToastCenter
     @AppStorage("ounje.selectedPricingTier") private var selectedTierRawValue = "free"
-    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
     @StateObject private var onboardingSavedStore = SavedRecipesStore(toastCenter: AppToastCenter())
     @State private var currentStep: SetupStep = .identity
@@ -3066,7 +3066,7 @@ struct FirstLoginOnboardingView: View {
         [
             selectedFoodPersona.isEmpty ? nil : "Describes me: \(selectedFoodPersona)",
             selectedFoodChallengeList.isEmpty ? nil : "Food goals: \(selectedFoodChallengeList.joined(separator: "; "))",
-            didChooseRecipeTypographyStyle ? "Recipe style: \(selectedRecipeTypographyStyle.rawValue)" : nil,
+            didChooseRecipeTypographyStyle ? "\(RecipeTypographyPreferenceStore.profileSignalPrefix) \(selectedRecipeTypographyStyle.rawValue)" : nil,
             "Budget considered: \(shouldUseBudgetGuardrail ? "Yes" : "No")"
         ]
         .compactMap { $0 }
@@ -3173,11 +3173,8 @@ struct FirstLoginOnboardingView: View {
                     ?? Array(selectedFoodChallenges)
             )
         )
-        if let storedRecipeStyle = Self.prefixedProfileSignal(
-            in: sourceProfile.mealPrepGoals,
-            prefix: "Recipe style:"
-        ) {
-            recipeTypographyStyleRawValue = storedRecipeStyle
+        if let storedRecipeStyle = RecipeTypographyPreferenceStore.style(in: sourceProfile) {
+            recipeTypographyStyleRawValue = storedRecipeStyle.rawValue
             didChooseRecipeTypographyStyle = true
         } else {
             recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue

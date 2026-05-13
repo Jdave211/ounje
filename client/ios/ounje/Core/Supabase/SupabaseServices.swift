@@ -409,6 +409,7 @@ final class SupabaseProfileStateService {
             let fallback = "Failed to save onboarding state (\(httpResponse.statusCode))."
             throw SupabaseProfileStateError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
+        await SupabaseUserBootstrapService.shared.invalidateServerCache(userID: userID, accessToken: accessToken)
     }
 
     private func fetchProfile(userID: String, accessToken: String?) async throws -> SupabaseProfileRow? {
@@ -920,6 +921,7 @@ final class SupabasePrepRecipeOverridesService {
             let fallback = "Failed to save prep override (\(httpResponse.statusCode))."
             throw SupabasePrepRecipeOverridesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
+        await SupabaseUserBootstrapService.shared.invalidateServerCache(userID: userID, accessToken: accessToken)
     }
 
     func deleteAllPrepRecipeOverrides(userID: String, accessToken: String?) async throws {
@@ -939,6 +941,7 @@ final class SupabasePrepRecipeOverridesService {
             let fallback = "Failed to clear prep overrides (\(httpResponse.statusCode))."
             throw SupabasePrepRecipeOverridesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
+        await SupabaseUserBootstrapService.shared.invalidateServerCache(userID: userID, accessToken: accessToken)
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -1210,6 +1213,7 @@ final class SupabaseMealPrepCycleService {
         if syncCart {
             try await syncMainShopAndBaseCart(userID: userID, plan: plan, accessToken: accessToken)
         }
+        await SupabaseUserBootstrapService.shared.invalidateServerCache(userID: userID, accessToken: accessToken)
     }
 
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {

@@ -434,16 +434,22 @@ final class DiscoverRecipesViewModel: ObservableObject {
         limit: Int,
         offset: Int = 0
     ) -> String {
-        let cuisines = profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
-        let dietary = profile?.dietaryPatterns.joined(separator: ",") ?? ""
-        let foods = profile?.favoriteFoods.joined(separator: ",") ?? ""
-        let flavors = profile?.favoriteFlavors.joined(separator: ",") ?? ""
-        let profileKey = String(profileFingerprint(profile).prefix(16))
+        let usesSharedBaseCache = usesSharedBaseFeedCache(
+            behaviorSeeds: behaviorSeeds,
+            filter: filter,
+            query: query
+        )
+        let cuisines = usesSharedBaseCache ? "" : (profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? "")
+        let dietary = usesSharedBaseCache ? "" : (profile?.dietaryPatterns.joined(separator: ",") ?? "")
+        let foods = usesSharedBaseCache ? "" : (profile?.favoriteFoods.joined(separator: ",") ?? "")
+        let flavors = usesSharedBaseCache ? "" : (profile?.favoriteFlavors.joined(separator: ",") ?? "")
+        let profileKey = usesSharedBaseCache ? "shared-base-profile" : String(profileFingerprint(profile).prefix(16))
+        let contextKey = usesSharedBaseCache ? "base|\(feedContext.windowKey)" : feedContext.cacheKey
         let behaviorKey = DiscoverOnboardingFeedMixer.behaviorSignature(behaviorSeeds)
         let baseRotationKey = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "|rotation:\(baseFeedRotationIndex)|token:\(baseFeedRefreshToken)"
             : ""
-        return "\(sessionSeed)|\(feedContext.cacheKey)|\(filter)|\(profileKey)|\(cuisines)|\(dietary)|\(foods)|\(flavors)|behavior:\(behaviorKey)|\(query)|feedback:\(feedbackRevision)|limit:\(limit)|offset:\(offset)\(baseRotationKey)"
+        return "\(sessionSeed)|\(contextKey)|\(filter)|\(profileKey)|\(cuisines)|\(dietary)|\(foods)|\(flavors)|behavior:\(behaviorKey)|\(query)|feedback:\(feedbackRevision)|limit:\(limit)|offset:\(offset)\(baseRotationKey)"
     }
 
     private func persistentShelfKey(
@@ -453,19 +459,34 @@ final class DiscoverRecipesViewModel: ObservableObject {
         query: String,
         feedContext: DiscoverFeedContext
     ) -> String {
-        [
+        let usesSharedBaseCache = usesSharedBaseFeedCache(
+            behaviorSeeds: behaviorSeeds,
+            filter: filter,
+            query: query
+        )
+        return [
             shelfCacheSchemaVersion,
             recipeCatalogVersion,
             rankingConfigVersion,
-            profileFingerprint(profile),
-            normalizedCacheComponent(DiscoverOnboardingFeedMixer.behaviorSignature(behaviorSeeds)),
+            usesSharedBaseCache ? "shared-base-profile" : profileFingerprint(profile),
+            usesSharedBaseCache ? "shared-base-behavior" : normalizedCacheComponent(DiscoverOnboardingFeedMixer.behaviorSignature(behaviorSeeds)),
             normalizedCacheComponent(filter),
             normalizedCacheComponent(query),
-            normalizedCacheComponent(feedContext.locationLabel ?? ""),
-            normalizedCacheComponent(feedContext.regionCode ?? ""),
+            usesSharedBaseCache ? "shared-base-location" : normalizedCacheComponent(feedContext.locationLabel ?? ""),
+            usesSharedBaseCache ? "shared-base-region" : normalizedCacheComponent(feedContext.regionCode ?? ""),
             normalizedCacheComponent(feedContext.seasonCue ?? ""),
             "feedback-\(feedbackRevision)"
         ].joined(separator: "|")
+    }
+
+    private func usesSharedBaseFeedCache(
+        behaviorSeeds: [DiscoverRecipeCardData],
+        filter: String,
+        query: String
+    ) -> Bool {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && DiscoverPreset.normalizedKey(for: filter) == "all"
+            && behaviorSeeds.isEmpty
     }
 
     private func profileFingerprint(_ profile: UserProfile?) -> String {

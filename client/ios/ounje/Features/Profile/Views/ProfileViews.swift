@@ -597,7 +597,7 @@ struct ProfileSettingsPage: View {
     @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
-    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
     @StateObject private var providersViewModel = GroceryProvidersViewModel()
     @State private var isAutonomyPickerPresented = false
     @State private var isMembershipPresented = false
@@ -1509,7 +1509,7 @@ struct MembershipSettingsSheet: View {
 struct RecipeStyleSettingsSheet: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("ounje.recipeTypographyStyle") private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
     private var selectedStyle: RecipeTypographyStyle {
         RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
@@ -1637,13 +1637,9 @@ struct RecipeStyleSettingsSheet: View {
     }
 
     private func persistRecipeStyle(_ style: RecipeTypographyStyle) {
-        guard var updated = store.profile else { return }
-        let prefix = "Recipe style:"
-        var goals = updated.mealPrepGoals.filter {
-            !$0.localizedCaseInsensitiveContains(prefix)
-        }
-        goals.append("\(prefix) \(style.rawValue)")
-        updated.mealPrepGoals = goals
+        RecipeTypographyPreferenceStore.persist(style)
+        guard let profile = store.profile else { return }
+        let updated = RecipeTypographyPreferenceStore.profile(profile, setting: style)
         store.updateProfile(updated)
     }
 }

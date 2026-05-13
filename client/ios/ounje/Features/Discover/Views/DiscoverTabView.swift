@@ -136,7 +136,7 @@ struct DiscoverTabView: View {
         .task(id: discoverFeedKey) {
             guard !isSearching else { return }
             let taskFeedKey = discoverFeedKey
-            let shouldForcePersonalizedReload = lastAppliedDiscoverFeedKey != nil
+            let didFeedIdentityChangeWithVisibleRecipes = lastAppliedDiscoverFeedKey != nil
                 && lastAppliedDiscoverFeedKey != taskFeedKey
                 && !viewModel.recipes.isEmpty
             lastAppliedDiscoverFeedKey = taskFeedKey
@@ -145,17 +145,8 @@ struct DiscoverTabView: View {
             viewModel.updateFeedbackRevision(discoverFeedbackRevision)
             async let environmentRefresh: Void = environmentModel.refresh(profile: store.profile)
 
-            if shouldForcePersonalizedReload {
-                viewModel.prepareForQueryRefresh()
+            if didFeedIdentityChangeWithVisibleRecipes {
                 await environmentRefresh
-                await viewModel.forceReload(
-                    profile: store.profile,
-                    query: normalizedSearchText,
-                    feedContext: environmentModel.feedContext,
-                    behaviorSeeds: [],
-                    rotateBaseFeed: normalizedSearchText.isEmpty,
-                    forceNetwork: true
-                )
                 return
             }
 
@@ -247,17 +238,7 @@ struct DiscoverTabView: View {
     }
 
     private var discoverFeedKey: String {
-        let cuisines = store.profile?.preferredCuisines.map(\.rawValue).joined(separator: ",") ?? ""
-        let foods = store.profile?.favoriteFoods.joined(separator: ",") ?? ""
-        let flavors = store.profile?.favoriteFlavors.joined(separator: ",") ?? ""
-        let dietary = store.profile?.dietaryPatterns.joined(separator: ",") ?? ""
-        let address = store.profile?.deliveryAddress
-        let environmentKey = [
-            address?.city ?? "",
-            address?.region ?? "",
-            address?.postalCode ?? ""
-        ].joined(separator: "|")
-        return "\(cuisines)|\(foods)|\(flavors)|\(dietary)|\(viewModel.selectedFilter)|\(environmentKey)"
+        viewModel.selectedFilter
     }
 
     private var discoverFeedbackRevision: Int {

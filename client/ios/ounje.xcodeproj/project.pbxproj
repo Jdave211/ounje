@@ -39,6 +39,7 @@
 		DAA00000000000000000012 /* ounje/App/OunjeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000012 /* ounje/App/OunjeApp.swift */; };
 		DAA00000000000000000013 /* ounje/App/AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000013 /* ounje/App/AppRootView.swift */; };
 		DAA00000000000000000014 /* ounje/App/AppTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000014 /* ounje/App/AppTab.swift */; };
+		DAA00000000000000000025 /* ounje/App/UserRuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000025 /* ounje/App/UserRuntimeStore.swift */; };
 		DAA00000000000000000015 /* ounje/Core/Networking/SupabaseConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000015 /* ounje/Core/Networking/SupabaseConfig.swift */; };
 		DAA00000000000000000016 /* ounje/Core/Services/ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000016 /* ounje/Core/Services/ToastCenter.swift */; };
 		DAA00000000000000000017 /* ounje/Core/Networking/BackendEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000017 /* ounje/Core/Networking/BackendEndpoint.swift */; };
@@ -133,6 +134,7 @@
 		DAB00000000000000000012 /* ounje/App/OunjeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/OunjeApp.swift; sourceTree = "<group>"; };
 		DAB00000000000000000013 /* ounje/App/AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/AppRootView.swift; sourceTree = "<group>"; };
 		DAB00000000000000000014 /* ounje/App/AppTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/AppTab.swift; sourceTree = "<group>"; };
+		DAB00000000000000000025 /* ounje/App/UserRuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/UserRuntimeStore.swift; sourceTree = "<group>"; };
 		DAB00000000000000000015 /* ounje/Core/Networking/SupabaseConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Networking/SupabaseConfig.swift; sourceTree = "<group>"; };
 		DAB00000000000000000016 /* ounje/Core/Services/ToastCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/ToastCenter.swift; sourceTree = "<group>"; };
 		DAB00000000000000000017 /* ounje/Core/Networking/BackendEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Networking/BackendEndpoint.swift; sourceTree = "<group>"; };
@@ -266,6 +268,7 @@
 				DAB00000000000000000012 /* ounje/App/OunjeApp.swift */,
 				DAB00000000000000000013 /* ounje/App/AppRootView.swift */,
 				DAB00000000000000000014 /* ounje/App/AppTab.swift */,
+				DAB00000000000000000025 /* ounje/App/UserRuntimeStore.swift */,
 				F1A2B3C40100000100000002 /* ounje/App/AppEnvironment.swift */,
 				DAB00000000000000000001 /* ounje/App/OunjeDevelopmentServer.swift */,
 				DAB00000000000000000023 /* ounje/App/OunjeAppDelegate.swift */,
@@ -716,6 +719,7 @@
 				DAA00000000000000000012 /* ounje/App/OunjeApp.swift in Sources */,
 				DAA00000000000000000013 /* ounje/App/AppRootView.swift in Sources */,
 				DAA00000000000000000014 /* ounje/App/AppTab.swift in Sources */,
+				DAA00000000000000000025 /* ounje/App/UserRuntimeStore.swift in Sources */,
 				C1D2E3F40100000100000002 /* ounje/App/AppEnvironment.swift in Sources */,
 				C1D2E3F40100000100000003 /* ounje/Features/Prep/PrepGenerationService.swift in Sources */,
 				C1D2E3F40100000100000004 /* ounje/Core/Models/UserProfile.swift in Sources */,

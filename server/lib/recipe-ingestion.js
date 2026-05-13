@@ -17,7 +17,8 @@ import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
-import { acquireRedisLock, deleteRedisKey, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
+import { acquireRedisLock, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
+import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
 
 import {
@@ -219,18 +220,6 @@ function recipeImportLockKey(kind, key) {
   if (!kind || !key) return null;
   const digest = crypto.createHash("sha256").update(String(key)).digest("hex");
   return `ounje:recipe-import:${kind}:${digest}`;
-}
-
-function userScopedCacheKey(namespace, userID) {
-  const normalizedUserID = normalizeText(userID);
-  if (!namespace || !normalizedUserID) return null;
-  const digest = crypto.createHash("sha256").update(normalizedUserID).digest("hex");
-  return `ounje:${namespace}:${digest}`;
-}
-
-function invalidateUserBootstrapCache(userID) {
-  const key = userScopedCacheKey("user-bootstrap", userID);
-  if (key) void deleteRedisKey(key);
 }
 
 function sourceMetadataCacheKey(kind, sourceURL) {

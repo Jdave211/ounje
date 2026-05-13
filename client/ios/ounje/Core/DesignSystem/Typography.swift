@@ -7,6 +7,7 @@ enum RecipeTypographyStyle: String, Codable, Hashable {
     case playful
 
     static let defaultStyle: RecipeTypographyStyle = .clean
+    static let storageKey = "ounje.recipeTypographyStyle"
 
     var displayName: String {
         switch self {
@@ -20,6 +21,52 @@ enum RecipeTypographyStyle: String, Codable, Hashable {
     static func resolved(from rawValue: String?) -> RecipeTypographyStyle {
         guard let rawValue else { return defaultStyle }
         return RecipeTypographyStyle(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? defaultStyle
+    }
+}
+
+enum RecipeTypographyPreferenceStore {
+    static let profileSignalPrefix = "Recipe style:"
+
+    static func style(in profile: UserProfile?) -> RecipeTypographyStyle? {
+        guard let rawValue = profile?.mealPrepGoals.first(where: { value in
+            hasProfileSignalPrefix(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        }) else {
+            return nil
+        }
+
+        let value = String(rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .dropFirst(profileSignalPrefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        return RecipeTypographyStyle.resolved(from: value)
+    }
+
+    static func profile(_ profile: UserProfile, setting style: RecipeTypographyStyle) -> UserProfile {
+        var updated = profile
+        var goals = updated.mealPrepGoals.filter { value in
+            !hasProfileSignalPrefix(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        goals.append("\(profileSignalPrefix) \(style.rawValue)")
+        updated.mealPrepGoals = goals
+        return updated
+    }
+
+    static func persist(_ style: RecipeTypographyStyle, defaults: UserDefaults = .standard) {
+        defaults.set(style.rawValue, forKey: RecipeTypographyStyle.storageKey)
+        defaults.synchronize()
+    }
+
+    static func persistFromProfile(_ profile: UserProfile?, defaults: UserDefaults = .standard) {
+        guard let style = style(in: profile) else { return }
+        persist(style, defaults: defaults)
+    }
+
+    private static func hasProfileSignalPrefix(_ value: String) -> Bool {
+        value.range(
+            of: profileSignalPrefix,
+            options: [.caseInsensitive, .anchored]
+        ) != nil
     }
 }
 
