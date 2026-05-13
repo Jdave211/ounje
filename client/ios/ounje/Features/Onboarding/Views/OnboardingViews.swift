@@ -646,7 +646,7 @@ struct FirstLoginOnboardingView: View {
             GroceryProviderConnectSheet(
                 provider: provider,
                 userId: store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "",
-                accessToken: store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken,
+                accessToken: store.authSession?.accessToken,
                 onConnected: {
                     loadOnboardingProviders()
                     selectedOnboardingProvider = nil
@@ -2951,7 +2951,7 @@ struct FirstLoginOnboardingView: View {
 
     private func loadOnboardingProviders() {
         Task {
-            let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+            let session = await store.freshUserDataSession()
             onboardingProvidersViewModel.loadProviders(
                 userId: session?.userID,
                 accessToken: session?.accessToken

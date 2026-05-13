@@ -91,7 +91,7 @@ struct RecipeDetailExperienceView: View {
     private let sectionDivider = OunjePalette.stroke
 
     private var accessToken: String? {
-        store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken
+        store.authSession?.accessToken
     }
 
     private var transitionContext: RecipeTransitionContext? {
@@ -3194,7 +3194,7 @@ struct RecipeAskSheet: View {
     @State private var isOnboardingGenerating = false
 
     private var accessToken: String? {
-        store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken
+        store.authSession?.accessToken
     }
 
     private var canGenerate: Bool {
@@ -3256,14 +3256,17 @@ struct RecipeAskSheet: View {
         switch mode {
         case .live:
             Task {
-                let session = await store.freshUserDataSession()
+                guard let session = await store.freshUserDataSession() else {
+                    viewModel.errorMessage = "Sign in again to ask Ounje."
+                    return
+                }
                 await viewModel.adapt(
                     recipeID: recipeID,
-                    userID: session?.userID ?? userID,
+                    userID: session.userID,
                     prompt: intent.promptSeed,
                     intent: intent,
                     profile: profile,
-                    accessToken: session?.accessToken ?? accessToken
+                    accessToken: session.accessToken
                 )
             }
         case let .onboarding(config):
@@ -3512,11 +3515,11 @@ struct RecipeAskSheet: View {
         }
         .task(id: "\(userID ?? "")::\(recipeID)") {
             guard isLiveMode else { return }
-            let session = await store.freshUserDataSession()
+            guard let session = await store.freshUserDataSession() else { return }
             await viewModel.loadHistory(
                 recipeID: recipeID,
-                userID: session?.userID ?? userID,
-                accessToken: session?.accessToken ?? accessToken
+                userID: session.userID,
+                accessToken: session.accessToken
             )
         }
         .fullScreenCover(item: $presentedAdaptedRecipe) { recipe in

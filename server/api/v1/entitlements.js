@@ -1,7 +1,7 @@
 import express from "express";
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { resolveAuthenticatedUserID } from "../../lib/instacart-run-logs.js";
+import { resolveAuthorizedUserID } from "../../lib/auth.js";
 import { deleteRedisKey, readRedisJSON, writeRedisJSON } from "../../lib/redis-cache.js";
 import {
   APP_STORE_PRODUCT_IDS_BY_TIER,
@@ -29,13 +29,6 @@ function userScopedCacheKey(namespace, userID) {
   if (!namespace || !normalizedUserID) return null;
   const digest = crypto.createHash("sha256").update(normalizedUserID).digest("hex");
   return `ounje:${namespace}:${digest}`;
-}
-
-function extractBearerToken(authorizationHeader) {
-  const value = String(authorizationHeader ?? "").trim();
-  if (!value) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(value);
-  return match?.[1]?.trim() || null;
 }
 
 function getServiceSupabase() {
@@ -119,31 +112,6 @@ function entitlementToResponse(row = null) {
     },
     effectiveTier: isActive ? tier : "free",
   };
-}
-
-async function resolveAuthorizedUserID(req) {
-  const accessToken = extractBearerToken(req.headers.authorization);
-  if (!accessToken) {
-    const error = new Error("Authorization required");
-    error.statusCode = 401;
-    throw error;
-  }
-
-  const authenticatedUserID = await resolveAuthenticatedUserID(accessToken);
-  if (!authenticatedUserID) {
-    const error = new Error("Could not resolve authenticated user");
-    error.statusCode = 401;
-    throw error;
-  }
-
-  const requestedUserID = normalizeText(req.headers["x-user-id"] ?? req.query.user_id ?? req.query.userID ?? req.body?.user_id ?? req.body?.userID);
-  if (requestedUserID && requestedUserID !== authenticatedUserID) {
-    const error = new Error("User mismatch");
-    error.statusCode = 403;
-    throw error;
-  }
-
-  return { userID: authenticatedUserID, accessToken };
 }
 
 async function fetchEntitlementRow(supabase, userID) {

@@ -36,7 +36,7 @@ struct OunjeAppScene: View {
                 // delivered before the user has signed in and replays them
                 // here once a session exists.
                 OunjePushTokenRegistrar.shared.sessionProvider = { [weak store] in
-                    await store?.freshTrackingSession()
+                    await store?.freshUserDataSession()
                 }
             }
             .onChange(of: store.authSession?.userID) { _ in
@@ -172,10 +172,7 @@ struct RootView: View {
 
     @MainActor
     private func currentNotificationSession() async -> AuthSession? {
-        if let refreshedSession = await store.freshUserDataSession() {
-            return refreshedSession
-        }
-        return store.resolvedTrackingSession
+        await store.freshUserDataSession()
     }
 
     @MainActor
@@ -503,6 +500,7 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
 
     func reconcileCompletedImports(
         _ completedItems: [RecipeImportCompletedItem],
+        accessToken: String?,
         onCompletedPreppedImport: ((RecipeImportResponse) async -> Void)? = nil
     ) async {
         let currentEnvelopes = (try? SharedRecipeImportInbox.readAll()) ?? []
@@ -538,7 +536,7 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
             }
 
             do {
-                let response = try await RecipeImportAPIService.shared.fetchImportJob(jobID: jobID)
+                let response = try await RecipeImportAPIService.shared.fetchImportJob(jobID: jobID, accessToken: accessToken)
                 let backendProcessingState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 let normalizedCanonicalURL = [
                     response.recipeDetail?.originalRecipeURLString,
@@ -602,8 +600,9 @@ private final class RecipeImportHistoryStore: ObservableObject {
         totalCompletedCount
     }
 
-    func refresh(userID: String?, force: Bool = false) async {
-        guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    func refresh(userID: String?, accessToken: String?, force: Bool = false) async {
+        let trimmedToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !trimmedToken.isEmpty else {
             completedItems = []
             totalCompletedCount = 0
             lastRefreshUserID = nil
@@ -616,7 +615,7 @@ private final class RecipeImportHistoryStore: ObservableObject {
            Date().timeIntervalSince(lastRefreshAt) < passiveRefreshTTL {
             return
         }
-        if let page = try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID) {
+        if let page = try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID, accessToken: accessToken) {
             completedItems = page.items
             totalCompletedCount = page.totalCount
         } else {
@@ -1089,11 +1088,7 @@ private struct AuthenticationView: View {
     }
 
     private var allowsLocalOnlyAuthFallback: Bool {
-#if targetEnvironment(simulator)
-        return true
-#else
-        return ProcessInfo.processInfo.environment["OUNJE_ALLOW_LOCAL_AUTH_FALLBACK"] == "1"
-#endif
+        OunjeLaunchFlags.allowsLocalOnlyAuthFallback
     }
 
     private func completeSignIn(with session: AuthSession, fallbackStatusMessage: String? = nil) async {
@@ -1967,9 +1962,11 @@ private struct MealPlannerShellView: View {
     @MainActor
     private func refreshSharedImportState(force: Bool = false) async {
         await sharedImportInbox.refresh()
-        await recipeImportHistory.refresh(userID: store.authSession?.userID, force: force)
+        let session = await store.freshUserDataSession()
+        await recipeImportHistory.refresh(userID: session?.userID, accessToken: session?.accessToken, force: force)
         await sharedImportInbox.reconcileCompletedImports(
             recipeImportHistory.completedItems,
+            accessToken: session?.accessToken,
             onCompletedPreppedImport: { response in
                 await handleCompletedPreppedImport(response)
             }
@@ -2241,7 +2238,7 @@ private struct MealPlannerShellView: View {
 
     @MainActor
     private func savedRecipesSession() async -> AuthSession? {
-        await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+        await store.freshUserDataSession()
     }
 
     @MainActor
@@ -2488,7 +2485,7 @@ private struct MealPlannerShellView: View {
 
                 let response: RecipeImportResponse
                 if shouldPollExistingJob {
-                    response = try await RecipeImportAPIService.shared.fetchImportJob(jobID: previousJobID)
+                    response = try await RecipeImportAPIService.shared.fetchImportJob(jobID: previousJobID, accessToken: accessToken)
                 } else {
                     let attachments = try await sharedImportAttachmentPayloads(from: envelope.attachments)
                     response = try await RecipeImportAPIService.shared.importRecipe(
@@ -3549,7 +3546,7 @@ private struct CookbookTabView: View {
 
     @MainActor
     private func savedRecipesSession() async -> AuthSession? {
-        await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+        await store.freshUserDataSession()
     }
 
     @ViewBuilder

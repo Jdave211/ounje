@@ -15,6 +15,7 @@ import { createClient } from "@supabase/supabase-js";
 import { buildKrogerSearchUrl, findNearestKrogerStore, searchKrogerProduct } from "./providers/kroger.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
 import { sourceEdgeID } from "../../lib/main-shop-collation.js";
+import { resolveAuthorizedUserID } from "../../lib/auth.js";
 
 const router = express.Router();
 const GROCERY_SPEC_CACHE_TTL_MS = Math.max(
@@ -463,49 +464,16 @@ function handleAmazonFresh(req, res, items) {
 import * as orchestrator from "../../lib/grocery-orchestrator.js";
 import * as browserAgent from "./providers/browser-agent.js";
 import { trackInstacartOrder } from "../../lib/instacart-order-tracker.js";
-import { resolveAuthenticatedUserID } from "../../lib/instacart-run-logs.js";
 
 const BROWSER_USE_API_KEY = process.env.BROWSER_USE_API_KEY ?? "";
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-function extractBearerToken(authorizationHeader) {
-  const value = String(authorizationHeader ?? "").trim();
-  if (!value) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(value);
-  return match?.[1]?.trim() || null;
-}
 
 function getServiceSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("Supabase not configured");
   }
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-}
-
-async function resolveAuthorizedUserID(req) {
-  const accessToken = extractBearerToken(req.headers.authorization);
-  if (!accessToken) {
-    const error = new Error("Authorization required");
-    error.statusCode = 401;
-    throw error;
-  }
-
-  const authenticatedUserID = await resolveAuthenticatedUserID(accessToken);
-  if (!authenticatedUserID) {
-    const error = new Error("Could not resolve authenticated user");
-    error.statusCode = 401;
-    throw error;
-  }
-
-  const requestedUserID = String(req.headers["x-user-id"] ?? req.query.user_id ?? req.query.userID ?? "").trim();
-  if (requestedUserID && requestedUserID !== authenticatedUserID) {
-    const error = new Error("User mismatch");
-    error.statusCode = 403;
-    throw error;
-  }
-
-  return { userID: authenticatedUserID, accessToken };
 }
 
 async function assertOrderOwnership(orderId, userID, columns = "id,user_id") {

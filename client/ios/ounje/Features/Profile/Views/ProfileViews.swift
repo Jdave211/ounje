@@ -684,7 +684,7 @@ struct ProfileSettingsPage: View {
                         trailingTint: instacartConnectionTint,
                         action: {
                             Task {
-                                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+                                let session = await store.freshUserDataSession()
                                 providersViewModel.loadProviders(
                                     userId: session?.userID,
                                     accessToken: session?.accessToken
@@ -831,7 +831,7 @@ struct ProfileSettingsPage: View {
             .toolbar(.hidden, for: .navigationBar)
             .preferredColorScheme(.dark)
             .task {
-                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+                let session = await store.freshUserDataSession()
                 providersViewModel.loadProviders(
                     userId: session?.userID,
                     accessToken: session?.accessToken
@@ -2111,7 +2111,7 @@ struct FeedbackSheet: View {
         guard let session = await feedbackSession(),
               let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
               !accessToken.isEmpty else {
-            feedbackErrorMessage = "Your Ounje session is still refreshing. Try again in a moment."
+            feedbackErrorMessage = "Sign in again to send feedback."
             return
         }
         let userID = session.userID
@@ -2302,7 +2302,7 @@ struct FeedbackSheet: View {
         guard let session = await feedbackSession(),
               let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
               !accessToken.isEmpty else {
-            feedbackErrorMessage = "Your Ounje session is still refreshing. Try again in a moment."
+            feedbackErrorMessage = "Sign in again to load feedback."
             return
         }
         let userID = session.userID
@@ -2328,10 +2328,6 @@ struct FeedbackSheet: View {
         if let session = await store.freshUserDataSession(),
            session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             return session
-        }
-        if let refreshed = await store.refreshAuthSessionAfterAuthorizationFailure(),
-           refreshed.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return refreshed
         }
         return nil
     }
@@ -2909,7 +2905,7 @@ struct GroceryProvidersCard: View {
         }
         .onAppear {
             Task {
-                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+                let session = await store.freshUserDataSession()
                 viewModel.loadProviders(userId: session?.userID, accessToken: session?.accessToken)
             }
         }
@@ -2917,10 +2913,10 @@ struct GroceryProvidersCard: View {
             GroceryProviderConnectSheet(
                 provider: provider,
                 userId: store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "",
-                accessToken: store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken,
+                accessToken: store.authSession?.accessToken,
                 onConnected: {
                     Task {
-                        let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+                        let session = await store.freshUserDataSession()
                         viewModel.loadProviders(userId: session?.userID, accessToken: session?.accessToken)
                         await store.refreshProviderConnectionState()
                     }
@@ -3273,7 +3269,7 @@ struct GroceryProviderConnectSheet: View {
             if let preferredSession {
                 liveSession = preferredSession
             } else {
-                liveSession = await store.freshTrackingSession() ?? store.resolvedTrackingSession ?? store.authSession
+                liveSession = await store.freshUserDataSession()
             }
             let resolvedUserID = liveSession?.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
                 ? liveSession!.userID
@@ -3396,29 +3392,7 @@ struct GroceryProviderConnectSheet: View {
 
     @MainActor
     private func refreshProviderConnectSession() async throws -> AuthSession? {
-        let fallbackSession = [store.authSession, store.resolvedTrackingSession]
-            .compactMap { $0 }
-            .first { session in
-                session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            }
-        guard let fallbackSession,
-              let refreshToken = fallbackSession.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !refreshToken.isEmpty else {
-            return nil
-        }
-
-        let tokenResponse = try await SupabaseAuthSessionRefreshService.shared.refreshSession(refreshToken: refreshToken)
-        let refreshedSession = AuthSession(
-            provider: fallbackSession.provider,
-            userID: tokenResponse.userID,
-            email: tokenResponse.email ?? fallbackSession.email,
-            displayName: tokenResponse.displayName ?? fallbackSession.displayName,
-            signedInAt: fallbackSession.signedInAt,
-            accessToken: tokenResponse.accessToken,
-            refreshToken: tokenResponse.refreshToken ?? fallbackSession.refreshToken
-        )
-        store.persistAuthSession(refreshedSession)
-        return refreshedSession
+        return await store.refreshAuthSessionAfterAuthorizationFailure()
     }
 
     private var sessionRefreshRequiredMessage: String {
@@ -3827,7 +3801,7 @@ struct NotificationInboxSheet: View {
                     Button {
                         Task {
                             isRefreshing = true
-                            await notificationCenter.refreshInbox(for: store.resolvedTrackingSession)
+                            await notificationCenter.refreshInbox(for: await store.freshUserDataSession())
                             isRefreshing = false
                         }
                     } label: {
@@ -3840,7 +3814,7 @@ struct NotificationInboxSheet: View {
                 }
             }
             .task {
-                await notificationCenter.refreshInbox(for: store.resolvedTrackingSession)
+                await notificationCenter.refreshInbox(for: await store.freshUserDataSession())
             }
             .safeAreaInset(edge: .top) {
                 if unreadCount > 0 {
@@ -3852,7 +3826,7 @@ struct NotificationInboxSheet: View {
                         Button {
                             Task {
                                 let unreadIDs = inboxEvents.filter { $0.seenAt == nil }.map(\.id)
-                                await notificationCenter.markInboxEventsSeen(unreadIDs, session: store.resolvedTrackingSession)
+                                await notificationCenter.markInboxEventsSeen(unreadIDs, session: await store.freshUserDataSession())
                             }
                         } label: {
                             Text("Mark all read")

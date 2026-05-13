@@ -11,6 +11,11 @@ export function extractBearerToken(authorizationHeader) {
   return match?.[1]?.trim() || null;
 }
 
+function extractBodyAccessToken(req) {
+  if (!req?.body || typeof req.body !== "object") return null;
+  return normalizeText(req.body.access_token ?? req.body.accessToken) || null;
+}
+
 function addCandidate(candidates, value) {
   const normalized = normalizeText(value);
   if (normalized) candidates.add(normalized);
@@ -35,8 +40,9 @@ export function collectRequestedUserIDs(req, extraValues = []) {
   return [...candidates];
 }
 
-export async function resolveAuthorizedUserID(req, { extraUserIDValues = [] } = {}) {
-  const accessToken = extractBearerToken(req?.headers?.authorization);
+export async function resolveAuthorizedUserID(req, { extraUserIDValues = [], allowBodyAccessToken = false } = {}) {
+  const accessToken = extractBearerToken(req?.headers?.authorization)
+    || (allowBodyAccessToken ? extractBodyAccessToken(req) : null);
   if (!accessToken) {
     const error = new Error("Authorization required");
     error.statusCode = 401;

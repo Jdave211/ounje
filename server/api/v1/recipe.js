@@ -59,6 +59,56 @@ const ALLOW_RECIPE_IMPORT_PROCESS_ENDPOINT = ["1", "true", "yes", "on"].includes
   String(process.env.OUNJE_ALLOW_RECIPE_IMPORT_PROCESS_ENDPOINT ?? "").trim().toLowerCase()
 );
 
+function isPublicCatalogImportRequest(payload = {}) {
+  return Boolean(
+    payload?.public_catalog_import === true
+    || payload?.publicCatalogImport === true
+    || payload?.catalog_import === true
+    || payload?.catalogImport === true
+    || process.env.OUNJE_ALLOW_PUBLIC_SOCIAL_RECIPE_IMPORT === "1"
+  );
+}
+
+function applyRecipeImportAuth(payload = {}, auth = null) {
+  const base = { ...(payload ?? {}) };
+  const strip = (entry = {}) => {
+    const sanitized = { ...entry };
+    delete sanitized.user_id;
+    delete sanitized.userID;
+    delete sanitized.access_token;
+    delete sanitized.accessToken;
+    return sanitized;
+  };
+
+  if (!auth) {
+    const sanitized = strip(base);
+    return {
+      ...sanitized,
+      sources: Array.isArray(base.sources) ? base.sources.map((entry) => strip(entry)) : base.sources,
+    };
+  }
+
+  const stamp = (entry = {}) => ({
+    ...entry,
+    user_id: auth.userID,
+    access_token: auth.accessToken,
+  });
+
+  return {
+    ...stamp(base),
+    sources: Array.isArray(base.sources) ? base.sources.map((entry) => stamp(entry)) : base.sources,
+  };
+}
+
+function assertRecipeImportBelongsToUser(result, userID) {
+  const jobUserID = String(result?.job?.user_id ?? "").trim();
+  if (!jobUserID || jobUserID !== String(userID ?? "").trim()) {
+    const error = new Error("Recipe import not found");
+    error.statusCode = 404;
+    throw error;
+  }
+}
+
 const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-api" }) : null;
 
 const SEARCH_RESPONSE_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -744,11 +794,11 @@ recipe_router.post("/recipe/share-links", async (req, res) => {
     }
 
     let accessToken = null;
-    if (recipeId.startsWith("uir_")) {
+    if (recipeId.startsWith("uir_") || userID) {
       try {
         const auth = await resolveAuthorizedUserID(req, { extraUserIDValues: userID ? [userID] : [] });
         accessToken = auth.accessToken;
-        userID = userID || auth.userID;
+        userID = auth.userID;
       } catch (error) {
         return sendAuthError(res, error, "recipe/share-links");
       }
@@ -1126,13 +1176,22 @@ recipe_router.post("/recipe/import-media/photo-pair", async (req, res) => {
 recipe_router.post("/recipe/imports", async (req, res) => {
   try {
     const body = req.body ?? {};
+    let auth = null;
+    try {
+      auth = await resolveAuthorizedUserID(req, { allowBodyAccessToken: true });
+    } catch (error) {
+      if (!isPublicCatalogImportRequest(body)) {
+        return sendAuthError(res, error, "recipe/imports");
+      }
+    }
+    const authorizedBody = applyRecipeImportAuth(body, auth);
     const preview = String(body.source_text ?? body.sourceText ?? "").trim().slice(0, 120);
     console.log("[recipe/imports] POST", {
-      user_id: body.user_id ?? body.userID ?? null,
+      user_id: authorizedBody.user_id ?? null,
       target_state: body.target_state ?? body.targetState ?? null,
       source_preview: preview || null,
     });
-    const result = await queueRecipeIngestion(body);
+    const result = await queueRecipeIngestion(authorizedBody);
     return res.status(202).json(result);
   } catch (error) {
     console.error("[recipe/imports] queue failed:", error.message);
@@ -1142,7 +1201,7 @@ recipe_router.post("/recipe/imports", async (req, res) => {
 
 recipe_router.get("/recipe/imports/completed", async (req, res) => {
   try {
-    const userID = String(req.query.user_id ?? req.query.userID ?? "").trim() || null;
+    const { userID } = await resolveAuthorizedUserID(req);
     const rawLimit = req.query.limit ?? null;
     const limit = rawLimit == null ? null : Number.parseInt(String(rawLimit), 10);
     const { items, totalCount } = await listCompletedRecipeImportItems({ userID, limit });
@@ -1152,13 +1211,17 @@ recipe_router.get("/recipe/imports/completed", async (req, res) => {
       total_count: totalCount,
     });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/imports/completed");
+    }
     console.error("[recipe/imports/completed] failed:", error.message);
-    return res.status(400).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
   }
 });
 
 recipe_router.get("/recipe/imports/:id", async (req, res) => {
   try {
+    const { userID } = await resolveAuthorizedUserID(req);
     const jobID = String(req.params.id ?? "").trim();
     const cached = await readSharedTimedCache(
       recipeImportJobCache,
@@ -1167,17 +1230,22 @@ recipe_router.get("/recipe/imports/:id", async (req, res) => {
       "recipe-import-job"
     );
     if (cached) {
+      assertRecipeImportBelongsToUser(cached, userID);
       return res.json(cached);
     }
 
     const result = await fetchRecipeIngestionJob(jobID);
+    assertRecipeImportBelongsToUser(result, userID);
     const ttlMs = isLiveImportStatus(result?.job?.status)
       ? RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS
       : RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS;
     await writeSharedTimedCache(recipeImportJobCache, jobID, result, ttlMs, "recipe-import-job");
     return res.json(result);
   } catch (error) {
-    return res.status(404).json({ error: error.message });
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/imports/status");
+    }
+    return res.status(Number(error?.statusCode) || 404).json({ error: error.message });
   }
 });
 
@@ -1187,16 +1255,22 @@ recipe_router.post("/recipe/imports/:id/process", async (req, res) => {
   }
 
   try {
+    const { userID, accessToken } = await resolveAuthorizedUserID(req);
     const jobID = String(req.params.id ?? "").trim();
-    const result = await processRecipeIngestionJob(jobID);
+    const existing = await fetchRecipeIngestionJob(jobID);
+    assertRecipeImportBelongsToUser(existing, userID);
+    const result = await processRecipeIngestionJob(jobID, { accessToken });
     const ttlMs = isLiveImportStatus(result?.job?.status)
       ? RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS
       : RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS;
     writeSharedTimedCache(recipeImportJobCache, jobID, result, ttlMs, "recipe-import-job");
     return res.json(result);
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/imports/process");
+    }
     console.error("[recipe/imports/process] failed:", error.message);
-    return res.status(400).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
   }
 });
 
@@ -7982,7 +8056,16 @@ recipe_router.post("/recipe/:id/enrich-image", async (req, res) => {
 
   try {
     let accessToken = null;
-    try { ({ accessToken } = await resolveAuthorizedUserID(req)); } catch {}
+    const isUserImport = recipeId.startsWith("uir_");
+    if (isUserImport) {
+      try {
+        ({ accessToken } = await resolveAuthorizedUserID(req));
+      } catch (error) {
+        return sendAuthError(res, error, "recipe/enrich-image");
+      }
+    } else {
+      try { ({ accessToken } = await resolveAuthorizedUserID(req)); } catch {}
+    }
 
     const recipe = await fetchRecipeById(recipeId, accessToken);
     if (!recipe) return res.status(404).json({ error: "Recipe not found." });

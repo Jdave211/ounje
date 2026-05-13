@@ -291,6 +291,22 @@ final class RecipeImportAPIService {
 
     private init() {}
 
+    private func applyAuthHeaders(
+        to request: inout URLRequest,
+        userID: String?,
+        accessToken: String?
+    ) {
+        let trimmedToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedToken.isEmpty {
+            request.setValue("Bearer \(trimmedToken)", forHTTPHeaderField: "Authorization")
+        }
+
+        let trimmedUserID = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedUserID.isEmpty {
+            request.setValue(trimmedUserID, forHTTPHeaderField: "x-user-id")
+        }
+    }
+
     func importRecipe(
         userID: String?,
         accessToken: String? = nil,
@@ -321,11 +337,11 @@ final class RecipeImportAPIService {
         throw lastError ?? RecipeImportServiceError.invalidRequest
     }
 
-    func fetchCompletedImports(userID: String) async throws -> RecipeImportCompletedPage {
+    func fetchCompletedImports(userID: String, accessToken: String?) async throws -> RecipeImportCompletedPage {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
             do {
-                return try await fetchCompletedImports(baseURL: baseURL, userID: userID)
+                return try await fetchCompletedImports(baseURL: baseURL, userID: userID, accessToken: accessToken)
             } catch {
                 lastError = error
             }
@@ -334,11 +350,11 @@ final class RecipeImportAPIService {
         throw lastError ?? RecipeImportServiceError.invalidRequest
     }
 
-    func fetchImportJob(jobID: String) async throws -> RecipeImportResponse {
+    func fetchImportJob(jobID: String, accessToken: String?) async throws -> RecipeImportResponse {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
             do {
-                return try await fetchImportJob(baseURL: baseURL, jobID: jobID)
+                return try await fetchImportJob(baseURL: baseURL, jobID: jobID, accessToken: accessToken)
             } catch {
                 lastError = error
             }
@@ -365,6 +381,7 @@ final class RecipeImportAPIService {
         request.httpMethod = "POST"
         request.timeoutInterval = 90
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuthHeaders(to: &request, userID: userID, accessToken: accessToken)
         request.httpBody = try JSONEncoder().encode(
             RecipeImportRequestPayload(
                 userID: userID,
@@ -393,7 +410,8 @@ final class RecipeImportAPIService {
 
     private func fetchCompletedImports(
         baseURL: String,
-        userID: String
+        userID: String,
+        accessToken: String?
     ) async throws -> RecipeImportCompletedPage {
         var components = URLComponents(string: "\(baseURL)/v1/recipe/imports/completed") ?? URLComponents()
         components.queryItems = [
@@ -403,7 +421,10 @@ final class RecipeImportAPIService {
             throw RecipeImportServiceError.invalidRequest
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        applyAuthHeaders(to: &request, userID: userID, accessToken: accessToken)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RecipeImportServiceError.invalidResponse
         }
@@ -435,13 +456,17 @@ final class RecipeImportAPIService {
 
     private func fetchImportJob(
         baseURL: String,
-        jobID: String
+        jobID: String,
+        accessToken: String?
     ) async throws -> RecipeImportResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/imports/\(jobID)") else {
             throw RecipeImportServiceError.invalidRequest
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        applyAuthHeaders(to: &request, userID: nil, accessToken: accessToken)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RecipeImportServiceError.invalidResponse
         }

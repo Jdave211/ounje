@@ -285,7 +285,7 @@ struct CartTabView: View {
                 store: instacartRunLogsStore,
                 mealStore: store,
                 userID: store.authSession?.userID ?? store.resolvedTrackingSession?.userID,
-                accessToken: store.authSession?.accessToken ?? store.resolvedTrackingSession?.accessToken,
+                accessToken: store.authSession?.accessToken,
                 onRerun: {
                     await performCartBuyNowRun(trigger: "instacart_runs_rerun")
                 }
@@ -485,7 +485,7 @@ struct CartTabView: View {
     private func openInstacartRunsSheet() {
         isRunLogsPresented = true
         Task {
-            let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+            let session = await store.freshUserDataSession()
             await instacartRunLogsStore.refresh(
                 userID: session?.userID,
                 accessToken: session?.accessToken
@@ -800,7 +800,7 @@ struct CartTabView: View {
                         onOpenRuns: {
                             isRunLogsPresented = true
                             Task {
-                                let session = await store.freshUserDataSession() ?? store.resolvedTrackingSession ?? store.authSession
+                                let session = await store.freshUserDataSession()
                                 await instacartRunLogsStore.refresh(
                                     userID: session?.userID,
                                     accessToken: session?.accessToken
@@ -1066,6 +1066,10 @@ struct CartTabView: View {
             allowedMainShopItemKeys: allowedKeys,
             quantityOverridesByMainShopKey: quantityOverrides
         )
+        if let message = store.manualAutoshopErrorMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !message.isEmpty {
+            toastCenter.show(title: message, destination: nil)
+        }
     }
 
     private func shouldShowMainShopDemarcation(

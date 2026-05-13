@@ -406,6 +406,8 @@ final class OunjeShareViewController: UIViewController {
         request.httpMethod = "POST"
         request.timeoutInterval = 90
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(authSession.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(authSession.userID, forHTTPHeaderField: "x-user-id")
         request.httpBody = try JSONEncoder().encode(
             RecipeImportRequestPayload(
                 userID: authSession.userID,

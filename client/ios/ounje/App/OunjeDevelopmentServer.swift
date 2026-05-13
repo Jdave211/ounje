@@ -3,6 +3,22 @@ import Foundation
 enum OunjeLaunchFlags {
     static let paywallsEnabled = true
     static let forceOnboardingIncomplete = false
+
+    static var usesSimulatorBillingBypass: Bool {
+#if DEBUG && targetEnvironment(simulator)
+        ProcessInfo.processInfo.environment["OUNJE_REQUIRE_STOREKIT_PAYWALL"] != "1"
+#else
+        false
+#endif
+    }
+
+    static var allowsLocalOnlyAuthFallback: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.environment["OUNJE_ALLOW_LOCAL_AUTH_FALLBACK"] == "1"
+#else
+        false
+#endif
+    }
 }
 
 enum OunjeDevelopmentServer {

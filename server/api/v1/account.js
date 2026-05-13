@@ -1,18 +1,11 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
-import { resolveAuthenticatedUserID } from "../../lib/instacart-run-logs.js";
+import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
 
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
-function extractBearerToken(authorizationHeader) {
-  const value = String(authorizationHeader ?? "").trim();
-  if (!value) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(value);
-  return match?.[1]?.trim() || null;
-}
 
 function getServiceSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -32,15 +25,7 @@ async function updateOrThrow(query, label) {
 
 router.post("/account/deactivate", async (req, res) => {
   try {
-    const accessToken = extractBearerToken(req.headers.authorization);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Authorization required" });
-    }
-
-    const userID = await resolveAuthenticatedUserID(accessToken);
-    if (!userID) {
-      return res.status(401).json({ error: "Could not resolve authenticated user" });
-    }
+    const { userID } = await resolveAuthorizedUserID(req);
 
     const supabase = getServiceSupabase();
     const now = new Date().toISOString();
@@ -151,8 +136,11 @@ router.post("/account/deactivate", async (req, res) => {
       counts,
     });
   } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "account/deactivate");
+    }
     console.error("[account/deactivate] error:", error.message);
-    return res.status(500).json({ error: error.message });
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
 

@@ -143,7 +143,14 @@ final class MealPlanningAppStore: ObservableObject {
     private var lastTrackingAuthFailureAt: Date?
     private var lastTrackingAuthFailureUserID: String?
     private var authStateRevision = 0
-    private var authRefreshTask: Task<AuthSession?, Never>?
+    private enum AuthSessionRefreshOutcome {
+        case refreshed(AuthSession)
+        case missingRefreshToken
+        case invalidRefreshToken
+        case transientFailure
+    }
+
+    private var authRefreshTask: Task<AuthSessionRefreshOutcome, Never>?
     private var cachedAuthenticatedEntryRoute: CachedAuthenticatedEntryRoute?
     private var hasPersistedOnboardingState = false
     // Set to true only when the server (or a completed onboarding flow) has positively
@@ -325,8 +332,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     @discardableResult
     func freshTrackingSession() async -> AuthSession? {
-        let refreshed = await refreshAuthSessionIfNeeded()
-        return refreshed ?? resolvedTrackingSession
+        await freshUserDataSession()
     }
 
     @discardableResult
@@ -350,14 +356,37 @@ final class MealPlanningAppStore: ObservableObject {
             return
         }
 
-        guard let session = await freshTrackingSession() else {
-            membershipEntitlement = nil
-            syncProfilePricingTierToEntitlement()
-            membershipEntitlementResolved = true
+        if OunjeLaunchFlags.usesSimulatorBillingBypass,
+           applySimulatorDevelopmentEntitlement() {
             return
         }
 
         let previousEntitlement = membershipEntitlement
+
+        guard let session = await freshUserDataSession() else {
+            // A stale signed-in session can fail server refresh while StoreKit still
+            // knows the user's subscription. Resolve from local membership state
+            // instead of leaving the root splash waiting forever.
+            if let cachedSession = authSession {
+                let localSnapshot = try? await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: cachedSession.userID)
+                if let localSnapshot {
+                    membershipEntitlement = localSnapshot
+                    billingStatusMessage = nil
+                } else if previousEntitlement?.isActive == true {
+                    membershipEntitlement = previousEntitlement
+                    billingStatusMessage = nil
+                } else {
+                    membershipEntitlement = nil
+                    billingStatusMessage = "[\(trigger)] Membership session is unavailable."
+                }
+            } else {
+                billingStatusMessage = nil
+                membershipEntitlement = nil
+            }
+            syncProfilePricingTierToEntitlement()
+            membershipEntitlementResolved = true
+            return
+        }
 
         // ── Phase 1: Local StoreKit scan (reads from device, no network) ──────────
         // If StoreKit has an active transaction, use it immediately. If it does not,
@@ -419,8 +448,6 @@ final class MealPlanningAppStore: ObservableObject {
             membershipEntitlementResolved = true
         }
 
-        isRefreshingMembershipEntitlement = false
-
         // Products are for paywall display only. Do not block entitlement gating
         // behind App Store product lookup.
         do {
@@ -438,6 +465,10 @@ final class MealPlanningAppStore: ObservableObject {
             return false
         }
 
+        if OunjeLaunchFlags.usesSimulatorBillingBypass {
+            return applySimulatorDevelopmentEntitlement(plan: plan)
+        }
+
         guard plan.tier != .free, plan.tier != .foundingLifetime else {
             await refreshMembershipEntitlement(trigger: "billing-noop")
             return true
@@ -447,7 +478,7 @@ final class MealPlanningAppStore: ObservableObject {
         defer { isBillingBusy = false }
 
         do {
-            guard let session = await freshTrackingSession() else {
+            guard let session = await freshUserDataSession() else {
                 throw StoreBillingError.authenticationRequired
             }
             let snapshot = try await StoreKitMembershipBillingService.shared.purchase(plan: plan, userID: session.userID)
@@ -489,11 +520,15 @@ final class MealPlanningAppStore: ObservableObject {
             return true
         }
 
+        if OunjeLaunchFlags.usesSimulatorBillingBypass {
+            return applySimulatorDevelopmentEntitlement()
+        }
+
         isBillingBusy = true
         defer { isBillingBusy = false }
 
         do {
-            guard let session = await freshTrackingSession() else {
+            guard let session = await freshUserDataSession() else {
                 throw StoreBillingError.authenticationRequired
             }
             let localSnapshot = try await StoreKitMembershipBillingService.shared.restorePurchases(userID: session.userID)
@@ -514,6 +549,51 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     @discardableResult
+    private func applySimulatorDevelopmentEntitlement(
+        plan: OunjeMembershipPlan = .init(tier: .plus, cadence: .monthly)
+    ) -> Bool {
+        guard let session = authSession,
+              !shouldDiscardLocalOnlyAuthSession(session) else {
+            billingStatusMessage = StoreBillingError.authenticationRequired.localizedDescription
+            return false
+        }
+        let userID = session.userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !userID.isEmpty else {
+            billingStatusMessage = StoreBillingError.authenticationRequired.localizedDescription
+            return false
+        }
+
+        membershipEntitlement = simulatorDevelopmentEntitlement(userID: userID, plan: plan)
+        syncProfilePricingTierToEntitlement()
+        membershipEntitlementResolved = true
+        billingStatusMessage = nil
+        return true
+    }
+
+    private func simulatorDevelopmentEntitlement(
+        userID: String,
+        plan: OunjeMembershipPlan = .init(tier: .plus, cadence: .monthly)
+    ) -> AppUserEntitlement {
+        let effectiveTier = plan.tier == .free ? .plus : plan.tier
+        return AppUserEntitlement(
+            userID: userID,
+            tier: effectiveTier,
+            status: .active,
+            source: .system,
+            productID: "debug.simulator.\(effectiveTier.rawValue).\(plan.cadence.rawValue)",
+            transactionID: "debug-simulator-\(userID)",
+            originalTransactionID: "debug-simulator-\(userID)",
+            expiresAt: Date().addingTimeInterval(60 * 60 * 24 * 30),
+            updatedAt: Date(),
+            metadata: [
+                "environment": "debug_simulator",
+                "billing_cadence": plan.cadence.rawValue
+            ],
+            signedTransactionInfo: nil
+        )
+    }
+
+    @discardableResult
     func refreshAuthSessionIfNeeded() async -> AuthSession? {
         guard let currentSession = authSession else { return nil }
         let token = currentSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -521,24 +601,31 @@ final class MealPlanningAppStore: ObservableObject {
             return currentSession
         }
 
-        if let refreshedSession = await refreshAuthSession(currentSession) {
-            authSession = refreshedSession
-            saveAuthSession(refreshedSession)
-            return refreshedSession
+        switch await refreshAuthSession(currentSession) {
+        case let .refreshed(refreshedSession):
+            return persistRefreshedAuthSession(refreshedSession)
+        case .missingRefreshToken, .invalidRefreshToken:
+            resetAll()
+            return nil
+        case .transientFailure:
+            // Keep using a still-valid token only for transient network/server failures.
+            // Irrecoverable auth failures are handled above by clearing the signed-in state.
+            return isAccessTokenUsable(token) ? currentSession : nil
         }
-
-        // Keep using a still-valid token if refresh fails. Expired persisted tokens
-        // make the app look signed in while every remote-backed screen fails.
-        return isAccessTokenUsable(token) ? currentSession : nil
     }
 
     @discardableResult
     func refreshAuthSessionAfterAuthorizationFailure() async -> AuthSession? {
         guard let currentSession = authSession else { return nil }
-        guard let refreshedSession = await refreshAuthSession(currentSession) else { return nil }
-        authSession = refreshedSession
-        saveAuthSession(refreshedSession)
-        return refreshedSession
+        switch await refreshAuthSession(currentSession) {
+        case let .refreshed(refreshedSession):
+            return persistRefreshedAuthSession(refreshedSession)
+        case .missingRefreshToken, .invalidRefreshToken:
+            resetAll()
+            return nil
+        case .transientFailure:
+            return nil
+        }
     }
 
     func completeOnboarding(with profile: UserProfile, lastStep: Int) async {
@@ -561,9 +648,9 @@ final class MealPlanningAppStore: ObservableObject {
         profile = updated
         saveProfile()
 
-        guard let session = authSession else { return }
+        guard authSession != nil else { return }
         Task(priority: .utility) {
-            let writeSession = await self.freshUserDataSession() ?? session
+            guard let writeSession = await self.freshUserDataSession() else { return }
             try? await SupabaseProfileStateService.shared.upsertProfile(
                 userID: writeSession.userID,
                 email: writeSession.email,
@@ -592,6 +679,11 @@ final class MealPlanningAppStore: ObservableObject {
 
     func bootstrapFromSupabaseIfNeeded() async {
         let bootstrapRevision = authStateRevision
+        if let authSession, shouldDiscardLocalOnlyAuthSession(authSession) {
+            resetAll()
+            return
+        }
+
         guard resolvedLiveUserID != nil else {
             hasResolvedInitialState = true
             isHydratingRemoteState = false
@@ -757,18 +849,24 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    private func refreshAuthSession(_ session: AuthSession) async -> AuthSession? {
+    private func persistRefreshedAuthSession(_ session: AuthSession) -> AuthSession {
+        authSession = session
+        saveAuthSession(session)
+        return session
+    }
+
+    private func refreshAuthSession(_ session: AuthSession) async -> AuthSessionRefreshOutcome {
         if let authRefreshTask {
             return await authRefreshTask.value
         }
 
         let refreshToken = session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !refreshToken.isEmpty else { return nil }
+        guard !refreshToken.isEmpty else { return .missingRefreshToken }
 
-        let task = Task<AuthSession?, Never> {
+        let task = Task<AuthSessionRefreshOutcome, Never> {
             do {
                 let tokenResponse = try await SupabaseAuthSessionRefreshService.shared.refreshSession(refreshToken: refreshToken)
-                return AuthSession(
+                let refreshedSession = AuthSession(
                     provider: session.provider,
                     userID: tokenResponse.userID,
                     email: tokenResponse.email ?? session.email,
@@ -777,14 +875,15 @@ final class MealPlanningAppStore: ObservableObject {
                     accessToken: tokenResponse.accessToken,
                     refreshToken: tokenResponse.refreshToken ?? session.refreshToken
                 )
+                return .refreshed(refreshedSession)
             } catch {
-                return nil
+                return Self.isPermanentAuthRefreshFailure(error) ? .invalidRefreshToken : .transientFailure
             }
         }
         authRefreshTask = task
-        let refreshedSession = await task.value
+        let refreshOutcome = await task.value
         authRefreshTask = nil
-        return refreshedSession
+        return refreshOutcome
     }
 
     private func shouldRefreshAccessToken(_ token: String) -> Bool {
@@ -797,6 +896,19 @@ final class MealPlanningAppStore: ObservableObject {
         guard !token.isEmpty else { return false }
         guard let expiration = accessTokenExpirationDate(token) else { return false }
         return expiration.timeIntervalSinceNow > 15
+    }
+
+    nonisolated private static func isPermanentAuthRefreshFailure(_ error: Error) -> Bool {
+        guard case SupabaseAuthSessionRefreshError.refreshFailed(let message) = error else {
+            return false
+        }
+
+        let normalized = message.lowercased()
+        return normalized.contains("invalid refresh token") ||
+            normalized.contains("refresh token not found") ||
+            normalized.contains("invalid_grant") ||
+            normalized.contains("already used") ||
+            normalized.contains("expired refresh token")
     }
 
     private func accessTokenExpirationDate(_ token: String) -> Date? {
@@ -983,11 +1095,18 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         guard var latestPlan,
-              latestPlan.bestQuote?.provider == .instacart,
               !latestPlan.groceryItems.isEmpty,
               latestPlan.mainShopSnapshot?.items.isEmpty == false
         else {
             manualAutoshopErrorMessage = "Autoshop needs a synced Instacart cart first."
+            return
+        }
+
+        let canStartInstacartRun = latestPlan.bestQuote?.provider == .instacart
+            || latestGroceryOrder?.normalizedProvider == "instacart"
+            || isInstacartProviderConnected
+        guard canStartInstacartRun else {
+            manualAutoshopErrorMessage = "Connect Instacart first."
             return
         }
         latestPlan = planCappedForAutoshop(latestPlan)
@@ -1706,7 +1825,11 @@ final class MealPlanningAppStore: ObservableObject {
 
         if let authData = loadAuthSessionData(),
            let decodedAuth = try? decoder.decode(AuthSession.self, from: authData) {
-            authSession = decodedAuth
+            if shouldDiscardLocalOnlyAuthSession(decodedAuth) {
+                clearPersistedAuthIdentity()
+            } else {
+                authSession = decodedAuth
+            }
         }
 
         cachedLiveUserID = loadLiveUserID()
@@ -1746,6 +1869,28 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         hasResolvedInitialState = authSession == nil
+    }
+
+    private func shouldDiscardLocalOnlyAuthSession(_ session: AuthSession) -> Bool {
+        isLocalOnlyAuthSession(session) && !OunjeLaunchFlags.allowsLocalOnlyAuthFallback
+    }
+
+    private func isLocalOnlyAuthSession(_ session: AuthSession) -> Bool {
+        let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let refreshToken = session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return accessToken.isEmpty && refreshToken.isEmpty
+    }
+
+    private func clearPersistedAuthIdentity() {
+        authSession = nil
+        cachedLiveUserID = nil
+        UserDefaults.standard.removeObject(forKey: authSessionKey)
+        sharedDefaults?.removeObject(forKey: authSessionKey)
+        sharedDefaults?.removeObject(forKey: sharedAuthSessionKey)
+        UserDefaults.standard.removeObject(forKey: liveUserIDKey)
+        sharedDefaults?.removeObject(forKey: liveUserIDKey)
+        sharedDefaults?.synchronize()
+        deleteAuthSessionFromKeychain()
     }
 
     private func updateCurrentPlanCache(with plan: MealPlan, persistRemote: Bool = true) {
@@ -2052,7 +2197,9 @@ final class MealPlanningAppStore: ObservableObject {
             saveRecurringPrepRecipesCache()
 
             do {
-                let session = await freshUserDataSession() ?? fallbackSession
+                guard let session = await freshUserDataSession() else {
+                    throw URLError(.userAuthenticationRequired)
+                }
                 try await SupabaseRecurringPrepRecipesService.shared.upsertRecurringPrepRecipe(
                     existing,
                     accessToken: session.accessToken
@@ -2077,7 +2224,9 @@ final class MealPlanningAppStore: ObservableObject {
             saveRecurringPrepRecipesCache()
 
             do {
-                let session = await refreshAuthSessionIfNeeded() ?? fallbackSession
+                guard let session = await freshUserDataSession() else {
+                    throw URLError(.userAuthenticationRequired)
+                }
                 try await SupabaseRecurringPrepRecipesService.shared.upsertRecurringPrepRecipe(
                     recurring,
                     accessToken: session.accessToken
@@ -2604,7 +2753,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func refreshProviderConnectionState() async {
-        guard let session = await freshTrackingSession() else { return }
+        guard let session = await freshUserDataSession() else { return }
 
         do {
             let providers = try await ProviderConnectionAPIService.shared.fetchProviders(
@@ -3312,7 +3461,7 @@ final class MealPlanningAppStore: ObservableObject {
             return
         }
 
-        guard let session = await freshTrackingSession() else { return }
+        guard let session = await freshUserDataSession() else { return }
 
         let normalizedStatus = latestGroceryOrder.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
@@ -3363,7 +3512,7 @@ final class MealPlanningAppStore: ObservableObject {
             )
         } catch {
             guard isAuthorizationFailure(error),
-                  let refreshedSession = await freshTrackingSession()
+                  let refreshedSession = await refreshAuthSessionAfterAuthorizationFailure()
             else {
                 throw error
             }
@@ -3386,7 +3535,7 @@ final class MealPlanningAppStore: ObservableObject {
             )
         } catch {
             guard isAuthorizationFailure(error),
-                  let refreshedSession = await freshTrackingSession()
+                  let refreshedSession = await refreshAuthSessionAfterAuthorizationFailure()
             else {
                 throw error
             }
