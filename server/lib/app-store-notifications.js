@@ -9,6 +9,7 @@ import {
   SignedDataVerifier,
   Status,
 } from "@apple/app-store-server-library";
+import { deleteRedisKey } from "./redis-cache.js";
 
 const ENTITLEMENTS_TABLE = "app_user_entitlements";
 const NOTIFICATION_EVENTS_TABLE = "app_store_notification_events";
@@ -334,6 +335,13 @@ function entitlementToResponse(row = null) {
   };
 }
 
+function userScopedCacheKey(namespace, userID) {
+  const normalizedUserID = normalizeText(userID);
+  if (!namespace || !normalizedUserID) return null;
+  const digest = crypto.createHash("sha256").update(normalizedUserID).digest("hex");
+  return `ounje:${namespace}:${digest}`;
+}
+
 async function recordNotificationEvent(supabase, decoded, resolvedUserID, entitlementState) {
   const { notification, transactionInfo, renewalInfo } = decoded;
   const notificationUUID = normalizeText(notification?.notificationUUID)
@@ -469,6 +477,8 @@ export async function processAppStoreNotification({
     .single();
 
   if (error) throw error;
+  void deleteRedisKey(userScopedCacheKey("entitlement-current", resolvedUserID));
+  void deleteRedisKey(userScopedCacheKey("user-bootstrap", resolvedUserID));
 
   return {
     ok: true,

@@ -65,6 +65,7 @@ const SEARCH_RESPONSE_CACHE_TTL_MS = 10 * 60 * 1000;
 const DISCOVER_FEED_CACHE_TTL_MS = 30 * 60 * 1000;
 const DISCOVER_BRACKET_IDS_CACHE_TTL_MS = 30 * 60 * 1000;
 const DISCOVER_BROAD_POOL_CACHE_TTL_MS = 30 * 60 * 1000;
+const DISCOVER_POOL_IDS_CACHE_TTL_MS = 15 * 60 * 1000;
 const INTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREP_REGENERATION_INTENT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -102,6 +103,7 @@ const searchResponseCache = new CappedMap(160);
 const discoverFeedCache = new CappedMap(120);
 const discoverBracketIdsCache = new CappedMap(40);
 const discoverBroadPoolCache = new CappedMap(80);
+const discoverPoolIdsCache = new CappedMap(120);
 const discoverIntentCache = new CappedMap(120);
 const prepRegenerationIntentCache = new CappedMap(80);
 const embeddingCache = new CappedMap(320);
@@ -118,6 +120,7 @@ globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
   discoverFeed: discoverFeedCache.size,
   discoverBracketIds: discoverBracketIdsCache.size,
   discoverBroadPool: discoverBroadPoolCache.size,
+  discoverPoolIds: discoverPoolIdsCache.size,
   discoverIntent: discoverIntentCache.size,
   prepRegenerationIntent: prepRegenerationIntentCache.size,
   embedding: embeddingCache.size,
@@ -1297,6 +1300,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         filter,
         feedContext,
         limit: baseShelfLimit,
+        forceRefresh: bypassDiscoverCache,
       });
 
       const payload = pageDiscoverResults({
@@ -2038,6 +2042,7 @@ async function buildFastBaseDiscoverRecipes({
   filter = "All",
   feedContext = null,
   limit = 30,
+  forceRefresh = false,
 }) {
   const normalizedFilter = getDiscoverPreset(filter)?.key ?? "all";
   const target = Math.min(
@@ -2052,6 +2057,7 @@ async function buildFastBaseDiscoverRecipes({
     feedContext,
     seed: baseSeed,
     limit: Math.max(target * 2, 60),
+    forceRefresh,
   });
 
   if (!sharedPool.length) {
@@ -2233,6 +2239,7 @@ async function buildPresetDiscoverPayload({
       filter,
       feedContext,
       limit: DISCOVER_BASE_SHELF_MAX,
+      forceRefresh,
     });
     return pageDiscoverResults({
       recipes,
@@ -5155,12 +5162,58 @@ async function fetchRandomDiscoverRecipes({ limit, seed, filter = "All" }) {
   }).slice(0, limit);
 }
 
+function discoverPoolRotationBucket() {
+  const bucketMs = 15 * 60 * 1000;
+  return Math.floor(Date.now() / bucketMs);
+}
+
+function buildDiscoverPoolIdsCacheKey({ profile = null, filter = "All", feedContext = null }) {
+  return JSON.stringify({
+    filter: String(filter ?? "All"),
+    profile: summarizeProfileForIntent(profile),
+    cues: {
+      daypart: feedContext?.daypart ?? null,
+      weekday: feedContext?.weekday ?? null,
+      weatherMood: feedContext?.weatherMood ?? null,
+      temperatureBand: feedContext?.temperatureBand ?? null,
+      seasonCue: feedContext?.seasonCue ?? null,
+    },
+    rotationBucket: discoverPoolRotationBucket(),
+  });
+}
+
+async function hydrateDiscoverPoolIds(ids, { seed = "discover-pool", limit = 120, filter = "All" } = {}) {
+  const normalizedIds = normalizeOrderedRecipeIDs(ids);
+  if (!normalizedIds.length) return [];
+
+  const fetchLimit = Math.min(
+    normalizedIds.length,
+    Math.max(36, Math.min(Math.ceil((Number(limit) || 120) * 1.15), 120))
+  );
+  const shuffledIds = stableShuffle(
+    normalizedIds.map((id) => ({ id })),
+    `${seed}|redis-pool`
+  ).map((entry) => entry.id);
+  const selectedIds = shuffledIds.slice(0, fetchLimit);
+  let recipes = [];
+  try {
+    recipes = await fetchRecipesByIdsWithFields(selectedIds, SEARCH_RECIPE_SELECT_FIELDS, 80);
+  } catch (error) {
+    if (!isMissingRecipeColumnError(error.message)) {
+      throw error;
+    }
+    recipes = await fetchRecipesByIdsWithFields(selectedIds, LEGACY_RECIPE_SELECT_FIELDS, 80);
+  }
+  return rankPresetFocusedRecipes(recipes, { filter, seed: `${seed}|redis-pool-rank` }).slice(0, Math.max(1, Number(limit) || 120));
+}
+
 async function fetchDiscoverBroadPool({
   profile = null,
   filter = "All",
   feedContext = null,
   seed = "discover-broad",
   limit = 360,
+  forceRefresh = false,
 }) {
   const cacheKey = JSON.stringify({
     filter: String(filter ?? "All"),
@@ -5178,9 +5231,26 @@ async function fetchDiscoverBroadPool({
     },
   });
 
-  const cachedPool = readTimedCache(discoverBroadPoolCache, cacheKey, DISCOVER_BROAD_POOL_CACHE_TTL_MS);
+  const cachedPool = forceRefresh ? null : readTimedCache(discoverBroadPoolCache, cacheKey, DISCOVER_BROAD_POOL_CACHE_TTL_MS);
   if (cachedPool) {
     return cachedPool;
+  }
+
+  const poolIdsCacheKey = buildDiscoverPoolIdsCacheKey({ profile, filter, feedContext });
+  if (!forceRefresh) {
+    const cachedPoolIds = await readSharedTimedCache(
+      discoverPoolIdsCache,
+      poolIdsCacheKey,
+      DISCOVER_POOL_IDS_CACHE_TTL_MS,
+      "discover-pool-ids"
+    );
+    if (Array.isArray(cachedPoolIds) && cachedPoolIds.length) {
+      const hydratedPool = await hydrateDiscoverPoolIds(cachedPoolIds, { seed, limit, filter });
+      if (hydratedPool.length) {
+        discoverBroadPoolCache.set(cacheKey, { value: hydratedPool, createdAt: Date.now() });
+        return hydratedPool;
+      }
+    }
   }
 
   const [randomPool, latestPool] = await Promise.all([
@@ -5203,6 +5273,13 @@ async function fetchDiscoverBroadPool({
     ...latestPool,
   ]);
   discoverBroadPoolCache.set(cacheKey, { value: pool, createdAt: Date.now() });
+  writeSharedTimedCache(
+    discoverPoolIdsCache,
+    poolIdsCacheKey,
+    normalizeOrderedRecipeIDs(pool.map((recipe) => recipe.id)).slice(0, 240),
+    DISCOVER_POOL_IDS_CACHE_TTL_MS,
+    "discover-pool-ids"
+  );
   return pool;
 }
 
@@ -5220,7 +5297,12 @@ async function fetchDbBracketRecipeIds(filter = "All", { forceRefresh = false } 
     }
   }
   if (!forceRefresh) {
-    const cachedIds = readTimedCache(discoverBracketIdsCache, cacheKey, DISCOVER_BRACKET_IDS_CACHE_TTL_MS);
+    const cachedIds = await readSharedTimedCache(
+      discoverBracketIdsCache,
+      cacheKey,
+      DISCOVER_BRACKET_IDS_CACHE_TTL_MS,
+      "discover-bracket-ids"
+    );
     if (Array.isArray(cachedIds)) {
       return cachedIds;
     }
@@ -5256,7 +5338,13 @@ async function fetchDbBracketRecipeIds(filter = "All", { forceRefresh = false } 
   }
 
   const uniqueIds = [...new Set(ids)];
-  discoverBracketIdsCache.set(cacheKey, { value: uniqueIds, createdAt: Date.now() });
+  writeSharedTimedCache(
+    discoverBracketIdsCache,
+    cacheKey,
+    uniqueIds,
+    DISCOVER_BRACKET_IDS_CACHE_TTL_MS,
+    "discover-bracket-ids"
+  );
   return uniqueIds;
 }
 

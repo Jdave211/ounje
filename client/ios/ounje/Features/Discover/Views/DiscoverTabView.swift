@@ -6,6 +6,7 @@ extension Notification.Name {
 }
 
 struct DiscoverTabView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var savedStore: SavedRecipesStore
     @Binding var selectedTab: AppTab
@@ -210,6 +211,12 @@ struct DiscoverTabView: View {
                         behaviorSeeds: []
                     )
                 }
+            }
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active, selectedTab == .discover else { return }
+            Task {
+                await resumeDiscoverFeedIfNeeded()
             }
         }
         .onDisappear {
@@ -434,6 +441,18 @@ struct DiscoverTabView: View {
 
     private func loadMoreRecipes() async {
         await viewModel.loadMoreIfNeeded(
+            profile: store.profile,
+            query: normalizedSearchText,
+            feedContext: environmentModel.feedContext,
+            behaviorSeeds: []
+        )
+    }
+
+    private func resumeDiscoverFeedIfNeeded() async {
+        guard viewModel.recipes.isEmpty || viewModel.errorMessage != nil || !viewModel.hasResolvedInitialLoad else { return }
+        viewModel.updateFeedbackRevision(discoverFeedbackRevision)
+        await environmentModel.refresh(profile: store.profile)
+        await viewModel.loadIfNeeded(
             profile: store.profile,
             query: normalizedSearchText,
             feedContext: environmentModel.feedContext,

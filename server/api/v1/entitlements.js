@@ -1,6 +1,8 @@
 import express from "express";
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { resolveAuthenticatedUserID } from "../../lib/instacart-run-logs.js";
+import { deleteRedisKey, readRedisJSON, writeRedisJSON } from "../../lib/redis-cache.js";
 import {
   APP_STORE_PRODUCT_IDS_BY_TIER,
   deriveEntitlementFromAppStoreNotification,
@@ -15,8 +17,18 @@ const ENTITLEMENTS_TABLE = "app_user_entitlements";
 const ALLOWED_TIERS = new Set(["free", "plus", "autopilot", "foundingLifetime"]);
 const ALLOWED_STATUSES = new Set(["active", "expired", "revoked", "inactive"]);
 const ALLOWED_SOURCES = new Set(["app_store", "manual", "system"]);
+const ENTITLEMENT_CACHE_TTL_SECONDS = 45;
+const USER_BOOTSTRAP_CACHE_TTL_SECONDS = 60;
+
 function normalizeText(value) {
   return String(value ?? "").trim();
+}
+
+function userScopedCacheKey(namespace, userID) {
+  const normalizedUserID = normalizeText(userID);
+  if (!namespace || !normalizedUserID) return null;
+  const digest = crypto.createHash("sha256").update(normalizedUserID).digest("hex");
+  return `ounje:${namespace}:${digest}`;
 }
 
 function extractBearerToken(authorizationHeader) {
@@ -149,9 +161,15 @@ async function fetchEntitlementRow(supabase, userID) {
 router.get("/entitlements/current", async (req, res) => {
   try {
     const { userID } = await resolveAuthorizedUserID(req);
+    const cacheKey = userScopedCacheKey("entitlement-current", userID);
+    const cached = await readRedisJSON(cacheKey);
+    if (cached) return res.json(cached);
+
     const supabase = getServiceSupabase();
     const row = await fetchEntitlementRow(supabase, userID);
-    return res.json(entitlementToResponse(row));
+    const payload = entitlementToResponse(row);
+    void writeRedisJSON(cacheKey, payload, ENTITLEMENT_CACHE_TTL_SECONDS);
+    return res.json(payload);
   } catch (error) {
     if (isMissingEntitlementsTableError(error)) {
       return res.json(entitlementToResponse(null));
@@ -258,13 +276,108 @@ router.post("/entitlements/sync", async (req, res) => {
       .single();
 
     if (error) throw error;
-    return res.json(entitlementToResponse(data));
+    const responsePayload = entitlementToResponse(data);
+    void writeRedisJSON(userScopedCacheKey("entitlement-current", userID), responsePayload, ENTITLEMENT_CACHE_TTL_SECONDS);
+    void deleteRedisKey(userScopedCacheKey("user-bootstrap", userID));
+    return res.json(responsePayload);
   } catch (error) {
     if (isMissingEntitlementsTableError(error)) {
       return res.status(503).json({ error: "Entitlements table is not available yet." });
     }
     const statusCode = Number(error?.statusCode) || 500;
     console.error("[entitlements/sync] error:", error.message);
+    return res.status(statusCode).json({ error: error.message });
+  }
+});
+
+async function countUserRows(supabase, table, userID, applyFilters = null) {
+  let query = supabase
+    .from(table)
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userID);
+  if (typeof applyFilters === "function") {
+    query = applyFilters(query);
+  }
+  const { count, error } = await query;
+  if (error) throw error;
+  return count ?? 0;
+}
+
+router.get("/bootstrap/user", async (req, res) => {
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const cacheKey = userScopedCacheKey("user-bootstrap", userID);
+    const cached = await readRedisJSON(cacheKey);
+    if (cached) return res.json(cached);
+
+    const supabase = getServiceSupabase();
+    const [
+      profileResult,
+      entitlementRow,
+      completedImportCount,
+      savedRecipeCount,
+      prepOverrideCount,
+      latestSavedResult,
+    ] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id,email,display_name,auth_provider,onboarded,last_onboarding_step,account_status,deactivated_at,profile_json,updated_at")
+        .eq("id", userID)
+        .limit(1)
+        .maybeSingle(),
+      fetchEntitlementRow(supabase, userID).catch((error) => {
+        if (isMissingEntitlementsTableError(error)) return null;
+        throw error;
+      }),
+      countUserRows(
+        supabase,
+        "recipe_ingestion_jobs",
+        userID,
+        (query) => query.in("status", ["saved", "draft", "needs_review"])
+      ).catch(() => null),
+      countUserRows(supabase, "saved_recipes", userID).catch(() => null),
+      countUserRows(supabase, "prep_recipe_overrides", userID).catch(() => null),
+      supabase
+        .from("saved_recipes")
+        .select("recipe_id,title,category,recipe_type,hero_image_url,discover_card_image_url,saved_at")
+        .eq("user_id", userID)
+        .order("saved_at", { ascending: false })
+        .limit(6),
+    ]);
+
+    if (profileResult.error) throw profileResult.error;
+    if (latestSavedResult.error) throw latestSavedResult.error;
+
+    const profile = profileResult.data ?? null;
+    const payload = {
+      user_id: userID,
+      profile: profile
+        ? {
+            onboarded: Boolean(profile.onboarded),
+            last_onboarding_step: profile.last_onboarding_step ?? 0,
+            account_status: normalizeText(profile.account_status) || "active",
+            deactivated_at: profile.deactivated_at ?? null,
+            profile_updated_at: profile.updated_at ?? null,
+            has_profile_json: Boolean(profile.profile_json),
+          }
+        : null,
+      entitlement: entitlementToResponse(entitlementRow),
+      counts: {
+        completed_imports: completedImportCount,
+        saved_recipes: savedRecipeCount,
+        prep_overrides: prepOverrideCount,
+      },
+      cookbook: {
+        latest_saved: latestSavedResult.data ?? [],
+      },
+      cached_at: new Date().toISOString(),
+    };
+
+    void writeRedisJSON(cacheKey, payload, USER_BOOTSTRAP_CACHE_TTL_SECONDS);
+    return res.json(payload);
+  } catch (error) {
+    const statusCode = Number(error?.statusCode) || 500;
+    console.error("[bootstrap/user] error:", error.message);
     return res.status(statusCode).json({ error: error.message });
   }
 });

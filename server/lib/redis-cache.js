@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { createClient } from "redis";
 
 let redisClient = null;
@@ -139,6 +141,52 @@ export async function writeRedisJSON(key, value, ttlSeconds) {
     const client = await getRedisClient();
     if (!client) return false;
     await withTimeout(client.set(key, JSON.stringify(value), { EX: seconds }), redisOperationTimeoutMs(), "redis_set");
+    return true;
+  } catch (error) {
+    lastRedisError = error;
+    return false;
+  }
+}
+
+export async function deleteRedisKey(key) {
+  if (!key) return false;
+  try {
+    const client = await getRedisClient();
+    if (!client) return false;
+    await withTimeout(client.del(key), redisOperationTimeoutMs(), "redis_del");
+    return true;
+  } catch (error) {
+    lastRedisError = error;
+    return false;
+  }
+}
+
+export async function acquireRedisLock(key, ttlSeconds, token = crypto.randomUUID()) {
+  if (!key) return null;
+  const seconds = Math.max(1, Number.parseInt(String(ttlSeconds ?? ""), 10) || 1);
+  try {
+    const client = await getRedisClient();
+    if (!client) return null;
+    const result = await withTimeout(
+      client.set(key, token, { NX: true, EX: seconds }),
+      redisOperationTimeoutMs(),
+      "redis_lock"
+    );
+    return result === "OK" ? token : null;
+  } catch (error) {
+    lastRedisError = error;
+    return null;
+  }
+}
+
+export async function releaseRedisLock(key, token) {
+  if (!key || !token) return false;
+  try {
+    const client = await getRedisClient();
+    if (!client) return false;
+    const current = await withTimeout(client.get(key), redisOperationTimeoutMs(), "redis_lock_get");
+    if (current !== token) return false;
+    await withTimeout(client.del(key), redisOperationTimeoutMs(), "redis_lock_del");
     return true;
   } catch (error) {
     lastRedisError = error;

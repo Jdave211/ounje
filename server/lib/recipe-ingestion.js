@@ -17,7 +17,7 @@ import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
-import { readRedisJSON, writeRedisJSON } from "./redis-cache.js";
+import { acquireRedisLock, deleteRedisKey, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
 
 import {
@@ -125,6 +125,10 @@ function withTimeout(promise, timeoutMs, label) {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
 function socialYTDLOptions(overrides = {}) {
   return {
     noWarnings: true,
@@ -170,6 +174,10 @@ async function execFileWithTimeout(command, args = [], timeoutMs = 10_000) {
 // has already been imported in this process lifetime.
 const CANONICAL_IMPORT_CACHE_MAX = 500;
 const CANONICAL_IMPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const WARM_RECIPE_DETAIL_CACHE_TTL_SECONDS = 5 * 60;
+const IMPORT_ENQUEUE_LOCK_TTL_SECONDS = 15;
+const IMPORT_PROCESS_LOCK_TTL_SECONDS = 30 * 60;
+const SOURCE_METADATA_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const _canonicalImportCache = new Map();
 
 function _canonicalImportCacheKey(userID, canonicalURL, dedupeKey) {
@@ -183,6 +191,133 @@ function _canonicalImportRedisCacheKey(key) {
   if (!key) return null;
   const digest = crypto.createHash("sha256").update(String(key)).digest("hex");
   return `ounje:canonical-import:${digest}`;
+}
+
+function _sharedRedisCacheKey(namespace, key) {
+  if (!namespace || !key) return null;
+  const digest = crypto.createHash("sha256").update(String(key)).digest("hex");
+  return `ounje:${namespace}:${digest}`;
+}
+
+async function warmRecipeDetailCache({ userID = null, recipeID = null, recipeDetail = null } = {}) {
+  const normalizedRecipeID = normalizeText(recipeID);
+  if (!normalizedRecipeID || !recipeDetail) return;
+
+  const detailCacheKey = normalizedRecipeID.startsWith("uir_")
+    ? `user:${normalizeText(userID)}:${normalizedRecipeID}`
+    : `public:${normalizedRecipeID}`;
+  if (normalizedRecipeID.startsWith("uir_") && !normalizeText(userID)) return;
+
+  await writeRedisJSON(
+    _sharedRedisCacheKey("recipe-detail", detailCacheKey),
+    { recipe: canonicalizeRecipeDetail({ ...recipeDetail, id: normalizedRecipeID }) },
+    WARM_RECIPE_DETAIL_CACHE_TTL_SECONDS
+  );
+}
+
+function recipeImportLockKey(kind, key) {
+  if (!kind || !key) return null;
+  const digest = crypto.createHash("sha256").update(String(key)).digest("hex");
+  return `ounje:recipe-import:${kind}:${digest}`;
+}
+
+function userScopedCacheKey(namespace, userID) {
+  const normalizedUserID = normalizeText(userID);
+  if (!namespace || !normalizedUserID) return null;
+  const digest = crypto.createHash("sha256").update(normalizedUserID).digest("hex");
+  return `ounje:${namespace}:${digest}`;
+}
+
+function invalidateUserBootstrapCache(userID) {
+  const key = userScopedCacheKey("user-bootstrap", userID);
+  if (key) void deleteRedisKey(key);
+}
+
+function sourceMetadataCacheKey(kind, sourceURL) {
+  const normalizedURL = cleanURL(sourceURL);
+  if (!kind || !normalizedURL) return null;
+  const digest = crypto.createHash("sha256").update(normalizedURL).digest("hex");
+  return `ounje:source-metadata:${kind}:${digest}`;
+}
+
+function compactYtdlMetadataForCache(info = null) {
+  if (!info || typeof info !== "object") return null;
+  const compactSubtitleBucket = (bucket) => {
+    if (!bucket || typeof bucket !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(bucket).slice(0, 12).map(([language, tracks]) => [
+        language,
+        Array.isArray(tracks)
+          ? tracks.slice(0, 4).map((track) => ({
+              ext: track?.ext ?? null,
+              url: cleanURL(track?.url ?? null),
+            })).filter((track) => track.url)
+          : [],
+      ])
+    );
+  };
+  return {
+    id: info.id ?? null,
+    title: info.title ?? null,
+    description: info.description ?? null,
+    uploader: info.uploader ?? null,
+    uploader_id: info.uploader_id ?? null,
+    uploader_url: info.uploader_url ?? null,
+    channel: info.channel ?? null,
+    channel_url: info.channel_url ?? null,
+    webpage_url: cleanURL(info.webpage_url ?? null),
+    original_url: cleanURL(info.original_url ?? null),
+    url: cleanURL(info.url ?? null),
+    webpage_url_basename: info.webpage_url_basename ?? null,
+    duration: info.duration ?? null,
+    upload_date: info.upload_date ?? null,
+    thumbnails: Array.isArray(info.thumbnails) ? info.thumbnails.slice(-12) : [],
+    subtitles: compactSubtitleBucket(info.subtitles),
+    automatic_captions: compactSubtitleBucket(info.automatic_captions),
+  };
+}
+
+function compactPageSignalsForCache(pageSignals = null) {
+  if (!pageSignals || typeof pageSignals !== "object") return null;
+  return {
+    source_type: pageSignals.source_type ?? "web",
+    platform: pageSignals.platform ?? "web",
+    source_url: cleanURL(pageSignals.source_url ?? null),
+    canonical_url: cleanURL(pageSignals.canonical_url ?? pageSignals.source_url ?? null),
+    title: normalizeText(pageSignals.title ?? ""),
+    meta_title: normalizeText(pageSignals.meta_title ?? ""),
+    meta_description: normalizeText(pageSignals.meta_description ?? ""),
+    hero_image_url: cleanURL(pageSignals.hero_image_url ?? null),
+    attached_video_url: cleanURL(pageSignals.attached_video_url ?? null),
+    site_name: normalizeText(pageSignals.site_name ?? ""),
+    author_name: normalizeText(pageSignals.author_name ?? ""),
+    ingredient_candidates: Array.isArray(pageSignals.ingredient_candidates) ? pageSignals.ingredient_candidates.slice(0, 80) : [],
+    instruction_candidates: Array.isArray(pageSignals.instruction_candidates) ? pageSignals.instruction_candidates.slice(0, 80) : [],
+    page_image_urls: Array.isArray(pageSignals.page_image_urls) ? pageSignals.page_image_urls.slice(0, 12) : [],
+    body_text: normalizeText(pageSignals.body_text ?? "", 6000),
+    structured_recipe: pageSignals.structured_recipe ?? null,
+  };
+}
+
+async function fetchYtdlMetadataCached(sourceURL, { options = {}, timeoutMs = SOCIAL_METADATA_TIMEOUT_MS, label = "metadata resolve", cacheKind = "ytdl" } = {}) {
+  const cacheKey = sourceMetadataCacheKey(cacheKind, sourceURL);
+  const cached = await readRedisJSON(cacheKey);
+  if (cached) return cached;
+
+  const metadata = await withTimeout(
+    ytdl(sourceURL, socialYTDLOptions({
+      dumpSingleJson: true,
+      skipDownload: true,
+      ...options,
+    }), ytdlExecOptions(timeoutMs)),
+    timeoutMs,
+    label
+  );
+  const compact = compactYtdlMetadataForCache(metadata);
+  if (compact) {
+    void writeRedisJSON(cacheKey, compact, SOURCE_METADATA_CACHE_TTL_SECONDS);
+  }
+  return metadata;
 }
 
 function _setCanonicalImportCache(userID, canonicalURL, dedupeKey, job) {
@@ -802,6 +937,12 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   const isTikTok = loweredSourceType === "tiktok" || host.includes("tiktok.com");
   if (!isTikTok) return normalized;
 
+  const canonicalCacheKey = sourceMetadataCacheKey("canonical-url", normalized);
+  const cachedCanonical = await readRedisJSON(canonicalCacheKey);
+  if (cachedCanonical?.canonical_url) {
+    return cachedCanonical.canonical_url;
+  }
+
   try {
     const response = await fetchWithTimeout(normalized, {
       redirect: "follow",
@@ -812,6 +953,7 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
 
     const redirected = cleanURL(response.url ?? normalized);
     if (redirected && redirected !== normalized) {
+      void writeRedisJSON(canonicalCacheKey, { canonical_url: redirected }, SOURCE_METADATA_CACHE_TTL_SECONDS);
       return redirected;
     }
   } catch {
@@ -819,17 +961,16 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   }
 
   try {
-    const info = await withTimeout(
-      ytdl(normalized, socialYTDLOptions({
-        dumpSingleJson: true,
-        skipDownload: true,
-      }), ytdlExecOptions(SOCIAL_METADATA_TIMEOUT_MS)),
-      SOCIAL_METADATA_TIMEOUT_MS,
-      "TikTok canonical metadata resolve"
-    );
+    const info = await fetchYtdlMetadataCached(normalized, {
+      label: "TikTok canonical metadata resolve",
+      cacheKind: "tiktok-canonical",
+    });
 
     const resolved = cleanURL(info?.webpage_url ?? info?.original_url ?? info?.url ?? info?.webpage_url_basename ?? null);
-    if (resolved) return resolved;
+    if (resolved) {
+      void writeRedisJSON(canonicalCacheKey, { canonical_url: resolved }, SOURCE_METADATA_CACHE_TTL_SECONDS);
+      return resolved;
+    }
   } catch {
     // Try browser fallback below.
   }
@@ -837,7 +978,10 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   try {
     const pageSignals = await extractWebSource(normalized);
     const resolved = cleanURL(pageSignals?.canonical_url ?? pageSignals?.source_url ?? null);
-    if (resolved) return resolved;
+    if (resolved) {
+      void writeRedisJSON(canonicalCacheKey, { canonical_url: resolved }, SOURCE_METADATA_CACHE_TTL_SECONDS);
+      return resolved;
+    }
   } catch {
     // Final fallback below.
   }
@@ -2697,6 +2841,12 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
   });
   const recipe = await fetchRecipeCardProjection(cachedJob.recipe_id).catch(() => null);
   const recipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
+  await warmRecipeDetailCache({
+    userID: completed.user_id,
+    recipeID: cachedJob.recipe_id,
+    recipeDetail,
+  });
+  invalidateUserBootstrapCache(completed.user_id);
   return formatJobResponse(completed, {
     recipe,
     recipe_detail: recipeDetail,
@@ -2727,6 +2877,12 @@ async function completeJobFromExistingImportedRecipe(job, recipeRow, { workerID,
   _setCanonicalImportCache(job.user_id, completed.canonical_url ?? canonicalURL ?? null, completed.dedupe_key ?? null, completed);
   const recipe = await fetchRecipeCardProjection(recipeID).catch(() => null);
   const recipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
+  await warmRecipeDetailCache({
+    userID: completed.user_id,
+    recipeID,
+    recipeDetail,
+  });
+  invalidateUserBootstrapCache(completed.user_id);
   return formatJobResponse(completed, {
     recipe,
     recipe_detail: recipeDetail,
@@ -2798,6 +2954,24 @@ async function createJobRow(request) {
         sourceText: request.source_text,
       });
 
+  const enqueueLockKey = dedupeKey
+    ? recipeImportLockKey("enqueue", `${request.user_id ?? "anon"}:${dedupeKey}`)
+    : null;
+  const enqueueLockToken = enqueueLockKey
+    ? await acquireRedisLock(enqueueLockKey, IMPORT_ENQUEUE_LOCK_TTL_SECONDS)
+    : null;
+
+  if (enqueueLockKey && !enqueueLockToken) {
+    const lockedExisting = await findExistingJobForRequest(request, dedupeKey)
+      ?? await findExistingJobForRequestSource(request, dedupeKey);
+    if (lockedExisting) return lockedExisting;
+    await delay(200);
+    const settledExisting = await findExistingJobForRequest(request, dedupeKey)
+      ?? await findExistingJobForRequestSource(request, dedupeKey);
+    if (settledExisting) return settledExisting;
+  }
+
+  try {
   const existing = await findExistingJobForRequest(request, dedupeKey);
   if (existing) {
     return existing;
@@ -2865,6 +3039,11 @@ async function createJobRow(request) {
   });
 
   return created;
+  } finally {
+    if (enqueueLockToken) {
+      void releaseRedisLock(enqueueLockKey, enqueueLockToken);
+    }
+  }
 }
 
 async function storeArtifact(jobID, artifact) {
@@ -4894,8 +5073,17 @@ async function extractWebSource(sourceURL) {
 }
 
 async function extractSocialPageSignals(sourceURL, platform) {
+  const cacheKey = sourceMetadataCacheKey(`${platform}-page-signals`, sourceURL);
+  const cached = await readRedisJSON(cacheKey);
+  if (cached) return cached;
+
   try {
-    return await extractWebSourceWithFetch(sourceURL, { playwrightError: new Error(`${platform} browser extraction skipped`) });
+    const pageSignals = await extractWebSourceWithFetch(sourceURL, { playwrightError: new Error(`${platform} browser extraction skipped`) });
+    const compact = compactPageSignalsForCache(pageSignals);
+    if (compact) {
+      void writeRedisJSON(cacheKey, compact, SOURCE_METADATA_CACHE_TTL_SECONDS);
+    }
+    return pageSignals;
   } catch (error) {
     console.warn(`[recipe-ingestion] ${platform} page signals skipped:`, error instanceof Error ? error.message : error);
     return null;
@@ -5153,14 +5341,10 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
 }
 
 async function extractYouTubeSource(sourceURL) {
-  const info = await withTimeout(
-    ytdl(sourceURL, socialYTDLOptions({
-      dumpSingleJson: true,
-      skipDownload: true,
-    }), ytdlExecOptions(SOCIAL_METADATA_TIMEOUT_MS)),
-    SOCIAL_METADATA_TIMEOUT_MS,
-    "youtube metadata resolve"
-  );
+  const info = await fetchYtdlMetadataCached(sourceURL, {
+    label: "youtube metadata resolve",
+    cacheKind: "youtube-metadata",
+  });
 
   const subtitleTrack = pickSubtitleTrack(info);
   const transcriptText = await downloadTranscript(subtitleTrack);
@@ -5257,14 +5441,10 @@ async function extractSocialSource(sourceURL, platform) {
   let metadata = null;
   let blocked = false;
   try {
-    metadata = await withTimeout(
-      ytdl(sourceURL, socialYTDLOptions({
-        dumpSingleJson: true,
-        skipDownload: true,
-      }), ytdlExecOptions(SOCIAL_METADATA_TIMEOUT_MS)),
-      SOCIAL_METADATA_TIMEOUT_MS,
-      `${platform} metadata resolve`
-    );
+    metadata = await fetchYtdlMetadataCached(sourceURL, {
+      label: `${platform} metadata resolve`,
+      cacheKind: `${platform}-metadata`,
+    });
   } catch (error) {
     blocked = true;
     console.warn(`[recipe-ingestion] ${platform} metadata skipped:`, error instanceof Error ? error.message : error);
@@ -8014,6 +8194,16 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     throw new Error("Recipe ingestion job could not be found.");
   }
 
+  const isAlreadyComplete = ["saved", "needs_review", "draft"].includes(normalizeText(existingJob.status));
+  const processLockKey = isAlreadyComplete ? null : recipeImportLockKey("process", existingJob.id);
+  const processLockToken = processLockKey
+    ? await acquireRedisLock(processLockKey, IMPORT_PROCESS_LOCK_TTL_SECONDS)
+    : null;
+  if (processLockKey && !processLockToken) {
+    const latestJob = await fetchJobRow(existingJob.id).catch(() => null);
+    return formatJobResponse(latestJob ?? existingJob, { processing_mode: "locked" });
+  }
+
   const stopHeartbeat = startRecipeIngestionHeartbeat(existingJob.id, workerID);
   try {
     return await withAIUsageContext({
@@ -8375,6 +8565,12 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       existingJob.dedupe_key ?? null,
       job
     );
+    await warmRecipeDetailCache({
+      userID: existingJob.user_id,
+      recipeID: persisted.recipe_id,
+      recipeDetail: persisted.recipe_detail,
+    });
+    invalidateUserBootstrapCache(existingJob.user_id);
 
     return formatJobResponse(job, {
       recipe: persisted.recipe_card,
@@ -8407,6 +8603,9 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
   });
   } finally {
     stopHeartbeat();
+    if (processLockToken) {
+      void releaseRedisLock(processLockKey, processLockToken);
+    }
   }
 }
 

@@ -38,6 +38,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
     private var responseCache: [String: InMemoryDiscoverCacheEntry] = [:]
     private var activeRequestID: UUID?
     private var inFlightLoadKey: String?
+    private var inFlightRequestID: UUID?
     private let sessionSeed = String(UUID().uuidString.prefix(8))
     private let filterShuffleSeed = UUID().uuidString
     private var baseFeedRotationIndex = 0
@@ -78,11 +79,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
             isTransitioningFeed = false
             return
         }
-        guard inFlightLoadKey != loadKey else {
-            isLoading = false
-            isTransitioningFeed = false
-            return
-        }
+        guard inFlightLoadKey != loadKey else { return }
         currentFeedLimit = stagedPageSize
         currentFeedOffset = 0
         await refresh(profile: profile, query: query, feedContext: feedContext, behaviorSeeds: behaviorSeeds, limit: currentFeedLimit, offset: 0)
@@ -98,8 +95,6 @@ final class DiscoverRecipesViewModel: ObservableObject {
         appendResults: Bool = false,
         forceNetwork: Bool = false
     ) async {
-        let requestID = UUID()
-        activeRequestID = requestID
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let hadExistingRecipes = !recipes.isEmpty
         let previousRecipes = recipes
@@ -115,9 +110,13 @@ final class DiscoverRecipesViewModel: ObservableObject {
         let shelfKey = persistentShelfKey(profile: profile, behaviorSeeds: behaviorSeeds, filter: selectedFilter, query: normalizedQuery, feedContext: feedContext)
 
         if !forceNetwork, inFlightLoadKey == loadKey {
+            if inFlightRequestID == nil {
+                inFlightLoadKey = nil
+                isLoading = false
+                isTransitioningFeed = false
+            }
             return
         }
-        inFlightLoadKey = loadKey
 
         if !forceNetwork,
            let cachedEntry = responseCache[loadKey],
@@ -150,6 +149,11 @@ final class DiscoverRecipesViewModel: ObservableObject {
             }
         }
 
+        let requestID = UUID()
+        activeRequestID = requestID
+        inFlightLoadKey = loadKey
+        inFlightRequestID = requestID
+
         errorMessage = nil
         isLoading = true
         if isPresetTransition {
@@ -172,10 +176,12 @@ final class DiscoverRecipesViewModel: ObservableObject {
             recipes = []
         }
         defer {
-            if inFlightLoadKey == loadKey {
+            if inFlightRequestID == requestID {
                 inFlightLoadKey = nil
+                inFlightRequestID = nil
             }
             if activeRequestID == requestID {
+                activeRequestID = nil
                 isLoading = false
                 isTransitioningFeed = false
             }
