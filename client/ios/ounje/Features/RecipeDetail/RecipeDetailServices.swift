@@ -41,9 +41,35 @@ struct RecipeDetailStep: Decodable, Hashable {
     enum CodingKeys: String, CodingKey {
         case number
         case text
+        case instructionText = "instruction_text"
         case tipText = "tip_text"
         case ingredientRefs = "ingredient_refs"
         case ingredients
+    }
+
+    init(
+        number: Int,
+        text: String,
+        tipText: String?,
+        ingredientRefs: [String],
+        ingredients: [RecipeDetailIngredient]
+    ) {
+        self.number = number
+        self.text = text
+        self.tipText = tipText
+        self.ingredientRefs = ingredientRefs
+        self.ingredients = ingredients
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        number = (try? container.decode(Int.self, forKey: .number)) ?? 0
+        text = (try? container.decode(String.self, forKey: .text))
+            ?? (try? container.decode(String.self, forKey: .instructionText))
+            ?? ""
+        tipText = try container.decodeIfPresent(String.self, forKey: .tipText)
+        ingredientRefs = (try? container.decode([String].self, forKey: .ingredientRefs)) ?? []
+        ingredients = (try? container.decode([RecipeDetailIngredient].self, forKey: .ingredients)) ?? []
     }
 
     func replacingIngredients(_ ingredients: [RecipeDetailIngredient]) -> RecipeDetailStep {
@@ -859,14 +885,20 @@ final class RecipeDetailViewModel: ObservableObject {
         self.initialDetailID = initialDetail?.id
     }
 
-    func load(for recipeID: String, similarFallbackRecipeID: String? = nil, accessToken: String? = nil) async {
+    @discardableResult
+    func load(
+        for recipeID: String,
+        similarFallbackRecipeID: String? = nil,
+        accessToken: String? = nil,
+        deferAuthorizationError: Bool = false
+    ) async -> String? {
         if let detail,
            detail.id == recipeID || detail.id == initialDetailID {
             let fallbackID = similarFallbackRecipeID ?? (detail.id == recipeID ? nil : recipeID)
             scheduleSimilarRecipesLoad(for: detail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
             scheduleMacroEnrichmentIfNeeded(for: detail, accessToken: accessToken)
             scheduleImageEnrichmentIfNeeded(for: detail, accessToken: accessToken)
-            return
+            return nil
         }
 
         similarLoadTask?.cancel()
@@ -887,10 +919,15 @@ final class RecipeDetailViewModel: ObservableObject {
             scheduleSimilarRecipesLoad(for: fetchedDetail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
             scheduleMacroEnrichmentIfNeeded(for: fetchedDetail, accessToken: accessToken)
             scheduleImageEnrichmentIfNeeded(for: fetchedDetail, accessToken: accessToken)
+            return nil
         } catch {
             similarRecipes = []
             hasLoadedSimilarRecipes = false
-            errorMessage = error.localizedDescription
+            let message = error.localizedDescription
+            if !(deferAuthorizationError && SupabaseUserDataRequest.isAuthorizationFailure(message: message)) {
+                errorMessage = message
+            }
+            return message
         }
     }
 
@@ -1499,7 +1536,10 @@ actor RecipeDetailService {
             "cuisine_tags",
             "occasion_tags",
             "main_protein",
-            "cook_method"
+            "cook_method",
+            "ingredients_json",
+            "steps_json",
+            "servings_count"
         ].joined(separator: ",")
 
         guard let recipeURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(recipeTable)?select=\(recipeSelect)&id=eq.\(encodedID)&limit=1") else {
@@ -1509,6 +1549,11 @@ actor RecipeDetailService {
         let recipes: [SupabaseRecipeDetailRow] = try await performSupabaseGET(url: recipeURL, as: [SupabaseRecipeDetailRow].self, accessToken: userDataAccessToken)
         guard let recipe = recipes.first else {
             throw SupabaseProfileStateError.requestFailed("Recipe detail could not be found.")
+        }
+
+        if isUserImported,
+           let jsonDetail = recipe.importedJSONDetail() {
+            return jsonDetail
         }
 
         guard let ingredientURL = URL(string: "\(SupabaseConfig.url)/rest/v1/\(ingredientTable)?select=id,ingredient_id,display_name,quantity_text,image_url,sort_order&recipe_id=eq.\(encodedID)&order=sort_order.asc") else {
@@ -1638,7 +1683,7 @@ actor RecipeDetailService {
             cookMethod: recipe.cookMethodValues.first,
             ingredients: ingredients,
             steps: steps,
-            servingsCount: nil
+            servingsCount: recipe.servingsCount
         )
     }
 
@@ -1863,7 +1908,7 @@ actor RecipeVideoResolveService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 25
+        request.timeoutInterval = 10
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -1920,6 +1965,9 @@ struct SupabaseRecipeDetailRow: Decodable {
     let occasionTags: [String]?
     let mainProtein: String?
     let cookMethodValues: [String]
+    let ingredientsJSON: [RecipeDetailIngredient]?
+    let stepsJSON: [RecipeDetailStep]?
+    let servingsCount: Int?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -1962,6 +2010,9 @@ struct SupabaseRecipeDetailRow: Decodable {
         case occasionTags = "occasion_tags"
         case mainProtein = "main_protein"
         case cookMethodValues = "cook_method"
+        case ingredientsJSON = "ingredients_json"
+        case stepsJSON = "steps_json"
+        case servingsCount = "servings_count"
     }
 
     init(from decoder: Decoder) throws {
@@ -2008,6 +2059,82 @@ struct SupabaseRecipeDetailRow: Decodable {
         cookMethodValues = (try? container.decode([String].self, forKey: .cookMethodValues))
             ?? (try? container.decode(String.self, forKey: .cookMethodValues)).map { [$0] }
             ?? []
+        ingredientsJSON = try container.decodeIfPresent([RecipeDetailIngredient].self, forKey: .ingredientsJSON)
+        stepsJSON = try container.decodeIfPresent([RecipeDetailStep].self, forKey: .stepsJSON)
+        servingsCount = try container.decodeIfPresent(Int.self, forKey: .servingsCount)
+    }
+
+    func importedJSONDetail() -> RecipeDetailData? {
+        let ingredients = (ingredientsJSON ?? [])
+            .enumerated()
+            .map { index, ingredient in
+                RecipeDetailIngredient(
+                    id: ingredient.id ?? "import-ingredient-\(index + 1)",
+                    ingredientID: ingredient.ingredientID,
+                    displayName: ingredient.displayName,
+                    quantityText: ingredient.quantityText,
+                    imageURLString: ingredient.imageURLString,
+                    sortOrder: ingredient.sortOrder ?? index + 1
+                )
+            }
+        let steps = (stepsJSON ?? [])
+            .enumerated()
+            .map { index, step in
+                RecipeDetailStep(
+                    number: step.number > 0 ? step.number : index + 1,
+                    text: step.text,
+                    tipText: step.tipText,
+                    ingredientRefs: step.ingredientRefs,
+                    ingredients: step.ingredients
+                )
+            }
+        guard !ingredients.isEmpty || !steps.isEmpty else { return nil }
+
+        return RecipeDetailData(
+            id: id,
+            title: title,
+            description: description ?? "",
+            authorName: authorName,
+            authorHandle: authorHandle,
+            authorURLString: authorURLString,
+            source: source,
+            sourcePlatform: sourcePlatform,
+            category: category,
+            subcategory: subcategory,
+            recipeType: recipeType,
+            skillLevel: skillLevel,
+            cookTimeText: cookTimeText,
+            servingsText: servingsText,
+            servingSizeText: servingSizeText,
+            dailyDietText: dailyDietText,
+            estCostText: estCostText,
+            estCaloriesText: estCaloriesText,
+            carbsText: carbsText,
+            proteinText: proteinText,
+            fatsText: fatsText,
+            caloriesKcal: caloriesKcal,
+            proteinG: proteinG,
+            carbsG: carbsG,
+            fatG: fatG,
+            prepTimeMinutes: prepTimeMinutes,
+            cookTimeMinutes: cookTimeMinutes,
+            heroImageURLString: heroImageURLString,
+            discoverCardImageURLString: discoverCardImageURLString,
+            recipeURLString: recipeURLString,
+            originalRecipeURLString: originalRecipeURLString,
+            attachedVideoURLString: attachedVideoURLString,
+            detailFootnote: detailFootnote,
+            imageCaption: imageCaption,
+            dietaryTags: dietaryTags ?? [],
+            flavorTags: flavorTags ?? [],
+            cuisineTags: cuisineTags ?? [],
+            occasionTags: occasionTags ?? [],
+            mainProtein: mainProtein,
+            cookMethod: cookMethodValues.first,
+            ingredients: ingredients,
+            steps: steps,
+            servingsCount: servingsCount
+        )
     }
 }
 

@@ -7813,9 +7813,17 @@ export async function fetchRecipeIngestionJob(jobID) {
     throw new Error(`Ingestion job ${jobID} could not be found.`);
   }
 
-  const recipe = job.recipe_id ? await fetchRecipeCardProjection(job.recipe_id) : null;
+  const [recipe, recipeDetail] = job.recipe_id
+    ? await Promise.all([
+        fetchRecipeCardProjection(job.recipe_id).catch(() => null),
+        ["saved", "needs_review", "draft"].includes(normalizeText(job.status))
+          ? fetchCanonicalRecipeDetailByID(job.recipe_id).catch(() => null)
+          : Promise.resolve(null),
+      ])
+    : [null, null];
   return formatJobResponse(job, {
     recipe,
+    recipe_detail: recipeDetail,
   });
 }
 

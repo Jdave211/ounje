@@ -75,6 +75,7 @@ const DISCOVER_PRESET_SHELF_MAX = 240;
 const DISCOVER_BASE_PAGE_BUFFER = 12;
 const DISCOVER_BASE_PAGE_MIN = 24;
 const DISCOVER_BASE_PAGE_MAX = 84;
+const VIDEO_DIRECT_RESOLVE_TIMEOUT_MS = 8_000;
 
 class CappedMap extends Map {
   constructor(maxEntries = 100) {
@@ -7342,7 +7343,9 @@ async function resolveRecipeVideoURL(sourceURL) {
   };
 
   try {
-    const directVideo = await resolveDirectVideoURL(expandedSourceURL);
+    const directVideo = fallbackEmbed
+      ? await resolveDirectVideoURLWithTimeout(expandedSourceURL, VIDEO_DIRECT_RESOLVE_TIMEOUT_MS)
+      : await resolveDirectVideoURL(expandedSourceURL);
     if (directVideo) {
       resolved = directVideo;
     }
@@ -7355,6 +7358,18 @@ async function resolveRecipeVideoURL(sourceURL) {
     value: resolved,
   });
   return resolved;
+}
+
+async function resolveDirectVideoURLWithTimeout(sourceURL, timeoutMs) {
+  const directResolve = resolveDirectVideoURL(sourceURL);
+  directResolve.catch(() => {});
+
+  return Promise.race([
+    directResolve,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Direct video resolve timed out after ${timeoutMs}ms.`)), timeoutMs);
+    }),
+  ]);
 }
 
 async function expandCanonicalVideoSourceURL(sourceURL) {

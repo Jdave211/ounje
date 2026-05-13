@@ -126,20 +126,31 @@ struct RecipeDetailExperienceView: View {
         detail?.id ?? presentedRecipe.id
     }
 
+    private var isImportedRecipe: Bool {
+        recipeID.hasPrefix("uir_") || presentedRecipe.id.hasPrefix("uir_")
+    }
+
     @MainActor
     private func loadResolvedRecipeDetail() async {
         guard !isOnboardingDemo else { return }
         let session = await store.freshUserDataSession()
-        await viewModel.load(
+        let firstError = await viewModel.load(
             for: presentedRecipe.id,
             similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
-            accessToken: session?.accessToken
+            accessToken: session?.accessToken,
+            deferAuthorizationError: true
         )
 
-        guard let message = viewModel.errorMessage,
-              isRecipeDetailAuthorizationFailure(message),
-              let refreshedSession = await store.refreshAuthSessionAfterAuthorizationFailure()
-        else {
+        guard let message = firstError, isRecipeDetailAuthorizationFailure(message) else {
+            return
+        }
+
+        guard let refreshedSession = await store.refreshAuthSessionAfterAuthorizationFailure() else {
+            await viewModel.load(
+                for: presentedRecipe.id,
+                similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
+                accessToken: session?.accessToken
+            )
             return
         }
 
@@ -311,8 +322,13 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var videoSourceURL: URL? {
-        // Watch should only appear for recipes that explicitly have a DB video URL.
-        detail?.attachedVideoURL
+        if let attachedVideoURL = detail?.attachedVideoURL {
+            return attachedVideoURL
+        }
+
+        return [detail?.originalURL, presentedRecipe.recipeCard.destinationURL]
+            .compactMap { $0 }
+            .first(where: Self.isWatchableSocialVideoURL)
     }
 
     private var resolvedVideoURL: URL? {
@@ -321,6 +337,21 @@ struct RecipeDetailExperienceView: View {
 
     private var hasVideoSource: Bool {
         videoSourceURL != nil
+    }
+
+    private static func isWatchableSocialVideoURL(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        if host.contains("tiktok.com") {
+            return true
+        }
+        if host.contains("instagram.com") {
+            return path.contains("/reel/") || path.contains("/p/") || path.contains("/tv/")
+        }
+        if host == "youtu.be" || host.contains("youtube.com") || host.contains("youtube-nocookie.com") {
+            return path.contains("/shorts/") || path.contains("/watch") || host == "youtu.be"
+        }
+        return false
     }
 
     private var fallbackShareItems: [Any] {
@@ -528,10 +559,10 @@ struct RecipeDetailExperienceView: View {
         GeometryReader { geometry in
             let safeTop = geometry.safeAreaInsets.top
             let pageWidth = geometry.size.width
-            let heroSize = min(pageWidth * 0.9, 376)
+            let heroSize = min(pageWidth * (isImportedRecipe ? 0.78 : 0.9), isImportedRecipe ? 326 : 376)
             let heroTopCrop = heroSize * 0.16
-            let heroTopBleed = safeTop + 18
-            let heroHeight = max(198, heroSize - heroTopCrop + 18)
+            let heroTopBleed = safeTop + (isImportedRecipe ? -16 : 18)
+            let heroHeight = max(isImportedRecipe ? 216 : 198, heroSize - heroTopCrop + (isImportedRecipe ? 44 : 18))
             let topControlTop = max(safeTop + 26, 72)
             let videoButtonTop = topControlTop + 64
             let ingredientGrid = Self.ingredientGridSpec(for: pageWidth)
@@ -557,7 +588,10 @@ struct RecipeDetailExperienceView: View {
                                     .overlay(alignment: .topTrailing) {
                                         RecipeDetailHeroImage(candidates: imageCandidates)
                                             .frame(width: heroSize, height: heroSize)
-                                            .offset(x: heroSize * 0.09, y: -(heroTopCrop + heroTopBleed))
+                                            .offset(
+                                                x: heroSize * (isImportedRecipe ? 0.06 : 0.09),
+                                                y: -(heroTopCrop + heroTopBleed)
+                                            )
                                             .ignoresSafeArea(.container, edges: .top)
                                             .allowsHitTesting(false)
                                     }
@@ -956,7 +990,8 @@ struct RecipeDetailExperienceView: View {
                         }
                     )
                 } else {
-                    Color.black.ignoresSafeArea()
+                    RecipeVideoLoadingOverlay(label: "Loading video")
+                        .ignoresSafeArea()
                 }
             }
         }
@@ -1720,6 +1755,11 @@ struct RecipeInlineVideoCard: View {
     let player: AVPlayer?
     @Binding var webAction: RecipeWebVideoAction
     let onTap: () -> Void
+    @State private var showsLoadingOverlay = true
+
+    private var loadingSignature: String {
+        "\(video.mode.rawValue)|\(url.absoluteString)"
+    }
 
     var body: some View {
         ZStack {
@@ -1735,6 +1775,12 @@ struct RecipeInlineVideoCard: View {
             Color.clear
                 .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                 .onTapGesture(perform: onTap)
+
+            if showsLoadingOverlay {
+                RecipeVideoLoadingOverlay(label: "Loading video")
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: 168, height: 248)
         .clipped()
@@ -1749,6 +1795,46 @@ struct RecipeInlineVideoCard: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .shadow(color: .black.opacity(0.28), radius: 14, y: 8)
+        .task(id: loadingSignature) {
+            showsLoadingOverlay = true
+            if video.supportsNativePlayback, let player {
+                for _ in 0..<80 {
+                    guard !Task.isCancelled else { return }
+                    let itemStatus = player.currentItem?.status
+                    if itemStatus == .readyToPlay || itemStatus == .failed || player.timeControlStatus == .playing {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                }
+            } else {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                showsLoadingOverlay = false
+            }
+        }
+    }
+}
+
+struct RecipeVideoLoadingOverlay: View {
+    let label: String
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color.black.opacity(0.62))
+
+            VStack(spacing: 10) {
+                ProgressView()
+                    .tint(OunjePalette.softCream)
+                    .scaleEffect(0.9)
+
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+        }
     }
 }
 
@@ -1848,7 +1934,15 @@ struct RecipeFullscreenVideoExperience: View {
 enum RecipeVideoURLResolver {
     static func fallbackVideo(from source: URL) -> RecipeResolvedVideoData {
         let resolvedURL = inAppPlayableURL(from: source)
-        let mode: RecipeResolvedVideoData.PlaybackMode = supportsNativePlayback(resolvedURL ?? source) ? .native : .embed
+        let mode: RecipeResolvedVideoData.PlaybackMode = {
+            if supportsNativePlayback(resolvedURL ?? source) {
+                return .native
+            }
+            if usesIframeWrapper(source: source) {
+                return .iframe
+            }
+            return .embed
+        }()
         return RecipeResolvedVideoData(
             modeRawValue: mode.rawValue,
             provider: source.host,
@@ -1891,6 +1985,11 @@ enum RecipeVideoURLResolver {
         return ["mp4", "m4v", "mov", "m3u8"].contains(ext)
     }
 
+    private static func usesIframeWrapper(source: URL) -> Bool {
+        let host = source.host?.lowercased() ?? ""
+        return host.contains("tiktok.com") || host.contains("instagram.com")
+    }
+
     private static func instagramEmbedURL(from source: URL) -> URL? {
         let components = source.pathComponents.filter { $0 != "/" }
         let kinds = Set(["reel", "p", "tv"])
@@ -1913,7 +2012,7 @@ enum RecipeVideoURLResolver {
             return nil
         }
         let videoID = components[videoIndex + 1]
-        return URL(string: "https://www.tiktok.com/embed/v2/\(videoID)?autoplay=1")
+        return URL(string: "https://www.tiktok.com/player/v1/\(videoID)?controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=0&description=0&music_info=0&rel=0&native_context_menu=0&closed_caption=0&autoplay=1")
     }
 
     private static func youtubeEmbedURL(from source: URL) -> URL? {

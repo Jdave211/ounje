@@ -240,14 +240,23 @@ enum SupabaseUserDataRequest {
     static func message(from data: Data, statusCode: Int, fallback: String) -> String {
         let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
         let message = errorPayload?.message ?? errorPayload?.error ?? fallback
-        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if statusCode == 401 || statusCode == 403 ||
-            normalized.contains("permission denied") ||
-            normalized.contains("jwt") ||
-            normalized.contains("token is expired") {
+        if isAuthorizationFailure(statusCode: statusCode, message: message) {
             return SupabaseUserDataAccessError.requiresSignIn.localizedDescription
         }
         return message
+    }
+
+    static func isAuthorizationFailure(statusCode: Int? = nil, message: String) -> Bool {
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return statusCode == 401 || statusCode == 403 ||
+            normalized.contains("permission denied") ||
+            normalized.contains("authorization") ||
+            normalized.contains("session expired") ||
+            normalized.contains("sign in") ||
+            normalized.contains("jwt") ||
+            normalized.contains("token is expired") ||
+            normalized.contains("401") ||
+            normalized.contains("403")
     }
 }
 

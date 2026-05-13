@@ -142,6 +142,7 @@ final class MealPlanningAppStore: ObservableObject {
     private var lastTrackingAuthFailureAt: Date?
     private var lastTrackingAuthFailureUserID: String?
     private var authStateRevision = 0
+    private var authRefreshTask: Task<AuthSession?, Never>?
     private var cachedAuthenticatedEntryRoute: CachedAuthenticatedEntryRoute?
     private var hasPersistedOnboardingState = false
     // Set to true only when the server (or a completed onboarding flow) has positively
@@ -722,23 +723,33 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func refreshAuthSession(_ session: AuthSession) async -> AuthSession? {
+        if let authRefreshTask {
+            return await authRefreshTask.value
+        }
+
         let refreshToken = session.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !refreshToken.isEmpty else { return nil }
 
-        do {
-            let tokenResponse = try await SupabaseAuthSessionRefreshService.shared.refreshSession(refreshToken: refreshToken)
-            return AuthSession(
-                provider: session.provider,
-                userID: tokenResponse.userID,
-                email: tokenResponse.email ?? session.email,
-                displayName: tokenResponse.displayName ?? session.displayName,
-                signedInAt: session.signedInAt,
-                accessToken: tokenResponse.accessToken,
-                refreshToken: tokenResponse.refreshToken ?? session.refreshToken
-            )
-        } catch {
-            return nil
+        let task = Task<AuthSession?, Never> {
+            do {
+                let tokenResponse = try await SupabaseAuthSessionRefreshService.shared.refreshSession(refreshToken: refreshToken)
+                return AuthSession(
+                    provider: session.provider,
+                    userID: tokenResponse.userID,
+                    email: tokenResponse.email ?? session.email,
+                    displayName: tokenResponse.displayName ?? session.displayName,
+                    signedInAt: session.signedInAt,
+                    accessToken: tokenResponse.accessToken,
+                    refreshToken: tokenResponse.refreshToken ?? session.refreshToken
+                )
+            } catch {
+                return nil
+            }
         }
+        authRefreshTask = task
+        let refreshedSession = await task.value
+        authRefreshTask = nil
+        return refreshedSession
     }
 
     private func shouldRefreshAccessToken(_ token: String) -> Bool {
