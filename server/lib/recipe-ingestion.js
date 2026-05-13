@@ -60,6 +60,34 @@ const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
 const SHORT_VIDEO_TRANSCRIBE_MODEL = process.env.SHORT_VIDEO_TRANSCRIBE_MODEL ?? "gpt-4o-mini-transcribe";
 const MAX_SOCIAL_FRAME_COUNT = Math.max(2, Number.parseInt(process.env.RECIPE_INGESTION_MAX_SOCIAL_FRAMES ?? "4", 10) || 4);
+const SOCIAL_METADATA_TIMEOUT_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_METADATA_TIMEOUT_MS ?? "20000", 10) || 20_000
+);
+const SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS ?? "45000", 10) || 45_000
+);
+const SOCIAL_FETCH_TIMEOUT_MS = Math.max(
+  3_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FETCH_TIMEOUT_MS ?? "10000", 10) || 10_000
+);
+const SOCIAL_FRAME_PROBE_TIMEOUT_MS = Math.max(
+  2_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_PROBE_TIMEOUT_MS ?? "5000", 10) || 5_000
+);
+const SOCIAL_FRAME_EXTRACT_TIMEOUT_MS = Math.max(
+  3_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_EXTRACT_TIMEOUT_MS ?? "7000", 10) || 7_000
+);
+const SOCIAL_AUDIO_EXTRACT_TIMEOUT_MS = Math.max(
+  3_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_AUDIO_EXTRACT_TIMEOUT_MS ?? "10000", 10) || 10_000
+);
+const SOCIAL_OCR_FRAME_TIMEOUT_MS = Math.max(
+  3_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_OCR_FRAME_TIMEOUT_MS ?? "8000", 10) || 8_000
+);
 const RECIPE_SEARCH_MAX_LINKS = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_SEARCH_MAX_LINKS ?? "6", 10) || 6, 12));
 const RECIPE_EXTRACTION_MAX_IMAGE_INPUTS = Math.max(
   1,
@@ -84,6 +112,58 @@ const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, ser
 verifyAIUsageLoggingConfiguration({ service: "recipe-ingestion" });
 let ocrWorkerPromise = null;
 let recipeImageBucketReadyPromise = null;
+
+function withTimeout(promise, timeoutMs, label) {
+  let timeoutID;
+  const timeout = new Promise((_, reject) => {
+    timeoutID = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutID) clearTimeout(timeoutID);
+  });
+}
+
+function socialYTDLOptions(overrides = {}) {
+  return {
+    noWarnings: true,
+    noCallHome: true,
+    noCheckCertificates: true,
+    preferFreeFormats: true,
+    socketTimeout: 15,
+    retries: 1,
+    fragmentRetries: 1,
+    extractorRetries: 1,
+    ...overrides,
+  };
+}
+
+function ytdlExecOptions(timeoutMs) {
+  return {
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+  };
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = SOCIAL_FETCH_TIMEOUT_MS, label = "fetch") {
+  const controller = new AbortController();
+  const timeoutID = setTimeout(() => controller.abort(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal ?? controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutID);
+  }
+}
+
+async function execFileWithTimeout(command, args = [], timeoutMs = 10_000) {
+  return execFile(command, args, {
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+  });
+}
 
 // In-memory canonical URL cache — avoids a DB round-trip when the same URL
 // has already been imported in this process lifetime.
@@ -689,12 +769,12 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   if (!isTikTok) return normalized;
 
   try {
-    const response = await fetch(normalized, {
+    const response = await fetchWithTimeout(normalized, {
       redirect: "follow",
       headers: {
         "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       },
-    });
+    }, SOCIAL_FETCH_TIMEOUT_MS, "TikTok redirect resolve");
 
     const redirected = cleanURL(response.url ?? normalized);
     if (redirected && redirected !== normalized) {
@@ -705,14 +785,14 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   }
 
   try {
-    const info = await ytdl(normalized, {
-      dumpSingleJson: true,
-      skipDownload: true,
-      noWarnings: true,
-      noCallHome: true,
-      noCheckCertificates: true,
-      preferFreeFormats: true,
-    });
+    const info = await withTimeout(
+      ytdl(normalized, socialYTDLOptions({
+        dumpSingleJson: true,
+        skipDownload: true,
+      }), ytdlExecOptions(SOCIAL_METADATA_TIMEOUT_MS)),
+      SOCIAL_METADATA_TIMEOUT_MS,
+      "TikTok canonical metadata resolve"
+    );
 
     const resolved = cleanURL(info?.webpage_url ?? info?.original_url ?? info?.url ?? info?.webpage_url_basename ?? null);
     if (resolved) return resolved;
@@ -1084,7 +1164,11 @@ async function ocrFrameDataURLs(frameDataURLs = []) {
     for (const [index, dataURL] of frameDataURLs.entries()) {
       if (!dataURL) continue;
       try {
-        const recognition = await worker.recognize(dataURL);
+        const recognition = await withTimeout(
+          worker.recognize(dataURL),
+          SOCIAL_OCR_FRAME_TIMEOUT_MS,
+          `frame OCR ${index + 1}`
+        );
         const text = normalizeText(recognition?.data?.text ?? "");
         const confidence = Number(recognition?.data?.confidence);
         if (!text) continue;
@@ -1109,13 +1193,13 @@ async function imageURLsToDataURLs(imageURLs = [], limit = 4) {
   const results = [];
   for (const imageURL of normalizedURLs) {
     try {
-      const response = await fetch(imageURL, {
+      const response = await fetchWithTimeout(imageURL, {
         redirect: "follow",
         headers: {
           "user-agent": DEFAULT_USER_AGENT,
           accept: "image/*,*/*;q=0.8",
         },
-      });
+      }, SOCIAL_FETCH_TIMEOUT_MS, "image fetch");
       if (!response.ok) continue;
       const contentType = response.headers.get("content-type") ?? "image/jpeg";
       if (!contentType.toLowerCase().startsWith("image/")) continue;
@@ -4474,13 +4558,13 @@ function extractImageURLsFromHTML(html, baseURL) {
 }
 
 async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } = {}) {
-  const response = await fetch(sourceURL, {
+  const response = await fetchWithTimeout(sourceURL, {
     redirect: "follow",
     headers: {
       "user-agent": DEFAULT_USER_AGENT,
       accept: "text/html,application/xhtml+xml",
     },
-  });
+  }, SOCIAL_FETCH_TIMEOUT_MS, "web source fetch");
   const html = await response.text();
   if (!response.ok) {
     throw new Error(`Fetch fallback returned HTTP ${response.status} for ${sourceURL}`);
@@ -4726,6 +4810,15 @@ async function extractWebSource(sourceURL) {
   }
 }
 
+async function extractSocialPageSignals(sourceURL, platform) {
+  try {
+    return await extractWebSourceWithFetch(sourceURL, { playwrightError: new Error(`${platform} browser extraction skipped`) });
+  } catch (error) {
+    console.warn(`[recipe-ingestion] ${platform} page signals skipped:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 function pickSubtitleTrack(info) {
   const candidates = [];
   for (const sourceName of ["subtitles", "automatic_captions"]) {
@@ -4758,7 +4851,7 @@ function pickSubtitleTrack(info) {
 
 async function downloadTranscript(track) {
   if (!track?.url) return "";
-  const response = await fetch(track.url);
+  const response = await fetchWithTimeout(track.url, {}, SOCIAL_FETCH_TIMEOUT_MS, "subtitle fetch");
   const raw = await response.text();
   if (!response.ok) {
     return "";
@@ -4819,7 +4912,7 @@ function imageBufferFromDataURL(dataURL) {
 
 async function commandExists(command) {
   try {
-    await execFile("which", [command]);
+    await execFileWithTimeout("which", [command], 2_000);
     return true;
   } catch {
     return false;
@@ -4841,12 +4934,12 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
 
   let duration = 12;
   try {
-    const { stdout } = await execFile("ffprobe", [
+    const { stdout } = await execFileWithTimeout("ffprobe", [
       "-v", "error",
       "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1",
       videoPath,
-    ]);
+    ], SOCIAL_FRAME_PROBE_TIMEOUT_MS);
     const parsed = Number.parseFloat(String(stdout ?? "").trim());
     if (Number.isFinite(parsed) && parsed > 0) {
       duration = parsed;
@@ -4866,7 +4959,7 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
   try {
     for (const [index, seconds] of timestamps.entries()) {
       const outputPath = path.join(frameDir, `frame-${index + 1}.jpg`);
-      await execFile("ffmpeg", [
+      await execFileWithTimeout("ffmpeg", [
         "-y",
         "-ss", seconds.toFixed(2),
         "-i", videoPath,
@@ -4874,7 +4967,7 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
         "-vf", "scale='min(720,iw)':-2",
         "-q:v", "2",
         outputPath,
-      ]);
+      ], SOCIAL_FRAME_EXTRACT_TIMEOUT_MS);
       const buffer = await fsp.readFile(outputPath);
       frameDataURLs.push(toDataURL(buffer, "image/jpeg"));
     }
@@ -4894,22 +4987,26 @@ async function transcribeShortVideo(videoPath) {
 
   const audioPath = path.join(os.tmpdir(), `ounje-short-video-${nanoid(8)}.mp3`);
   try {
-    await execFile("ffmpeg", [
+    await execFileWithTimeout("ffmpeg", [
       "-y",
       "-i", videoPath,
       "-vn",
       "-ac", "1",
       "-ar", "16000",
       audioPath,
-    ]);
+    ], SOCIAL_AUDIO_EXTRACT_TIMEOUT_MS);
 
     const stat = await fsp.stat(audioPath).catch(() => null);
     if (!stat || stat.size === 0) return "";
 
-    const transcript = await withRecipeAIStage("recipe_import.short_video_transcription", () => openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model: SHORT_VIDEO_TRANSCRIBE_MODEL,
-    }));
+    const transcript = await withRecipeAIStage("recipe_import.short_video_transcription", () => withTimeout(
+      openai.audio.transcriptions.create({
+        file: fs.createReadStream(audioPath),
+        model: SHORT_VIDEO_TRANSCRIBE_MODEL,
+      }),
+      SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+      "short video transcription"
+    ));
     return normalizeText(transcript?.text ?? "");
   } catch {
     return "";
@@ -4921,14 +5018,15 @@ async function transcribeShortVideo(videoPath) {
 async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = null) {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), `ounje-${platform}-`));
   try {
-    await ytdl(sourceURL, {
-      output: path.join(tempDir, "asset.%(ext)s"),
-      format: "mp4/best",
-      mergeOutputFormat: "mp4",
-      noWarnings: true,
-      noCallHome: true,
-      preferFreeFormats: true,
-    });
+    await withTimeout(
+      ytdl(sourceURL, socialYTDLOptions({
+        output: path.join(tempDir, "asset.%(ext)s"),
+        format: "mp4/best",
+        mergeOutputFormat: "mp4",
+      }), ytdlExecOptions(SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS)),
+      SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+      `${platform} video download`
+    );
 
     const videoPath = await findDownloadedVideoPath(tempDir);
     if (!videoPath) {
@@ -4958,7 +5056,8 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
         uploader_id: metadata?.uploader_id ?? null,
       }),
     };
-  } catch {
+  } catch (error) {
+    console.warn(`[recipe-ingestion] ${platform} video download skipped:`, error instanceof Error ? error.message : error);
     return {
       transcript_text: "",
       frame_data_urls: [],
@@ -4971,13 +5070,14 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
 }
 
 async function extractYouTubeSource(sourceURL) {
-  const info = await ytdl(sourceURL, {
-    dumpSingleJson: true,
-    skipDownload: true,
-    noWarnings: true,
-    noCallHome: true,
-    preferFreeFormats: true,
-  });
+  const info = await withTimeout(
+    ytdl(sourceURL, socialYTDLOptions({
+      dumpSingleJson: true,
+      skipDownload: true,
+    }), ytdlExecOptions(SOCIAL_METADATA_TIMEOUT_MS)),
+    SOCIAL_METADATA_TIMEOUT_MS,
+    "youtube metadata resolve"
+  );
 
   const subtitleTrack = pickSubtitleTrack(info);
   const transcriptText = await downloadTranscript(subtitleTrack);
@@ -5074,27 +5174,25 @@ async function extractSocialSource(sourceURL, platform) {
   let metadata = null;
   let blocked = false;
   try {
-    metadata = await ytdl(sourceURL, {
-      dumpSingleJson: true,
-      skipDownload: true,
-      noWarnings: true,
-      noCallHome: true,
-      preferFreeFormats: true,
-    });
+    metadata = await withTimeout(
+      ytdl(sourceURL, socialYTDLOptions({
+        dumpSingleJson: true,
+        skipDownload: true,
+      }), ytdlExecOptions(SOCIAL_METADATA_TIMEOUT_MS)),
+      SOCIAL_METADATA_TIMEOUT_MS,
+      `${platform} metadata resolve`
+    );
   } catch (error) {
     blocked = true;
-  }
-
-  let pageSignals = null;
-  try {
-    pageSignals = await extractWebSource(sourceURL);
-  } catch {
-    // Social pages are frequently blocked; this is a best-effort path only.
+    console.warn(`[recipe-ingestion] ${platform} metadata skipped:`, error instanceof Error ? error.message : error);
   }
 
   const transcriptTrack = metadata ? pickSubtitleTrack(metadata) : null;
-  const transcriptText = await downloadTranscript(transcriptTrack);
-  const downloadedSignals = await enrichDownloadedShortVideoSource(sourceURL, platform, metadata);
+  const [pageSignals, transcriptText, downloadedSignals] = await Promise.all([
+    extractSocialPageSignals(sourceURL, platform),
+    downloadTranscript(transcriptTrack),
+    enrichDownloadedShortVideoSource(sourceURL, platform, metadata),
+  ]);
   const mediaMode = inferSocialMediaMode({
     downloadedVideo: downloadedSignals.downloaded_video,
     pageSignals,

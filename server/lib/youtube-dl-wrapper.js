@@ -1,7 +1,15 @@
 let cachedYoutubeDl = null;
 
-export async function runYoutubeDl(sourceURL, options = {}) {
+export async function runYoutubeDl(sourceURL, options = {}, execOptions = {}) {
   const youtubeDl = await loadYoutubeDl();
+  if (execOptions && Object.keys(execOptions).length > 0 && typeof youtubeDl.exec === "function") {
+    const result = await youtubeDl.exec(sourceURL, options, execOptions);
+    const stdout = String(result?.stdout ?? "").trim();
+    if (stdout.startsWith("{")) {
+      return JSON.parse(stdout);
+    }
+    return stdout;
+  }
   return youtubeDl(sourceURL, options);
 }
 

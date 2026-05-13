@@ -7420,6 +7420,9 @@ async function resolveDirectVideoURL(sourceURL) {
     skipDownload: true,
     preferFreeFormats: true,
     noCheckCertificates: true,
+  }, {
+    timeout: VIDEO_DIRECT_RESOLVE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
 
   const candidates = [
