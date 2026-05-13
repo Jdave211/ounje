@@ -359,20 +359,34 @@ final class MealPlanningAppStore: ObservableObject {
             return
         }
 
+        let previousEntitlement = membershipEntitlement
+
         // ── Phase 1: Local StoreKit scan (reads from device, no network) ──────────
-        // Reads the device's local transaction database (~1 s).  This is enough to
-        // unlock the paywall splash gate so the app is responsive even with no Wi-Fi.
+        // If StoreKit has an active transaction, use it immediately. If it does not,
+        // keep the splash up until the server confirms the state so active subscribers
+        // are not briefly thrown into the paywall on launch.
         let localSnapshot = try? await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: session.userID)
-        membershipEntitlement = localSnapshot
-        syncProfilePricingTierToEntitlement()
-        membershipEntitlementResolved = true   // ← UI gate unlocked; rendering can proceed
+        if let localSnapshot {
+            membershipEntitlement = localSnapshot
+            syncProfilePricingTierToEntitlement()
+            membershipEntitlementResolved = true
+        } else if previousEntitlement?.isActive == true {
+            membershipEntitlement = previousEntitlement
+            syncProfilePricingTierToEntitlement()
+            membershipEntitlementResolved = true
+        } else {
+            membershipEntitlement = nil
+            syncProfilePricingTierToEntitlement()
+            membershipEntitlementResolved = false
+        }
 
         // ── Phase 2: Server sync (best-effort, non-blocking for UI) ─────────────
         // Keep the server's entitlement record up to date and pull the authoritative
         // state back.  On no network the 20 s timeouts fire and we keep the local
         // StoreKit snapshot already applied above.
+        var syncedEntitlement: AppUserEntitlement?
         if let localSnapshot {
-            _ = try? await SupabaseEntitlementService.shared.syncCurrentEntitlement(
+            syncedEntitlement = try? await SupabaseEntitlementService.shared.syncCurrentEntitlement(
                 snapshot: localSnapshot,
                 userID: session.userID,
                 accessToken: session.accessToken
@@ -383,17 +397,24 @@ final class MealPlanningAppStore: ObservableObject {
                 userID: session.userID,
                 accessToken: session.accessToken
             )
-            if localSnapshot == nil,
-               remoteEntitlement?.source == .appStore {
-                membershipEntitlement = nil
-            } else {
+            if let remoteEntitlement {
                 membershipEntitlement = remoteEntitlement
+            } else if let syncedEntitlement {
+                membershipEntitlement = syncedEntitlement
+            } else {
+                membershipEntitlement = localSnapshot
             }
             syncProfilePricingTierToEntitlement()
             billingStatusMessage = nil
+            membershipEntitlementResolved = true
         } catch {
             // Server unreachable — keep the local StoreKit snapshot.
+            if localSnapshot == nil, previousEntitlement?.isActive != true {
+                membershipEntitlement = nil
+                syncProfilePricingTierToEntitlement()
+            }
             billingStatusMessage = "[\(trigger)] \(error.localizedDescription)"
+            membershipEntitlementResolved = true
         }
     }
 

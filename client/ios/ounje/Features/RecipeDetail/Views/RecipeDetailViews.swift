@@ -133,11 +133,12 @@ struct RecipeDetailExperienceView: View {
     @MainActor
     private func loadResolvedRecipeDetail() async {
         guard !isOnboardingDemo else { return }
-        let session = await store.freshUserDataSession()
+        let currentAccessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialAccessToken = currentAccessToken?.isEmpty == false ? currentAccessToken : nil
         let firstError = await viewModel.load(
             for: presentedRecipe.id,
             similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
-            accessToken: session?.accessToken,
+            accessToken: initialAccessToken,
             deferAuthorizationError: true
         )
 
@@ -149,7 +150,7 @@ struct RecipeDetailExperienceView: View {
             await viewModel.load(
                 for: presentedRecipe.id,
                 similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
-                accessToken: session?.accessToken
+                accessToken: initialAccessToken
             )
             return
         }

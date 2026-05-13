@@ -1584,7 +1584,7 @@ private struct MealPlannerShellView: View {
     @StateObject private var discoverRecipesViewModel = DiscoverRecipesViewModel()
     @StateObject private var discoverEnvironmentModel = DiscoverEnvironmentViewModel()
     @Namespace private var recipeTransitionNamespace
-    @State private var selectedTab: AppTab = .discover
+    @State private var selectedTab: AppTab
     @State private var discoverSearchText = ""
     @State private var cookbookSearchText = ""
     @State private var presentedRecipe: PresentedRecipeDetail?
@@ -1595,7 +1595,7 @@ private struct MealPlannerShellView: View {
     @State private var syncedCompletedImportIDs = Set<String>()
     @State private var prewarmedCompletedImportIDs = Set<String>()
     @State private var lastSharedImportRefreshAt = Date.distantPast
-    @State private var previousSelectedTab: AppTab = .discover
+    @State private var previousSelectedTab: AppTab
     @State private var tabTransitionDirection: CGFloat = 1
     @State private var requestedCookbookImportText: String?
     @State private var isPhotoImportComposerPresented = false
@@ -1608,9 +1608,31 @@ private struct MealPlannerShellView: View {
         case all
     }
 
+    private static func isTransientSharedImportNetworkError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+        return nsError.code == NSURLErrorTimedOut
+            || nsError.code == NSURLErrorNetworkConnectionLost
+            || nsError.code == NSURLErrorNotConnectedToInternet
+            || nsError.code == NSURLErrorCannotConnectToHost
+    }
+
+    private static let selectedTabStorageKey = "ounje-selected-tab-v1"
+
     init(toastCenter: AppToastCenter) {
+        let initialTab = Self.persistedSelectedTab()
         _toastCenter = ObservedObject(wrappedValue: toastCenter)
         _savedStore = StateObject(wrappedValue: SavedRecipesStore(toastCenter: toastCenter))
+        _selectedTab = State(initialValue: initialTab)
+        _previousSelectedTab = State(initialValue: initialTab)
+    }
+
+    private static func persistedSelectedTab() -> AppTab {
+        guard let rawValue = UserDefaults.standard.string(forKey: selectedTabStorageKey),
+              let tab = AppTab(rawValue: rawValue) else {
+            return .discover
+        }
+        return tab
     }
 
     var body: some View {
@@ -1806,6 +1828,7 @@ private struct MealPlannerShellView: View {
             let previousTab = previousSelectedTab
             tabTransitionDirection = newTab.motionIndex >= previousTab.motionIndex ? 1 : -1
             previousSelectedTab = newTab
+            UserDefaults.standard.set(newTab.rawValue, forKey: Self.selectedTabStorageKey)
             if newTab != .discover {
                 discoverSearchText = ""
             }
@@ -2197,14 +2220,14 @@ private struct MealPlannerShellView: View {
 
     private func prewarmCompletedImportDetails() async {
         let accessToken = await store.freshUserDataSession()?.accessToken
-        let recipeIDs = recipeImportHistory.completedItems.compactMap { item -> String? in
+        let recipeIDs = recipeImportHistory.completedItems.prefix(8).compactMap { item -> String? in
             guard let id = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
                 return nil
             }
             return id
         }
 
-        for recipeID in recipeIDs.reversed() {
+        for recipeID in recipeIDs {
             guard prewarmedCompletedImportIDs.insert(recipeID).inserted else { continue }
             Task(priority: .utility) {
                 _ = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
@@ -2431,10 +2454,10 @@ private struct MealPlannerShellView: View {
 
         for envelope in eligibleEnvelopes {
             var activeAttemptCount = envelope.attemptCount ?? 0
+            let previousJobID = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             do {
                 var processingEnvelope = envelope
-                let existingJobID = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let shouldPollExistingJob = !existingJobID.isEmpty
+                let shouldPollExistingJob = !previousJobID.isEmpty
                     && !envelope.isRetryNeeded
                 let nextAttemptCount = shouldPollExistingJob
                     ? (processingEnvelope.attemptCount ?? 0)
@@ -2461,7 +2484,7 @@ private struct MealPlannerShellView: View {
 
                 let response: RecipeImportResponse
                 if shouldPollExistingJob {
-                    response = try await RecipeImportAPIService.shared.fetchImportJob(jobID: existingJobID)
+                    response = try await RecipeImportAPIService.shared.fetchImportJob(jobID: previousJobID)
                 } else {
                     let attachments = try await sharedImportAttachmentPayloads(from: envelope.attachments)
                     response = try await RecipeImportAPIService.shared.importRecipe(
@@ -2607,6 +2630,9 @@ private struct MealPlannerShellView: View {
                 await sharedImportInbox.refresh()
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
             } catch {
+                let shouldKeepServerJobLive = !previousJobID.isEmpty
+                    && envelope.isLiveQueueState
+                    && Self.isTransientSharedImportNetworkError(error)
                 let errorMessage = (error as? RecipeImportServiceError).map {
                     switch $0 {
                     case .invalidRequest:
@@ -2627,7 +2653,7 @@ private struct MealPlannerShellView: View {
                     canonicalSourceURLString: envelope.canonicalSourceURLString,
                     sourceApp: envelope.sourceApp,
                     attachments: envelope.attachments,
-                    processingState: "failed",
+                    processingState: shouldKeepServerJobLive ? envelope.normalizedProcessingState : "failed",
                     attemptCount: max(activeAttemptCount, (envelope.attemptCount ?? 0) + 1),
                     lastAttemptAt: Date(),
                     lastError: errorMessage,
@@ -2636,12 +2662,14 @@ private struct MealPlannerShellView: View {
                 try? SharedRecipeImportInbox.update(failedEnvelope)
                 await sharedImportInbox.refresh()
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
-                toastCenter.show(
-                    title: "Couldn’t import share",
-                    subtitle: errorMessage,
-                    systemImage: "exclamationmark.circle.fill",
-                    destination: .recipeImportQueue(.failed)
-                )
+                if !shouldKeepServerJobLive {
+                    toastCenter.show(
+                        title: "Couldn’t import share",
+                        subtitle: errorMessage,
+                        systemImage: "exclamationmark.circle.fill",
+                        destination: .recipeImportQueue(.failed)
+                    )
+                }
             }
         }
     }

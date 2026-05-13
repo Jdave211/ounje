@@ -564,6 +564,27 @@ function cleanURL(raw) {
   }
 }
 
+function urlLookupVariants(...values) {
+  const variants = [];
+  for (const value of values) {
+    const cleaned = cleanURL(value);
+    if (!cleaned || !isProbablyURL(cleaned)) continue;
+    variants.push(cleaned);
+
+    try {
+      const url = new URL(cleaned);
+      if (!url.search && url.pathname && url.pathname !== "/") {
+        const originalPath = url.pathname;
+        url.pathname = originalPath.endsWith("/") ? originalPath.replace(/\/+$/, "") : `${originalPath}/`;
+        variants.push(url.toString());
+      }
+    } catch {
+      // Ignore malformed variants; cleanURL already returned the canonical candidate.
+    }
+  }
+  return uniqueStrings(variants).filter(Boolean);
+}
+
 function isRecipeImageStorageURL(raw) {
   const normalized = cleanURL(raw);
   if (!normalized || !SUPABASE_URL) return false;
@@ -2495,7 +2516,44 @@ async function findExistingJobForRequest(request, dedupeKey) {
   const existing = rows[0] ?? null;
   if (!existing) return null;
 
-  return existing.status === "failed" && !isResumableIngestionJob(existing) ? null : existing;
+  return normalizeText(existing.status).toLowerCase() === "failed" ? null : existing;
+}
+
+async function findExistingJobForRequestSource(request, dedupeKey = null) {
+  const candidateURLs = urlLookupVariants(
+    request.source_url,
+    request.canonical_url,
+  );
+  if (!candidateURLs.length && !dedupeKey) return null;
+
+  const sourceFilters = [];
+  for (const url of candidateURLs) {
+    sourceFilters.push(`source_url.eq.${encodeURIComponent(url)}`);
+    sourceFilters.push(`canonical_url.eq.${encodeURIComponent(url)}`);
+  }
+  if (dedupeKey) {
+    sourceFilters.push(`dedupe_key.eq.${encodeURIComponent(dedupeKey)}`);
+  }
+  if (!sourceFilters.length) return null;
+
+  const userFilter = request.user_id
+    ? `user_id=eq.${encodeURIComponent(request.user_id)}`
+    : "user_id=is.null";
+
+  const rows = await fetchRows(
+    "recipe_ingestion_jobs",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    {
+      filters: [
+        userFilter,
+        `or=(${sourceFilters.join(",")})`,
+      ],
+      order: ["completed_at.desc", "updated_at.desc", "created_at.desc"],
+      limit: 8,
+    }
+  );
+
+  return rows.find((row) => normalizeText(row.status).toLowerCase() !== "failed") ?? null;
 }
 
 async function findCompletedCanonicalImportForRequest(request, { canonicalURL = null, dedupeKey = null, excludeJobID = null } = {}) {
@@ -2517,11 +2575,11 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
     : "user_id=is.null";
 
   const sourceFilters = [];
-  const candidateURLs = uniqueStrings([
+  const candidateURLs = urlLookupVariants(
     cacheableURL,
-    cleanURL(request.canonical_url ?? null),
-    cleanURL(request.source_url ?? null),
-  ]).filter(Boolean);
+    request.canonical_url,
+    request.source_url,
+  );
   for (const url of candidateURLs) {
     sourceFilters.push(`canonical_url.eq.${encodeURIComponent(url)}`);
     sourceFilters.push(`source_url.eq.${encodeURIComponent(url)}`);
@@ -2578,11 +2636,11 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
     if (rows[0]) return rows[0];
   }
 
-  const candidateURLs = uniqueStrings([
-    cleanURL(canonicalURL ?? null),
-    cleanURL(request?.canonical_url ?? null),
-    cleanURL(request?.source_url ?? null),
-  ]).filter(Boolean);
+  const candidateURLs = urlLookupVariants(
+    canonicalURL,
+    request?.canonical_url,
+    request?.source_url,
+  );
   if (!candidateURLs.length) return null;
 
   for (const column of ["recipe_url", "original_recipe_url", "attached_video_url"]) {
@@ -2730,6 +2788,17 @@ async function createJobRow(request) {
   const existing = await findExistingJobForRequest(request, dedupeKey);
   if (existing) {
     return existing;
+  }
+
+  const existingForSource = await findExistingJobForRequestSource(request, dedupeKey);
+  if (existingForSource) {
+    _setCanonicalImportCache(
+      request.user_id,
+      existingForSource.canonical_url ?? existingForSource.source_url ?? request.source_url ?? null,
+      existingForSource.dedupe_key ?? dedupeKey ?? null,
+      existingForSource
+    );
+    return existingForSource;
   }
 
   const completedCanonical = await findCompletedCanonicalImportForRequest(request, {

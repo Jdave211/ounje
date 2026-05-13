@@ -1212,6 +1212,19 @@ actor RecipeDetailService {
             }
         }
 
+        if id.hasPrefix("uir_") {
+            let quantityResolved = resolvedIngredientQuantities(
+                ingredients: baseDetail.ingredients,
+                steps: baseDetail.steps
+            )
+            let immediateDetail = baseDetail.replacing(
+                ingredients: quantityResolved.ingredients,
+                steps: quantityResolved.steps
+            )
+            cache[immediateDetail.id] = immediateDetail
+            return immediateDetail
+        }
+
         let detail = await enrichCanonicalImages(in: baseDetail)
         cache[detail.id] = detail
         return detail

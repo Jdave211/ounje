@@ -10,10 +10,10 @@ WorkingDirectory=/opt/ounje
 Environment=NODE_ENV=production
 Environment=OUNJE_RUNTIME_ENV=production
 Environment=OUNJE_ENABLE_AI_CALL_LOGGING=true
-Environment=RECIPE_INGESTION_WORKER_CONCURRENCY=1
+Environment=RECIPE_INGESTION_WORKER_CONCURRENCY=2
 Environment=YOUTUBE_DL_BINARY=/usr/local/bin/yt-dlp
 EnvironmentFile=-/etc/ounje/ounje.env
-ExecStart=/usr/bin/env node /opt/ounje/server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 1 --idle-sleep-ms 4000
+ExecStart=/usr/bin/env node /opt/ounje/server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 2 --idle-sleep-ms 2000
 Restart=always
 RestartSec=5
 
