@@ -74,17 +74,24 @@ struct RootView: View {
                 // This prevents a brief flash of the planner before the paywall gate renders.
                 OunjeSplashLoaderView()
                     .id("membership-check-splash")
-            } else if OunjeLaunchFlags.paywallsEnabled && !store.hasActivePaidEntitlement {
-                // Hard paywall gate — user must subscribe before accessing the app.
-                OunjePaywallHostView(
-                    initialTier: .plus,
-                    isDismissible: false,
-                    onClose: { }
-                )
-                .id("subscription-gate")
             } else {
                 MealPlannerShellView(toastCenter: toastCenter)
                     .id("planner-shell")
+                    .overlay {
+                        if shouldShowMembershipRefreshGate {
+                            OunjeSplashLoaderView()
+                                .id("membership-refresh-gate")
+                                .transition(.opacity)
+                        } else if shouldShowSubscriptionGate {
+                            OunjePaywallHostView(
+                                initialTier: .plus,
+                                isDismissible: false,
+                                onClose: { }
+                            )
+                            .id("subscription-gate")
+                            .transition(.opacity)
+                        }
+                    }
             }
         }
         .overlay(alignment: .top) {
@@ -147,6 +154,20 @@ struct RootView: View {
                 try? await Task.sleep(nanoseconds: sleepInterval)
             }
         }
+    }
+
+    private var shouldShowSubscriptionGate: Bool {
+        OunjeLaunchFlags.paywallsEnabled
+            && store.membershipEntitlementResolved
+            && !store.isRefreshingMembershipEntitlement
+            && !store.hasActivePaidEntitlement
+    }
+
+    private var shouldShowMembershipRefreshGate: Bool {
+        OunjeLaunchFlags.paywallsEnabled
+            && store.membershipEntitlementResolved
+            && store.isRefreshingMembershipEntitlement
+            && !store.hasActivePaidEntitlement
     }
 
     @MainActor
@@ -1592,7 +1613,6 @@ private struct MealPlannerShellView: View {
     @State private var requestedCookbookCycleID: String?
     @State private var requestedImportQueueTab: SharedRecipeImportQueueTab?
     @State private var isProcessingSharedImports = false
-    @State private var syncedCompletedImportIDs = Set<String>()
     @State private var prewarmedCompletedImportIDs = Set<String>()
     @State private var lastSharedImportRefreshAt = Date.distantPast
     @State private var previousSelectedTab: AppTab
@@ -1727,7 +1747,6 @@ private struct MealPlannerShellView: View {
             }
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
-            syncedCompletedImportIDs.removeAll()
             prewarmedCompletedImportIDs.removeAll()
             await savedStore.refreshFromRemote(authSession: await savedRecipesSession(), force: true)
         }
@@ -1955,7 +1974,6 @@ private struct MealPlannerShellView: View {
                 await handleCompletedPreppedImport(response)
             }
         )
-        await syncCompletedImportsIntoSavedStore()
         await prewarmCompletedImportDetails()
     }
 
@@ -2105,9 +2123,6 @@ private struct MealPlannerShellView: View {
 
             NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
 
-            if let importedRecipe = response.recipe {
-                savedStore.saveImportedRecipe(importedRecipe, showToast: false, respectUnsave: true)
-            }
             if let detail = response.recipeDetail {
                 await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
             }
@@ -2204,17 +2219,6 @@ private struct MealPlannerShellView: View {
                 systemImage: "exclamationmark.circle.fill",
                 destination: nil
             )
-        }
-    }
-
-    @MainActor
-    private func syncCompletedImportsIntoSavedStore() async {
-        for item in recipeImportHistory.completedItems.reversed() {
-            guard syncedCompletedImportIDs.insert(item.id).inserted else { continue }
-            guard let savedRecipe = item.savedRecipeCard else { continue }
-            // respectUnsave: true so that background auto-sync never overrides an
-            // explicit unsave — recipes the user has tombstoned stay hidden.
-            savedStore.saveImportedRecipe(savedRecipe, showToast: false, respectUnsave: true)
         }
     }
 
@@ -2497,14 +2501,14 @@ private struct MealPlannerShellView: View {
                     )
                 }
 
-                if let importedRecipe = response.recipe {
-                    let isExplicitSavedImport = envelope.targetState
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .localizedCaseInsensitiveCompare("saved") == .orderedSame
+                let isSavedTarget = envelope.targetState
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .localizedCaseInsensitiveCompare("saved") == .orderedSame
+                if let importedRecipe = response.recipe, isSavedTarget {
                     savedStore.saveImportedRecipe(
                         importedRecipe,
                         showToast: false,
-                        respectUnsave: !isExplicitSavedImport
+                        respectUnsave: true
                     )
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
@@ -7395,11 +7399,11 @@ private struct DiscoverComposerSheet: View {
 
                 await MainActor.run {
                     let importedRecipe = response.recipe
-                    if let importedRecipe {
+                    if let importedRecipe, context == .saved {
                         savedStore.saveImportedRecipe(
                             importedRecipe,
                             showToast: context == .saved,
-                            respectUnsave: context != .saved
+                            respectUnsave: true
                         )
                     }
                 }

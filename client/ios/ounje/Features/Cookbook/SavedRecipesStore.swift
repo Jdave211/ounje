@@ -103,9 +103,8 @@ final class SavedRecipesStore: ObservableObject {
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
             )
-            let localRecipes = savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
             let filteredRemoteRecipes = remoteRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
-            savedRecipes = deduplicated(filteredRemoteRecipes + localRecipes)
+            savedRecipes = merge(local: savedRecipes, remote: filteredRemoteRecipes)
             persist()
             markRemoteSyncComplete(for: authSession.userID)
         } catch {
@@ -322,10 +321,14 @@ final class SavedRecipesStore: ObservableObject {
     }
 
     private func merge(local: [DiscoverRecipeCardData], remote: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
-        // Prefer the server's newest ordering first, then keep any local-only saves.
         let filteredRemote = remote.filter { !deletedSavedRecipeIDs.contains($0.id) }
         let filteredLocal = local.filter { !deletedSavedRecipeIDs.contains($0.id) }
-        return deduplicated(filteredRemote + filteredLocal)
+        let remoteIDs = Set(filteredRemote.map(\.id))
+        let localOnly = filteredLocal.filter { !remoteIDs.contains($0.id) }
+
+        // Local-only rows are unsynced or freshly saved on-device, so keep them
+        // ahead of the server list. The server list is already saved_at.desc.
+        return deduplicated(localOnly + filteredRemote + filteredLocal)
     }
 
     private func deduplicated(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {

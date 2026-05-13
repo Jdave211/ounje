@@ -34,6 +34,7 @@ import {
 } from "../../lib/discover-brackets.js";
 import { createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
 import { createOrReuseRecipeShareLink, resolveRecipeShareLink } from "../../lib/recipe-share-links.js";
+import { readRedisJSON, writeRedisJSON } from "../../lib/redis-cache.js";
 import { extractBearerToken, resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import {
   getRecipeAdaptationContract,
@@ -106,7 +107,11 @@ const prepRegenerationIntentCache = new CappedMap(80);
 const embeddingCache = new CappedMap(320);
 const recipeVideoResolveCache = new CappedMap(120);
 const recipeDetailCache = new CappedMap(400);
+const recipeImportJobCache = new CappedMap(240);
 const RECIPE_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+const RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS = 2 * 1000;
+const RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS = 60 * 1000;
+const RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
   searchResponse: searchResponseCache.size,
@@ -117,6 +122,7 @@ globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
   prepRegenerationIntent: prepRegenerationIntentCache.size,
   embedding: embeddingCache.size,
   recipeVideoResolve: recipeVideoResolveCache.size,
+  recipeImportJob: recipeImportJobCache.size,
 });
 
 function trimString(value) {
@@ -663,20 +669,26 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     }
 
     let accessToken = null;
+    let authorizedUserID = null;
     if (recipeId.startsWith("uir_")) {
       try {
-        ({ accessToken } = await resolveAuthorizedUserID(req));
+        ({ userID: authorizedUserID, accessToken } = await resolveAuthorizedUserID(req));
       } catch (error) {
         return sendAuthError(res, error, "recipe/detail");
       }
     }
 
-    // Cache public recipes (not user-imported) — they're the same for every user.
     const isPublic = !recipeId.startsWith("uir_");
-    if (isPublic) {
-      const cached = readTimedCache(recipeDetailCache, recipeId, RECIPE_DETAIL_CACHE_TTL_MS);
-      if (cached) return res.json(cached);
-    }
+    const detailCacheKey = isPublic
+      ? `public:${recipeId}`
+      : `user:${authorizedUserID}:${recipeId}`;
+    const cached = await readSharedTimedCache(
+      recipeDetailCache,
+      detailCacheKey,
+      RECIPE_DETAIL_CACHE_TTL_MS,
+      "recipe-detail"
+    );
+    if (cached) return res.json(cached);
 
     const recipe = await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
@@ -700,9 +712,13 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       }),
     };
 
-    if (isPublic) {
-      recipeDetailCache.set(recipeId, { value: payload, createdAt: Date.now() });
-    }
+    await writeSharedTimedCache(
+      recipeDetailCache,
+      detailCacheKey,
+      payload,
+      RECIPE_DETAIL_CACHE_TTL_MS,
+      "recipe-detail"
+    );
 
     return res.json(payload);
   } catch (error) {
@@ -1140,7 +1156,22 @@ recipe_router.get("/recipe/imports/completed", async (req, res) => {
 
 recipe_router.get("/recipe/imports/:id", async (req, res) => {
   try {
-    const result = await fetchRecipeIngestionJob(String(req.params.id ?? "").trim());
+    const jobID = String(req.params.id ?? "").trim();
+    const cached = await readSharedTimedCache(
+      recipeImportJobCache,
+      jobID,
+      RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS,
+      "recipe-import-job"
+    );
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const result = await fetchRecipeIngestionJob(jobID);
+    const ttlMs = isLiveImportStatus(result?.job?.status)
+      ? RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS
+      : RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS;
+    await writeSharedTimedCache(recipeImportJobCache, jobID, result, ttlMs, "recipe-import-job");
     return res.json(result);
   } catch (error) {
     return res.status(404).json({ error: error.message });
@@ -1153,7 +1184,12 @@ recipe_router.post("/recipe/imports/:id/process", async (req, res) => {
   }
 
   try {
-    const result = await processRecipeIngestionJob(String(req.params.id ?? "").trim());
+    const jobID = String(req.params.id ?? "").trim();
+    const result = await processRecipeIngestionJob(jobID);
+    const ttlMs = isLiveImportStatus(result?.job?.status)
+      ? RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS
+      : RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS;
+    writeSharedTimedCache(recipeImportJobCache, jobID, result, ttlMs, "recipe-import-job");
     return res.json(result);
   } catch (error) {
     console.error("[recipe/imports/process] failed:", error.message);
@@ -1209,7 +1245,12 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         offset: requestedOffset,
         profile,
       });
-      const cachedPayload = readTimedCache(searchResponseCache, searchCacheKey, SEARCH_RESPONSE_CACHE_TTL_MS);
+      const cachedPayload = await readSharedTimedCache(
+        searchResponseCache,
+        searchCacheKey,
+        SEARCH_RESPONSE_CACHE_TTL_MS,
+        "discover-search"
+      );
       if (cachedPayload) {
         return res.json(cachedPayload);
       }
@@ -1224,7 +1265,12 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         offset: requestedOffset,
       });
       if (!bypassDiscoverCache) {
-        const cachedPayload = readTimedCache(discoverFeedCache, feedCacheKey, DISCOVER_FEED_CACHE_TTL_MS);
+        const cachedPayload = await readSharedTimedCache(
+          discoverFeedCache,
+          feedCacheKey,
+          DISCOVER_FEED_CACHE_TTL_MS,
+          "discover-feed"
+        );
         if (cachedPayload) {
           return res.json(cachedPayload);
         }
@@ -1238,7 +1284,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
           offset: requestedOffset,
           forceRefresh: bypassDiscoverCache,
         });
-        discoverFeedCache.set(feedCacheKey, { value: payload, createdAt: Date.now() });
+        await writeSharedTimedCache(discoverFeedCache, feedCacheKey, payload, DISCOVER_FEED_CACHE_TTL_MS, "discover-feed");
         return res.json(payload);
       }
 
@@ -1258,7 +1304,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         filters: deriveDiscoverFilters(recipes),
         rankingMode,
       }, requestedOffset, requestedLimit);
-      discoverFeedCache.set(feedCacheKey, { value: payload, createdAt: Date.now() });
+      await writeSharedTimedCache(discoverFeedCache, feedCacheKey, payload, DISCOVER_FEED_CACHE_TTL_MS, "discover-feed");
       return res.json(payload);
     }
 
@@ -1416,7 +1462,8 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         requestedWindowLimit,
       });
       if (!bypassDiscoverCache) {
-        searchResponseCache.set(
+        await writeSharedTimedCache(
+          searchResponseCache,
           buildDiscoverSearchCacheKey({
             query: trimmedQuery,
             filter,
@@ -1424,7 +1471,9 @@ recipe_router.post("/recipe/discover", async (req, res) => {
             offset: requestedOffset,
             profile,
           }),
-          { value: fallbackPayload, createdAt: Date.now() }
+          fallbackPayload,
+          SEARCH_RESPONSE_CACHE_TTL_MS,
+          "discover-search"
         );
       }
       return res.json(fallbackPayload);
@@ -1438,7 +1487,8 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         : "fast_hybrid_search_embeddings",
     }, requestedOffset, requestedLimit);
     if (!bypassDiscoverCache) {
-      searchResponseCache.set(
+      await writeSharedTimedCache(
+        searchResponseCache,
         buildDiscoverSearchCacheKey({
           query: trimmedQuery,
           filter,
@@ -1446,7 +1496,9 @@ recipe_router.post("/recipe/discover", async (req, res) => {
           offset: requestedOffset,
           profile,
         }),
-        { value: payload, createdAt: Date.now() }
+        payload,
+        SEARCH_RESPONSE_CACHE_TTL_MS,
+        "discover-search"
       );
     }
     return res.json(payload);
@@ -3485,7 +3537,7 @@ async function inferDiscoverIntentWithLLM({ profile, filter, query }) {
     query: String(query ?? "").trim().toLowerCase(),
     profile: summarizeProfileForIntent(profile),
   });
-  const cached = readTimedCache(discoverIntentCache, cacheKey, INTENT_CACHE_TTL_MS);
+  const cached = await readSharedTimedCache(discoverIntentCache, cacheKey, INTENT_CACHE_TTL_MS, "discover-intent");
   if (cached) return cached;
 
   try {
@@ -3520,7 +3572,7 @@ async function inferDiscoverIntentWithLLM({ profile, filter, query }) {
     const content = completion.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) return null;
     const normalized = normalizeDiscoverIntent(JSON.parse(content));
-    discoverIntentCache.set(cacheKey, { value: normalized, createdAt: Date.now() });
+    await writeSharedTimedCache(discoverIntentCache, cacheKey, normalized, INTENT_CACHE_TTL_MS, "discover-intent");
     return normalized;
   } catch (error) {
     console.warn("[recipe/discover] intent inference failed:", error.message);
@@ -5774,6 +5826,33 @@ function readTimedCache(cache, key, ttlMs) {
   return entry.value;
 }
 
+function redisCacheKey(namespace, key) {
+  const digest = crypto.createHash("sha256").update(String(key ?? "")).digest("hex");
+  return `ounje:${namespace}:${digest}`;
+}
+
+async function readSharedTimedCache(cache, key, ttlMs, namespace) {
+  const cached = readTimedCache(cache, key, ttlMs);
+  if (cached) return cached;
+
+  const redisValue = await readRedisJSON(redisCacheKey(namespace, key));
+  if (redisValue == null) return null;
+
+  cache.set(key, { value: redisValue, createdAt: Date.now() });
+  return redisValue;
+}
+
+function writeSharedTimedCache(cache, key, value, ttlMs, namespace) {
+  cache.set(key, { value, createdAt: Date.now() });
+  void writeRedisJSON(redisCacheKey(namespace, key), value, Math.ceil(ttlMs / 1000));
+}
+
+function isLiveImportStatus(status) {
+  return ["queued", "processing", "fetching", "parsing", "normalized"].includes(
+    String(status ?? "").trim().toLowerCase()
+  );
+}
+
 function pageDiscoverResults(payload, offset = 0, limit = 30) {
   const recipes = Array.isArray(payload?.recipes) ? payload.recipes : [];
   const safeOffset = Number.isFinite(Number(offset)) ? Math.max(0, Number(offset)) : 0;
@@ -7324,12 +7403,17 @@ async function resolveRecipeVideoURL(sourceURL) {
     throw new Error("Recipe video URL is empty.");
   }
 
-  const expandedSourceURL = await expandCanonicalVideoSourceURL(normalizedSourceURL);
-
-  const cached = recipeVideoResolveCache.get(normalizedSourceURL);
-  if (cached && Date.now() - cached.timestamp < 1000 * 60 * 60 * 6) {
-    return cached.value;
+  const cached = await readSharedTimedCache(
+    recipeVideoResolveCache,
+    normalizedSourceURL,
+    RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS,
+    "recipe-video-resolve"
+  );
+  if (cached) {
+    return cached;
   }
+
+  const expandedSourceURL = await expandCanonicalVideoSourceURL(normalizedSourceURL);
 
   const iframeFallback = await buildHostedIframeFallback(expandedSourceURL);
   const fallbackEmbed = iframeFallback ?? buildVideoEmbedFallback(expandedSourceURL);
@@ -7353,10 +7437,13 @@ async function resolveRecipeVideoURL(sourceURL) {
     console.warn("[recipe/video/resolve] direct resolve failed", expandedSourceURL, error instanceof Error ? error.message : error);
   }
 
-  recipeVideoResolveCache.set(normalizedSourceURL, {
-    timestamp: Date.now(),
-    value: resolved,
-  });
+  await writeSharedTimedCache(
+    recipeVideoResolveCache,
+    normalizedSourceURL,
+    resolved,
+    RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS,
+    "recipe-video-resolve"
+  );
   return resolved;
 }
 

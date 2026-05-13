@@ -235,7 +235,9 @@ struct OunjePaywallHostView: View {
         .preferredColorScheme(.dark)
         .interactiveDismissDisabled(!isDismissible)
         .task {
-            await store.refreshMembershipEntitlement(trigger: "paywall-presented")
+            if !store.membershipEntitlementResolved {
+                await store.refreshMembershipEntitlement(trigger: "paywall-presented")
+            }
             if store.membershipEntitlement?.isActive == true {
                 handleUnlockSuccess()
             }

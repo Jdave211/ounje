@@ -90,6 +90,7 @@ final class MealPlanningAppStore: ObservableObject {
     /// True after the first `refreshMembershipEntitlement` call completes (success or failure).
     /// Used to hold the paywall gate splash until entitlement is confirmed.
     @Published private(set) var membershipEntitlementResolved: Bool = false
+    @Published private(set) var isRefreshingMembershipEntitlement: Bool = false
     @Published var manualInstacartRerunQueuedAt: Date?
     @Published var isManualAutoshopRunning = false
     @Published var manualAutoshopErrorMessage: String?
@@ -336,6 +337,10 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func refreshMembershipEntitlement(trigger: String) async {
+        guard !isRefreshingMembershipEntitlement else { return }
+        isRefreshingMembershipEntitlement = true
+        defer { isRefreshingMembershipEntitlement = false }
+
         guard OunjeLaunchFlags.paywallsEnabled else {
             availableMembershipProducts = [:]
             membershipEntitlement = nil
@@ -343,13 +348,6 @@ final class MealPlanningAppStore: ObservableObject {
             syncProfilePricingTierToEntitlement()
             membershipEntitlementResolved = true
             return
-        }
-
-        // Products needed for paywall price display — fetch eagerly but non-fatally.
-        do {
-            availableMembershipProducts = try await StoreKitMembershipBillingService.shared.fetchProductsByPlan()
-        } catch {
-            billingStatusMessage = error.localizedDescription
         }
 
         guard let session = await freshTrackingSession() else {
@@ -377,7 +375,9 @@ final class MealPlanningAppStore: ObservableObject {
         } else {
             membershipEntitlement = nil
             syncProfilePricingTierToEntitlement()
-            membershipEntitlementResolved = false
+            if !membershipEntitlementResolved {
+                membershipEntitlementResolved = false
+            }
         }
 
         // ── Phase 2: Server sync (best-effort, non-blocking for UI) ─────────────
@@ -397,7 +397,9 @@ final class MealPlanningAppStore: ObservableObject {
                 userID: session.userID,
                 accessToken: session.accessToken
             )
-            if let remoteEntitlement {
+            if localSnapshot?.isActive == true {
+                membershipEntitlement = syncedEntitlement?.isActive == true ? syncedEntitlement : localSnapshot
+            } else if let remoteEntitlement {
                 membershipEntitlement = remoteEntitlement
             } else if let syncedEntitlement {
                 membershipEntitlement = syncedEntitlement
@@ -415,6 +417,18 @@ final class MealPlanningAppStore: ObservableObject {
             }
             billingStatusMessage = "[\(trigger)] \(error.localizedDescription)"
             membershipEntitlementResolved = true
+        }
+
+        isRefreshingMembershipEntitlement = false
+
+        // Products are for paywall display only. Do not block entitlement gating
+        // behind App Store product lookup.
+        do {
+            availableMembershipProducts = try await StoreKitMembershipBillingService.shared.fetchProductsByPlan()
+        } catch {
+            if billingStatusMessage == nil {
+                billingStatusMessage = error.localizedDescription
+            }
         }
     }
 

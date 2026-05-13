@@ -17,6 +17,7 @@ import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
+import { readRedisJSON, writeRedisJSON } from "./redis-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
 
 import {
@@ -178,26 +179,38 @@ function _canonicalImportCacheKey(userID, canonicalURL, dedupeKey) {
   return null;
 }
 
+function _canonicalImportRedisCacheKey(key) {
+  if (!key) return null;
+  const digest = crypto.createHash("sha256").update(String(key)).digest("hex");
+  return `ounje:canonical-import:${digest}`;
+}
+
 function _setCanonicalImportCache(userID, canonicalURL, dedupeKey, job) {
   const key = _canonicalImportCacheKey(userID, canonicalURL, dedupeKey);
   if (!key || !job) return;
   _canonicalImportCache.delete(key); // refresh insertion order for LRU
   _canonicalImportCache.set(key, { job, cachedAt: Date.now() });
+  void writeRedisJSON(_canonicalImportRedisCacheKey(key), job, Math.ceil(CANONICAL_IMPORT_CACHE_TTL_MS / 1000));
   if (_canonicalImportCache.size > CANONICAL_IMPORT_CACHE_MAX) {
     _canonicalImportCache.delete(_canonicalImportCache.keys().next().value);
   }
 }
 
-function _getCanonicalImportCache(userID, canonicalURL, dedupeKey) {
+async function _getCanonicalImportCache(userID, canonicalURL, dedupeKey) {
   const key = _canonicalImportCacheKey(userID, canonicalURL, dedupeKey);
   if (!key) return null;
   const entry = _canonicalImportCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.cachedAt > CANONICAL_IMPORT_CACHE_TTL_MS) {
+  if (entry) {
+    if (Date.now() - entry.cachedAt <= CANONICAL_IMPORT_CACHE_TTL_MS) {
+      return entry.job;
+    }
     _canonicalImportCache.delete(key);
-    return null;
   }
-  return entry.job;
+
+  const redisJob = await readRedisJSON(_canonicalImportRedisCacheKey(key));
+  if (!redisJob) return null;
+  _canonicalImportCache.set(key, { job: redisJob, cachedAt: Date.now() });
+  return redisJob;
 }
 
 function withRecipeAIStage(operation, fn) {
@@ -2567,7 +2580,7 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
   if (!isCanonicalCacheableSource(request.source_type, cacheableURL ?? request.source_url)) return null;
 
   // Fast path: in-memory cache hit (avoids DB round-trip for repeated URLs).
-  const memCached = _getCanonicalImportCache(request.user_id, cacheableURL, cacheDedupeKey);
+  const memCached = await _getCanonicalImportCache(request.user_id, cacheableURL, cacheDedupeKey);
   if (memCached && (!excludeJobID || memCached.id !== excludeJobID)) return memCached;
 
   const userFilter = request.user_id
@@ -4385,11 +4398,12 @@ async function persistNormalizedRecipe(
         id: recipeID,
       };
 
-  if (userID && ["saved", "prepped"].includes(String(targetState ?? "").trim())) {
+  if (userID && String(targetState ?? "").trim() === "saved") {
     await upsertSavedRecipeForUser(userID, recipeDetail);
-    if (targetState === "prepped") {
-      await upsertPrepOverrideForUser(userID, recipeDetail);
-    }
+  }
+
+  if (userID && String(targetState ?? "").trim() === "prepped") {
+    await upsertPrepOverrideForUser(userID, recipeDetail);
   }
 
   return {

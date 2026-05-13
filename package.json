@@ -46,6 +46,7 @@
     "nanoid": "^5.0.7",
     "openai": "^4.24.1",
     "playwright": "^1.59.1",
+    "redis": "^5.12.1",
     "tesseract.js": "^7.0.0"
   },
   "nodemonConfig": {

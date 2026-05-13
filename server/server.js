@@ -12,6 +12,7 @@ import api_router from "./api/index.js";
 import { runRecipeIngestionWorkerBatch } from "./lib/recipe-ingestion.js";
 import { startRecipeFineTunePolling } from "./lib/recipe-model-registry.js";
 import { withAIUsageContext } from "./lib/openai-usage-logger.js";
+import { checkRedisHealth } from "./lib/redis-cache.js";
 import { renderRecipeSharePage, resolveRecipeShareLink } from "./lib/recipe-share-links.js";
 
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
@@ -255,13 +256,20 @@ app.get("/healthz", async (req, res) => {
       throw error;
     }
 
+    const redis = await checkRedisHealth();
+    const responseStatus = redis.configured && redis.status !== "ok"
+      ? "ready_degraded"
+      : "ready";
+
     return res.json({
       ok: true,
       service: "ounje-api",
-      status: "ready",
+      status: responseStatus,
       dependencies: {
         supabase: "ok",
+        redis: redis.status,
       },
+      redis,
       checkedAt: new Date().toISOString(),
     });
   } catch (error) {
