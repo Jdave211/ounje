@@ -34,7 +34,8 @@ import {
 } from "../../lib/discover-brackets.js";
 import { createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
 import { createOrReuseRecipeShareLink, resolveRecipeShareLink } from "../../lib/recipe-share-links.js";
-import { readRedisJSON, writeRedisJSON } from "../../lib/redis-cache.js";
+import { acquireRedisLock, readRedisJSON, releaseRedisLock, writeRedisJSON } from "../../lib/redis-cache.js";
+import { createRateLimit } from "../../lib/rate-limit.js";
 import { extractBearerToken, resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import {
   getRecipeAdaptationContract,
@@ -110,6 +111,25 @@ function assertRecipeImportBelongsToUser(result, userID) {
 }
 
 const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-api" }) : null;
+
+// Rate limits on the most expensive recipe endpoints. Numbers are per-user
+// where x-user-id is present (default for the iOS app — set by the AI usage
+// context middleware in server.js), else fall back to per-IP hashing. All can
+// be disabled at deploy time via RATE_LIMIT_DISABLED=1. Tuned so legitimate
+// interactive use is comfortably under the cap while a runaway retry loop or
+// abusive client is throttled before it can burn meaningful OpenAI / DB
+// budget.
+//
+// To raise/lower without a deploy, the per-route window/max can be overridden
+// via env vars at the call site if desired. For now the values are static.
+const discoverRateLimit = createRateLimit({ name: "recipe-discover", windowSeconds: 60, max: 40 });
+const prepCandidatesRateLimit = createRateLimit({ name: "recipe-prep-candidates", windowSeconds: 60, max: 12 });
+const adaptRateLimit = createRateLimit({ name: "recipe-adapt", windowSeconds: 60, max: 15 });
+const shapeRateLimit = createRateLimit({ name: "recipe-shape", windowSeconds: 60, max: 20 });
+const videoResolveRateLimit = createRateLimit({ name: "recipe-video-resolve", windowSeconds: 60, max: 8 });
+const recipeImportRateLimit = createRateLimit({ name: "recipe-import-enqueue", windowSeconds: 60, max: 20 });
+const enrichRateLimit = createRateLimit({ name: "recipe-enrich", windowSeconds: 60, max: 10 });
+const modelStatusRateLimit = createRateLimit({ name: "recipe-model-status", windowSeconds: 60, max: 10 });
 
 const SEARCH_RESPONSE_CACHE_TTL_MS = 10 * 60 * 1000;
 const DISCOVER_FEED_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -693,7 +713,7 @@ Rules:
 - replace_recipe_ids are recipes to rotate away from.
 - Return only valid JSON matching the schema.`;
 
-recipe_router.get("/recipe/model-status", async (req, res) => {
+recipe_router.get("/recipe/model-status", modelStatusRateLimit, async (req, res) => {
   const registry = await refreshRecipeFineTuneStatus();
   return res.json({
     fine_tune: {
@@ -1201,7 +1221,7 @@ recipe_router.post("/recipe/import-media/photo-pair", async (req, res) => {
   }
 });
 
-recipe_router.post("/recipe/imports", async (req, res) => {
+recipe_router.post("/recipe/imports", recipeImportRateLimit, async (req, res) => {
   try {
     const body = req.body ?? {};
     let auth = null;
@@ -1302,7 +1322,7 @@ recipe_router.post("/recipe/imports/:id/process", async (req, res) => {
   }
 });
 
-recipe_router.get("/recipe/video/resolve", async (req, res) => {
+recipe_router.get("/recipe/video/resolve", videoResolveRateLimit, async (req, res) => {
   const rawURL = String(req.query.url ?? "").trim();
 
   if (!rawURL) {
@@ -1319,7 +1339,7 @@ recipe_router.get("/recipe/video/resolve", async (req, res) => {
   }
 });
 
-recipe_router.post("/recipe/discover", async (req, res) => {
+recipe_router.post("/recipe/discover", discoverRateLimit, async (req, res) => {
   const {
     profile = null,
     filter = "All",
@@ -1369,48 +1389,50 @@ recipe_router.post("/recipe/discover", async (req, res) => {
         limit: requestedLimit,
         offset: requestedOffset,
       });
+
+      const computeDiscoverFeedPayload = async () => {
+        if (!isBaseDiscover) {
+          return buildPresetDiscoverPayload({
+            filter,
+            feedContext,
+            limit: requestedLimit,
+            offset: requestedOffset,
+            forceRefresh: bypassDiscoverCache,
+          });
+        }
+
+        const baseShelfLimit = Math.min(
+          DISCOVER_BASE_PAGE_MAX,
+          Math.max(requestedWindowLimit + DISCOVER_BASE_PAGE_BUFFER, DISCOVER_BASE_PAGE_MIN)
+        );
+        const { recipes, rankingMode } = await buildFastBaseDiscoverRecipes({
+          profile,
+          filter,
+          feedContext,
+          limit: baseShelfLimit,
+          forceRefresh: bypassDiscoverCache,
+        });
+
+        return pageDiscoverResults({
+          recipes,
+          filters: deriveDiscoverFilters(recipes),
+          rankingMode,
+        }, requestedOffset, requestedLimit);
+      };
+
       if (!bypassDiscoverCache) {
-        const cachedPayload = await readSharedTimedCache(
+        const { value: payload } = await computeWithSharedTimedCache(
           discoverFeedCache,
           feedCacheKey,
           DISCOVER_FEED_CACHE_TTL_MS,
-          "discover-feed"
+          "discover-feed",
+          computeDiscoverFeedPayload,
+          { lockSeconds: 90, waitMs: 8_000, pollMs: 150 }
         );
-        if (cachedPayload) {
-          return res.json(cachedPayload);
-        }
-      }
-
-      if (!isBaseDiscover) {
-        const payload = await buildPresetDiscoverPayload({
-          filter,
-          feedContext,
-          limit: requestedLimit,
-          offset: requestedOffset,
-          forceRefresh: bypassDiscoverCache,
-        });
-        await writeSharedTimedCache(discoverFeedCache, feedCacheKey, payload, DISCOVER_FEED_CACHE_TTL_MS, "discover-feed");
         return res.json(payload);
       }
 
-      const baseShelfLimit = Math.min(
-        DISCOVER_BASE_PAGE_MAX,
-        Math.max(requestedWindowLimit + DISCOVER_BASE_PAGE_BUFFER, DISCOVER_BASE_PAGE_MIN)
-      );
-      const { recipes, rankingMode } = await buildFastBaseDiscoverRecipes({
-        profile,
-        filter,
-        feedContext,
-        limit: baseShelfLimit,
-        forceRefresh: bypassDiscoverCache,
-      });
-
-      const payload = pageDiscoverResults({
-        recipes,
-        filters: deriveDiscoverFilters(recipes),
-        rankingMode,
-      }, requestedOffset, requestedLimit);
-      await writeSharedTimedCache(discoverFeedCache, feedCacheKey, payload, DISCOVER_FEED_CACHE_TTL_MS, "discover-feed");
+      const payload = await computeDiscoverFeedPayload();
       return res.json(payload);
     }
 
@@ -1650,7 +1672,7 @@ recipe_router.post("/recipe/discover", async (req, res) => {
   }
 });
 
-recipe_router.post("/recipe/prep-candidates", async (req, res) => {
+recipe_router.post("/recipe/prep-candidates", prepCandidatesRateLimit, async (req, res) => {
   const {
     profile = null,
     limit = 72,
@@ -3424,7 +3446,7 @@ recipe_router.get("/recipe/adapt/history", async (req, res) => {
   }
 });
 
-recipe_router.post("/recipe/adapt", async (req, res) => {
+recipe_router.post("/recipe/adapt", adaptRateLimit, async (req, res) => {
   const {
     recipe_id: recipeId = "",
     recipe = null,
@@ -3553,7 +3575,7 @@ recipe_router.post("/recipe/adapt", async (req, res) => {
   }
 });
 
-recipe_router.post("/recipe/shape", async (req, res) => {
+recipe_router.post("/recipe/shape", shapeRateLimit, async (req, res) => {
   const {
     title = "",
     summary = "",
@@ -6037,6 +6059,89 @@ function writeSharedTimedCache(cache, key, value, ttlMs, namespace) {
   void writeRedisJSON(redisCacheKey(namespace, key), value, Math.ceil(ttlMs / 1000));
 }
 
+/**
+ * Single-flight + per-process + per-cluster wrapper for the shared timed cache.
+ * Use for expensive miss paths (discover feed, embedding fan-out, pool builds)
+ * where N concurrent misses on a cold key would otherwise all redo the same
+ * work in parallel ("cache stampede").
+ *
+ * Behavior:
+ *  1) Local cache hit  -> return immediately (no compute, no Redis call).
+ *  2) Redis cache hit  -> warm local cache, return value.
+ *  3) In-flight local computation for the same key -> wait for it.
+ *  4) Try to acquire a cluster-wide Redis lock; leader runs compute() and writes.
+ *  5) Followers poll Redis briefly for the leader's fill; fall back to local
+ *     compute only if the leader never fills within the wait window.
+ *
+ * Failures in Redis (unavailable / timeout) fall back to local compute so the
+ * caller always gets a value.
+ */
+async function computeWithSharedTimedCache(cache, key, ttlMs, namespace, compute, {
+  lockSeconds = 15,
+  waitMs = 2_000,
+  pollMs = 120,
+} = {}) {
+  const cachedLocal = readTimedCache(cache, key, ttlMs);
+  if (cachedLocal !== null && cachedLocal !== undefined) {
+    return { value: cachedLocal, hit: "memory" };
+  }
+
+  const redisKey = redisCacheKey(namespace, key);
+  const cachedRedis = await readRedisJSON(redisKey);
+  if (cachedRedis !== null && cachedRedis !== undefined) {
+    cache.set(key, { value: cachedRedis, createdAt: Date.now() });
+    return { value: cachedRedis, hit: "redis" };
+  }
+
+  if (!singleFlightInFlight) {
+    singleFlightInFlight = new Map();
+  }
+  const inflightKey = `${namespace}:${key}`;
+  const inflight = singleFlightInFlight.get(inflightKey);
+  if (inflight) {
+    const value = await inflight;
+    return { value, hit: "inflight" };
+  }
+
+  const lockKey = `${redisKey}:lock`;
+  const lockToken = await acquireRedisLock(lockKey, lockSeconds);
+
+  const runWork = async () => {
+    if (!lockToken) {
+      const deadline = Date.now() + waitMs;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+        const filled = await readRedisJSON(redisKey);
+        if (filled !== null && filled !== undefined) {
+          cache.set(key, { value: filled, createdAt: Date.now() });
+          return { value: filled, hit: "waited" };
+        }
+      }
+    }
+
+    try {
+      const value = await compute();
+      if (value !== null && value !== undefined) {
+        writeSharedTimedCache(cache, key, value, ttlMs, namespace);
+      }
+      return { value, hit: "computed" };
+    } finally {
+      if (lockToken) {
+        await releaseRedisLock(lockKey, lockToken).catch(() => null);
+      }
+    }
+  };
+
+  const promise = runWork();
+  singleFlightInFlight.set(inflightKey, promise.then((r) => r?.value));
+  try {
+    return await promise;
+  } finally {
+    singleFlightInFlight.delete(inflightKey);
+  }
+}
+let singleFlightInFlight = null;
+
 function isLiveImportStatus(status) {
   return ["queued", "processing", "fetching", "parsing", "normalized"].includes(
     String(status ?? "").trim().toLowerCase()
@@ -7943,7 +8048,7 @@ async function patchRecipeRow(recipeID, payload) {
   }
 }
 
-recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
+recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res) => {
   const recipeId = String(req.params.id ?? "").trim();
   if (!recipeId) {
     return res.status(400).json({ error: "Recipe ID is required." });
@@ -8102,7 +8207,7 @@ recipe_router.post("/recipe/:id/enrich-macros", async (req, res) => {
 // Backfill a missing hero/card image for an imported recipe.
 // Tries: (1) persist the source URL already on the recipe, (2) reference catalog
 // image lookup, (3) AI image generation (if enabled). Patches the DB row.
-recipe_router.post("/recipe/:id/enrich-image", async (req, res) => {
+recipe_router.post("/recipe/:id/enrich-image", enrichRateLimit, async (req, res) => {
   const recipeId = String(req.params.id ?? "").trim();
   if (!recipeId) return res.status(400).json({ error: "Recipe ID is required." });
 

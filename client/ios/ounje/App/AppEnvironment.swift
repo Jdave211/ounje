@@ -3430,20 +3430,55 @@ final class MealPlanningAppStore: ObservableObject {
 
     func refreshRealtimeMealPrepState(trigger: String = "realtime") async {
         guard let session = await freshUserDataSession() else { return }
+
+        // Coalesce bursts: a single broadcast can fire from multiple tables
+        // (cycle, override, automation, etc.) within milliseconds. Without
+        // this gate every one of them used to fan out into 8+ network calls.
+        // Anything inside the window short-circuits and reuses the prior
+        // refresh's results.
+        let now = Date()
+        if let last = lastRealtimeMealPrepRefreshAt,
+           now.timeIntervalSince(last) < realtimeMealPrepRefreshMinIntervalSeconds {
+            // Schedule a single trailing refresh if one isn't already pending
+            // so the most recent state still gets loaded after the window.
+            if !realtimeMealPrepRefreshTrailingScheduled {
+                realtimeMealPrepRefreshTrailingScheduled = true
+                let delaySeconds = realtimeMealPrepRefreshMinIntervalSeconds
+                    - now.timeIntervalSince(last)
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(max(0, delaySeconds) * 1_000_000_000))
+                    await MainActor.run {
+                        self?.realtimeMealPrepRefreshTrailingScheduled = false
+                    }
+                    await self?.refreshRealtimeMealPrepState(trigger: "\(trigger).trailing")
+                }
+            }
+            return
+        }
+        lastRealtimeMealPrepRefreshAt = now
+
         let shouldShowPrepRefresh = latestPlan?.recipes.isEmpty != false
         if shouldShowPrepRefresh {
             isRefreshingPrepRecipes = true
         }
         defer { isRefreshingPrepRecipes = false }
 
-        let remotePlanLoadState = await loadMealPrepCycles(
+        // Run the independent loads in parallel — they used to serialize, so
+        // every realtime event added up to ~5× a single round-trip latency.
+        async let remotePlanLoadStateTask = loadMealPrepCycles(
             userID: session.userID,
             accessToken: session.accessToken
         )
-        await loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
-        await loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
-        await loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
-        await loadAutomationState(userID: session.userID, accessToken: session.accessToken)
+        async let completedTask: Void = loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
+        async let overridesTask: Void = loadPrepRecipeOverrides(userID: session.userID, accessToken: session.accessToken)
+        async let recurringTask: Void = loadRecurringPrepRecipes(userID: session.userID, accessToken: session.accessToken)
+        async let automationTask: Void = loadAutomationState(userID: session.userID, accessToken: session.accessToken)
+
+        let remotePlanLoadState = await remotePlanLoadStateTask
+        _ = await (completedTask, overridesTask, recurringTask, automationTask)
+
+        // Reconciliation steps must run AFTER loads complete and are ordered
+        // (each depends on the prior having applied state).
         await repairRemotePrepStateIfNeeded(session: session, remotePlanLoadState: remotePlanLoadState)
         await reconcileLatestPlanWithPrepOverrides()
         await repairRemoteCartStateIfNeeded(session: session)
@@ -3452,6 +3487,15 @@ final class MealPlanningAppStore: ObservableObject {
             _ = await refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: false)
         }
     }
+
+    // Coalesce realtime meal-prep refreshes so a single broadcast burst can't
+    // amplify into a request storm. We use a 1.2s "leading + trailing" window
+    // so the first event triggers an immediate refresh, and a single follow-
+    // up refresh is scheduled after the window if any later events fired
+    // during the cooldown.
+    private var lastRealtimeMealPrepRefreshAt: Date? = nil
+    private var realtimeMealPrepRefreshTrailingScheduled: Bool = false
+    private let realtimeMealPrepRefreshMinIntervalSeconds: TimeInterval = 1.2
 
     func refreshRealtimeRecurringPrepRecipes(trigger: String = "realtime") async {
         guard let session = await freshUserDataSession() else { return }

@@ -1,18 +1,11 @@
 import express from "express";
-import { createClient } from "@supabase/supabase-js";
 import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
+import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-
 function getSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Recurring API requires Supabase service role configuration");
-  }
-
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function stripPostgrestOperator(value) {

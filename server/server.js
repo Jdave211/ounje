@@ -9,7 +9,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import api_router from "./api/index.js";
-import { runRecipeIngestionWorkerBatch } from "./lib/recipe-ingestion.js";
 import { startRecipeFineTunePolling } from "./lib/recipe-model-registry.js";
 import { withAIUsageContext } from "./lib/openai-usage-logger.js";
 import { checkRedisHealth } from "./lib/redis-cache.js";
@@ -335,6 +334,14 @@ const CAN_CLAIM_RECIPE_INGESTION_JOBS = RECIPE_INGESTION_WORKER_ID
   .startsWith("vm_recipe_ingest");
 
 let recipeIngestionPollInFlight = false;
+let recipeIngestionRunBatch = null;
+
+async function ensureRecipeIngestionRunner() {
+  if (recipeIngestionRunBatch) return recipeIngestionRunBatch;
+  const mod = await import("./lib/recipe-ingestion.js");
+  recipeIngestionRunBatch = mod.runRecipeIngestionWorkerBatch;
+  return recipeIngestionRunBatch;
+}
 
 async function tickRecipeIngestionWorker() {
   if (recipeIngestionPollInFlight) {
@@ -343,7 +350,8 @@ async function tickRecipeIngestionWorker() {
 
   recipeIngestionPollInFlight = true;
   try {
-    const processed = await runRecipeIngestionWorkerBatch({
+    const runBatch = await ensureRecipeIngestionRunner();
+    const processed = await runBatch({
       workerID: RECIPE_INGESTION_WORKER_ID,
       batchSize: RECIPE_INGESTION_BATCH_SIZE,
     });
@@ -384,6 +392,29 @@ if (ENABLE_RECIPE_INGESTION_POLLING && CAN_CLAIM_RECIPE_INGESTION_JOBS) {
 } else {
   console.log("[recipe-ingestion] polling disabled by OUNJE_ENABLE_RECIPE_INGESTION_POLLING");
 }
-app.listen(PORT, HOST, function () {
+const httpServer = app.listen(PORT, HOST, function () {
   console.log(`Server listening at http://${HOST}:${PORT}`);
 });
+
+// Render's edge / Cloudflare-style proxies hold connections open for ~100s.
+// Node's defaults (keepAliveTimeout=5s, headersTimeout=60s) cause Node to
+// close idle TCP connections before the proxy expects, surfacing as random
+// "ECONNRESET / 502 / 504" client-side errors. We align both so Node always
+// outlives the proxy idle window and the proxy is the one that initiates
+// any close.
+const KEEP_ALIVE_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(String(process.env.OUNJE_KEEP_ALIVE_TIMEOUT_MS ?? "120000"), 10) || 120_000
+);
+const HEADERS_TIMEOUT_MS = Math.max(
+  KEEP_ALIVE_TIMEOUT_MS + 5_000,
+  Number.parseInt(String(process.env.OUNJE_HEADERS_TIMEOUT_MS ?? "125000"), 10) || 125_000
+);
+const REQUEST_TIMEOUT_MS = Math.max(
+  10_000,
+  Number.parseInt(String(process.env.OUNJE_REQUEST_TIMEOUT_MS ?? "60000"), 10) || 60_000
+);
+
+httpServer.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+httpServer.headersTimeout = HEADERS_TIMEOUT_MS;
+httpServer.requestTimeout = REQUEST_TIMEOUT_MS;

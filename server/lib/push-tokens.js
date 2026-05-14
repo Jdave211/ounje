@@ -5,17 +5,11 @@
 // don't want a stolen access token to be able to register or hijack another
 // user's device.
 
-import { createClient } from "@supabase/supabase-js";
 import { sendApnsNotification } from "./apns-sender.js";
-
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+import { getServiceRoleSupabase } from "./supabase-clients.js";
 
 function getSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Supabase service role configuration is missing");
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function normalize(value) {

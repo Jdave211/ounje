@@ -1,18 +1,13 @@
 import express from "express";
-import { createClient } from "@supabase/supabase-js";
 import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
 import { invalidateUserBootstrapCache } from "../../lib/user-bootstrap-cache.js";
+import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 function getServiceSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Account deactivation requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 async function updateOrThrow(query, label) {
@@ -42,7 +37,7 @@ router.post("/account/deactivate", async (req, res) => {
           updated_at: now,
         })
         .eq("id", userID)
-        .select("id", { count: "exact", head: true }),
+        .select("id", { count: "estimated", head: true }),
       "profiles"
     );
 
@@ -58,7 +53,7 @@ router.post("/account/deactivate", async (req, res) => {
         })
         .eq("user_id", userID)
         .in("status", ["queued", "running"])
-        .select("id", { count: "exact", head: true }),
+        .select("id", { count: "estimated", head: true }),
       "automation_jobs"
     );
 
@@ -72,7 +67,7 @@ router.post("/account/deactivate", async (req, res) => {
           updated_at: now,
         })
         .eq("user_id", userID)
-        .select("id", { count: "exact", head: true }),
+        .select("id", { count: "estimated", head: true }),
       "user_provider_accounts"
     );
 
@@ -87,7 +82,7 @@ router.post("/account/deactivate", async (req, res) => {
           updated_at: now,
         })
         .eq("user_id", userID)
-        .select("user_id", { count: "exact", head: true }),
+        .select("user_id", { count: "estimated", head: true }),
       "meal_prep_automation_state"
     );
 
@@ -103,7 +98,7 @@ router.post("/account/deactivate", async (req, res) => {
         })
         .eq("user_id", userID)
         .in("status", ["pending", "session_started", "building_cart", "cart_ready", "selecting_slot", "awaiting_review", "user_approved", "checkout_started"])
-        .select("id", { count: "exact", head: true }),
+        .select("id", { count: "estimated", head: true }),
       "grocery_orders"
     );
 
@@ -121,7 +116,7 @@ router.post("/account/deactivate", async (req, res) => {
         })
         .eq("user_id", userID)
         .in("status_kind", ["queued", "running", "partial"])
-        .select("run_id", { count: "exact", head: true }),
+        .select("run_id", { count: "estimated", head: true }),
       "instacart_run_logs"
     );
 

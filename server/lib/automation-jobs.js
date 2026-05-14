@@ -1,15 +1,10 @@
-import { createClient } from "@supabase/supabase-js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
+import { getServiceRoleSupabase } from "./supabase-clients.js";
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const AUTOMATION_JOBS_TABLE = "automation_jobs";
 
 function getServiceSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Automation jobs require SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function normalizeText(value) {

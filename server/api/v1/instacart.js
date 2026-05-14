@@ -1,6 +1,5 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 import { addItemsToInstacartCart } from "../../lib/instacart-cart.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
 import { createAutomationJob } from "../../lib/automation-jobs.js";
@@ -15,6 +14,7 @@ import {
 } from "../../lib/instacart-run-logs.js";
 import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
 import { createNotificationEvent } from "../../lib/notification-events.js";
+import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
@@ -153,7 +153,7 @@ function getServiceSupabase() {
     return null;
   }
 
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function normalizeSelectedStoreName(selectedStore) {
@@ -1091,7 +1091,7 @@ router.post("/instacart/runs", async (req, res) => {
     // instacart_run job, return 409 so the client can surface the existing run
     // rather than enqueue a second one that would conflict on the same cart.
     if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && !retryContext?.rootRunID) {
-      const dedupClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const dedupClient = getServiceRoleSupabase();
       const { data: activeJobs } = await dedupClient
         .from("automation_jobs")
         .select("id,status,run_id,created_at")

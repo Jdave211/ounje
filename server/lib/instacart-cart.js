@@ -2,13 +2,13 @@ import { chromium } from "playwright";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
 import { loadProviderSession, loadPreferredProviderSession } from "./provider-session-store.js";
 import { getInstacartRunLogTrace, persistInstacartRunLog } from "./instacart-run-logs.js";
 import { createNotificationEvent } from "./notification-events.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { installCaptchaHooksScript, maybeSolveCaptcha } from "./twocaptcha.js";
 import { createLoggedOpenAI } from "./openai-usage-logger.js";
+import { getServiceRoleSupabase } from "./supabase-clients.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const INSTACART_STORE_MODEL = process.env.INSTACART_STORE_MODEL ?? "gpt-5-mini";
@@ -28,7 +28,7 @@ function getSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     return null;
   }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 async function appendRunBackedOrderEvent({

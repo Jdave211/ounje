@@ -1,5 +1,4 @@
 import express from "express";
-import { createClient } from "@supabase/supabase-js";
 import { resolveAuthorizedUserID } from "../../lib/auth.js";
 import { readRedisJSON, writeRedisJSON } from "../../lib/redis-cache.js";
 import { invalidateUserBootstrapCache, userScopedCacheKey } from "../../lib/user-bootstrap-cache.js";
@@ -8,11 +7,10 @@ import {
   deriveEntitlementFromAppStoreNotification,
   verifyAppStoreTransactionInfo,
 } from "../../lib/app-store-notifications.js";
+import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ENTITLEMENTS_TABLE = "app_user_entitlements";
 const ALLOWED_TIERS = new Set(["free", "plus", "autopilot", "foundingLifetime"]);
 const ALLOWED_STATUSES = new Set(["active", "expired", "revoked", "inactive"]);
@@ -24,10 +22,7 @@ function normalizeText(value) {
 }
 
 function getServiceSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Supabase not configured");
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function isMissingEntitlementsTableError(error) {

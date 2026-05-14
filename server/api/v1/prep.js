@@ -1,31 +1,16 @@
 import crypto from "node:crypto";
 import express from "express";
-import { createClient } from "@supabase/supabase-js";
 import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import { invalidateUserBootstrapCache } from "../../lib/user-bootstrap-cache.js";
+import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const prepRouter = express.Router();
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const APPLE_REFERENCE_DATE_MS = Date.UTC(2001, 0, 1, 0, 0, 0);
 const MAX_PREP_BATCHES = 4;
 
-let serviceSupabase = null;
-
 function getServiceSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Supabase not configured");
-  }
-  if (!serviceSupabase) {
-    serviceSupabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
-  }
-  return serviceSupabase;
+  return getServiceRoleSupabase();
 }
 
 function normalizeText(value) {

@@ -11,11 +11,11 @@
 
 import express from "express";
 import crypto from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 import { buildKrogerSearchUrl, findNearestKrogerStore, searchKrogerProduct } from "./providers/kroger.js";
 import { buildShoppingSpecEntries } from "../../lib/instacart-intent.js";
 import { sourceEdgeID } from "../../lib/main-shop-collation.js";
 import { resolveAuthorizedUserID } from "../../lib/auth.js";
+import { getServiceRoleSupabase as _getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
 const GROCERY_SPEC_CACHE_TTL_MS = Math.max(
@@ -470,10 +470,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 function getServiceSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Supabase not configured");
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return _getServiceRoleSupabase();
 }
 
 async function assertOrderOwnership(orderId, userID, columns = "id,user_id") {

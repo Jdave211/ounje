@@ -17,7 +17,6 @@
  *   Failed orders can be retried (up to 3 times)
  */
 
-import { createClient } from "@supabase/supabase-js";
 import * as browserAgent from "../api/v1/providers/browser-agent.js";
 import {
   createNotificationEvent,
@@ -25,11 +24,10 @@ import {
   fetchOrderingGuardrails,
 } from "./notification-events.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
+import { getServiceRoleSupabase } from "./supabase-clients.js";
 
 // ── Configuration ──────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const LUMBOX_API_KEY = process.env.LUMBOX_API_KEY ?? "";
 const AGENTSIM_API_KEY = process.env.AGENTSIM_API_KEY ?? "";
 
@@ -38,10 +36,7 @@ const MAX_RETRIES = 3;
 // ── Supabase Client ────────────────────────────────────────────────────────────
 
 function getSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    throw new Error("Supabase not configured");
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function normalizeText(value) {

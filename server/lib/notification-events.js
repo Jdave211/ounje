@@ -1,9 +1,6 @@
-import { createClient } from "@supabase/supabase-js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
 import { pushToUser } from "./push-tokens.js";
-
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+import { getServiceRoleSupabase } from "./supabase-clients.js";
 
 // Kinds we deliver as APNs pushes (in addition to writing to the inbox).
 // Stuff like internal feedback thread shadows stays inbox-only so users
@@ -70,11 +67,7 @@ async function allowsPushForUserPreference(supabase, userId, kind, metadata = {}
 }
 
 function getSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Supabase notification events are not configured");
-  }
-
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function normalizeString(value) {

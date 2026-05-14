@@ -738,7 +738,10 @@ async function listStoredInstacartRunLogs({ userID = null, accessToken = null, s
 
   const table = client
     .from(INSTACART_RUN_LOGS_TABLE);
-  let builder = (includeCount ? table.select(selectColumns, { count: "exact" }) : table.select(selectColumns))
+  // count: "estimated" is dramatically cheaper than "exact" on this table and
+  // good enough for the UI ("123+ runs"). Exact counts forced a scan of every
+  // matching row per request.
+  let builder = (includeCount ? table.select(selectColumns, { count: "estimated" }) : table.select(selectColumns))
     .order("completed_at", { ascending: false, nullsFirst: true })
     .order("started_at", { ascending: false, nullsFirst: false });
 

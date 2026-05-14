@@ -125,18 +125,13 @@ struct RootView: View {
             _ = await (bootstrap, membershipRefresh, notificationSync)
         }
         .onChange(of: scenePhase) { newPhase in
-            guard newPhase == .active else {
+            // Only disconnect on background. Reconnect + entitlement +
+            // tracking + notification sync is handled by the `.task` below,
+            // whose id depends on scenePhase — letting *both* fire on every
+            // foreground was the source of duplicate request bursts on every
+            // scene activation.
+            if newPhase != .active {
                 realtimeCoordinator.disconnect()
-                return
-            }
-            Task {
-                await store.refreshMembershipEntitlement(trigger: "scene-active")
-                let session = await currentNotificationSession()
-                realtimeCoordinator.connect(session: session) { event in
-                    await handleRealtimeInvalidation(event)
-                }
-                await store.refreshLiveTrackingState()
-                await notificationCenter.syncForCurrentSession(session)
             }
         }
         .task(id: "\(store.authSession?.userID ?? "signed-out")::\(scenePhase == .active ? "active" : "inactive")::live-sync") {
@@ -148,8 +143,21 @@ struct RootView: View {
             realtimeCoordinator.connect(session: initialSession) { event in
                 await handleRealtimeInvalidation(event)
             }
+            // First foreground tick after .active: do the entitlement refresh
+            // that the old onChange handler used to do. Subsequent iterations
+            // of the poll loop rely on the passive-sync throttling inside
+            // refreshMembershipEntitlement / notificationCenter.
+            await store.refreshMembershipEntitlement(trigger: "scene-active")
+            if store.hasLiveInstacartActivity {
+                await store.refreshLiveTrackingState()
+            }
+            await notificationCenter.syncForCurrentSession(initialSession)
+
             while !Task.isCancelled {
                 let session = await currentNotificationSession()
+                // Reconnect is idempotent / cheap when the websocket is
+                // already running; the underlying coordinator no-ops in that
+                // case, so we can call it on each tick without churn.
                 realtimeCoordinator.connect(session: session) { event in
                     await handleRealtimeInvalidation(event)
                 }
@@ -232,17 +240,20 @@ struct RootView: View {
     private func handleRealtimeInvalidation(_ event: AppRealtimeInvalidationEvent) async {
         switch event.name {
         case "recipe_import.updated", "recipe_import.completed", "recipe_import.failed":
+            // Post the local notification; the shared-import listener will
+            // refresh history. The notification center will pick up any
+            // inbox-bound notification on its next passive sync — no need to
+            // burn a forced sync here.
             NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: event)
-            let session = await currentNotificationSession()
-            await notificationCenter.syncForCurrentSession(session, force: true)
 
         case "instacart_run.updated", "grocery_order.updated":
+            // Tracking state is what the user-visible UI cares about. The
+            // notification inbox lags by at most a passive-sync interval,
+            // which is fine for these events.
             await store.refreshRealtimeTrackingState(
                 runID: event.string("run_id"),
                 groceryOrderID: event.uuid("grocery_order_id")
             )
-            let session = await currentNotificationSession()
-            await notificationCenter.syncForCurrentSession(session, force: true)
 
         case "main_shop_snapshot.updated", "meal_prep_cycle.updated":
             await store.refreshRealtimeMealPrepState(trigger: event.name)
@@ -255,6 +266,8 @@ struct RootView: View {
             }
 
         case "notification.updated":
+            // The only event that genuinely needs to bypass the passive-sync
+            // 5min throttle: a notification row itself was created/updated.
             let session = await currentNotificationSession()
             await notificationCenter.syncForCurrentSession(session, force: true)
 

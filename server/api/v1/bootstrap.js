@@ -1,5 +1,4 @@
 import express from "express";
-import { createClient } from "@supabase/supabase-js";
 import { resolveAuthorizedUserID } from "../../lib/auth.js";
 import { readRedisJSON, writeRedisJSON } from "../../lib/redis-cache.js";
 import {
@@ -9,13 +8,21 @@ import {
   userScopedCacheKey,
 } from "../../lib/user-bootstrap-cache.js";
 import { getCurrentInstacartRunLogSummary } from "../../lib/instacart-run-logs.js";
+import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const ENTITLEMENTS_TABLE = "app_user_entitlements";
 const USER_BOOTSTRAP_CACHE_TTL_SECONDS = 60;
+// Cap how many saved-recipe IDs we ship in the bootstrap payload. Power users
+// have thousands; without a cap we serialized and sent every one on every
+// cold-cache bootstrap. The iOS app already paginates / hydrates from the
+// detail endpoint, so 500 is plenty for the "is X saved?" lookup set.
+const SAVED_RECIPE_ID_LIMIT = Math.max(
+  100,
+  Number.parseInt(String(process.env.OUNJE_BOOTSTRAP_SAVED_ID_LIMIT ?? "500"), 10) || 500
+);
+const SAVED_RECIPE_CARD_LIMIT = 120;
 const ALLOWED_TIERS = new Set(["free", "plus", "autopilot", "foundingLifetime"]);
 const ALLOWED_STATUSES = new Set(["active", "expired", "revoked", "inactive"]);
 const ALLOWED_SOURCES = new Set(["app_store", "manual", "system"]);
@@ -26,10 +33,7 @@ const GROCERY_PROVIDER_NAMES = {
 };
 
 function getServiceSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Supabase not configured");
-  }
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 function normalizeTier(value) {
@@ -229,7 +233,8 @@ router.get("/bootstrap/user", async (req, res) => {
           .from("saved_recipes")
           .select("recipe_id,saved_at")
           .eq("user_id", userID)
-          .order("saved_at", { ascending: false }),
+          .order("saved_at", { ascending: false })
+          .limit(SAVED_RECIPE_ID_LIMIT),
         { data: [], error: null }
       ),
       safeQuery(
@@ -238,7 +243,7 @@ router.get("/bootstrap/user", async (req, res) => {
           .select("recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source,saved_at")
           .eq("user_id", userID)
           .order("saved_at", { ascending: false })
-          .limit(120),
+          .limit(SAVED_RECIPE_CARD_LIMIT),
         { data: [], error: null }
       ),
       safeQuery(

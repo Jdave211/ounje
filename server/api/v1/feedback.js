@@ -1,12 +1,10 @@
 import express from "express";
 import crypto from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
+import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const FEEDBACK_SHADOW_KIND = "recipe_nudge";
 const FEEDBACK_ATTACHMENTS_BUCKET = "feedback-attachments";
 // Signed URLs live for 1 hour. The client opens the feedback sheet, fetches
@@ -15,11 +13,7 @@ const FEEDBACK_ATTACHMENTS_BUCKET = "feedback-attachments";
 const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 function getSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Feedback API requires Supabase service role configuration");
-  }
-
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  return getServiceRoleSupabase();
 }
 
 // Generates signed read URLs for every attachment with a storage_path. We use
