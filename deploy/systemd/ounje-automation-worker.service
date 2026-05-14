@@ -10,7 +10,7 @@ WorkingDirectory=/opt/ounje
 Environment=NODE_ENV=production
 Environment=OUNJE_RUNTIME_ENV=production
 EnvironmentFile=-/etc/ounje/ounje.env
-ExecStart=/usr/bin/env node /opt/ounje/server/scripts/automation_worker.mjs --worker-id vm_automation_worker --lock-seconds 900
+ExecStart=/usr/bin/env node /opt/ounje/server/scripts/automation_worker.mjs --worker-id vm_automation_worker --lock-seconds 900 --idle-sleep-ms 15000
 Restart=always
 RestartSec=5
 

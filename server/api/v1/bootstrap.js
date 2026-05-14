@@ -119,19 +119,6 @@ async function fetchEntitlementRow(supabase, userID) {
   return data ?? null;
 }
 
-async function countUserRows(supabase, table, userID, selectColumn, applyFilters = null) {
-  let query = supabase
-    .from(table)
-    .select(selectColumn, { count: "planned", head: true })
-    .eq("user_id", userID);
-  if (typeof applyFilters === "function") {
-    query = applyFilters(query);
-  }
-  const { count, error } = await query;
-  if (error) throw error;
-  return count ?? 0;
-}
-
 function safeQuery(query, fallback) {
   return Promise.resolve(query).catch(() => fallback);
 }
@@ -168,21 +155,10 @@ function compactImportStatus(row) {
   };
 }
 
-function parseSessionCookies(rawCookies) {
-  if (Array.isArray(rawCookies)) return rawCookies;
-  if (typeof rawCookies !== "string") return [];
-  try {
-    const parsed = JSON.parse(rawCookies);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 function isProviderAccountConnected(row = {}) {
   const isActive = row.is_active !== false;
   const loginStatus = normalizeText(row.login_status).toLowerCase();
-  return isActive && loginStatus !== "logged_out" && parseSessionCookies(row.session_cookies).length > 0;
+  return isActive && loginStatus === "logged_in";
 }
 
 function providerConnectionsPayload(rows = []) {
@@ -211,15 +187,10 @@ router.get("/bootstrap/user", async (req, res) => {
       profileResult,
       entitlementRow,
       latestPlanResult,
-      prepHistoryCount,
-      prepOverrideCount,
-      completedImportCount,
       recentImportsResult,
       savedIDsResult,
       latestSavedResult,
       savedTombstonesResult,
-      mainShopCount,
-      baseCartCount,
       latestOrderResult,
       latestRunSummary,
       providerAccountsResult,
@@ -244,15 +215,6 @@ router.get("/bootstrap/user", async (req, res) => {
           .maybeSingle(),
         { data: null, error: null }
       ),
-      countUserRows(supabase, "meal_prep_cycles", userID, "plan_id").catch(() => null),
-      countUserRows(supabase, "prep_recipe_overrides", userID, "recipe_id").catch(() => null),
-      countUserRows(
-        supabase,
-        "recipe_ingestion_jobs",
-        userID,
-        "id",
-        (query) => query.in("status", ["saved", "draft", "needs_review"])
-      ).catch(() => null),
       safeQuery(
         supabase
           .from("recipe_ingestion_jobs")
@@ -286,8 +248,6 @@ router.get("/bootstrap/user", async (req, res) => {
           .eq("user_id", userID),
         { data: [], error: null }
       ),
-      countUserRows(supabase, "main_shop_items", userID, "id").catch(() => null),
-      countUserRows(supabase, "base_cart_items", userID, "id").catch(() => null),
       safeQuery(
         supabase
           .from("grocery_orders")
@@ -302,7 +262,7 @@ router.get("/bootstrap/user", async (req, res) => {
       safeQuery(
         supabase
           .from("user_provider_accounts")
-          .select("provider,is_active,login_status,session_cookies")
+          .select("provider,is_active,login_status")
           .eq("user_id", userID),
         { data: [], error: null }
       ),
@@ -363,8 +323,8 @@ router.get("/bootstrap/user", async (req, res) => {
       prep: {
         latest_plan: latestPlanResult.data?.plan ?? null,
         latest_plan_id: latestPlanResult.data?.plan_id ?? null,
-        history_count: prepHistoryCount,
-        override_count: prepOverrideCount,
+        history_count: latestPlanResult.data?.plan ? 1 : 0,
+        override_count: null,
       },
       saved: {
         count: savedIDRows.length,
@@ -372,12 +332,12 @@ router.get("/bootstrap/user", async (req, res) => {
         latest_cards: latestSavedRows.map(compactSavedCard),
       },
       imports: {
-        completed_count: completedImportCount,
+        completed_count: null,
         recent_statuses: (recentImportsResult.data ?? []).map(compactImportStatus),
       },
       cart: {
-        main_shop_count: mainShopCount,
-        base_cart_count: baseCartCount,
+        main_shop_count: null,
+        base_cart_count: null,
         latest_grocery_order: latestOrderResult.data ?? null,
         latest_instacart_run: latestRunSummary ?? null,
       },

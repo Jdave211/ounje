@@ -2735,6 +2735,95 @@ private actor SupabaseIngredientImageLookupCache {
     }
 }
 
+private actor SupabaseRecipeIngredientArtLookupCache {
+    static let shared = SupabaseRecipeIngredientArtLookupCache()
+
+    private struct Entry {
+        let rows: [SupabaseRecipeIngredientArtRow]
+        let cachedAt: Date
+    }
+
+    private let ttl: TimeInterval = 6 * 60 * 60
+    private let maxEntryCount = 700
+    private var entriesByIngredientID: [String: Entry] = [:]
+    private var entriesByDisplayName: [String: Entry] = [:]
+
+    func cachedIngredientRows(for ingredientIDs: [String]) -> (rows: [SupabaseRecipeIngredientArtRow], missingIDs: [String]) {
+        let cached = cachedRows(for: ingredientIDs, entries: &entriesByIngredientID, normalize: Self.normalizedID)
+        return (cached.rows, cached.missingKeys)
+    }
+
+    func cachedDisplayNameRows(for displayNames: [String]) -> (rows: [SupabaseRecipeIngredientArtRow], missingDisplayNames: [String]) {
+        let cached = cachedRows(for: displayNames, entries: &entriesByDisplayName, normalize: SupabaseIngredientsCatalogService.normalizedName)
+        return (cached.rows, cached.missingKeys)
+    }
+
+    func storeIngredientRows(_ rows: [SupabaseRecipeIngredientArtRow], requestedIDs: [String]) {
+        let rowsByID = Dictionary(grouping: rows) { Self.normalizedID($0.ingredientID) }
+        store(rowsByKey: rowsByID, requestedKeys: requestedIDs, entries: &entriesByIngredientID, normalize: Self.normalizedID)
+    }
+
+    func storeDisplayNameRows(_ rows: [SupabaseRecipeIngredientArtRow], requestedDisplayName: String) {
+        let key = SupabaseIngredientsCatalogService.normalizedName(requestedDisplayName)
+        guard !key.isEmpty else { return }
+        entriesByDisplayName[key] = Entry(rows: rows, cachedAt: Date())
+        prune(entries: &entriesByDisplayName)
+    }
+
+    private func cachedRows(
+        for keys: [String],
+        entries: inout [String: Entry],
+        normalize: (String) -> String
+    ) -> (rows: [SupabaseRecipeIngredientArtRow], missingKeys: [String]) {
+        let now = Date()
+        var rows: [SupabaseRecipeIngredientArtRow] = []
+        var missingKeys: [String] = []
+
+        for key in keys {
+            let normalizedKey = normalize(key)
+            guard !normalizedKey.isEmpty else { continue }
+            if let entry = entries[normalizedKey] {
+                if now.timeIntervalSince(entry.cachedAt) <= ttl {
+                    rows.append(contentsOf: entry.rows)
+                    continue
+                }
+                entries.removeValue(forKey: normalizedKey)
+            }
+            missingKeys.append(normalizedKey)
+        }
+
+        return (rows, missingKeys)
+    }
+
+    private func store(
+        rowsByKey: [String: [SupabaseRecipeIngredientArtRow]],
+        requestedKeys: [String],
+        entries: inout [String: Entry],
+        normalize: (String) -> String
+    ) {
+        let now = Date()
+        for key in requestedKeys {
+            let normalizedKey = normalize(key)
+            guard !normalizedKey.isEmpty else { continue }
+            entries[normalizedKey] = Entry(rows: rowsByKey[key] ?? [], cachedAt: now)
+        }
+        prune(entries: &entries)
+    }
+
+    private static func normalizedID(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func prune(entries: inout [String: Entry]) {
+        guard entries.count > maxEntryCount else { return }
+        let staleKeys = entries
+            .sorted { $0.value.cachedAt < $1.value.cachedAt }
+            .prefix(entries.count - maxEntryCount)
+            .map(\.key)
+        staleKeys.forEach { entries.removeValue(forKey: $0) }
+    }
+}
+
 final class SupabaseIngredientsCatalogService {
     static let shared = SupabaseIngredientsCatalogService()
 
@@ -3079,10 +3168,14 @@ final class SupabaseRecipeIngredientArtService {
         .prefix(6)
 
         var artRows: [SupabaseRecipeIngredientArtRow] = []
+        let cache = SupabaseRecipeIngredientArtLookupCache.shared
 
-        if !ids.isEmpty {
+        let cachedIDs = await cache.cachedIngredientRows(for: ids)
+        artRows.append(contentsOf: cachedIDs.rows)
+
+        if !cachedIDs.missingIDs.isEmpty {
             let select = "ingredient_id,display_name,image_url"
-            let inClause = ids.joined(separator: ",")
+            let inClause = cachedIDs.missingIDs.joined(separator: ",")
             guard let encodedIDs = inClause.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
                   let url = URL(
                     string: "\(SupabaseConfig.url)/rest/v1/recipe_ingredients?select=\(select)&ingredient_id=in.(\(encodedIDs))&image_url=not.is.null&order=ingredient_id.asc&limit=5000"
@@ -3106,10 +3199,15 @@ final class SupabaseRecipeIngredientArtService {
                 throw SupabaseRecipeIngredientsError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
             }
 
-            artRows.append(contentsOf: try JSONDecoder().decode([SupabaseRecipeIngredientArtRow].self, from: data))
+            let fetchedRows = try JSONDecoder().decode([SupabaseRecipeIngredientArtRow].self, from: data)
+            await cache.storeIngredientRows(fetchedRows, requestedIDs: cachedIDs.missingIDs)
+            artRows.append(contentsOf: fetchedRows)
         }
 
-        for displayName in normalizedDisplayNames {
+        let cachedDisplayNames = await cache.cachedDisplayNameRows(for: Array(normalizedDisplayNames))
+        artRows.append(contentsOf: cachedDisplayNames.rows)
+
+        for displayName in cachedDisplayNames.missingDisplayNames {
             guard let encodedPattern = displayName
                 .replacingOccurrences(of: " ", with: "%")
                 .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
@@ -3134,6 +3232,7 @@ final class SupabaseRecipeIngredientArtService {
             }
 
             let rows = try JSONDecoder().decode([SupabaseRecipeIngredientArtRow].self, from: data)
+            await cache.storeDisplayNameRows(rows, requestedDisplayName: displayName)
             artRows.append(contentsOf: rows)
         }
 

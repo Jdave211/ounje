@@ -574,12 +574,13 @@ struct CartTabView: View {
 
     private var cartReloadKey: String {
         guard let latestPlan = store.latestPlan else { return "empty-cart" }
+        let batchKey = latestPlan.activeBatchID?.uuidString ?? "legacy"
         let recipeKey = latestPlan.recipes.map(\.recipe.id).joined(separator: "|")
         let groceryKey = mainShopSignature(for: latestPlan.groceryItems)
         let snapshotKey = latestPlan.mainShopSnapshot.map { snapshot in
             "\(snapshot.signature)::\(snapshot.generatedAt.timeIntervalSince1970)"
         } ?? "no-snapshot"
-        return [recipeKey, groceryKey, snapshotKey].joined(separator: "::")
+        return [batchKey, recipeKey, groceryKey, snapshotKey].joined(separator: "::")
     }
 
     private var cartTrackingReloadKey: String {

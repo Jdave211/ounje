@@ -228,6 +228,10 @@ final class MealPlanningAppStore: ObservableObject {
     private var lastAutomationSceneActiveAt: Date?
     private var lastTrackingAuthFailureAt: Date?
     private var lastTrackingAuthFailureUserID: String?
+    private var lastProviderConnectionRefreshAt: Date?
+    private var lastProviderConnectionRefreshUserID: String?
+    private var lastInstacartRunLoadAt: Date?
+    private var lastGroceryOrderLoadAt: Date?
     private var authStateRevision = 0
     private enum AuthSessionRefreshOutcome {
         case refreshed(AuthSession)
@@ -581,7 +585,7 @@ final class MealPlanningAppStore: ObservableObject {
         isHydratingRemoteState = false
     }
 
-    func refreshPostRuntimeBootstrapDetails(session: AuthSession) async {
+    func refreshPostRuntimeBootstrapDetails(session: AuthSession, runtimeSnapshot: UserRuntimeSnapshot? = nil) async {
         guard authSession?.userID == session.userID || resolvedLiveUserID == session.userID else { return }
         guard isOnboarded else { return }
 
@@ -609,15 +613,27 @@ final class MealPlanningAppStore: ObservableObject {
             async let completedCyclesLoad: Void = self.loadCompletedMealPrepCycles(userID: session.userID, accessToken: session.accessToken)
             async let automationLoad: Void = self.loadAutomationState(userID: session.userID, accessToken: session.accessToken)
             async let cartRepairLoad: Void = self.repairRemoteCartStateIfNeeded(session: session)
-            async let instacartLoad: Void = self.loadLatestInstacartRun()
-            async let groceryLoad: Void = self.loadLatestGroceryOrder()
-            async let providerLoad: Void = self.refreshProviderConnectionState()
-            _ = await completedCyclesLoad
-            _ = await automationLoad
-            _ = await cartRepairLoad
-            _ = await instacartLoad
-            _ = await groceryLoad
-            _ = await providerLoad
+            if runtimeSnapshot == nil {
+                async let instacartLoad: Void = self.loadLatestInstacartRun()
+                async let groceryLoad: Void = self.loadLatestGroceryOrder()
+                async let providerLoad: Void = self.refreshProviderConnectionState()
+                _ = await completedCyclesLoad
+                _ = await automationLoad
+                _ = await cartRepairLoad
+                _ = await instacartLoad
+                _ = await groceryLoad
+                _ = await providerLoad
+            } else if runtimeSnapshot?.providerConnections == nil {
+                async let providerLoad: Void = self.refreshProviderConnectionState()
+                _ = await completedCyclesLoad
+                _ = await automationLoad
+                _ = await cartRepairLoad
+                _ = await providerLoad
+            } else {
+                _ = await completedCyclesLoad
+                _ = await automationLoad
+                _ = await cartRepairLoad
+            }
         }
     }
 
@@ -632,6 +648,8 @@ final class MealPlanningAppStore: ObservableObject {
                 && provider.connected
         }
         isInstacartProviderConnected = instacartConnected
+        lastProviderConnectionRefreshUserID = userID
+        lastProviderConnectionRefreshAt = Date()
         savePersistedProviderConnectionState(instacartConnected, for: userID)
     }
 
@@ -2683,11 +2701,25 @@ final class MealPlanningAppStore: ObservableObject {
               latestPlan.batches?.contains(where: { $0.id == batchID }) == true
         else { return false }
 
+        let previousBatchID = activeBatchID
+        let previousCartSignature = automationCartSignature(for: latestPlan.groceryItems)
         lastLocalPrepMutationAt = .now
         let plan = planMirroringPrimeBatch(latestPlan, preferredBatchID: batchID)
         updateCurrentPlanCache(with: plan, persistRemote: persistRemote)
         clearPendingCartSyncIntentIfCurrentPlanChanged()
+        if persistRemote,
+           previousBatchID != batchID || previousCartSignature != automationCartSignature(for: plan.groceryItems) {
+            Task { [weak self] in
+                await self?.syncPrimePrepSelectionToCart()
+            }
+        }
         return true
+    }
+
+    private func syncPrimePrepSelectionToCart() async {
+        await syncPrepMutationToAutomation(trigger: "prime_prep_changed", forceCartSync: true)
+        await enqueueCartSyncForLatestPlan(trigger: "prime_prep_changed", resetSyncedState: true)
+        await processQueuedInstacartRerunIfNeeded()
     }
 
     private func assignRecipeToPrepBatch(_ plannedRecipe: PlannedRecipe, batchID: UUID, profile: UserProfile) {
@@ -3154,7 +3186,14 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    private func loadLatestInstacartRun() async {
+    private func loadLatestInstacartRun(force: Bool = false) async {
+        if !force,
+           let lastInstacartRunLoadAt,
+           Date().timeIntervalSince(lastInstacartRunLoadAt) < 10 {
+            return
+        }
+        lastInstacartRunLoadAt = Date()
+
         guard let session = await freshUserDataSession() else {
             latestInstacartRun = nil
             latestBlockingInstacartRun = nil
@@ -3178,6 +3217,9 @@ final class MealPlanningAppStore: ObservableObject {
             }
             latestBlockingInstacartRun = activeRun
             latestInstacartRun = selectedRun
+            if selectedRun?.linkedGroceryOrderID != latestGroceryOrder?.id {
+                lastGroceryOrderLoadAt = nil
+            }
             if let latestPlan, let profile {
                 let currentSignature = automationCartSignature(for: latestPlan.groceryItems)
                 let deliveryAnchor = automationAnchorString(for: profile.scheduledDeliveryDate())
@@ -3229,7 +3271,7 @@ final class MealPlanningAppStore: ObservableObject {
             }
             NotificationCenter.default.post(name: .instacartRunSummaryDidUpdate, object: summary)
         } else {
-            await loadLatestInstacartRun()
+            await loadLatestInstacartRun(force: true)
         }
 
         if let groceryOrderID,
@@ -3240,11 +3282,18 @@ final class MealPlanningAppStore: ObservableObject {
            ) {
             latestGroceryOrder = order
         } else {
-            await loadLatestGroceryOrder()
+            await loadLatestGroceryOrder(force: true)
         }
     }
 
-    private func loadLatestGroceryOrder() async {
+    private func loadLatestGroceryOrder(force: Bool = false) async {
+        if !force,
+           let lastGroceryOrderLoadAt,
+           Date().timeIntervalSince(lastGroceryOrderLoadAt) < 10 {
+            return
+        }
+        lastGroceryOrderLoadAt = Date()
+
         guard let session = await freshUserDataSession() else {
             latestGroceryOrder = nil
             return
@@ -3352,8 +3401,14 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    func refreshProviderConnectionState() async {
+    func refreshProviderConnectionState(force: Bool = false) async {
         guard let session = await freshUserDataSession() else { return }
+        if !force,
+           lastProviderConnectionRefreshUserID == session.userID,
+           let lastProviderConnectionRefreshAt,
+           Date().timeIntervalSince(lastProviderConnectionRefreshAt) < 5 * 60 {
+            return
+        }
 
         do {
             let providers = try await ProviderConnectionAPIService.shared.fetchProviders(
@@ -3365,6 +3420,8 @@ final class MealPlanningAppStore: ObservableObject {
                     && provider.connected
             }
             isInstacartProviderConnected = instacartConnected
+            lastProviderConnectionRefreshUserID = session.userID
+            lastProviderConnectionRefreshAt = Date()
             savePersistedProviderConnectionState(instacartConnected, for: session.userID)
         } catch {
             // Keep the last known connection state when the lookup is unavailable.

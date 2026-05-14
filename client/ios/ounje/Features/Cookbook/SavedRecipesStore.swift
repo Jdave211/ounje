@@ -131,7 +131,9 @@ final class SavedRecipesStore: ObservableObject {
             persist()
             markRemoteSyncComplete(for: authSession.userID)
         } catch {
-            await bootstrap(authSession: authSession)
+            // Avoid immediately repeating the same failing remote read. The next
+            // explicit or TTL-based sync will retry while local saves stay visible.
+            hasPendingRemoteSaveRetry = true
         }
     }
 

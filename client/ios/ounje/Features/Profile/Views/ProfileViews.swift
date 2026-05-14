@@ -3108,7 +3108,7 @@ struct GroceryProvidersCard: View {
                     Task {
                         let session = await store.freshUserDataSession()
                         viewModel.loadProviders(userId: session?.userID, accessToken: session?.accessToken)
-                        await store.refreshProviderConnectionState()
+                        await store.refreshProviderConnectionState(force: true)
                     }
                     selectedProvider = nil
                 }

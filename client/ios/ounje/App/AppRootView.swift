@@ -118,12 +118,11 @@ struct RootView: View {
             // Supabase bootstrap is what made first-install Discover feel blocked.
             async let bootstrap: Void = runUserRuntimeBootstrap(loadCachedSnapshot: false)
             async let membershipRefresh: Void = store.refreshMembershipEntitlement(trigger: "root-bootstrap")
-            async let discoverCatalogPrewarm: Void = SupabaseDiscoverRecipeService.shared.prewarmBaseCatalog()
             async let notificationSync: Void = {
                 let session = await currentNotificationSession()
                 await notificationCenter.syncForCurrentSession(session, force: true)
             }()
-            _ = await (bootstrap, membershipRefresh, discoverCatalogPrewarm, notificationSync)
+            _ = await (bootstrap, membershipRefresh, notificationSync)
         }
         .onChange(of: scenePhase) { newPhase in
             guard newPhase == .active else {
@@ -207,7 +206,7 @@ struct RootView: View {
         if !needsLegacyRecovery, store.needsLegacyBootstrapRecovery(for: snapshot) {
             await store.bootstrapFromSupabaseIfNeeded()
         }
-        await store.refreshPostRuntimeBootstrapDetails(session: session)
+        await store.refreshPostRuntimeBootstrapDetails(session: session, runtimeSnapshot: snapshot)
     }
 
     private var shouldShowSubscriptionGate: Bool {
@@ -330,9 +329,12 @@ final class AppNotificationCenterManager: ObservableObject {
     private var isSyncing = false
     private var lastSyncedUserID: String?
     private var lastSyncedAt: Date?
+    private var lastSyncFailureUserID: String?
+    private var lastSyncFailureAt: Date?
     private var lastTrackingAuthFailureAt: Date?
     private var lastTrackingAuthFailureUserID: String?
     private let passiveSyncInterval: TimeInterval = 5 * 60
+    private let failureRetryInterval: TimeInterval = 2 * 60
 
     init() {
         configureNotificationCategories()
@@ -351,16 +353,21 @@ final class AppNotificationCenterManager: ObservableObject {
            Date().timeIntervalSince(lastSyncedAt) < passiveSyncInterval {
             return
         }
+        if !force,
+           lastSyncFailureUserID == session.userID,
+           let lastSyncFailureAt,
+           Date().timeIntervalSince(lastSyncFailureAt) < failureRetryInterval {
+            return
+        }
 
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
 
-        await refreshInbox(for: session)
-        await refreshAuthorizationStatus()
-        if authorizationStatus == .notDetermined {
-            await requestAuthorizationIfNeeded()
-        }
+            await refreshAuthorizationStatus()
+            if authorizationStatus == .notDetermined {
+                await requestAuthorizationIfNeeded()
+            }
 
         guard authorizationStatus == .authorized || authorizationStatus == .provisional else {
             return
@@ -409,12 +416,16 @@ final class AppNotificationCenterManager: ObservableObject {
                     userID: session.userID,
                     accessToken: session.accessToken
                 )
+                await refreshInbox(for: session)
             }
 
-            await refreshInbox(for: session)
             lastSyncedUserID = session.userID
             lastSyncedAt = Date()
+            lastSyncFailureUserID = nil
+            lastSyncFailureAt = nil
         } catch {
+            lastSyncFailureUserID = session.userID
+            lastSyncFailureAt = Date()
             // Keep retrying on the next active/scene sync instead of treating a failed sync as fresh.
         }
     }
@@ -2004,7 +2015,6 @@ private struct MealPlannerShellView: View {
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
             prewarmedCompletedImportIDs.removeAll()
-            await savedStore.refreshFromRemote(authSession: await savedRecipesSession(), force: true)
         }
         .task(id: savedStoreAuthKey) {
             await savedStore.bootstrap(authSession: await savedRecipesSession())

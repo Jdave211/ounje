@@ -128,22 +128,10 @@ function providerSessionResponse(row) {
   };
 }
 
-function parseSessionCookies(rawCookies) {
-  if (Array.isArray(rawCookies)) return rawCookies;
-  if (typeof rawCookies !== "string") return [];
-  try {
-    const parsed = JSON.parse(rawCookies);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 function isProviderAccountConnected(row = {}) {
   const isActive = row.is_active !== false;
   const loginStatus = String(row.login_status ?? "").trim().toLowerCase();
-  const cookies = parseSessionCookies(row.session_cookies);
-  return isActive && loginStatus !== "logged_out" && cookies.length > 0;
+  return isActive && loginStatus === "logged_in";
 }
 
 // ── POST /v1/connect/:provider ─────────────────────────────────────────────────
@@ -295,7 +283,7 @@ router.get("/connect/:provider/status", async (req, res) => {
     const supabase = getSupabase();
     const { data } = await supabase
       .from("user_provider_accounts")
-      .select("id, provider, login_status, last_used_at, is_active, session_cookies")
+      .select("id, provider, login_status, last_used_at, is_active")
       .eq("user_id", auth.userID)
       .eq("provider", provider)
       .maybeSingle();
@@ -738,7 +726,7 @@ router.get("/connect/providers", async (req, res) => {
     const supabase = getSupabase();
     const { data } = await supabase
       .from("user_provider_accounts")
-      .select("provider,is_active,login_status,session_cookies")
+      .select("provider,is_active,login_status")
       .eq("user_id", auth.userID);
 
     if (data) {

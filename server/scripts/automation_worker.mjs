@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-const DEFAULT_IDLE_SLEEP_MS = 5_000;
+const DEFAULT_IDLE_SLEEP_MS = 15_000;
 const DEFAULT_LOCK_SECONDS = 600;
 const DEFAULT_BATCH_SIZE = 1;
 

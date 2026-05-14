@@ -66,7 +66,16 @@ const repoRoot = path.resolve(serverDir, "..");
 
 const SUPABASE_URL = String(process.env.SUPABASE_URL ?? "").trim();
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+const HEALTHZ_CACHE_TTL_MS = Math.max(
+  5_000,
+  Number.parseInt(String(process.env.OUNJE_HEALTHZ_CACHE_TTL_MS ?? ""), 10) || 30_000
+);
+const HEALTHZ_FAILURE_CACHE_TTL_MS = Math.max(
+  2_000,
+  Number.parseInt(String(process.env.OUNJE_HEALTHZ_FAILURE_CACHE_TTL_MS ?? ""), 10) || 10_000
+);
 let healthSupabaseClient = null;
+let cachedHealthz = null;
 
 function getHealthSupabaseClient() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -246,6 +255,14 @@ app.get("/healthz", async (req, res) => {
     });
   }
 
+  if (cachedHealthz && Date.now() < cachedHealthz.expiresAt) {
+    return res.status(cachedHealthz.statusCode).json({
+      ...cachedHealthz.payload,
+      cached: true,
+      servedAt: new Date().toISOString(),
+    });
+  }
+
   try {
     const { error } = await supabase
       .from("profiles")
@@ -261,7 +278,7 @@ app.get("/healthz", async (req, res) => {
       ? "ready_degraded"
       : "ready";
 
-    return res.json({
+    const payload = {
       ok: true,
       service: "ounje-api",
       status: responseStatus,
@@ -271,9 +288,15 @@ app.get("/healthz", async (req, res) => {
       },
       redis,
       checkedAt: new Date().toISOString(),
-    });
+    };
+    cachedHealthz = {
+      statusCode: 200,
+      payload,
+      expiresAt: Date.now() + HEALTHZ_CACHE_TTL_MS,
+    };
+    return res.json(payload);
   } catch (error) {
-    return res.status(503).json({
+    const payload = {
       ok: false,
       service: "ounje-api",
       status: "dependency_error",
@@ -281,7 +304,13 @@ app.get("/healthz", async (req, res) => {
         supabase: error.message,
       },
       checkedAt: new Date().toISOString(),
-    });
+    };
+    cachedHealthz = {
+      statusCode: 503,
+      payload,
+      expiresAt: Date.now() + HEALTHZ_FAILURE_CACHE_TTL_MS,
+    };
+    return res.status(503).json(payload);
   }
 });
 const PORT = process.env.PORT || 8080;

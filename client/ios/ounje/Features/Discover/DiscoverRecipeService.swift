@@ -346,40 +346,14 @@ final class SupabaseDiscoverRecipeService {
     ) async throws -> DiscoverRankedRecipesResponse {
         let normalizedLimit = max(1, limit)
         let normalizedOffset = max(0, offset)
-        let fetchLimit = max(normalizedOffset + (normalizedLimit * 4), normalizedLimit * 4)
-        let catalogResult = try await fetchFullCatalogPool(
-            fetchLimit: fetchLimit,
-            sessionSeed: sessionSeed,
-            forceRefresh: forceRefresh
-        )
-        let catalog = catalogResult.recipes.sorted { lhs, rhs in
-            let leftScore = deterministicCatalogOrderScore(id: lhs.id, seed: sessionSeed)
-            let rightScore = deterministicCatalogOrderScore(id: rhs.id, seed: sessionSeed)
-            if leftScore == rightScore {
-                return lhs.id < rhs.id
-            }
-            return leftScore < rightScore
-        }
-
-        guard !catalog.isEmpty else {
-            return DiscoverRankedRecipesResponse(
-                recipes: [],
-                filters: DiscoverPreset.allTitles,
-                rankingMode: "supabase_direct_rotating_catalog",
-                totalAvailable: 0,
-                hasMore: false,
-                nextOffset: nil
-            )
-        }
-
-        let pageRecipes = Array(catalog.dropFirst(normalizedOffset).prefix(normalizedLimit))
-        let totalAvailable = max(catalogResult.totalCount, catalog.count)
-        let hasMore = !pageRecipes.isEmpty && normalizedOffset + pageRecipes.count < totalAvailable
+        let fetched = try await fetchRecipes(limit: normalizedLimit + 1, offset: normalizedOffset)
+        let pageRecipes = Array(fetched.prefix(normalizedLimit))
+        let hasMore = fetched.count > normalizedLimit
         return DiscoverRankedRecipesResponse(
             recipes: pageRecipes,
             filters: DiscoverPreset.allTitles,
-            rankingMode: "supabase_direct_full_catalog_sample",
-            totalAvailable: totalAvailable,
+            rankingMode: "supabase_direct_page_fallback",
+            totalAvailable: nil,
             hasMore: hasMore,
             nextOffset: hasMore ? normalizedOffset + pageRecipes.count : nil
         )
