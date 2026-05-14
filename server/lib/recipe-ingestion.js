@@ -109,6 +109,15 @@ const REDIS_DISABLED_FOR_INGESTION_LOCK = ["1", "true", "yes", "on"].includes(
 );
 const execFile = promisify(execFileCallback);
 
+async function maybeGenerateImportedRecipeImage(recipe = null) {
+  const heroImageURL = cleanURL(recipe?.hero_image_url ?? recipe?.discover_card_image_url ?? null);
+  const cardImageURL = cleanURL(recipe?.discover_card_image_url ?? heroImageURL ?? null);
+  return {
+    hero_image_url: heroImageURL,
+    discover_card_image_url: cardImageURL,
+  };
+}
+
 const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-ingestion" }) : null;
 verifyAIUsageLoggingConfiguration({ service: "recipe-ingestion" });
 let ocrWorkerPromise = null;
@@ -8388,6 +8397,7 @@ export {
   RECIPE_INGESTION_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
   PHOTO_MEAL_GATE_MODEL,
+  maybeGenerateImportedRecipeImage,
   buildFinalRecipeValidationIssues,
   extractRecipeSearchSource,
   persistNormalizedRecipe,
