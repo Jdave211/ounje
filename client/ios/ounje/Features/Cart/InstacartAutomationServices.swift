@@ -451,7 +451,7 @@ struct InstacartRunLogSummary: Identifiable, Codable {
     }
 }
 
-struct GroceryOrderSummaryRecord: Identifiable, Decodable {
+struct GroceryOrderSummaryRecord: Identifiable, Codable, Hashable {
     let id: UUID
     let provider: String
     let status: String
@@ -513,7 +513,7 @@ struct GroceryOrderSummaryRecord: Identifiable, Decodable {
     }
 }
 
-struct GroceryOrderItemRecord: Identifiable, Decodable, Hashable {
+struct GroceryOrderItemRecord: Identifiable, Codable, Hashable {
     let id: UUID
     let orderID: UUID?
     let requestedName: String
@@ -573,7 +573,7 @@ struct GroceryOrderItemRecord: Identifiable, Decodable, Hashable {
     }
 }
 
-struct GroceryOrderStepLogEntry: Decodable, Hashable {
+struct GroceryOrderStepLogEntry: Codable, Hashable {
     let status: String?
     let kind: String?
     let title: String?

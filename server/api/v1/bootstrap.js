@@ -8,6 +8,7 @@ import {
   userBootstrapCacheKey,
   userScopedCacheKey,
 } from "../../lib/user-bootstrap-cache.js";
+import { getCurrentInstacartRunLogSummary } from "../../lib/instacart-run-logs.js";
 
 const router = express.Router();
 
@@ -184,11 +185,11 @@ router.get("/bootstrap/user", async (req, res) => {
       mainShopCount,
       baseCartCount,
       latestOrderResult,
-      latestRunResult,
+      latestRunSummary,
     ] = await Promise.all([
       supabase
         .from("profiles")
-        .select("id,email,display_name,auth_provider,onboarded,last_onboarding_step,account_status,deactivated_at,profile_json,updated_at")
+        .select("id,email,display_name,auth_provider,onboarded,last_onboarding_step,account_status,deactivated_at,profile_json,updated_at,preferred_name,dietary_patterns,hard_restrictions,cadence,delivery_anchor_day,adults,kids,cooks_for_others,meals_per_week,budget_per_cycle,budget_window,ordering_autonomy,address_line1,address_line2,city,region,postal_code,delivery_notes,food_persona,food_goals")
         .eq("id", userID)
         .limit(1)
         .maybeSingle(),
@@ -254,16 +255,7 @@ router.get("/bootstrap/user", async (req, res) => {
           .maybeSingle(),
         { data: null, error: null }
       ),
-      safeQuery(
-        supabase
-          .from("instacart_run_logs")
-          .select("run_id,status_kind,progress,success,partial_success,top_issue,created_at,updated_at,completed_at")
-          .eq("user_id", userID)
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-        { data: null, error: null }
-      ),
+      getCurrentInstacartRunLogSummary({ userID }).catch(() => null),
     ]);
 
     if (profileResult.error) throw profileResult.error;
@@ -272,7 +264,6 @@ router.get("/bootstrap/user", async (req, res) => {
     if (savedIDsResult.error) throw savedIDsResult.error;
     if (latestSavedResult.error) throw latestSavedResult.error;
     if (latestOrderResult.error) throw latestOrderResult.error;
-    if (latestRunResult.error) throw latestRunResult.error;
 
     const profile = profileResult.data ?? null;
     const payload = {
@@ -286,6 +277,26 @@ router.get("/bootstrap/user", async (req, res) => {
           deactivated_at: profile.deactivated_at ?? null,
           profile_updated_at: profile.updated_at ?? null,
           profile_json: profile.profile_json ?? null,
+          preferred_name: profile.preferred_name ?? null,
+          dietary_patterns: profile.dietary_patterns ?? [],
+          hard_restrictions: profile.hard_restrictions ?? [],
+          cadence: profile.cadence ?? null,
+          delivery_anchor_day: profile.delivery_anchor_day ?? null,
+          adults: profile.adults ?? null,
+          kids: profile.kids ?? null,
+          cooks_for_others: profile.cooks_for_others ?? null,
+          meals_per_week: profile.meals_per_week ?? null,
+          budget_per_cycle: profile.budget_per_cycle ?? null,
+          budget_window: profile.budget_window ?? null,
+          ordering_autonomy: profile.ordering_autonomy ?? null,
+          address_line1: profile.address_line1 ?? null,
+          address_line2: profile.address_line2 ?? null,
+          city: profile.city ?? null,
+          region: profile.region ?? null,
+          postal_code: profile.postal_code ?? null,
+          delivery_notes: profile.delivery_notes ?? null,
+          food_persona: profile.food_persona ?? null,
+          food_goals: profile.food_goals ?? [],
           email: profile.email ?? null,
           display_name: profile.display_name ?? null,
           auth_provider: profile.auth_provider ?? null,
@@ -311,7 +322,7 @@ router.get("/bootstrap/user", async (req, res) => {
         main_shop_count: mainShopCount,
         base_cart_count: baseCartCount,
         latest_grocery_order: latestOrderResult.data ?? null,
-        latest_instacart_run: latestRunResult.data ?? null,
+        latest_instacart_run: latestRunSummary ?? null,
       },
       cached_at: new Date().toISOString(),
     };

@@ -54,11 +54,13 @@ struct UserRuntimeImportCounts: Codable, Hashable {
     var recentStatuses: [UserRuntimeImportStatus]
 }
 
-struct UserRuntimeCartSummary: Codable, Hashable {
+struct UserRuntimeCartSummary: Codable {
     var mainShopCount: Int?
     var baseCartCount: Int?
     var latestGroceryOrderStatus: String?
     var latestInstacartRunStatus: String?
+    var latestGroceryOrder: GroceryOrderSummaryRecord?
+    var latestInstacartRun: InstacartRunLogSummary?
 }
 
 struct UserRuntimeSnapshot: Codable {
@@ -89,7 +91,14 @@ struct UserRuntimeSnapshot: Codable {
         savedRecipeIDs: Set<String> = [],
         importCounts: UserRuntimeImportCounts = .init(completedCount: nil, recentStatuses: []),
         prepSummary: UserRuntimePrepSummary = .init(historyCount: nil, overrideCount: nil, hasLatestPlan: false),
-        cartSummary: UserRuntimeCartSummary = .init(mainShopCount: nil, baseCartCount: nil, latestGroceryOrderStatus: nil, latestInstacartRunStatus: nil),
+        cartSummary: UserRuntimeCartSummary = .init(
+            mainShopCount: nil,
+            baseCartCount: nil,
+            latestGroceryOrderStatus: nil,
+            latestInstacartRunStatus: nil,
+            latestGroceryOrder: nil,
+            latestInstacartRun: nil
+        ),
         selectedRecipeTypographyStyle: RecipeTypographyStyle? = nil,
         updatedAt: Date = .now
     ) {
@@ -434,7 +443,7 @@ private struct UserBootstrapEnvelope: Decodable {
     }
 
     var snapshot: UserRuntimeSnapshot {
-        let profile = profileState?.profileJSON
+        let profile = profileState?.decodedProfile
         let savedCards = saved.latestCards.map(\.recipe)
         let savedIDs = Set(saved.ids.isEmpty ? savedCards.map(\.id) : saved.ids)
         let profileRuntimeState = profileState.map {
@@ -470,7 +479,9 @@ private struct UserBootstrapEnvelope: Decodable {
                 mainShopCount: cart.mainShopCount,
                 baseCartCount: cart.baseCartCount,
                 latestGroceryOrderStatus: cart.latestGroceryOrder?.status,
-                latestInstacartRunStatus: cart.latestInstacartRun?.statusKind
+                latestInstacartRunStatus: cart.latestInstacartRun?.statusKind,
+                latestGroceryOrder: cart.latestGroceryOrder,
+                latestInstacartRun: cart.latestInstacartRun
             ),
             selectedRecipeTypographyStyle: RecipeTypographyPreferenceStore.style(in: profile),
             updatedAt: cachedAt ?? .now
@@ -485,6 +496,26 @@ private struct UserBootstrapProfileState: Decodable {
     let deactivatedAt: String?
     let profileUpdatedAt: String?
     let profileJSON: UserProfile?
+    let preferredName: String?
+    let dietaryPatterns: [String]?
+    let hardRestrictions: [String]?
+    let cadence: String?
+    let deliveryAnchorDay: String?
+    let adults: Int?
+    let kids: Int?
+    let cooksForOthers: Bool?
+    let mealsPerWeek: Int?
+    let budgetPerCycle: Double?
+    let budgetWindow: String?
+    let orderingAutonomy: String?
+    let addressLine1: String?
+    let addressLine2: String?
+    let city: String?
+    let region: String?
+    let postalCode: String?
+    let deliveryNotes: String?
+    let foodPersona: String?
+    let foodGoals: [String]?
     let email: String?
     let displayName: String?
     let authProvider: AuthProvider?
@@ -496,9 +527,67 @@ private struct UserBootstrapProfileState: Decodable {
         case deactivatedAt = "deactivated_at"
         case profileUpdatedAt = "profile_updated_at"
         case profileJSON = "profile_json"
+        case preferredName = "preferred_name"
+        case dietaryPatterns = "dietary_patterns"
+        case hardRestrictions = "hard_restrictions"
+        case cadence
+        case deliveryAnchorDay = "delivery_anchor_day"
+        case adults
+        case kids
+        case cooksForOthers = "cooks_for_others"
+        case mealsPerWeek = "meals_per_week"
+        case budgetPerCycle = "budget_per_cycle"
+        case budgetWindow = "budget_window"
+        case orderingAutonomy = "ordering_autonomy"
+        case addressLine1 = "address_line1"
+        case addressLine2 = "address_line2"
+        case city
+        case region
+        case postalCode = "postal_code"
+        case deliveryNotes = "delivery_notes"
+        case foodPersona = "food_persona"
+        case foodGoals = "food_goals"
         case email
         case displayName = "display_name"
         case authProvider = "auth_provider"
+    }
+
+    var decodedProfile: UserProfile? {
+        if let profileJSON {
+            return profileJSON
+        }
+
+        return SupabaseProfileRow(
+            id: nil,
+            email: email,
+            displayName: displayName,
+            authProvider: authProvider?.rawValue,
+            accountStatus: accountStatus,
+            deactivatedAt: deactivatedAt,
+            onboarded: onboarded,
+            lastOnboardingStep: lastOnboardingStep,
+            profileJSON: nil,
+            preferredName: preferredName,
+            dietaryPatterns: dietaryPatterns,
+            hardRestrictions: hardRestrictions,
+            cadence: cadence,
+            deliveryAnchorDay: deliveryAnchorDay,
+            adults: adults,
+            kids: kids,
+            cooksForOthers: cooksForOthers,
+            mealsPerWeek: mealsPerWeek,
+            budgetPerCycle: budgetPerCycle,
+            budgetWindow: budgetWindow,
+            orderingAutonomy: orderingAutonomy,
+            addressLine1: addressLine1,
+            addressLine2: addressLine2,
+            city: city,
+            region: region,
+            postalCode: postalCode,
+            deliveryNotes: deliveryNotes,
+            foodPersona: foodPersona,
+            foodGoals: foodGoals
+        ).decodedProfile
     }
 }
 
@@ -544,8 +633,8 @@ private struct UserBootstrapImportsEnvelope: Decodable {
 private struct UserBootstrapCartEnvelope: Decodable {
     let mainShopCount: Int?
     let baseCartCount: Int?
-    let latestGroceryOrder: UserBootstrapGroceryOrder?
-    let latestInstacartRun: UserBootstrapInstacartRun?
+    let latestGroceryOrder: GroceryOrderSummaryRecord?
+    let latestInstacartRun: InstacartRunLogSummary?
 
     enum CodingKeys: String, CodingKey {
         case mainShopCount = "main_shop_count"
@@ -553,16 +642,12 @@ private struct UserBootstrapCartEnvelope: Decodable {
         case latestGroceryOrder = "latest_grocery_order"
         case latestInstacartRun = "latest_instacart_run"
     }
-}
 
-private struct UserBootstrapGroceryOrder: Decodable {
-    let status: String?
-}
-
-private struct UserBootstrapInstacartRun: Decodable {
-    let statusKind: String?
-
-    enum CodingKeys: String, CodingKey {
-        case statusKind = "status_kind"
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mainShopCount = try container.decodeIfPresent(Int.self, forKey: .mainShopCount)
+        baseCartCount = try container.decodeIfPresent(Int.self, forKey: .baseCartCount)
+        latestGroceryOrder = try? container.decodeIfPresent(GroceryOrderSummaryRecord.self, forKey: .latestGroceryOrder)
+        latestInstacartRun = try? container.decodeIfPresent(InstacartRunLogSummary.self, forKey: .latestInstacartRun)
     }
 }

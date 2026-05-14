@@ -216,23 +216,27 @@ final class MealPlanningAppStore: ObservableObject {
 
     var requiresProfileOnboarding: Bool {
         guard isAuthenticated else { return false }
-        if hasResolvedInitialState {
-            // Require positive confirmation before routing to onboarding. On reinstall +
-            // network failure, bootstrap sets hasResolvedInitialState=true (via defer)
-            // but never updates isOnboarded — so without this guard we'd flash the
-            // onboarding screen at a returning user whose profile fetch just timed out.
-            guard bootstrapDidConfirmOnboardingState || hasPersistedOnboardingState else {
-                return false
-            }
-            return !isOnboarded
+        guard hasResolvedInitialState else {
+            return false
         }
-        return provisionalAuthenticatedEntryRoute == .onboarding
+
+        // Require positive confirmation before routing to onboarding. On app reopen,
+        // a restored auth session can exist before runtime/server bootstrap has
+        // re-applied the user snapshot. A stale local `onboarded=false` flag must not
+        // win that race and send a returning user through onboarding.
+        guard bootstrapDidConfirmOnboardingState || hasPersistedOnboardingState else {
+            return false
+        }
+        if !isOnboarded, !bootstrapDidConfirmOnboardingState, hasCachedPlannerEvidence {
+            return false
+        }
+        return !isOnboarded
     }
 
     var shouldShowBootstrapLoadingView: Bool {
         guard isAuthenticated else { return false }
         guard !hasResolvedInitialState || isHydratingRemoteState else { return false }
-        return provisionalAuthenticatedEntryRoute == nil
+        return provisionalAuthenticatedEntryRoute != .planner
     }
 
     var shouldHoldPlannerSplash: Bool {
@@ -360,7 +364,8 @@ final class MealPlanningAppStore: ObservableObject {
         saveLiveUserID(snapshotUserID)
 
         if let state = snapshot.profileState {
-            isOnboarded = shouldForceOnboardingIncomplete ? false : state.onboarded && snapshot.profile != nil
+            let recoveredProfile = snapshot.profile ?? profile
+            isOnboarded = shouldForceOnboardingIncomplete ? false : state.onboarded && recoveredProfile != nil
             lastOnboardingStep = shouldForceOnboardingIncomplete ? 0 : max(0, state.lastOnboardingStep)
             hasPersistedOnboardingState = true
             if source == .remote || snapshot.profile != nil {
@@ -391,6 +396,9 @@ final class MealPlanningAppStore: ObservableObject {
         } else if let runtimeProfile = snapshot.profile {
             profile = runtimeProfile
         } else if !isOnboarded, profile == nil {
+            // Only create starter state for confirmed incomplete users. If the
+            // user is onboarded and an older bootstrap payload lacks profile_json,
+            // keep any legacy local profile instead of downgrading the account.
             profile = .starter
         }
         if profile != nil {
@@ -416,6 +424,18 @@ final class MealPlanningAppStore: ObservableObject {
             isRefreshingPrepRecipes = false
         } else if source == .remote, snapshot.prepSummary.historyCount == 0 {
             remoteMealPrepCycleLoadState = .empty
+        }
+
+        if let latestRun = snapshot.cartSummary.latestInstacartRun {
+            latestInstacartRun = latestRun
+            let status = latestRun.normalizedStatusKind
+            let retryState = latestRun.normalizedRetryState
+            latestBlockingInstacartRun = (status == "running" || status == "queued" || retryState == "queued" || retryState == "running" || status == "partial")
+                ? latestRun
+                : latestBlockingInstacartRun
+        }
+        if let latestOrder = snapshot.cartSummary.latestGroceryOrder {
+            latestGroceryOrder = latestOrder
         }
 
         hasResolvedInitialState = true
@@ -4141,16 +4161,24 @@ final class MealPlanningAppStore: ObservableObject {
         if isOnboarded {
             return .planner
         }
-        if hasPersistedOnboardingState {
-            return .onboarding
-        }
         if let cachedAuthenticatedEntryRoute {
             return cachedAuthenticatedEntryRoute
+        }
+        if hasPersistedOnboardingState {
+            return .onboarding
         }
         if latestPlan != nil || !planHistory.isEmpty || automationState != nil {
             return .planner
         }
         return nil
+    }
+
+    private var hasCachedPlannerEvidence: Bool {
+        cachedAuthenticatedEntryRoute == .planner
+            || latestPlan != nil
+            || !planHistory.isEmpty
+            || automationState != nil
+            || profile?.isPlanningReady == true
     }
 
     private func cacheAuthenticatedEntryRoute(_ route: CachedAuthenticatedEntryRoute) {
