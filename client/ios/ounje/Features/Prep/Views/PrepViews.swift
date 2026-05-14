@@ -74,6 +74,15 @@ struct PrepTabView: View {
                                 plan: store.latestPlan,
                                 activeBatchID: $store.activeBatchID,
                                 isGenerating: isUserRegeneratingPrep,
+                                onSelectBatch: { batch in
+                                    if store.setPrimePrepBatch(batchID: batch.id) {
+                                        toastCenter.show(
+                                            title: "Prime prep changed",
+                                            subtitle: "\(batch.name) now drives Prep and Cart.",
+                                            systemImage: "checkmark.circle.fill"
+                                        )
+                                    }
+                                },
                                 onRenameBatch: { id, name in store.renamePrepBatch(id: id, to: name) },
                                 onDeleteBatch: { id in store.deletePrepBatch(id: id) },
                                 onOpenCookbook: {
@@ -577,6 +586,7 @@ struct PrepBatchPickerRow: View {
     let plan: MealPlan?
     @Binding var activeBatchID: UUID?
     let isGenerating: Bool
+    let onSelectBatch: (PrepBatch) -> Void
     let onRenameBatch: (UUID, String) -> Void
     let onDeleteBatch: (UUID) -> Void
     let onOpenCookbook: () -> Void
@@ -685,7 +695,7 @@ struct PrepBatchPickerRow: View {
         let tint = prepBatchTint(batch)
         Button {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                activeBatchID = batch.id
+                onSelectBatch(batch)
             }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         } label: {

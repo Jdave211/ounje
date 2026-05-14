@@ -82,7 +82,7 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     }
 
     var isTerminalLocalState: Bool {
-        ["saved", "draft", "needs_review"].contains(normalizedProcessingState)
+        ["saved", "draft", "needs_review", "completed_applied"].contains(normalizedProcessingState)
     }
 
     var isLiveQueueState: Bool {

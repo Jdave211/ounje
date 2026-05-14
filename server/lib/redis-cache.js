@@ -148,6 +148,19 @@ export async function writeRedisJSON(key, value, ttlSeconds) {
   }
 }
 
+export async function publishRedisJSON(channel, value = {}) {
+  if (!channel) return false;
+  try {
+    const client = await getRedisClient();
+    if (!client) return false;
+    await withTimeout(client.publish(channel, JSON.stringify(value ?? {})), redisOperationTimeoutMs(), "redis_publish");
+    return true;
+  } catch (error) {
+    lastRedisError = error;
+    return false;
+  }
+}
+
 export async function deleteRedisKey(key) {
   if (!key) return false;
   try {

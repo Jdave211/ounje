@@ -663,6 +663,11 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
         }
 
         for envelope in remainingEnvelopes where !envelope.isPinnedTypedImport {
+            if envelope.normalizedProcessingState == "completed_applied" {
+                try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
+                continue
+            }
+
             guard let jobID = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !jobID.isEmpty else {
                 continue
@@ -688,6 +693,23 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
 
                 if isTerminalServerState || response.recipe != nil {
                     if envelope.targetState == "prepped", response.recipeDetail != nil {
+                        let appliedEnvelope = SharedRecipeImportEnvelope(
+                            id: envelope.id,
+                            createdAt: envelope.createdAt,
+                            jobID: response.job.id,
+                            targetState: envelope.targetState,
+                            sourceText: envelope.sourceText,
+                            sourceURLString: envelope.sourceURLString,
+                            canonicalSourceURLString: normalizedCanonicalURL,
+                            sourceApp: envelope.sourceApp,
+                            attachments: envelope.attachments,
+                            processingState: "completed_applied",
+                            attemptCount: envelope.attemptCount,
+                            lastAttemptAt: envelope.lastAttemptAt,
+                            lastError: response.job.errorMessage ?? envelope.lastError,
+                            updatedAt: Date()
+                        )
+                        try? SharedRecipeImportInbox.update(appliedEnvelope)
                         await onCompletedPreppedImport?(response)
                     }
                     try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
@@ -2218,11 +2240,6 @@ private struct MealPlannerShellView: View {
         await sharedImportInbox.refresh()
         let session = await store.freshUserDataSession()
         await recipeImportHistory.refresh(userID: session?.userID, accessToken: session?.accessToken, force: force)
-        await MainActor.run {
-            for card in recipeImportHistory.completedItems.compactMap(\.savedRecipeCard) {
-                savedStore.saveImportedRecipe(card, showToast: false, respectUnsave: true)
-            }
-        }
         await sharedImportInbox.reconcileCompletedImports(
             recipeImportHistory.completedItems,
             accessToken: session?.accessToken,
@@ -2238,7 +2255,6 @@ private struct MealPlannerShellView: View {
         guard let detail = response.recipeDetail else { return }
         await RecipeDetailService.shared.cacheDetail(detail)
         await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
-        selectedTab = .prep
         toastCenter.show(
             title: "Added to next prep",
             subtitle: detail.title,
@@ -3563,7 +3579,14 @@ private struct CookbookTabView: View {
                 .autocorrectionDisabled()
             Button("Create") {
                 let name = newCookbookPrepName.trimmingCharacters(in: .whitespacesAndNewlines)
-                store.addPrepBatch(name: name.isEmpty ? nil : name)
+                if let batchID = store.addPrepBatch(name: name.isEmpty ? nil : name) {
+                    _ = store.setPrimePrepBatch(batchID: batchID)
+                    toastCenter.show(
+                        title: "Prime prep changed",
+                        subtitle: name.isEmpty ? "New prep is now driving Prep and Cart." : "\(name) is now driving Prep and Cart.",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                }
                 newCookbookPrepName = ""
                 selectedSection = .prepped
             }
@@ -3974,49 +3997,52 @@ private struct CookbookTabView: View {
     }
 
     private var cookbookPrepControls: some View {
-        HStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    if cookbookPrepBatches.isEmpty {
-                        cookbookPrepPill(
-                            title: "Usual",
-                            isSelected: true,
-                            action: {}
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Prep brackets")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                Spacer(minLength: 0)
+                Button {
+                    presentNewCookbookPrepPrompt()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(
+                            Circle()
+                                .fill(Color(hex: "174C32"))
+                                .overlay(Circle().stroke(Color.black, lineWidth: 1.5))
                         )
-                    } else {
-                        ForEach(cookbookPrepBatches) { batch in
-                            cookbookPrepPill(
-                                title: batch.name,
-                                isSelected: store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id),
-                                action: {
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                                        store.activeBatchID = batch.id
-                                    }
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                }
-                            )
-                        }
-                    }
                 }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 2)
+                .buttonStyle(.plain)
+                .accessibilityLabel("New Prep")
             }
 
-            Button {
-                presentNewCookbookPrepPrompt()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(OunjePalette.softCream)
-                    .frame(width: 56, height: 44)
-                    .contentShape(Rectangle())
+            VStack(spacing: 8) {
+                if cookbookPrepBatches.isEmpty {
+                    cookbookPrepRow(
+                        title: "Usual",
+                        detail: "Current prime prep",
+                        isSelected: true,
+                        action: {
+                            selectedTab = .prep
+                        }
+                    )
+                } else {
+                    ForEach(cookbookPrepBatches) { batch in
+                        let isSelected = store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id)
+                        cookbookPrepRow(
+                            title: batch.name,
+                            detail: "\(batch.recipes.count) recipes",
+                            isSelected: isSelected,
+                            action: { selectCookbookPrepBatch(batch) }
+                        )
+                    }
+                }
             }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .accessibilityLabel("New Prep")
-            .zIndex(100)
         }
-        .zIndex(100)
     }
 
     private func presentNewCookbookPrepPrompt() {
@@ -4025,23 +4051,53 @@ private struct CookbookTabView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    private func cookbookPrepPill(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func cookbookPrepRow(title: String, detail: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
-                .foregroundStyle(isSelected ? OunjePalette.background : OunjePalette.primaryText.opacity(0.72))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(isSelected ? OunjePalette.softCream : OunjePalette.surface)
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(isSelected ? Color.clear : OunjePalette.stroke, lineWidth: 1)
-                        )
-                )
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(isSelected ? OunjePalette.accent : OunjePalette.secondaryText.opacity(0.35))
+                    .frame(width: 9, height: 9)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text(isSelected ? "Prime prep - drives cart" : detail)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.7))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(isSelected ? Color(hex: "174C32").opacity(0.82) : OunjePalette.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(isSelected ? OunjePalette.accent.opacity(0.45) : OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
         }
         .buttonStyle(.plain)
+    }
+
+    private func selectCookbookPrepBatch(_ batch: PrepBatch) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+            _ = store.setPrimePrepBatch(batchID: batch.id)
+            selectedTab = .prep
+        }
+        toastCenter.show(
+            title: "Prime prep changed",
+            subtitle: "\(batch.name) now drives Prep and Cart.",
+            systemImage: "checkmark.circle.fill"
+        )
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     private func openRequestedCycleIfNeeded() {

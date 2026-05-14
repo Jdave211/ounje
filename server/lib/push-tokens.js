@@ -95,6 +95,7 @@ export async function pushToUser({
   category = null,
   threadId = null,
   userInfo = {},
+  limitLatest = false,
 }) {
   const normalizedUserId = normalize(userId);
   if (!normalizedUserId) return [];
@@ -102,10 +103,15 @@ export async function pushToUser({
   let tokens = [];
   try {
     const supabase = getSupabase();
-    const { data, error } = await supabase
+    let query = supabase
       .from("device_tokens")
-      .select("token, environment")
-      .eq("user_id", normalizedUserId);
+      .select("token, environment, platform, last_seen_at")
+      .eq("user_id", normalizedUserId)
+      .order("last_seen_at", { ascending: false });
+    if (limitLatest) {
+      query = query.limit(1);
+    }
+    const { data, error } = await query;
     if (error) throw error;
     tokens = data ?? [];
   } catch (cause) {
@@ -115,6 +121,8 @@ export async function pushToUser({
 
   if (tokens.length === 0) return [];
 
+  const maskToken = (token) => `${String(token).slice(0, 8)}...${String(token).slice(-6)}`;
+  const notificationKind = normalize(userInfo?.kind) || "unknown";
   const results = await Promise.all(
     tokens.map(async (row) => {
       const result = await sendApnsNotification({
@@ -127,10 +135,23 @@ export async function pushToUser({
         threadId,
         userInfo,
       });
-      // APNs returns "BadDeviceToken" / "Unregistered" / "DeviceTokenNotForTopic"
-      // when a token is no longer valid (user uninstalled, re-installed, etc.).
-      // Prune those rows so we don't keep retrying.
-      const fatal = ["BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"];
+      console.info("[push] APNs attempt", {
+        userId: normalizedUserId,
+        kind: notificationKind,
+        environment: row.environment,
+        platform: row.platform,
+        topic: result.topic,
+        ok: result.ok,
+        status: result.status ?? null,
+        reason: result.reason ?? null,
+        token: maskToken(row.token),
+        lastSeenAt: row.last_seen_at ?? null,
+      });
+      // Only "Unregistered" proves the device token is stale. BadDeviceToken
+      // and DeviceTokenNotForTopic can also mean we pointed at the wrong APNs
+      // environment or topic, so keep them for diagnostics instead of deleting
+      // a potentially valid phone token.
+      const fatal = ["Unregistered"];
       if (!result.ok && fatal.includes(result.reason)) {
         try {
           const supabase = getSupabase();
@@ -141,8 +162,22 @@ export async function pushToUser({
             .eq("token", row.token);
         } catch (_) { /* swallow */ }
       }
-      return { token: row.token, ...result };
+      return { token: maskToken(row.token), ...result };
     })
   );
   return results;
+}
+
+export async function pushTestNotificationToLatestDevice({ userId }) {
+  return pushToUser({
+    userId,
+    title: "Ounje test notification",
+    body: "If this appears, APNs is wired correctly.",
+    userInfo: {
+      kind: "apns_test",
+      deep_link: "ounje://notifications",
+      action_url: "ounje://notifications",
+    },
+    limitLatest: true,
+  });
 }

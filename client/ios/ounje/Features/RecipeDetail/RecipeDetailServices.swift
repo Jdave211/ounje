@@ -2025,30 +2025,62 @@ actor RecipeDetailDiskCache {
 
 actor PlannedRecipeRefreshService {
     static let shared = PlannedRecipeRefreshService()
+    private let maxConcurrentDetailRefreshes = 3
 
     func refreshedPlannedRecipes(from plannedRecipes: [PlannedRecipe], accessToken: String? = nil) async -> [PlannedRecipe] {
+        guard !plannedRecipes.isEmpty else { return [] }
+
+        var resolved = plannedRecipes
+        let candidates = plannedRecipes.enumerated().filter { _, plannedRecipe in
+            shouldRefreshDetails(for: plannedRecipe)
+        }
+        guard !candidates.isEmpty else { return plannedRecipes }
+
         await withTaskGroup(of: (Int, PlannedRecipe).self) { group in
-            for (index, plannedRecipe) in plannedRecipes.enumerated() {
+            var iterator = candidates.makeIterator()
+            var activeTaskCount = 0
+
+            func enqueueNextIfPossible() {
+                guard activeTaskCount < maxConcurrentDetailRefreshes,
+                      let next = iterator.next()
+                else {
+                    return
+                }
+                activeTaskCount += 1
                 group.addTask {
-                    let refreshed = await self.refreshedPlannedRecipe(from: plannedRecipe, accessToken: accessToken)
-                    return (index, refreshed)
+                    let refreshed = await self.refreshedPlannedRecipe(from: next.element, accessToken: accessToken)
+                    return (next.offset, refreshed)
                 }
             }
 
-            var resolved = Array(repeating: Optional<PlannedRecipe>.none, count: plannedRecipes.count)
-            for await (index, refreshed) in group {
-                resolved[index] = refreshed
+            for _ in 0..<maxConcurrentDetailRefreshes {
+                enqueueNextIfPossible()
             }
 
-            return resolved.enumerated().map { index, refreshed in
-                refreshed ?? plannedRecipes[index]
+            for await (index, refreshed) in group {
+                resolved[index] = refreshed
+                activeTaskCount -= 1
+                enqueueNextIfPossible()
             }
         }
+
+        return resolved
+    }
+
+    private func shouldRefreshDetails(for plannedRecipe: PlannedRecipe) -> Bool {
+        let recipe = plannedRecipe.recipe
+        if recipe.ingredients.isEmpty {
+            return true
+        }
+        if recipe.isLegacySeedRecipe || recipe.isKnownSampleRecipe {
+            return true
+        }
+        return false
     }
 
     private func refreshedPlannedRecipe(from plannedRecipe: PlannedRecipe, accessToken: String? = nil) async -> PlannedRecipe {
         do {
-            let detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: plannedRecipe.recipe.id, forceRefresh: true, accessToken: accessToken)
+            let detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: plannedRecipe.recipe.id, accessToken: accessToken)
             let refreshedRecipe = recipePlanModel(
                 from: detail,
                 targetServings: plannedRecipe.servings,

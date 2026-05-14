@@ -231,9 +231,10 @@ struct MealPlan: Identifiable, Codable, Hashable {
     var pipeline: [PipelineDecision]
     var mainShopSnapshot: MainShopSnapshot? = nil
     var recurringRecipeIDs: [String]? = nil
+    var activeBatchID: UUID? = nil
     /// Named batches. When non-nil, the UI renders these instead of `recipes`
-    /// directly. `recipes` stays as the merged superset for backward compat
-    /// with generation, cart, and grocery logic that hasn't been migrated yet.
+    /// directly. `recipes` / `groceryItems` mirror the active batch so legacy
+    /// cart and automation flows only act on the user's prime prep.
     var batches: [PrepBatch]? = nil
 
     var bestQuote: ProviderQuote? {

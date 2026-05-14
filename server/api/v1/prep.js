@@ -96,6 +96,28 @@ function mergedPlanRecipes(batches) {
   return result;
 }
 
+function resolvePrimeBatchID(plan, batches, preferredBatchID = null) {
+  const validIDs = new Set(batches.map((batch) => normalizeUUID(batch?.id)).filter(Boolean));
+  const preferred = normalizeUUID(preferredBatchID);
+  if (preferred && validIDs.has(preferred)) return preferred;
+  const planActive = normalizeUUID(plan?.activeBatchID ?? plan?.active_batch_id);
+  if (planActive && validIDs.has(planActive)) return planActive;
+  return normalizeUUID(batches[0]?.id);
+}
+
+function mirrorPlanToPrimeBatch(plan, batches, preferredBatchID = null) {
+  const activeBatchID = resolvePrimeBatchID(plan, batches, preferredBatchID);
+  const activeBatch = batches.find((batch) => normalizeUUID(batch?.id) === activeBatchID) ?? batches[0];
+  return {
+    ...plan,
+    activeBatchID,
+    batches,
+    recipes: Array.isArray(activeBatch?.recipes) ? activeBatch.recipes : [],
+    groceryItems: Array.isArray(activeBatch?.groceryItems) ? activeBatch.groceryItems : [],
+    recurringRecipeIDs: Array.isArray(activeBatch?.recurringRecipeIDs) ? activeBatch.recurringRecipeIDs : null,
+  };
+}
+
 async function fetchLatestMealPrepCycle(supabase, userID) {
   const { data, error } = await supabase
     .from("meal_prep_cycles")
@@ -137,11 +159,7 @@ prepRouter.post("/prep/batches", async (req, res) => {
       name: normalizedBatchName(req.body?.name, `New Prep ${batches.length + 1}`),
     });
     const nextBatches = existingRequestedBatch ? batches : [...batches, newBatch];
-    const nextPlan = {
-      ...plan,
-      batches: nextBatches,
-      recipes: mergedPlanRecipes(nextBatches),
-    };
+    const nextPlan = mirrorPlanToPrimeBatch(plan, nextBatches, newBatch.id);
 
     const { error } = await supabase
       .from("meal_prep_cycles")

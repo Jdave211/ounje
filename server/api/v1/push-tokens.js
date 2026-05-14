@@ -1,6 +1,6 @@
 import express from "express";
 import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
-import { registerDeviceToken, unregisterDeviceToken } from "../../lib/push-tokens.js";
+import { registerDeviceToken, unregisterDeviceToken, pushTestNotificationToLatestDevice } from "../../lib/push-tokens.js";
 
 const router = express.Router();
 
@@ -42,6 +42,20 @@ router.post("/push-tokens/unregister", async (req, res) => {
       return sendAuthError(res, error, "push-tokens/unregister");
     }
     console.error("[push-tokens/unregister] error:", error.message);
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
+  }
+});
+
+router.post("/push-tokens/test", async (req, res) => {
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const results = await pushTestNotificationToLatestDevice({ userId: userID });
+    return res.json({ ok: results.some((result) => result.ok), results });
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "push-tokens/test");
+    }
+    console.error("[push-tokens/test] error:", error.message);
     return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });

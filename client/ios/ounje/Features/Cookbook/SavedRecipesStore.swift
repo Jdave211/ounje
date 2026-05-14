@@ -74,23 +74,11 @@ final class SavedRecipesStore: ObservableObject {
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
             )
-            let remoteIDSet = Set(remoteRecipes.map(\.id))
-
             let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
 
             if mergedRecipes != savedRecipes {
                 savedRecipes = mergedRecipes
                 persist()
-            }
-
-            let remoteIDs = remoteIDSet.subtracting(deletedSavedRecipeIDs)
-            let unsyncedLocalRecipes = mergedRecipes.filter { !remoteIDs.contains($0.id) && !deletedSavedRecipeIDs.contains($0.id) }
-            if !unsyncedLocalRecipes.isEmpty {
-                try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
-                    userID: authSession.userID,
-                    recipes: unsyncedLocalRecipes,
-                    accessToken: authSession.accessToken
-                )
             }
             markRemoteSyncComplete(for: authSession.userID)
         } catch {
@@ -216,18 +204,23 @@ final class SavedRecipesStore: ObservableObject {
         respectUnsave: Bool = true
     ) {
         if respectUnsave, deletedSavedRecipeIDs.contains(recipe.id) { return }
-        let existing = savedRecipes.first(where: { $0.id == recipe.id })
+        let existingIndex = savedRecipes.firstIndex(where: { $0.id == recipe.id })
+        let existing = existingIndex.map { savedRecipes[$0] }
         let resolved = mergeRecipeCards(primary: recipe, fallback: existing)
         deletedSavedRecipeIDs.remove(recipe.id)
         pendingRemoteDeleteRecipeIDs.remove(recipe.id)
-        savedRecipes.removeAll { $0.id == recipe.id }
-        savedRecipes.insert(resolved, at: 0)
+        if let existingIndex {
+            savedRecipes[existingIndex] = resolved
+        } else {
+            savedRecipes.insert(resolved, at: 0)
+        }
         persist()
 
         if showToast {
             toastCenter.showSavedRecipe(resolved)
         }
 
+        guard existing == nil else { return }
         guard let userID = activeUserID else { return }
         let accessToken = activeAccessToken
         Task(priority: .utility) {
@@ -363,12 +356,13 @@ final class SavedRecipesStore: ObservableObject {
     private func merge(local: [DiscoverRecipeCardData], remote: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
         let filteredRemote = remote.filter { !deletedSavedRecipeIDs.contains($0.id) }
         let filteredLocal = local.filter { !deletedSavedRecipeIDs.contains($0.id) }
-        let remoteIDs = Set(filteredRemote.map(\.id))
-        let localOnly = filteredLocal.filter { !remoteIDs.contains($0.id) }
 
-        // Local-only rows are unsynced or freshly saved on-device, so keep them
-        // ahead of the server list. The server list is already saved_at.desc.
-        return deduplicated(localOnly + filteredRemote + filteredLocal)
+        // Remote saved rows are authoritative after bootstrap/refresh. Keeping
+        // stale local-only imported cards here is what resurrected unsaved
+        // recipes after import-history refreshes and relaunches.
+        return deduplicated(filteredRemote + filteredLocal.filter { recipe in
+            filteredRemote.contains { $0.id == recipe.id }
+        })
     }
 
     private func deduplicated(_ recipes: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {

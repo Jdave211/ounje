@@ -30,6 +30,12 @@ services:
         value: "8"
       - key: OUNJE_AI_USER_DAILY_SPEND_LIMIT_USD
         value: "3"
+      - key: APNS_BUNDLE_ID
+        value: net.ounje
+      - key: APNS_KEY_ID
+        value: US3DPZX54S
+      - key: APNS_TEAM_ID
+        value: U8FPZXV6X6
       - key: OPENAI_API_KEY
         sync: false
       - key: GITHUB_TOKEN
@@ -57,4 +63,6 @@ services:
       - key: TWO_CAPTCHA_API_KEY
         sync: false
       - key: RECIPE_IMAGE_BUCKET
+        sync: false
+      - key: APNS_KEY_BASE64
         sync: false

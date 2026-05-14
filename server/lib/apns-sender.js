@@ -29,6 +29,9 @@ const APNS_KEY_ID = process.env.APNS_KEY_ID ?? "";
 const APNS_TEAM_ID = process.env.APNS_TEAM_ID ?? "";
 const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID ?? "";
 const APNS_KEY_BASE64 = process.env.APNS_KEY_BASE64 ?? "";
+const APNS_TOPIC = APNS_TEAM_ID && APNS_BUNDLE_ID.startsWith(`${APNS_TEAM_ID}.`)
+  ? APNS_BUNDLE_ID.slice(APNS_TEAM_ID.length + 1)
+  : APNS_BUNDLE_ID;
 
 const PRODUCTION_HOST = "api.push.apple.com";
 const SANDBOX_HOST = "api.development.push.apple.com";
@@ -132,15 +135,16 @@ export async function sendApnsNotification({
   threadId = null,
   userInfo = {},
 }) {
+  const topic = APNS_TOPIC;
   if (!isApnsConfigured()) {
-    return { ok: false, reason: "apns_not_configured" };
+    return { ok: false, reason: "apns_not_configured", topic };
   }
   if (!token || !title || !body) {
-    return { ok: false, reason: "missing_parameters" };
+    return { ok: false, reason: "missing_parameters", topic };
   }
 
   const jwt = mintJwt();
-  if (!jwt) return { ok: false, reason: "jwt_failed" };
+  if (!jwt) return { ok: false, reason: "jwt_failed", topic };
 
   const host = environment === "sandbox" ? SANDBOX_HOST : PRODUCTION_HOST;
   const path = `/3/device/${token}`;
@@ -173,7 +177,7 @@ export async function sendApnsNotification({
       ":method": "POST",
       ":path": path,
       "authorization": `bearer ${jwt}`,
-      "apns-topic": APNS_BUNDLE_ID,
+      "apns-topic": topic,
       "apns-push-type": "alert",
       "apns-priority": "10",
       "content-type": "application/json",
@@ -189,14 +193,14 @@ export async function sendApnsNotification({
     request.on("data", (chunk) => { responseBody += chunk.toString(); });
     request.on("end", () => {
       if (status >= 200 && status < 300) {
-        safeResolve({ ok: true, status });
+        safeResolve({ ok: true, status, topic });
       } else {
         let reason = `apns_${status}`;
         try {
           const parsed = JSON.parse(responseBody);
           if (parsed?.reason) reason = parsed.reason;
         } catch (_) { /* keep generic reason */ }
-        safeResolve({ ok: false, status, reason });
+        safeResolve({ ok: false, status, reason, topic });
       }
     });
     request.on("error", (err) => {

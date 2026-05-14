@@ -16,7 +16,7 @@ import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
-import { acquireRedisLock, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
+import { acquireRedisLock, publishRedisJSON, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
 
@@ -211,6 +211,8 @@ const WARM_RECIPE_DETAIL_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const IMPORT_ENQUEUE_LOCK_TTL_SECONDS = 15;
 const IMPORT_PROCESS_LOCK_TTL_SECONDS = 30 * 60;
 const SOURCE_METADATA_CACHE_TTL_SECONDS = 6 * 60 * 60;
+const GLOBAL_IMPORT_CACHE_NAMESPACE = "__global__";
+const RECIPE_IMPORT_WAKE_CHANNEL = "ounje:recipe-ingestion:queued";
 const _canonicalImportCache = new Map();
 
 function _canonicalImportCacheKey(userID, canonicalURL, dedupeKey) {
@@ -736,12 +738,19 @@ function cleanURL(raw) {
   try {
     const url = new URL(String(raw ?? "").trim());
     url.hash = "";
+    const host = url.hostname.toLowerCase();
     if (url.hostname.includes("youtube.com") && url.searchParams.has("v")) {
       return `https://www.youtube.com/watch?v=${url.searchParams.get("v")}`;
     }
     if (url.hostname === "youtu.be") {
       const id = url.pathname.split("/").filter(Boolean)[0] ?? "";
       return id ? `https://www.youtube.com/watch?v=${id}` : url.toString();
+    }
+    if (host.includes("tiktok.com")) {
+      const videoMatch = url.pathname.match(/^\/(@[^/]+)\/video\/(\d+)/i);
+      if (videoMatch) {
+        return `https://www.tiktok.com/${videoMatch[1]}/video/${videoMatch[2]}`;
+      }
     }
     const removable = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "si", "feature"];
     removable.forEach((key) => url.searchParams.delete(key));
@@ -2834,7 +2843,7 @@ async function findExistingJobForRequestSource(request, dedupeKey = null) {
   return rows.find((row) => normalizeText(row.status).toLowerCase() !== "failed") ?? null;
 }
 
-async function findCompletedCanonicalImportForRequest(request, { canonicalURL = null, dedupeKey = null, excludeJobID = null } = {}) {
+async function findCompletedCanonicalImportForRequest(request, { canonicalURL = null, dedupeKey = null, excludeJobID = null, scope = "user" } = {}) {
   const cacheableURL = cleanURL(canonicalURL ?? request.canonical_url ?? request.source_url ?? null);
   const cacheDedupeKey = dedupeKey ?? buildDedupeKey({
     sourceUrl: request.source_url,
@@ -2845,12 +2854,9 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
   if (!isCanonicalCacheableSource(request.source_type, cacheableURL ?? request.source_url)) return null;
 
   // Fast path: in-memory cache hit (avoids DB round-trip for repeated URLs).
-  const memCached = await _getCanonicalImportCache(request.user_id, cacheableURL, cacheDedupeKey);
+  const cacheUserID = scope === "global" ? GLOBAL_IMPORT_CACHE_NAMESPACE : request.user_id;
+  const memCached = await _getCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey);
   if (memCached && (!excludeJobID || memCached.id !== excludeJobID)) return memCached;
-
-  const userFilter = request.user_id
-    ? `user_id=eq.${encodeURIComponent(request.user_id)}`
-    : "user_id=is.null";
 
   const sourceFilters = [];
   const candidateURLs = urlLookupVariants(
@@ -2868,11 +2874,15 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
   if (!sourceFilters.length) return null;
 
   const filters = [
-    userFilter,
     `status=in.${buildInClause(["saved", "draft", "needs_review"])}`,
     "recipe_id=not.is.null",
     `or=(${sourceFilters.join(",")})`,
   ];
+  if (scope !== "global") {
+    filters.unshift(request.user_id
+      ? `user_id=eq.${encodeURIComponent(request.user_id)}`
+      : "user_id=is.null");
+  }
   if (excludeJobID) {
     filters.push(`id=neq.${encodeURIComponent(excludeJobID)}`);
   }
@@ -2889,7 +2899,7 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
 
   const result = rows[0] ?? null;
   if (result) {
-    _setCanonicalImportCache(request.user_id, cacheableURL, cacheDedupeKey, result);
+    _setCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey, result);
   }
   return result;
 }
@@ -2971,6 +2981,65 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
   return formatJobResponse(completed, {
     recipe,
     recipe_detail: recipeDetail,
+  });
+}
+
+async function completeJobByCloningGlobalImportedRecipe(job, cachedJob, { workerID, canonicalURL = null, dedupeKey = null } = {}) {
+  const sourceRecipeID = normalizeText(cachedJob?.recipe_id ?? "");
+  const targetUserID = normalizeText(job?.user_id ?? "");
+  if (!sourceRecipeID || !targetUserID) return null;
+
+  const sourceDetail = await fetchCanonicalRecipeDetailByID(sourceRecipeID).catch(() => null);
+  if (!sourceDetail) return null;
+
+  const cloneSource = { ...sourceDetail };
+  delete cloneSource.id;
+
+  const persisted = await persistNormalizedRecipe(cloneSource, {
+    userID: targetUserID,
+    targetState: job.target_state,
+    sourceJobID: job.id,
+    dedupeKey: dedupeKey ?? job.dedupe_key ?? cachedJob.dedupe_key ?? null,
+    reviewState: cachedJob.review_state ?? "approved",
+    confidenceScore: cachedJob.confidence_score ?? 0.98,
+    qualityFlags: uniqueStrings([...(cachedJob.quality_flags ?? []), "global_import_cache_hit"]),
+  });
+
+  const now = nowIso();
+  const completed = await appendJobEvent(job.id, "global_import_cache_hit", {
+    worker_id: workerID,
+    cached_job_id: cachedJob.id,
+    cached_recipe_id: sourceRecipeID,
+    recipe_id: persisted.recipe_id,
+  }, {
+    status: "saved",
+    canonical_url: canonicalURL ?? cachedJob.canonical_url ?? cachedJob.source_url ?? job.canonical_url ?? job.source_url ?? null,
+    dedupe_key: dedupeKey ?? job.dedupe_key ?? cachedJob.dedupe_key ?? null,
+    dedupe_recipe_id: sourceRecipeID,
+    recipe_id: persisted.recipe_id,
+    review_state: cachedJob.review_state ?? "approved",
+    confidence_score: cachedJob.confidence_score ?? job.confidence_score ?? null,
+    quality_flags: uniqueStrings([...(job.quality_flags ?? []), "global_import_cache_hit"]),
+    review_reason: cachedJob.review_reason ?? job.review_reason ?? null,
+    error_message: null,
+    saved_at: job.saved_at ?? now,
+    completed_at: now,
+  });
+
+  _setCanonicalImportCache(targetUserID, completed.canonical_url ?? canonicalURL ?? null, completed.dedupe_key ?? null, completed);
+  _setCanonicalImportCache(GLOBAL_IMPORT_CACHE_NAMESPACE, completed.canonical_url ?? canonicalURL ?? null, completed.dedupe_key ?? null, completed);
+  await warmRecipeDetailCache({
+    userID: completed.user_id,
+    recipeID: persisted.recipe_id,
+    recipeDetail: persisted.recipe_detail,
+  });
+  if (persisted.saved_state === "inserted") {
+    scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: job.id });
+  }
+  invalidateUserBootstrapCache(completed.user_id);
+  return formatJobResponse(completed, {
+    recipe: persisted.recipe_card,
+    recipe_detail: persisted.recipe_detail,
   });
 }
 
@@ -7944,6 +8013,10 @@ function formatJobResponse(jobRow, extras = {}) {
   };
 }
 
+function isImportQueuedForWorker(jobRow) {
+  return ["queued", "retryable"].includes(normalizeText(jobRow?.status).toLowerCase());
+}
+
 export async function queueRecipeIngestion(payload = {}, options = {}) {
   const requests = Array.isArray(payload.sources)
     ? payload.sources.map((entry) => normalizeImportPayload({ ...payload, ...entry }))
@@ -7968,6 +8041,14 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     };
 
     const job = await createJobRow(queuedRequest);
+    if (isImportQueuedForWorker(job)) {
+      void publishRedisJSON(RECIPE_IMPORT_WAKE_CHANNEL, {
+        job_id: job.id,
+        user_id: job.user_id ?? null,
+        source_type: job.source_type ?? null,
+        queued_at: nowIso(),
+      });
+    }
     if (processInline) {
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
     } else {
@@ -8063,6 +8144,11 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     canonicalUrl: requestPayload.source_url,
     sourceText: requestPayload.source_text,
   });
+  const lookupRequest = {
+    ...requestPayload,
+    source_url: existingJob.source_url ?? requestPayload.source_url,
+    canonical_url: requestPayload.source_url,
+  };
   requestPayload = {
     ...requestPayload,
     access_token: accessToken ?? requestPayload.access_token ?? null,
@@ -8108,7 +8194,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       }).catch(() => {});
     }
 
-    const cachedCanonical = await findCompletedCanonicalImportForRequest(requestPayload, {
+    const cachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
       canonicalURL: requestPayload.source_url,
       dedupeKey: canonicalDedupeKey,
       excludeJobID: existingJob.id,
@@ -8120,7 +8206,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       });
     }
 
-    const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(requestPayload, {
+    const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(lookupRequest, {
       canonicalURL: requestPayload.source_url,
       dedupeKey: canonicalDedupeKey,
     });
@@ -8130,6 +8216,28 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
         canonicalURL: requestPayload.source_url,
         dedupeKey: canonicalDedupeKey,
       });
+    }
+
+    const globalCachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
+      canonicalURL: requestPayload.source_url,
+      dedupeKey: canonicalDedupeKey,
+      excludeJobID: existingJob.id,
+      scope: "global",
+    });
+    if (globalCachedCanonical) {
+      const sameUser = normalizeText(globalCachedCanonical.user_id) === normalizeText(existingJob.user_id);
+      if (sameUser) {
+        return await completeJobFromCachedCanonicalImport(existingJob, globalCachedCanonical, {
+          workerID,
+          canonicalURL: requestPayload.source_url,
+        });
+      }
+      const cloned = await completeJobByCloningGlobalImportedRecipe(existingJob, globalCachedCanonical, {
+        workerID,
+        canonicalURL: requestPayload.source_url,
+        dedupeKey: canonicalDedupeKey,
+      });
+      if (cloned) return cloned;
     }
 
     const resumedSourceArtifact = await fetchLatestJobArtifact(existingJob.id, "source_evidence_bundle").catch(() => null);
@@ -8325,7 +8433,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       userID: existingJob.user_id,
       targetState: existingJob.target_state,
       sourceJobID: existingJob.id,
-      dedupeKey: existingJob.dedupe_key ?? requestPayload.source_url ?? null,
+      dedupeKey: canonicalDedupeKey ?? existingJob.dedupe_key ?? requestPayload.source_url ?? null,
       reviewState: extraction.review_state,
       confidenceScore: extraction.confidence_score,
       qualityFlags: extraction.quality_flags,
@@ -8350,7 +8458,13 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     _setCanonicalImportCache(
       existingJob.user_id,
       requestPayload.source_url ?? existingJob.canonical_url ?? null,
-      existingJob.dedupe_key ?? null,
+      canonicalDedupeKey ?? existingJob.dedupe_key ?? null,
+      job
+    );
+    _setCanonicalImportCache(
+      GLOBAL_IMPORT_CACHE_NAMESPACE,
+      requestPayload.source_url ?? existingJob.canonical_url ?? null,
+      canonicalDedupeKey ?? existingJob.dedupe_key ?? null,
       job
     );
     await warmRecipeDetailCache({
@@ -8447,6 +8561,7 @@ export async function runRecipeIngestionWorkerBatch({ workerID = `daemon_${nanoi
 }
 
 export {
+  RECIPE_IMPORT_WAKE_CHANNEL,
   RECIPE_GATE_MODEL,
   RECIPE_IMPORT_COMPLETION_MODEL,
   RECIPE_INGESTION_MODEL,

@@ -5,9 +5,9 @@ The VM is private worker infrastructure. It should not serve the public API, ter
 ## Process
 
 - `ounje-automation-worker.service`: claims `automation_jobs` rows from Supabase and runs long browser/autonomous work such as Instacart cart building.
-- `ounje-recipe-ingestion-worker.service`: claims `recipe_ingestion_jobs` rows from Supabase and runs TikTok/IG/web media extraction, scraping, OpenAI extraction/completion, recipe persistence, artifacts, and AI usage logging.
+- `ounje-recipe-ingestion-worker.service`: wakes from Redis when Render enqueues a recipe import, claims `recipe_ingestion_jobs` rows from Supabase, and runs TikTok/IG/web media extraction, scraping, OpenAI extraction/completion, recipe persistence, artifacts, and AI usage logging.
 
-The old VM API/nginx path is intentionally out of the production architecture. The app talks to Render only; the VM polls Supabase privately.
+The old VM API/nginx path is intentionally out of the production architecture. The app talks to Render only; the VM sleeps on Redis and only performs a sparse safety sweep when no wake event arrives.
 
 ## VM Setup
 
@@ -43,6 +43,8 @@ TWO_CAPTCHA_API_KEY=...
 RECIPE_IMAGE_BUCKET=...
 OUNJE_ENABLE_AI_CALL_LOGGING=true
 RECIPE_INGESTION_WORKER_CONCURRENCY=1
+RECIPE_INGESTION_WORKER_WAKE_MODE=redis
+RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS=900000
 YOUTUBE_DL_BINARY=/usr/local/bin/yt-dlp
 ```
 
