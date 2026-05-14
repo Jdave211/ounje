@@ -1123,6 +1123,7 @@ struct UserProfile: Codable, Hashable {
     var purchasingBehavior: PurchasingBehavior
     var orderingAutonomy: OrderingAutonomyLevel
     var pricingTier: OunjePricingTier
+    var notificationPreferences: OunjeNotificationPreferences?
     /// Identity persona chosen during onboarding (e.g. "student", "parent").
     var foodPersona: String
     /// Food goals / challenges chosen during onboarding (e.g. "Save money", "Eat healthier").
@@ -1161,6 +1162,7 @@ struct UserProfile: Codable, Hashable {
         purchasingBehavior: PurchasingBehavior = .healthier,
         orderingAutonomy: OrderingAutonomyLevel = .autoOrderWithinBudget,
         pricingTier: OunjePricingTier = .free,
+        notificationPreferences: OunjeNotificationPreferences? = nil,
         foodPersona: String = "",
         foodGoals: [String] = []
     ) {
@@ -1196,6 +1198,7 @@ struct UserProfile: Codable, Hashable {
         self.purchasingBehavior = purchasingBehavior
         self.orderingAutonomy = orderingAutonomy
         self.pricingTier = pricingTier
+        self.notificationPreferences = notificationPreferences
         self.foodPersona = foodPersona
         self.foodGoals = foodGoals
     }
@@ -1558,6 +1561,7 @@ struct UserProfile: Codable, Hashable {
         case purchasingBehavior
         case orderingAutonomy
         case pricingTier
+        case notificationPreferences
         case foodPersona
         case foodGoals
     }
@@ -1598,6 +1602,7 @@ struct UserProfile: Codable, Hashable {
         purchasingBehavior = try container.decodeIfPresent(PurchasingBehavior.self, forKey: .purchasingBehavior) ?? .healthier
         orderingAutonomy = try container.decodeIfPresent(OrderingAutonomyLevel.self, forKey: .orderingAutonomy) ?? .autoOrderWithinBudget
         pricingTier = try container.decodeIfPresent(OunjePricingTier.self, forKey: .pricingTier) ?? .plus
+        notificationPreferences = try container.decodeIfPresent(OunjeNotificationPreferences.self, forKey: .notificationPreferences)
         foodPersona = try container.decodeIfPresent(String.self, forKey: .foodPersona) ?? ""
         foodGoals = try container.decodeIfPresent([String].self, forKey: .foodGoals) ?? []
     }
@@ -1634,6 +1639,7 @@ struct UserProfile: Codable, Hashable {
         try container.encode(purchasingBehavior, forKey: .purchasingBehavior)
         try container.encode(orderingAutonomy, forKey: .orderingAutonomy)
         try container.encode(pricingTier, forKey: .pricingTier)
+        try container.encodeIfPresent(notificationPreferences, forKey: .notificationPreferences)
         if !foodPersona.isEmpty { try container.encode(foodPersona, forKey: .foodPersona) }
         if !foodGoals.isEmpty { try container.encode(foodGoals, forKey: .foodGoals) }
     }

@@ -7,6 +7,92 @@ extension Notification.Name {
     static let instacartRunSummaryDidUpdate = Notification.Name("instacartRunSummaryDidUpdate")
 }
 
+struct OunjeNotificationPreferences: Codable, Hashable {
+    var recipeImportUpdates: Bool = true
+    var promotional: Bool = true
+    var agentShoppingGeneralUpdates: Bool = true
+    var agentShoppingItemUpdates: Bool = true
+    var prepReminders: Bool = true
+
+    static let enabled = OunjeNotificationPreferences()
+
+    func allows(kind: String, metadata: [String: String]? = nil) -> Bool {
+        switch Self.area(for: kind, metadata: metadata) {
+        case .recipeImportUpdates:
+            return recipeImportUpdates
+        case .promotional:
+            return promotional
+        case .agentShoppingGeneralUpdates:
+            return agentShoppingGeneralUpdates
+        case .agentShoppingItemUpdates:
+            return agentShoppingItemUpdates
+        case .prepReminders:
+            return prepReminders
+        case .unknown:
+            return true
+        }
+    }
+
+    static func area(for kind: String, metadata: [String: String]? = nil) -> Area {
+        let normalizedKind = kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedArea = metadata?["notification_area"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isItemLevel = metadata?["item_update"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true"
+            || normalizedArea == "agent_shopping_item"
+
+        if normalizedKind.hasPrefix("recipe_import_") {
+            return .recipeImportUpdates
+        }
+        if normalizedKind == "recipe_nudge" || normalizedKind == "trending_recipe_nudge" || normalizedArea == "promotional" {
+            return .promotional
+        }
+        if normalizedKind == "meal_prep_ready" || normalizedArea == "prep_reminder" {
+            return .prepReminders
+        }
+        if normalizedKind.hasPrefix("autoshop_")
+            || normalizedKind.hasPrefix("grocery_")
+            || normalizedKind == "cart_review_required"
+            || normalizedKind == "checkout_approval_required" {
+            return isItemLevel ? .agentShoppingItemUpdates : .agentShoppingGeneralUpdates
+        }
+        return .unknown
+    }
+
+    enum Area: String, CaseIterable, Identifiable {
+        case recipeImportUpdates
+        case promotional
+        case agentShoppingGeneralUpdates
+        case agentShoppingItemUpdates
+        case prepReminders
+        case unknown
+
+        var id: String { rawValue }
+    }
+}
+
+enum OunjeNotificationPreferenceStore {
+    private static let storageKey = "ounje.notification.preferences.v1"
+
+    static func load() -> OunjeNotificationPreferences {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let preferences = try? JSONDecoder().decode(OunjeNotificationPreferences.self, from: data)
+        else {
+            return .enabled
+        }
+        return preferences
+    }
+
+    static func save(_ preferences: OunjeNotificationPreferences) {
+        guard let data = try? JSONEncoder().encode(preferences) else { return }
+        UserDefaults.standard.set(data, forKey: storageKey)
+    }
+}
+
+extension UserProfile {
+    var resolvedNotificationPreferences: OunjeNotificationPreferences {
+        notificationPreferences ?? .enabled
+    }
+}
+
 struct AppNotificationEvent: Identifiable, Codable, Hashable {
     let id: UUID
     let userID: String

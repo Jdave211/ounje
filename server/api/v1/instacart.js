@@ -870,14 +870,14 @@ export async function executeInstacartAutomationJob(job, { logger = console } = 
     const resolvedCount = resolvedItems.length - (result?.unresolvedItems?.length ?? 0);
     await createNotificationEvent({
       userId: userID,
-      kind: "grocery_cart_ready",
+      kind: "autoshop_completed",
       dedupeKey: `grocery-cart-ready-${runID}`,
       title: isRetry ? "Instacart cart updated" : "Instacart cart is ready",
       body: resolvedCount > 0
         ? `${resolvedCount} of ${resolvedItems.length} items were added to your cart.`
         : "Your grocery cart is ready for checkout.",
-      actionUrl: result?.cartUrl ?? null,
-      actionLabel: result?.cartUrl ? "Open cart" : null,
+      actionUrl: result?.cartUrl ?? "ounje://cart",
+      actionLabel: "Open cart",
       orderId: groceryOrderID ?? null,
       planId: mealPlanID ?? null,
       metadata: { runId: runID, resolvedCount, totalCount: resolvedItems.length },
@@ -888,12 +888,14 @@ export async function executeInstacartAutomationJob(job, { logger = console } = 
     const addedCount = result?.addedItems?.length ?? 0;
     await createNotificationEvent({
       userId: userID,
-      kind: "grocery_cart_partial",
+      kind: "autoshop_failed",
       dedupeKey: `grocery-cart-partial-${runID}`,
       title: "Most items added — a few need attention",
       body: addedCount > 0
         ? `${addedCount} items added. Ounje is retrying the rest.`
         : "Some items couldn't be matched. Ounje is retrying.",
+      actionUrl: result?.cartUrl ?? "ounje://cart",
+      actionLabel: "Open cart",
       orderId: groceryOrderID ?? null,
       planId: mealPlanID ?? null,
       metadata: { runId: runID, addedCount, totalCount: resolvedItems.length },

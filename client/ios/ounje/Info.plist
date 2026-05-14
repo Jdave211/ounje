@@ -28,6 +28,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>net.ounje</string>
+				<string>ounje</string>
 			</array>
 		</dict>
 	</array>

@@ -128,6 +128,8 @@ export async function sendApnsNotification({
   title,
   body,
   subtitle,
+  category = null,
+  threadId = null,
   userInfo = {},
 }) {
   if (!isApnsConfigured()) {
@@ -147,6 +149,8 @@ export async function sendApnsNotification({
       alert: subtitle ? { title, subtitle, body } : { title, body },
       sound: "default",
       "content-available": 1,
+      ...(category ? { category } : {}),
+      ...(threadId ? { "thread-id": threadId } : {}),
     },
     ...userInfo,
   });

@@ -295,9 +295,15 @@ const RECIPE_INGESTION_BATCH_SIZE = Math.max(
   1,
   Number.parseInt(process.env.RECIPE_INGESTION_BATCH_SIZE ?? "4", 10) || 4
 );
+const RECIPE_INGESTION_WORKER_ID = String(
+  process.env.RECIPE_INGESTION_WORKER_ID ?? `api_${process.pid}`
+).trim();
 const ENABLE_RECIPE_INGESTION_POLLING = ["1", "true", "yes", "on"].includes(
   String(process.env.OUNJE_ENABLE_RECIPE_INGESTION_POLLING ?? "").trim().toLowerCase()
 );
+const CAN_CLAIM_RECIPE_INGESTION_JOBS = RECIPE_INGESTION_WORKER_ID
+  .toLowerCase()
+  .startsWith("vm_recipe_ingest");
 
 let recipeIngestionPollInFlight = false;
 
@@ -309,7 +315,7 @@ async function tickRecipeIngestionWorker() {
   recipeIngestionPollInFlight = true;
   try {
     const processed = await runRecipeIngestionWorkerBatch({
-      workerID: `api_${process.pid}`,
+      workerID: RECIPE_INGESTION_WORKER_ID,
       batchSize: RECIPE_INGESTION_BATCH_SIZE,
     });
     if (processed > 0) {
@@ -339,9 +345,13 @@ if (ENABLE_RECIPE_FINE_TUNE_POLLING) {
 } else {
   console.log("[recipe-model-registry] fine-tune polling disabled");
 }
-if (ENABLE_RECIPE_INGESTION_POLLING) {
-  console.log("[recipe-ingestion] polling enabled");
+if (ENABLE_RECIPE_INGESTION_POLLING && CAN_CLAIM_RECIPE_INGESTION_JOBS) {
+  console.log(`[recipe-ingestion] polling enabled worker=${RECIPE_INGESTION_WORKER_ID}`);
   startRecipeIngestionPolling();
+} else if (ENABLE_RECIPE_INGESTION_POLLING) {
+  console.log(
+    `[recipe-ingestion] polling skipped: worker id ${RECIPE_INGESTION_WORKER_ID} is not allowed to claim jobs`
+  );
 } else {
   console.log("[recipe-ingestion] polling disabled by OUNJE_ENABLE_RECIPE_INGESTION_POLLING");
 }

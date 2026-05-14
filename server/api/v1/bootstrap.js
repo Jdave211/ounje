@@ -117,7 +117,7 @@ async function fetchEntitlementRow(supabase, userID) {
 async function countUserRows(supabase, table, userID, selectColumn, applyFilters = null) {
   let query = supabase
     .from(table)
-    .select(selectColumn, { count: "exact", head: true })
+    .select(selectColumn, { count: "planned", head: true })
     .eq("user_id", userID);
   if (typeof applyFilters === "function") {
     query = applyFilters(query);
@@ -179,9 +179,9 @@ router.get("/bootstrap/user", async (req, res) => {
       prepOverrideCount,
       completedImportCount,
       recentImportsResult,
-      savedRecipeCount,
       savedIDsResult,
       latestSavedResult,
+      savedTombstonesResult,
       mainShopCount,
       baseCartCount,
       latestOrderResult,
@@ -225,7 +225,6 @@ router.get("/bootstrap/user", async (req, res) => {
           .limit(8),
         { data: [], error: null }
       ),
-      countUserRows(supabase, "saved_recipes", userID, "recipe_id").catch(() => null),
       safeQuery(
         supabase
           .from("saved_recipes")
@@ -241,6 +240,13 @@ router.get("/bootstrap/user", async (req, res) => {
           .eq("user_id", userID)
           .order("saved_at", { ascending: false })
           .limit(120),
+        { data: [], error: null }
+      ),
+      safeQuery(
+        supabase
+          .from("saved_recipe_tombstones")
+          .select("recipe_id")
+          .eq("user_id", userID),
         { data: [], error: null }
       ),
       countUserRows(supabase, "main_shop_items", userID, "id").catch(() => null),
@@ -263,9 +269,15 @@ router.get("/bootstrap/user", async (req, res) => {
     if (recentImportsResult.error) throw recentImportsResult.error;
     if (savedIDsResult.error) throw savedIDsResult.error;
     if (latestSavedResult.error) throw latestSavedResult.error;
+    if (savedTombstonesResult.error) throw savedTombstonesResult.error;
     if (latestOrderResult.error) throw latestOrderResult.error;
 
     const profile = profileResult.data ?? null;
+    const tombstonedSavedRecipeIDs = new Set(
+      (savedTombstonesResult.data ?? []).map((row) => row.recipe_id).filter(Boolean)
+    );
+    const savedIDRows = (savedIDsResult.data ?? []).filter((row) => !tombstonedSavedRecipeIDs.has(row.recipe_id));
+    const latestSavedRows = (latestSavedResult.data ?? []).filter((row) => !tombstonedSavedRecipeIDs.has(row.recipe_id));
     const payload = {
       version: 1,
       user_id: userID,
@@ -310,9 +322,9 @@ router.get("/bootstrap/user", async (req, res) => {
         override_count: prepOverrideCount,
       },
       saved: {
-        count: savedRecipeCount,
-        ids: (savedIDsResult.data ?? []).map((row) => row.recipe_id).filter(Boolean),
-        latest_cards: (latestSavedResult.data ?? []).map(compactSavedCard),
+        count: savedIDRows.length,
+        ids: savedIDRows.map((row) => row.recipe_id).filter(Boolean),
+        latest_cards: latestSavedRows.map(compactSavedCard),
       },
       imports: {
         completed_count: completedImportCount,

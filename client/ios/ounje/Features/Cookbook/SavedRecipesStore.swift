@@ -165,7 +165,9 @@ final class SavedRecipesStore: ObservableObject {
                     try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
                         userID: remoteSession.userID,
                         recipes: [recipe],
-                        accessToken: remoteSession.accessToken ?? accessToken
+                        accessToken: remoteSession.accessToken ?? accessToken,
+                        clearTombstones: true,
+                        touchSavedAt: true
                     )
                     await SupabaseUserBootstrapService.shared.invalidateServerCache(
                         userID: remoteSession.userID,
@@ -269,7 +271,9 @@ final class SavedRecipesStore: ObservableObject {
                 try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
                     userID: remoteSession.userID,
                     recipes: [recipe],
-                    accessToken: remoteSession.accessToken ?? accessToken
+                    accessToken: remoteSession.accessToken ?? accessToken,
+                    clearTombstones: true,
+                    touchSavedAt: true
                 )
                 await SupabaseUserBootstrapService.shared.invalidateServerCache(
                     userID: remoteSession.userID,

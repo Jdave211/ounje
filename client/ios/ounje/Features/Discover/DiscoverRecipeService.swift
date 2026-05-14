@@ -120,38 +120,6 @@ final class SupabaseDiscoverRecipeService {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
 
-        // The base feed should render from the public catalog immediately.
-        // Waiting on the ranked Render route here can stall first paint and
-        // pull-to-refresh for 20s+ before falling back to the same catalog.
-        if normalizedQuery.isEmpty,
-           normalizedFilter == "all" {
-            do {
-                let directFeed = try await fetchRotatedCatalogFeed(
-                    limit: limit,
-                    offset: offset,
-                    sessionSeed: sessionSeed,
-                    forceRefresh: forceRefresh
-                )
-                debugLogDiscoverFallback(
-                    forceRefresh ? "direct refreshed catalog feed" : "direct catalog feed",
-                    filter: filter,
-                    offset: offset,
-                    recipes: directFeed.recipes.count,
-                    mode: directFeed.rankingMode
-                )
-                return directFeed
-            } catch {
-                debugLogDiscoverFallback(
-                    "fast initial catalog failed; trying render",
-                    filter: filter,
-                    offset: offset,
-                    recipes: 0,
-                    mode: nil,
-                    error: error
-                )
-            }
-        }
-
         var lastError: Error?
         for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
@@ -180,27 +148,6 @@ final class SupabaseDiscoverRecipeService {
                         )
                         return fallback
                     }
-
-                    let directFeed = try await fetchRotatedCatalogFeed(
-                        limit: limit,
-                        offset: offset,
-                        sessionSeed: sessionSeed
-                    )
-                    debugLogDiscoverFallback(
-                        "render empty; feed fallback",
-                        filter: filter,
-                        offset: offset,
-                        recipes: directFeed.recipes.count,
-                        mode: "supabase_direct_empty_response_fallback"
-                    )
-                    return DiscoverRankedRecipesResponse(
-                        recipes: directFeed.recipes,
-                        filters: directFeed.filters,
-                        rankingMode: "supabase_direct_empty_response_fallback",
-                        totalAvailable: directFeed.totalAvailable,
-                        hasMore: directFeed.hasMore,
-                        nextOffset: directFeed.nextOffset
-                    )
                 }
 
                 return response
@@ -256,12 +203,32 @@ final class SupabaseDiscoverRecipeService {
     }
 
     func prewarmBaseCatalog(limit: Int = 96) async {
-        _ = try? await fetchRecipeCount()
-        _ = try? await fetchFullCatalogPool(
-            fetchLimit: max(1, limit),
-            sessionSeed: "prewarm",
-            forceRefresh: false
-        )
+        let prewarmLimit = min(max(1, limit), 24)
+        for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                _ = try await fetchRankedRecipes(
+                    baseURL: candidateBaseURL,
+                    profile: nil,
+                    filter: "All",
+                    query: "",
+                    sessionSeed: "prewarm",
+                    feedContext: DiscoverFeedContext.current,
+                    limit: prewarmLimit,
+                    offset: 0,
+                    forceRefresh: false
+                )
+                return
+            } catch {
+                debugLogDiscoverFallback(
+                    "server prewarm failed",
+                    filter: "All",
+                    offset: 0,
+                    recipes: 0,
+                    mode: nil,
+                    error: error
+                )
+            }
+        }
     }
 
     private func fetchRankedRecipes(

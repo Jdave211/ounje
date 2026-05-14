@@ -68,9 +68,62 @@ final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
     ) {
         completionHandler([.banner, .sound, .badge, .list])
     }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        defer { completionHandler() }
+
+        let userInfo = response.notification.request.content.userInfo
+        guard let url = Self.notificationURL(from: userInfo) else { return }
+        OunjeNotificationDeepLinkBuffer.shared.store(url)
+        NotificationCenter.default.post(
+            name: .ounjeNotificationDeepLinkReceived,
+            object: url,
+            userInfo: ["url": url]
+        )
+    }
+
+    private static func notificationURL(from userInfo: [AnyHashable: Any]) -> URL? {
+        let keys = ["action_url", "actionURL", "deep_link", "deepLink"]
+        for key in keys {
+            if let rawValue = userInfo[key] as? String,
+               let url = URL(string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+               !rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return url
+            }
+        }
+        return nil
+    }
 }
 
 extension Notification.Name {
     /// Broadcast when the app receives a remote push while in the foreground.
     static let ounjeRemoteNotificationReceived = Notification.Name("ounjeRemoteNotificationReceived")
+    /// Broadcast when the user taps a push/local notification with a destination.
+    static let ounjeNotificationDeepLinkReceived = Notification.Name("ounjeNotificationDeepLinkReceived")
+}
+
+final class OunjeNotificationDeepLinkBuffer {
+    static let shared = OunjeNotificationDeepLinkBuffer()
+
+    private let storageKey = "ounje.notification.pendingDeepLink"
+
+    private init() {}
+
+    func store(_ url: URL) {
+        UserDefaults.standard.set(url.absoluteString, forKey: storageKey)
+    }
+
+    func consume() -> URL? {
+        guard let rawValue = UserDefaults.standard.string(forKey: storageKey),
+              let url = URL(string: rawValue)
+        else {
+            return nil
+        }
+        UserDefaults.standard.removeObject(forKey: storageKey)
+        return url
+    }
 }

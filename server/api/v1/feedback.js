@@ -30,9 +30,47 @@ function getSupabase() {
 async function signAttachmentUrls(supabase, attachments) {
   if (!Array.isArray(attachments) || attachments.length === 0) return [];
 
+  const normalizedAttachments = attachments
+    .filter((attachment) => attachment && typeof attachment === "object");
+  const pathByIndex = normalizedAttachments.map((attachment) => String(attachment.storage_path ?? attachment.storagePath ?? "").trim());
+  const paths = [];
+  const batchIndexByAttachmentIndex = new Map();
+  pathByIndex.forEach((path, attachmentIndex) => {
+    if (!path) return;
+    batchIndexByAttachmentIndex.set(attachmentIndex, paths.length);
+    paths.push(path);
+  });
+  const bucket = supabase.storage.from(FEEDBACK_ATTACHMENTS_BUCKET);
+  if (paths.length > 0 && typeof bucket.createSignedUrls === "function") {
+    try {
+      const { data, error } = await bucket.createSignedUrls(paths, ATTACHMENT_SIGNED_URL_TTL_SECONDS);
+      if (error) throw error;
+
+      const signedURLByPath = new Map();
+      const signedURLByIndex = new Map();
+      for (const [index, item] of (data ?? []).entries()) {
+        const path = String(item?.path ?? item?.name ?? paths[index] ?? "").trim();
+        const signedURL = item?.signedUrl ?? item?.signedURL ?? item?.signed_url ?? null;
+        if (path && signedURL) signedURLByPath.set(path, signedURL);
+        if (signedURL) signedURLByIndex.set(index, signedURL);
+      }
+
+      return normalizedAttachments.map((attachment, index) => {
+        const path = pathByIndex[index];
+        const signedURL = path && signedURLByPath.has(path)
+          ? signedURLByPath.get(path)
+          : signedURLByIndex.get(batchIndexByAttachmentIndex.get(index));
+        return signedURL
+          ? { ...attachment, signed_url: signedURL }
+          : attachment;
+      });
+    } catch (cause) {
+      console.warn("[feedback] batch signed attachment URLs failed:", cause.message);
+    }
+  }
+
   const result = [];
-  for (const attachment of attachments) {
-    if (!attachment || typeof attachment !== "object") continue;
+  for (const attachment of normalizedAttachments) {
     const path = attachment.storage_path ?? attachment.storagePath;
     if (!path) {
       result.push(attachment);

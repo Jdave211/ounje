@@ -603,6 +603,7 @@ struct ProfileSettingsPage: View {
     @State private var isMembershipPresented = false
     @State private var isProvidersPresented = false
     @State private var isRecipeStylePresented = false
+    @State private var isNotificationPreferencesPresented = false
     @State private var isFeedbackPresented = false
     @State private var isFoundersCallDialogPresented = false
     @State private var isSignOutDialogPresented = false
@@ -702,10 +703,10 @@ struct ProfileSettingsPage: View {
                         icon: "bell.fill",
                         iconTint: notificationStatusTint,
                         title: "Notifications",
-                        detail: "Device alerts and delivery updates",
+                        detail: "Imports, shopping, promos, and prep reminders",
                         trailingValue: notificationStatusTitle,
                         trailingTint: notificationStatusTint,
-                        action: openNotificationSettings
+                        action: { isNotificationPreferencesPresented = true }
                     ),
                     ProfileSettingsMenuRowModel(
                         icon: "star.bubble.fill",
@@ -861,6 +862,16 @@ struct ProfileSettingsPage: View {
             RecipeStyleSettingsSheet()
                 .presentationDetents([.height(460)])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isNotificationPreferencesPresented) {
+            NotificationPreferencesSheet(
+                systemStatusTitle: notificationStatusTitle,
+                systemStatusTint: notificationStatusTint,
+                onOpenSystemSettings: openNotificationSettings
+            )
+            .environmentObject(store)
+            .presentationDetents([.height(620), .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $isProvidersPresented) {
             NavigationStack {
@@ -1228,6 +1239,189 @@ extension UNAuthorizationStatus {
         default:
             return OunjePalette.secondaryText
         }
+    }
+}
+
+struct NotificationPreferencesSheet: View {
+    @EnvironmentObject private var store: MealPlanningAppStore
+    @Environment(\.dismiss) private var dismiss
+    let systemStatusTitle: String
+    let systemStatusTint: Color
+    let onOpenSystemSettings: () -> Void
+    @State private var preferences: OunjeNotificationPreferences
+
+    init(
+        systemStatusTitle: String,
+        systemStatusTint: Color,
+        onOpenSystemSettings: @escaping () -> Void
+    ) {
+        self.systemStatusTitle = systemStatusTitle
+        self.systemStatusTint = systemStatusTint
+        self.onOpenSystemSettings = onOpenSystemSettings
+        _preferences = State(initialValue: OunjeNotificationPreferenceStore.load())
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Notifications")
+                            .font(.system(size: 28, weight: .heavy))
+                            .foregroundStyle(OunjePalette.primaryText)
+
+                        Text("Choose what should interrupt you. Ounje still keeps the in-app inbox for anything important.")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Button(action: onOpenSystemSettings) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "iphone.radiowaves.left.and.right")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(systemStatusTint)
+                                .frame(width: 26, height: 26)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("System permission")
+                                    .font(.system(size: 15.5, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                Text("iOS notification permission is \(systemStatusTitle.lowercased()).")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                            }
+
+                            Spacer(minLength: 10)
+
+                            Text(systemStatusTitle)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(systemStatusTint)
+                        }
+                        .padding(14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(OunjePalette.panel.opacity(0.96))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(OunjePalette.stroke.opacity(0.7), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    VStack(spacing: 10) {
+                        preferenceRow(
+                            title: "Recipe import updates",
+                            detail: "Queued, completed, and failed recipe imports.",
+                            symbolName: "square.and.arrow.down",
+                            isOn: Binding(
+                                get: { preferences.recipeImportUpdates },
+                                set: { update(\.recipeImportUpdates, to: $0) }
+                            )
+                        )
+                        preferenceRow(
+                            title: "Promotional",
+                            detail: "Saved-recipe nudges and trending recipe suggestions.",
+                            symbolName: "megaphone.fill",
+                            isOn: Binding(
+                                get: { preferences.promotional },
+                                set: { update(\.promotional, to: $0) }
+                            )
+                        )
+                        preferenceRow(
+                            title: "Agent shopping updates",
+                            detail: "Prep started, cart finished, checkout needed, and errors.",
+                            symbolName: "cart.badge.plus",
+                            isOn: Binding(
+                                get: { preferences.agentShoppingGeneralUpdates },
+                                set: { update(\.agentShoppingGeneralUpdates, to: $0) }
+                            )
+                        )
+                        preferenceRow(
+                            title: "Shopping item updates",
+                            detail: "Item-by-item agent changes when Ounje is filling carts.",
+                            symbolName: "list.bullet.rectangle",
+                            isOn: Binding(
+                                get: { preferences.agentShoppingItemUpdates },
+                                set: { update(\.agentShoppingItemUpdates, to: $0) }
+                            )
+                        )
+                        preferenceRow(
+                            title: "Prep reminders",
+                            detail: "Meal prep ready and schedule reminders.",
+                            symbolName: "calendar.badge.clock",
+                            isOn: Binding(
+                                get: { preferences.prepReminders },
+                                set: { update(\.prepReminders, to: $0) }
+                            )
+                        )
+                    }
+                }
+                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 28)
+            }
+            .background(OunjePalette.background.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            preferences = store.profile?.resolvedNotificationPreferences ?? OunjeNotificationPreferenceStore.load()
+            OunjeNotificationPreferenceStore.save(preferences)
+        }
+    }
+
+    private func preferenceRow(
+        title: String,
+        detail: String,
+        symbolName: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: symbolName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText.opacity(0.9))
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                Text(detail)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 10)
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(OunjePalette.accent)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.62), lineWidth: 1)
+                )
+        )
+    }
+
+    private func update(_ keyPath: WritableKeyPath<OunjeNotificationPreferences, Bool>, to value: Bool) {
+        preferences[keyPath: keyPath] = value
+        OunjeNotificationPreferenceStore.save(preferences)
+        guard var profile = store.profile else { return }
+        profile.notificationPreferences = preferences
+        store.updateProfile(profile)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 }
 

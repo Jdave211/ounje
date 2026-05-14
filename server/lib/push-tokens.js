@@ -92,6 +92,8 @@ export async function pushToUser({
   title,
   body,
   subtitle,
+  category = null,
+  threadId = null,
   userInfo = {},
 }) {
   const normalizedUserId = normalize(userId);
@@ -121,6 +123,8 @@ export async function pushToUser({
         title,
         body,
         subtitle,
+        category,
+        threadId,
         userInfo,
       });
       // APNs returns "BadDeviceToken" / "Unregistered" / "DeviceTokenNotForTopic"

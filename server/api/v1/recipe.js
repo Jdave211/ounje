@@ -161,6 +161,7 @@ const recipeVideoResolveCache = new CappedMap(120);
 const recipeDetailCache = new CappedMap(400);
 const recipeImportJobCache = new CappedMap(240);
 const RECIPE_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+const IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS = 2 * 1000;
 const RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS = 60 * 1000;
 const RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -765,7 +766,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
         recipeDetailCache,
         detailCacheKey,
         payload,
-        RECIPE_DETAIL_CACHE_TTL_MS,
+        IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS,
         "recipe-detail"
       );
 
@@ -796,7 +797,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       recipeDetailCache,
       detailCacheKey,
       payload,
-      RECIPE_DETAIL_CACHE_TTL_MS,
+      recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
       "recipe-detail"
     );
 

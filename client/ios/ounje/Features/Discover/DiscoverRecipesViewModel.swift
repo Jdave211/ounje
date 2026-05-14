@@ -40,7 +40,6 @@ final class DiscoverRecipesViewModel: ObservableObject {
     private var inFlightLoadKey: String?
     private var inFlightRequestID: UUID?
     private let sessionSeed = String(UUID().uuidString.prefix(8))
-    private let filterShuffleSeed = UUID().uuidString
     private var baseFeedRotationIndex = 0
     private var baseFeedRefreshToken = UUID().uuidString
     private var lastBaseRotationAt: Date?
@@ -56,7 +55,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
     private let rankingConfigVersion = "ranked-discover-v2-onboarding-profile"
 
     init() {
-        filters = DiscoverPreset.shuffledTitles(seed: filterShuffleSeed)
+        filters = Self.stableFilters
     }
 
     func loadIfNeeded(
@@ -264,7 +263,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
                 hasMoreRecipes: response.hasMore ?? (mixedRecipes.count >= requestedLimit),
                 nextOffset: response.nextOffset ?? (requestedOffset + response.recipes.count)
             )
-            filters = DiscoverPreset.shuffledTitles(seed: filterShuffleSeed)
+            filters = Self.stableFilters
             errorMessage = nil
             hasResolvedInitialLoad = true
             hasMoreRecipes = response.hasMore ?? (mixedRecipes.count >= requestedLimit)
@@ -519,9 +518,7 @@ final class DiscoverRecipesViewModel: ObservableObject {
         recipes = appendResults && requestedOffset > 0
             ? dedupeRecipesByID(recipes + cachedRecipes)
             : cachedRecipes
-        if !cachedFilters.isEmpty {
-            filters = cachedFilters
-        }
+        filters = Self.stableFilters
         errorMessage = nil
         hasResolvedInitialLoad = true
         hasMoreRecipes = hasMore
@@ -546,6 +543,10 @@ final class DiscoverRecipesViewModel: ObservableObject {
             hasMoreRecipes: shelf.hasMoreRecipes,
             nextOffset: shelf.nextOffset
         )
+    }
+
+    private static var stableFilters: [String] {
+        DiscoverPreset.allTitles
     }
 
     private func storedShelf(for key: String) -> DiscoverShelfCacheEntry? {

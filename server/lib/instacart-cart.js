@@ -5576,11 +5576,11 @@ export async function addItemsToInstacartCart({
     try {
       await createNotificationEvent({
         userId,
-        kind: "grocery_cart_ready",
+        kind: "autoshop_started",
         dedupeKey: `${runId}:started-shopping`,
         title: "Our agents started shopping",
         body: "We’re building your cart now.",
-        actionUrl: runTrace.cartUrl ?? null,
+        actionUrl: runTrace.cartUrl ?? "ounje://cart",
         actionLabel: "Open cart",
         metadata: {
           provider: "instacart",
@@ -5851,11 +5851,11 @@ export async function addItemsToInstacartCart({
       if (userId) {
         await createNotificationEvent({
           userId,
-          kind: "grocery_issue",
+          kind: "autoshop_failed",
           dedupeKey: `${runId}:selected-store-cart-reset-blocked`,
           title: "Queued after cart clear",
           body: "The chosen store cart still has items, so this run is queued until the cart is cleared.",
-          actionUrl: runTrace.cartUrl ?? null,
+          actionUrl: runTrace.cartUrl ?? "ounje://cart",
           actionLabel: "Open cart",
           metadata: {
             provider: "instacart",

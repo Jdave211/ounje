@@ -36,6 +36,89 @@ struct ProviderConnectionRecord: Decodable {
     let connected: Bool
 }
 
+private struct PrepBatchMutationResponse: Decodable {
+    let plan: MealPlan
+    let activeBatchID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case plan
+        case activeBatchID = "active_batch_id"
+    }
+}
+
+private struct PrepBatchCreateRequestPayload: Encodable {
+    let userID: String
+    let name: String?
+    let clientBatchID: UUID?
+    let accessToken: String?
+    let plan: MealPlan
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case name
+        case clientBatchID = "client_batch_id"
+        case accessToken = "access_token"
+        case plan
+    }
+}
+
+private final class PrepBatchAPIService {
+    static let shared = PrepBatchAPIService()
+
+    private init() {}
+
+    func createBatch(name: String?, clientBatchID: UUID?, plan: MealPlan, userID: String, accessToken: String?) async throws -> PrepBatchMutationResponse {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                return try await createBatch(baseURL: baseURL, name: name, clientBatchID: clientBatchID, plan: plan, userID: userID, accessToken: accessToken)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? URLError(.badServerResponse)
+    }
+
+    private func createBatch(baseURL: String, name: String?, clientBatchID: UUID?, plan: MealPlan, userID: String, accessToken: String?) async throws -> PrepBatchMutationResponse {
+        guard let url = URL(string: "\(baseURL)/v1/prep/batches") else {
+            throw URLError(.badURL)
+        }
+
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedAccessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let payload = PrepBatchCreateRequestPayload(
+            userID: userID,
+            name: trimmedName.isEmpty ? nil : trimmedName,
+            clientBatchID: clientBatchID,
+            accessToken: trimmedAccessToken.isEmpty ? nil : trimmedAccessToken,
+            plan: plan
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(userID, forHTTPHeaderField: "x-user-id")
+        if !trimmedAccessToken.isEmpty {
+            request.setValue("Bearer \(trimmedAccessToken)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = (try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data))?.message
+                ?? (try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data))?.error
+                ?? "Prep batch creation failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(message)
+        }
+
+        return try JSONDecoder().decode(PrepBatchMutationResponse.self, from: data)
+    }
+}
+
 final class ProviderConnectionAPIService {
     static let shared = ProviderConnectionAPIService()
 
@@ -763,6 +846,17 @@ final class MealPlanningAppStore: ObservableObject {
     private func applySimulatorDevelopmentEntitlement(
         plan: OunjeMembershipPlan = .init(tier: .plus, cadence: .monthly)
     ) -> Bool {
+#if DEBUG && targetEnvironment(simulator)
+        let rawUserID = authSession?.userID
+            ?? resolvedLiveUserID
+            ?? cachedLiveUserID
+            ?? ""
+        let userID = rawUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !userID.isEmpty else {
+            billingStatusMessage = StoreBillingError.authenticationRequired.localizedDescription
+            return false
+        }
+#else
         guard let session = authSession,
               !shouldDiscardLocalOnlyAuthSession(session) else {
             billingStatusMessage = StoreBillingError.authenticationRequired.localizedDescription
@@ -773,6 +867,7 @@ final class MealPlanningAppStore: ObservableObject {
             billingStatusMessage = StoreBillingError.authenticationRequired.localizedDescription
             return false
         }
+#endif
 
         membershipEntitlement = simulatorDevelopmentEntitlement(userID: userID, plan: plan)
         syncProfilePricingTierToEntitlement()
@@ -1876,6 +1971,7 @@ final class MealPlanningAppStore: ObservableObject {
         async let membershipRefresh: Void = refreshMembershipEntitlement(trigger: "post-onboarding")
         if profile.isPlanningReady {
             await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
+            await ensureOnboardingUsualPrepBatch()
         }
         await membershipRefresh
 
@@ -1925,6 +2021,32 @@ final class MealPlanningAppStore: ObservableObject {
             targetRecipeCount: 3,
             userPrompt: userPrompt
         )
+    }
+
+    private func ensureOnboardingUsualPrepBatch() async {
+        guard var plan = latestPlan, !plan.recipes.isEmpty else { return }
+        let existingBatches = plan.batches ?? []
+        if let usualBatch = existingBatches.first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame }),
+           !usualBatch.recipes.isEmpty {
+            activeBatchID = usualBatch.id
+            return
+        }
+
+        let usualBatch = PrepBatch(
+            name: "Usual",
+            recipes: Array(plan.recipes.prefix(3)),
+            groceryItems: plan.groceryItems,
+            recurringRecipeIDs: plan.recurringRecipeIDs
+        )
+
+        if existingBatches.isEmpty {
+            plan.batches = [usualBatch]
+        } else {
+            plan.batches = [usualBatch] + existingBatches
+        }
+        activeBatchID = usualBatch.id
+        updateCurrentPlanCache(with: plan, persistRemote: false)
+        _ = await persistLatestPlanRemotelyIfPossible(plan)
     }
 
     private func persistCompletedOnboardingState(
@@ -2166,11 +2288,13 @@ final class MealPlanningAppStore: ObservableObject {
         let previousPlanID = latestPlan?.id
         let previousRecipeSignature = latestPlan?.recipes.map(\.recipe.id).joined(separator: "|") ?? ""
         let nextRecipeSignature = plan.recipes.map(\.recipe.id).joined(separator: "|")
+        let previousBatchSignature = prepBatchSignature(for: latestPlan)
+        let nextBatchSignature = prepBatchSignature(for: plan)
         if grocerySourceRefreshFingerprint(for: latestPlan) != grocerySourceRefreshFingerprint(for: plan) {
             lastGrocerySourceRefreshFingerprint = nil
         }
         latestPlan = plan
-        if previousPlanID != plan.id || previousRecipeSignature != nextRecipeSignature {
+        if previousPlanID != plan.id || previousRecipeSignature != nextRecipeSignature || previousBatchSignature != nextBatchSignature {
             latestPlanRevision += 1
         }
         loadHiddenMainShopItems(for: plan.id)
@@ -2183,6 +2307,17 @@ final class MealPlanningAppStore: ObservableObject {
 
         guard persistRemote else { return }
         persistMealPrepCycleIfPossible(plan)
+    }
+
+    private func prepBatchSignature(for plan: MealPlan?) -> String {
+        (plan?.batches ?? []).map { batch in
+            [
+                batch.id.uuidString,
+                batch.name,
+                batch.recipes.map(\.recipe.id).joined(separator: ",")
+            ].joined(separator: ":")
+        }
+        .joined(separator: "|")
     }
 
     private func resolvedRecurringRecipeIDs(for plan: MealPlan?) -> [String] {
@@ -2391,8 +2526,9 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     /// Creates a new named batch on the latest plan and selects it.
-    func addPrepBatch(name: String? = nil) {
-        guard var plan = latestPlan else { return }
+    @discardableResult
+    func addPrepBatch(name: String? = nil) -> UUID? {
+        guard var plan = latestPlan else { return nil }
         var currentBatches = plan.batches ?? []
         if currentBatches.isEmpty {
             // Migrate existing `recipes` into an intent-based default on first named-prep creation.
@@ -2416,7 +2552,36 @@ final class MealPlanningAppStore: ObservableObject {
         currentBatches.append(newBatch)
         plan.batches = currentBatches
         activeBatchID = newBatch.id
-        updateCurrentPlanCache(with: plan, persistRemote: true)
+        updateCurrentPlanCache(with: plan, persistRemote: false)
+
+        Task(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            let session = await self.freshUserDataSession()
+            guard let session else {
+                _ = await self.persistLatestPlanRemotelyIfPossible(plan)
+                return
+            }
+
+            do {
+                let response = try await PrepBatchAPIService.shared.createBatch(
+                    name: resolvedName,
+                    clientBatchID: newBatch.id,
+                    plan: plan,
+                    userID: session.userID,
+                    accessToken: session.accessToken
+                )
+                await MainActor.run {
+                    guard self.latestPlan?.id == plan.id else { return }
+                    self.updateCurrentPlanCache(with: response.plan, persistRemote: false)
+                    self.activeBatchID = response.activeBatchID ?? newBatch.id
+                }
+            } catch {
+                print("[MealPlanningAppStore] Remote prep batch creation failed; falling back to meal_prep_cycles upsert: \(error.localizedDescription)")
+                _ = await self.persistLatestPlanRemotelyIfPossible(plan)
+            }
+        }
+
+        return newBatch.id
     }
 
     private func assignRecipeToPrepBatch(_ plannedRecipe: PlannedRecipe, batchID: UUID) {

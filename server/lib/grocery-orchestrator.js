@@ -411,11 +411,11 @@ export async function startOrder(orderId, { deliveryAddress: deliveryAddressOver
       .eq("id", orderId);
 
     await emitOrderNotification(orderId, {
-      kind: "grocery_cart_ready",
+      kind: "autoshop_started",
       dedupeKey: `grocery-order-started-${order.user_id}-${orderId}`,
       title: "Our agents started shopping",
       body: "We’re building your cart now.",
-      actionUrl: liveUrl ?? null,
+      actionUrl: liveUrl ?? "ounje://cart",
       actionLabel: "Open cart",
       orderId,
       metadata: {
@@ -479,7 +479,7 @@ export async function startOrder(orderId, { deliveryAddress: deliveryAddressOver
     });
 
     await emitOrderNotification(orderId, {
-      kind: "grocery_cart_ready",
+      kind: missingItems.length > 0 ? "autoshop_failed" : "autoshop_completed",
       dedupeKey: `grocery-cart-ready-${order.user_id}-${orderId}`,
       title: matchedItems.length > 0
         ? `Cart built with ${matchedItems.length} items`
@@ -487,7 +487,7 @@ export async function startOrder(orderId, { deliveryAddress: deliveryAddressOver
       body: missingItems.length > 0
         ? `${missingItems.length} item${missingItems.length === 1 ? "" : "s"} still need attention before checkout.`
         : "Your grocery cart is set and ready for the next step.",
-      actionUrl: cartResult.cartUrl ?? null,
+      actionUrl: cartResult.cartUrl ?? "ounje://cart",
       actionLabel: "Open cart",
       orderId,
       metadata: {
@@ -1269,11 +1269,11 @@ async function failOrder(orderId, errorMessage) {
     })();
 
     await emitOrderNotification(orderId, {
-      kind: "grocery_issue",
+      kind: "autoshop_failed",
       dedupeKey: `grocery-failed-${order.user_id}-${orderId}-${normalizeText(errorMessage).toLowerCase()}`,
       title: "Shopping paused",
       body: friendlyBody,
-      actionUrl: order.provider_checkout_url ?? order.provider_cart_url ?? null,
+      actionUrl: order.provider_checkout_url ?? order.provider_cart_url ?? "ounje://cart",
       actionLabel: "Open order",
       orderId,
       metadata: {

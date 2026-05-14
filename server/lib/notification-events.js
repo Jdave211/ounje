@@ -28,6 +28,47 @@ const PUSH_DELIVERABLE_KINDS = new Set([
   "autoshop_failed",
 ]);
 
+function notificationPreferenceAreaForKind(kind, metadata = {}) {
+  const normalizedKind = normalizeString(kind).toLowerCase();
+  const notificationArea = normalizeString(metadata?.notification_area).toLowerCase();
+  const itemLevel = normalizeString(metadata?.item_update).toLowerCase() === "true"
+    || notificationArea === "agent_shopping_item";
+
+  if (normalizedKind.startsWith("recipe_import_")) return "recipeImportUpdates";
+  if (normalizedKind === "recipe_nudge" || normalizedKind === "trending_recipe_nudge" || notificationArea === "promotional") return "promotional";
+  if (normalizedKind === "meal_prep_ready" || notificationArea === "prep_reminder") return "prepReminders";
+  if (
+    normalizedKind.startsWith("autoshop_")
+    || normalizedKind.startsWith("grocery_")
+    || normalizedKind === "cart_review_required"
+    || normalizedKind === "checkout_approval_required"
+  ) {
+    return itemLevel ? "agentShoppingItemUpdates" : "agentShoppingGeneralUpdates";
+  }
+  return null;
+}
+
+async function allowsPushForUserPreference(supabase, userId, kind, metadata = {}) {
+  const area = notificationPreferenceAreaForKind(kind, metadata);
+  if (!area) return true;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("profile_json")
+    .eq("id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[notifications] preference lookup failed:", error.message);
+    return true;
+  }
+
+  const preferences = data?.profile_json?.notificationPreferences;
+  if (!preferences || typeof preferences !== "object") return true;
+  return preferences[area] !== false;
+}
+
 function getSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("Supabase notification events are not configured");
@@ -38,6 +79,30 @@ function getSupabase() {
 
 function normalizeString(value) {
   return String(value ?? "").trim();
+}
+
+function notificationPresentationForKind(kind) {
+  if (String(kind ?? "").startsWith("recipe_import_")) {
+    return {
+      category: "OUNJE_RECIPE_IMPORT",
+      threadId: "recipe-import",
+    };
+  }
+  if (
+    String(kind ?? "").startsWith("autoshop_")
+    || String(kind ?? "").startsWith("grocery_")
+    || kind === "cart_review_required"
+    || kind === "checkout_approval_required"
+  ) {
+    return {
+      category: "OUNJE_AUTOSHOP",
+      threadId: "autoshop",
+    };
+  }
+  return {
+    category: null,
+    threadId: "ounje",
+  };
 }
 
 export async function createNotificationEvent({
@@ -109,17 +174,26 @@ export async function createNotificationEvent({
   if (
     PUSH_DELIVERABLE_KINDS.has(normalizedKind)
     && !metadata?.hidden_from_notifications
+    && await allowsPushForUserPreference(supabase, normalizedUserId, normalizedKind, payload.metadata)
   ) {
+    const presentation = notificationPresentationForKind(normalizedKind);
+    const normalizedActionUrl = normalizeString(actionUrl) || null;
     pushToUser({
       userId: normalizedUserId,
       title: normalizedTitle,
       body: normalizedBody,
       subtitle: normalizeString(subtitle) || undefined,
+      category: presentation.category,
+      threadId: presentation.threadId,
       userInfo: {
         event_id: data?.id ?? null,
         kind: data?.kind ?? normalizedKind,
         dedupe_key: data?.dedupe_key ?? normalizedDedupeKey,
-        action_url: normalizeString(actionUrl) || null,
+        action_url: normalizedActionUrl,
+        deep_link: normalizedActionUrl,
+        recipe_id: normalizeString(recipeId) || null,
+        order_id: normalizeString(orderId) || null,
+        plan_id: normalizeString(planId) || null,
       },
     }).catch((cause) => {
       console.warn("[notifications] APNs push failed:", cause.message);

@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import dotenv from "dotenv";
-import { fileFromPath } from "openai";
 import { nanoid } from "nanoid";
 import { createWorker, OEM } from "tesseract.js";
 import { expandFlavorTerms, extractIngredientSignals, scoreFlavorAlignment } from "./flavorgraph.js";
@@ -52,9 +51,6 @@ const PHOTO_RECIPE_CLEANUP_MODEL = process.env.PHOTO_RECIPE_CLEANUP_MODEL ?? REC
 const PHOTO_RECIPE_SONAR_MODEL = process.env.PHOTO_RECIPE_SONAR_MODEL ?? "sonar";
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY ?? "";
 const PERPLEXITY_API_URL = process.env.PERPLEXITY_API_URL ?? "https://api.perplexity.ai/chat/completions";
-const RECIPE_IMAGE_RESTYLE_MODEL = process.env.RECIPE_IMAGE_RESTYLE_MODEL ?? "gpt-image-1";
-const RECIPE_IMAGE_CHECK_MODEL = process.env.RECIPE_IMAGE_CHECK_MODEL ?? RECIPE_GATE_MODEL;
-const ENABLE_IMPORTED_RECIPE_IMAGE_GEN = ["1", "true", "yes"].includes(String(process.env.ENABLE_IMPORTED_RECIPE_IMAGE_GEN ?? "").trim().toLowerCase());
 const ENABLE_AI_WEB_REFERENCE_SEARCH = !["0", "false", "no", "off"].includes(String(process.env.RECIPE_ENABLE_AI_WEB_REFERENCE_SEARCH ?? "1").trim().toLowerCase());
 const PLAYWRIGHT_FALLBACK_PATH = "/Users/davejaga/.openclaw/skills/playwright-scraper-skill/node_modules/playwright/index.js";
 const DEFAULT_USER_AGENT =
@@ -90,7 +86,8 @@ const SOCIAL_OCR_FRAME_TIMEOUT_MS = Math.max(
   3_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_OCR_FRAME_TIMEOUT_MS ?? "8000", 10) || 8_000
 );
-const RECIPE_SEARCH_MAX_LINKS = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_SEARCH_MAX_LINKS ?? "6", 10) || 6, 12));
+const RECIPE_SEARCH_MAX_LINKS = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_SEARCH_MAX_LINKS ?? "3", 10) || 3, 6));
+const RECIPE_REFERENCE_MAX_SOURCES = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_REFERENCE_MAX_SOURCES ?? "3", 10) || 3, 3));
 const RECIPE_EXTRACTION_MAX_IMAGE_INPUTS = Math.max(
   1,
   Math.min(Number.parseInt(process.env.RECIPE_EXTRACTION_MAX_IMAGE_INPUTS ?? "3", 10) || 3, 4)
@@ -107,7 +104,9 @@ const RECIPE_INGESTION_HEARTBEAT_MS = Math.max(
   15_000,
   Number.parseInt(process.env.RECIPE_INGESTION_HEARTBEAT_MS ?? "60000", 10) || 60_000
 );
-const IMAGE_TEMPLATE_DIR = path.resolve(__dirname, "../../image_gen_templates");
+const REDIS_DISABLED_FOR_INGESTION_LOCK = ["1", "true", "yes", "on"].includes(
+  String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase()
+);
 const execFile = promisify(execFileCallback);
 
 const openai = OPENAI_API_KEY ? createLoggedOpenAI({ apiKey: OPENAI_API_KEY, service: "recipe-ingestion" }) : null;
@@ -128,6 +127,30 @@ function withTimeout(promise, timeoutMs, label) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+async function timeRecipeImportStage(stage, { jobID = null, metadata = null } = {}, fn) {
+  const startedAt = Date.now();
+  const context = {
+    job_id: jobID ?? null,
+    ...(metadata && typeof metadata === "object" ? metadata : {}),
+  };
+  console.info(`[recipe-ingestion][timing] ${stage} start`, context);
+  try {
+    const result = await fn();
+    console.info(`[recipe-ingestion][timing] ${stage} done`, {
+      ...context,
+      duration_ms: Date.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    console.warn(`[recipe-ingestion][timing] ${stage} failed`, {
+      ...context,
+      duration_ms: Date.now() - startedAt,
+      error: errorSummary(error),
+    });
+    throw error;
+  }
 }
 
 function socialYTDLOptions(overrides = {}) {
@@ -535,15 +558,6 @@ Rules:
 - Replace vague or technically wrong cooking verbs with practical cooking actions.
 - Keep steps concise, sequential, and cookable.
 - Keep ingredient quantities practical for the stated servings.
-- Do not include commentary outside the JSON object.`;
-
-const RECIPE_IMAGE_RESTYLE_CHECK_PROMPT = `You are checking whether a generated food image is acceptable for Ounje.
-
-Rules:
-- Return JSON only.
-- Accept only if the dish identity looks correct, the plating feels clean, and the image looks like a polished recipe hero image.
-- Reject if the food looks wrong for the recipe, the plate/bowl choice is wrong, the image is messy, distorted, low quality, or inconsistent with a clean Julienne-style recipe card.
-- If rejected, provide a short reason and a precise prompt fix.
 - Do not include commentary outside the JSON object.`;
 
 const RECIPE_GATE_SYSTEM_PROMPT = `You decide whether imported content is actually a recipe.
@@ -1887,63 +1901,88 @@ function mergeRecipeSearchLinks(...buckets) {
   return links;
 }
 
-async function extractRecipeSearchSource(query, attachments = [], { source = null } = {}) {
+async function extractRecipeSearchSource(query, attachments = [], { source = null, jobID = null } = {}) {
   const searchMethods = [];
   let searchError = null;
   let aiSearchError = null;
   let browserLinks = [];
   let aiLinks = [];
-  try {
-    aiLinks = await searchRecipeLinksWithAI(query, { limit: RECIPE_SEARCH_MAX_LINKS, source });
-    if (aiLinks.length) searchMethods.push("ai_web_reference_search");
-  } catch (error) {
-    aiSearchError = errorSummary(error);
-  }
-  try {
-    browserLinks = await searchRecipeLinksWithPlaywright(query, { limit: RECIPE_SEARCH_MAX_LINKS });
-    if (browserLinks.length) searchMethods.push("playwright");
-  } catch (error) {
-    searchError = errorSummary(error);
-    browserLinks = await searchRecipeLinksWithFetch(query, { limit: RECIPE_SEARCH_MAX_LINKS });
-    if (browserLinks.length) searchMethods.push("fetch_fallback");
-  }
-  if (!browserLinks.length && !searchMethods.includes("fetch_fallback")) {
+
+  await timeRecipeImportStage("web_reference_search", { jobID, metadata: { query: normalizeText(query, 180) } }, async () => {
+    const aiSearch = (async () => {
+      try {
+        const links = await searchRecipeLinksWithAI(query, { limit: RECIPE_SEARCH_MAX_LINKS, source });
+        if (links.length) searchMethods.push("ai_web_reference_search");
+        return links;
+      } catch (error) {
+        aiSearchError = errorSummary(error);
+        return [];
+      }
+    })();
+
+    const fetchSearch = (async () => {
+      try {
+        const links = await searchRecipeLinksWithFetch(query, { limit: RECIPE_SEARCH_MAX_LINKS });
+        if (links.length) searchMethods.push("fetch");
+        return links;
+      } catch (error) {
+        searchError = errorSummary(error);
+        return [];
+      }
+    })();
+
+    [aiLinks, browserLinks] = await Promise.all([aiSearch, fetchSearch]);
+  });
+
+  if (!browserLinks.length && !aiLinks.length) {
     try {
-      const fallbackLinks = await searchRecipeLinksWithFetch(query, { limit: RECIPE_SEARCH_MAX_LINKS });
-      if (fallbackLinks.length) {
-        searchMethods.push("fetch_fallback_empty_browser");
-        browserLinks = fallbackLinks;
+      const playwrightLinks = await timeRecipeImportStage(
+        "web_reference_playwright_fallback",
+        { jobID, metadata: { query: normalizeText(query, 180) } },
+        () => searchRecipeLinksWithPlaywright(query, { limit: RECIPE_SEARCH_MAX_LINKS })
+      );
+      if (playwrightLinks.length) {
+        searchMethods.push("playwright_fallback_empty_fetch");
+        browserLinks = playwrightLinks;
       }
     } catch (error) {
       searchError = errorSummary(error);
     }
   }
   const links = mergeRecipeSearchLinks(aiLinks, browserLinks).slice(0, RECIPE_SEARCH_MAX_LINKS);
-  const scraped = [];
-  const scrapeErrors = [];
-
-  for (const link of links) {
-    try {
-      const source = await extractWebSource(link.url);
-      scraped.push({
-        ...source,
-        search_result_title: link.title,
-        search_result_url: link.url,
-        search_score: scoreScrapedRecipeSource(source, query),
-      });
-    } catch (error) {
-      scrapeErrors.push({
-        url: link.url,
-        title: link.title ?? null,
-        error: errorSummary(error),
-      });
-      continue;
-    }
-  }
+  const scrapeResults = await timeRecipeImportStage(
+    "scraping",
+    { jobID, metadata: { link_count: links.length } },
+    () => Promise.all(links.map(async (link) => {
+      try {
+        const source = await extractWebSource(link.url);
+        return {
+          ok: true,
+          source: {
+            ...source,
+            search_result_title: link.title,
+            search_result_url: link.url,
+            search_score: scoreScrapedRecipeSource(source, query),
+          },
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            url: link.url,
+            title: link.title ?? null,
+            error: errorSummary(error),
+          },
+        };
+      }
+    }))
+  );
+  const scraped = scrapeResults.filter((entry) => entry.ok).map((entry) => entry.source);
+  const scrapeErrors = scrapeResults.filter((entry) => !entry.ok).map((entry) => entry.error);
 
   const rankedSources = scraped
     .sort((left, right) => right.search_score - left.search_score)
-    .slice(0, Math.max(2, Math.min(scraped.length, RECIPE_SEARCH_MAX_LINKS)));
+    .slice(0, Math.max(2, Math.min(scraped.length, RECIPE_REFERENCE_MAX_SOURCES)));
 
   const lead = rankedSources[0] ?? null;
   const title = normalizeText(lead?.title ?? query) || query;
@@ -2624,6 +2663,8 @@ async function maybeEmitRecipeImportNotification(job, eventName) {
       title: "Got it — building your recipe",
       body: title ? `We'll let you know when "${title}" is ready.` : "We'll let you know when your recipe is ready.",
       recipeId: normalizeText(job?.recipe_id) || null,
+      actionUrl: "ounje://cookbook/import",
+      actionLabel: "View imports",
       metadata: { job_id: jobID, status },
     });
   } else if (["saved", "draft"].includes(status)) {
@@ -3268,35 +3309,6 @@ function buildSavedProjection(recipeDetail) {
   };
 }
 
-function deterministicChoice(values, seed = "") {
-  const list = Array.isArray(values) ? values.filter(Boolean) : [];
-  if (!list.length) return null;
-  const digest = crypto.createHash("sha256").update(String(seed ?? "")).digest("hex");
-  const index = Number.parseInt(digest.slice(0, 8), 16) % list.length;
-  return list[index];
-}
-
-function chooseRecipeImageTemplate(recipe) {
-  const descriptor = normalizeKey([
-    recipe?.title,
-    recipe?.recipe_type,
-    recipe?.category,
-    recipe?.description,
-  ].filter(Boolean).join(" "));
-
-  const bowls = ["bowl1.png", "bowl2.png", "bowl_plate1.png"];
-  const plates = ["plate1.png", "plate2.png", "plate3.png"];
-  const dessertPlates = ["plate4.png", "plate2.png"];
-
-  if (/\b(stew|soup|curry|ramen|noodle|rice bowl|bowl|oatmeal|porridge|beans|chili)\b/.test(descriptor)) {
-    return path.join(IMAGE_TEMPLATE_DIR, deterministicChoice(bowls, descriptor));
-  }
-  if (/\b(cake|cookie|brownie|tart|pie|dessert|pudding|muffin|banana bread)\b/.test(descriptor)) {
-    return path.join(IMAGE_TEMPLATE_DIR, deterministicChoice(dessertPlates, descriptor));
-  }
-  return path.join(IMAGE_TEMPLATE_DIR, deterministicChoice(plates, descriptor));
-}
-
 async function fetchRecipeImageReference(normalizedRecipe) {
   const recipeType = normalizeText(normalizedRecipe?.recipe_type ?? normalizedRecipe?.category ?? "");
   const title = normalizeText(normalizedRecipe?.title ?? "");
@@ -3369,358 +3381,39 @@ function isOunjeGeneratedSourceType(sourceType) {
   return ["concept_prompt", "direct_input", "text", "recipe_search"].includes(normalizeText(sourceType).toLowerCase());
 }
 
-async function readImageInput(input) {
-  if (!input) return null;
-  if (Buffer.isBuffer(input)) {
-    return { buffer: input, contentType: "image/png", sourceKey: "buffer" };
-  }
+async function hasSavedRecipeTombstone(userID, recipeID) {
+  const normalizedUserID = normalizeText(userID);
+  const normalizedRecipeID = normalizeText(recipeID);
+  if (!normalizedUserID || !normalizedRecipeID) return false;
 
-  const normalized = normalizeText(input);
-  if (!normalized) return null;
-
-  try {
-    if (/^https?:\/\//i.test(normalized)) {
-      const response = await fetch(normalized, {
-        redirect: "follow",
-        headers: {
-          "user-agent": DEFAULT_USER_AGENT,
-          accept: "image/*,*/*;q=0.8",
-        },
-      });
-      if (!response.ok) return null;
-      const contentType = response.headers.get("content-type") ?? "image/png";
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (!buffer.length) return null;
-      return { buffer, contentType, sourceKey: normalized };
-    }
-
-    const buffer = await fsp.readFile(normalized);
-    if (!buffer.length) return null;
-    return {
-      buffer,
-      contentType: `image/${guessImageExtension("", normalized).replace("jpg", "jpeg")}`,
-      sourceKey: normalized,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function createTempImageFile(imageInput, prefix = "ounje-image") {
-  if (!imageInput?.buffer?.length) return null;
-  const ext = guessImageExtension(imageInput.contentType, imageInput.sourceKey);
-  const filePath = path.join(os.tmpdir(), `${prefix}-${nanoid(8)}.${ext}`);
-  await fsp.writeFile(filePath, imageInput.buffer);
-  return filePath;
-}
-
-function buildRecipeImageRestylePrompt(
-  recipe,
-  { referenceTitle = "", templateKind = "plate", hasSourceImage = true, hasReferenceImage = true } = {}
-) {
-  const groundingInstructions = hasSourceImage
-    ? hasReferenceImage
-      ? [
-          "Use image 1 as dish identity grounding.",
-          "Use image 2 as the Julienne-style reference for composition, lighting, and finish.",
-          "Use image 3 as the empty plate or bowl composition template.",
-        ]
-      : [
-          "Use image 1 as dish identity grounding.",
-          "Use image 2 as a fallback grounding reference derived from the source image.",
-          "Use image 3 as the empty plate or bowl composition template.",
-        ]
-    : hasReferenceImage
-      ? [
-          "Use the recipe title and ingredients as the dish identity grounding.",
-          "Use image 1 as the Julienne-style reference for composition, lighting, and finish.",
-          "Use image 2 as the empty plate or bowl composition template.",
-        ]
-      : [
-          "Use the recipe title and ingredients as the dish identity grounding.",
-          "Use image 1 as the empty plate or bowl composition template.",
-        ];
-
-  return [
-    "Create a polished Ounje / Julienne-style recipe hero image for this dish.",
-    `Dish: ${normalizeText(recipe?.title ?? "Recipe")}`,
-    `Recipe type: ${normalizeText(recipe?.recipe_type ?? recipe?.category ?? "")}`,
-    `Description: ${normalizeText(recipe?.description ?? "")}`,
-    `Key ingredients: ${(recipe?.ingredients ?? []).slice(0, 10).map((item) => item.display_name).join(", ")}`,
-    `Plating template: ${templateKind}`,
-    referenceTitle ? `Style reference dish: ${referenceTitle}` : null,
-    ...groundingInstructions,
-    hasSourceImage ? null : "Do not leave the dish abstract; render the named recipe clearly and faithfully from the recipe text.",
-    "Keep the final image appetizing, realistic, minimal, and editorial.",
-    "No text, no cutlery, no hands, no collage, no background clutter.",
-    "Make the food actually match the named dish and ingredients.",
-  ].filter(Boolean).join("\n");
-}
-
-async function checkGeneratedRecipeImage({
-  recipe,
-  generatedDataURL,
-  sourceImageURL,
-  referenceImageURL,
-  templatePath,
-  hasSourceImage = true,
-  hasReferenceImage = true,
-}) {
-  if (!openai || !generatedDataURL) {
-    return { accepted: true, reason: null, fix_prompt: null };
-  }
-
-  const imageContextLines = hasSourceImage
-    ? hasReferenceImage
-      ? [
-          "Image 1 is the newly generated candidate.",
-          "Image 2 is the source dish image.",
-          "Image 3 is the Julienne-style reference image.",
-          "Image 4 is the empty plate/bowl template.",
-        ]
-      : [
-          "Image 1 is the newly generated candidate.",
-          "Image 2 is the source dish image.",
-          "Image 3 is the fallback grounding reference derived from the source image.",
-          "Image 4 is the empty plate/bowl template.",
-        ]
-    : hasReferenceImage
-      ? [
-          "Image 1 is the newly generated candidate.",
-          "Image 2 is the Julienne-style reference image.",
-          "Image 3 is the empty plate/bowl template.",
-        ]
-      : [
-          "Image 1 is the newly generated candidate.",
-          "Image 2 is the empty plate/bowl template.",
-        ];
-
-  const response = await withRecipeAIStage("recipe_import.image_check", async () => openai.chat.completions.create({
-    model: RECIPE_IMAGE_CHECK_MODEL,
-    ...chatCompletionTemperatureParams(RECIPE_IMAGE_CHECK_MODEL, 0),
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: RECIPE_IMAGE_RESTYLE_CHECK_PROMPT },
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: [
-              `Recipe title: ${normalizeText(recipe?.title ?? "")}`,
-              `Recipe type: ${normalizeText(recipe?.recipe_type ?? recipe?.category ?? "")}`,
-              `Description: ${normalizeText(recipe?.description ?? "")}`,
-              `Ingredients: ${(recipe?.ingredients ?? []).slice(0, 10).map((item) => item.display_name).join(", ")}`,
-              "",
-              ...imageContextLines,
-              "",
-              "Return JSON with accepted (boolean), reason (string|null), and fix_prompt (string|null).",
-            ].join("\n"),
-          },
-          { type: "image_url", image_url: { url: generatedDataURL } },
-          ...(sourceImageURL ? [{ type: "image_url", image_url: { url: sourceImageURL } }] : []),
-          ...(referenceImageURL ? [{ type: "image_url", image_url: { url: referenceImageURL } }] : []),
-          ...(templatePath ? [{ type: "image_url", image_url: { url: `data:image/png;base64,${(await fsp.readFile(templatePath)).toString("base64")}` } }] : []),
-        ],
-      },
+  const rows = await fetchRows("saved_recipe_tombstones", "recipe_id", {
+    filters: [
+      `user_id=eq.${encodeURIComponent(normalizedUserID)}`,
+      `recipe_id=eq.${encodeURIComponent(normalizedRecipeID)}`,
     ],
-  }));
-
-  const rawContent = response.choices?.[0]?.message?.content ?? "{}";
-  const parsed = JSON.parse(rawContent);
-  return {
-    accepted: Boolean(parsed.accepted),
-    reason: normalizeText(parsed.reason ?? "") || null,
-    fix_prompt: normalizeText(parsed.fix_prompt ?? "") || null,
-  };
-}
-
-export async function maybeGenerateImportedRecipeImage(recipeDetail, source, { accessToken = null } = {}) {
-  if (!openai || !recipeDetail?.id || !recipeDetail?.title) return null;
-
-  const sourceImageURL = cleanURL(
-    source?.hero_image_url
-      ?? source?.thumbnail_url
-      ?? recipeDetail?.hero_image_url
-      ?? recipeDetail?.discover_card_image_url
-      ?? null
-  );
-
-  const templatePath = chooseRecipeImageTemplate(recipeDetail);
-  const referenceRecipe = await fetchRecipeImageReference(recipeDetail);
-  const referenceImageURL = cleanURL(referenceRecipe?.hero_image_url ?? referenceRecipe?.discover_card_image_url ?? null);
-
-  const sourceInput = sourceImageURL ? await readImageInput(sourceImageURL) : null;
-  const referenceInput = await readImageInput(referenceImageURL);
-  const templateInput = await readImageInput(templatePath);
-  if (!templateInput) return null;
-
-  if (!sourceInput && referenceImageURL) {
-    return {
-      hero_image_url: referenceImageURL,
-      discover_card_image_url: referenceImageURL,
-      image_generation: {
-        accepted: true,
-        attempts: 0,
-        reason: "reference_recipe_fallback",
-        prompt: null,
-        source_image_url: sourceImageURL,
-        reference_image_url: referenceImageURL,
-        template_path: templatePath,
-      },
-    };
-  }
-
-  const [sourceFile, referenceFile, templateFile] = await Promise.all([
-    sourceInput ? createTempImageFile(sourceInput, "ounje-source") : Promise.resolve(null),
-    createTempImageFile(referenceInput, "ounje-ref"),
-    createTempImageFile(templateInput, "ounje-template"),
-  ]);
-
-  if (!templateFile) return null;
-
-  try {
-    const templateKind = path.basename(templatePath).startsWith("bowl") ? "bowl" : "plate";
-    const hasSourceImage = Boolean(sourceFile);
-    const hasReferenceImage = Boolean(referenceFile);
-    let prompt = buildRecipeImageRestylePrompt(recipeDetail, {
-      referenceTitle: normalizeText(referenceRecipe?.title ?? ""),
-      templateKind,
-      hasSourceImage,
-      hasReferenceImage,
-    });
-
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      const imageInputs = hasSourceImage
-        ? [
-            await fileFromPath(sourceFile),
-            await fileFromPath(referenceFile ?? sourceFile),
-            await fileFromPath(templateFile),
-          ]
-        : [
-            ...(referenceFile ? [await fileFromPath(referenceFile)] : []),
-            await fileFromPath(templateFile),
-          ];
-
-      const imageResponse = await withRecipeAIStage("recipe_import.image_restyle", () => openai.images.edit({
-        model: RECIPE_IMAGE_RESTYLE_MODEL,
-        image: imageInputs,
-        prompt,
-        size: "1536x1024",
-        quality: "high",
-        output_format: "png",
-      }));
-
-      const b64 = imageResponse.data?.[0]?.b64_json ?? null;
-      if (!b64) continue;
-
-      const buffer = Buffer.from(b64, "base64");
-      const dataURL = `data:image/png;base64,${b64}`;
-        const review = await checkGeneratedRecipeImage({
-          recipe: recipeDetail,
-          generatedDataURL: dataURL,
-          sourceImageURL,
-          referenceImageURL,
-          templatePath,
-          hasSourceImage,
-          hasReferenceImage,
-        });
-
-        if (review.accepted || attempt === 2) {
-          const uploadedHeroURL = await uploadRecipeImageBufferToStorage(buffer, {
-          recipeKey: recipeDetail.title,
-          imageRole: "generated-hero",
-          accessToken,
-          contentType: "image/png",
-          sourceKey: `${recipeDetail.id}:${attempt}:${prompt}`,
-        });
-        if (!uploadedHeroURL) return null;
-        return {
-          hero_image_url: uploadedHeroURL,
-          discover_card_image_url: uploadedHeroURL,
-            image_generation: {
-              accepted: review.accepted,
-              attempts: attempt,
-              reason: review.reason,
-              prompt,
-              source_image_url: sourceImageURL,
-              reference_image_url: referenceImageURL,
-              template_path: templatePath,
-            },
-          };
-        }
-
-      prompt = [
-        prompt,
-        "",
-        `Fix for retry: ${review.fix_prompt ?? review.reason ?? "make the dish identity and plating more accurate."}`,
-      ].join("\n");
-    }
-  } finally {
-    await Promise.all([sourceFile, referenceFile, templateFile].map((filePath) => filePath ? fsp.rm(filePath, { force: true }).catch(() => {}) : Promise.resolve()));
-  }
-
-  const fallbackSourceURL = sourceImageURL
-    ? await persistRecipeImageToStorage(sourceImageURL, {
-        recipeKey: recipeDetail.title,
-        imageRole: "generated-hero-fallback",
-        accessToken,
-      })
-    : null;
-
-  if (fallbackSourceURL) {
-    return {
-      hero_image_url: fallbackSourceURL,
-      discover_card_image_url: fallbackSourceURL,
-      image_generation: {
-        accepted: false,
-        attempts: 2,
-        reason: "source_image_fallback",
-        prompt: null,
-        source_image_url: sourceImageURL,
-        reference_image_url: referenceImageURL,
-        template_path: templatePath,
-      },
-    };
-  }
-
-  const fallbackReferenceURL = referenceImageURL
-    ? await persistRecipeImageToStorage(referenceImageURL, {
-        recipeKey: recipeDetail.title,
-        imageRole: "generated-hero-fallback",
-        accessToken,
-      })
-    : null;
-
-  if (fallbackReferenceURL) {
-    return {
-      hero_image_url: fallbackReferenceURL,
-      discover_card_image_url: fallbackReferenceURL,
-      image_generation: {
-        accepted: false,
-        attempts: 2,
-        reason: "reference_recipe_retry_fallback",
-        prompt: null,
-        source_image_url: sourceImageURL,
-        reference_image_url: referenceImageURL,
-        template_path: templatePath,
-      },
-    };
-  }
-
-  return null;
+    limit: 1,
+  });
+  return rows.length > 0;
 }
 
 async function upsertSavedRecipeForUser(userID, recipeDetail) {
-  if (!userID) return;
+  if (!userID) return false;
   const savedProjection = buildSavedProjection(recipeDetail);
+  if (!savedProjection.recipe_id) return false;
+  if (await hasSavedRecipeTombstone(userID, savedProjection.recipe_id)) {
+    console.info("[recipe-ingestion] Skipping saved recipe upsert because user tombstoned it", {
+      userID,
+      recipeID: savedProjection.recipe_id,
+    });
+    return false;
+  }
+
   await insertRows(
     "saved_recipes",
     [
       {
         user_id: userID,
         ...savedProjection,
-        saved_at: nowIso(),
       },
     ],
     {
@@ -3728,6 +3421,7 @@ async function upsertSavedRecipeForUser(userID, recipeDetail) {
       prefer: "resolution=merge-duplicates,return=minimal",
     }
   );
+  return true;
 }
 
 function normalizeCuisinePreference(rawValue) {
@@ -4522,38 +4216,6 @@ async function persistNormalizedRecipe(
 
     await insertRecipeTableRow(tableConfig.recipeTable, recipeArtifacts.recipe_row);
 
-    // Generate and persist a basic embedding for user-imported recipes so
-    // similar-recipe matching can surface them alongside public catalog results.
-    if (userID && openai) {
-      const recipeRow = recipeArtifacts.recipe_row;
-      const embeddingInput = [
-        `title: ${normalizeText(recipeRow.title ?? "", 240)}`,
-        `description: ${normalizeText(recipeRow.description ?? "", 600)}`,
-        `recipe_type: ${normalizeText(recipeRow.recipe_type ?? recipeRow.category ?? "", 80)}`,
-        `main_protein: ${normalizeText(recipeRow.main_protein ?? "", 80)}`,
-        `cuisine_tags: ${(recipeRow.cuisine_tags ?? []).join(", ")}`,
-        `dietary_tags: ${(recipeRow.dietary_tags ?? []).join(", ")}`,
-        `flavor_tags: ${(recipeRow.flavor_tags ?? []).join(", ")}`,
-        `ingredients: ${normalizeText(recipeRow.ingredients_text ?? "", 1600)}`,
-      ].join("\n");
-
-      openai.embeddings.create({ model: "text-embedding-3-small", input: embeddingInput })
-        .then(async (resp) => {
-          const vector = resp.data?.[0]?.embedding;
-          if (!Array.isArray(vector) || vector.length === 0) return;
-          const vectorLiteral = `[${vector.join(",")}]`;
-          await patchRows(
-            tableConfig.recipeTable,
-            [`id=eq.${encodeURIComponent(recipeArtifacts.recipe_id)}`],
-            { embedding_basic: vectorLiteral },
-            { prefer: "return=minimal" }
-          );
-        })
-        .catch((embeddingError) => {
-          console.warn("[recipe-ingestion] user-import embedding failed:", embeddingError.message);
-        });
-    }
-
     if (recipeArtifacts.recipe_ingredients.length) {
       await insertRows(tableConfig.ingredientTable, recipeArtifacts.recipe_ingredients, {
         prefer: "return=minimal",
@@ -4607,6 +4269,41 @@ async function persistNormalizedRecipe(
     recipe_card: recipeCard ?? buildSavedProjection(recipeDetail),
     recipe_detail: recipeDetail,
   };
+}
+
+function scheduleUserImportEmbedding(recipeID, recipeDetail, { jobID = null } = {}) {
+  if (!openai || !recipeID || !recipeDetail) return;
+
+  setTimeout(() => {
+    void (async () => {
+      const embeddingInput = [
+        `title: ${normalizeText(recipeDetail.title ?? "", 240)}`,
+        `description: ${normalizeText(recipeDetail.description ?? "", 600)}`,
+        `recipe_type: ${normalizeText(recipeDetail.recipe_type ?? recipeDetail.category ?? "", 80)}`,
+        `main_protein: ${normalizeText(recipeDetail.main_protein ?? "", 80)}`,
+        `cuisine_tags: ${(recipeDetail.cuisine_tags ?? []).join(", ")}`,
+        `dietary_tags: ${(recipeDetail.dietary_tags ?? []).join(", ")}`,
+        `flavor_tags: ${(recipeDetail.flavor_tags ?? []).join(", ")}`,
+        `ingredients: ${normalizeText(recipeDetail.ingredients_text ?? (recipeDetail.ingredients ?? []).map((entry) => [entry.quantity_text, entry.display_name].filter(Boolean).join(" ")).join(", "), 1600)}`,
+      ].join("\n");
+
+      const resp = await timeRecipeImportStage(
+        "post_completion_embedding",
+        { jobID, metadata: { recipe_id: recipeID } },
+        () => openai.embeddings.create({ model: "text-embedding-3-small", input: embeddingInput })
+      );
+      const vector = resp.data?.[0]?.embedding;
+      if (!Array.isArray(vector) || vector.length === 0) return;
+      await patchRows(
+        USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
+        [`id=eq.${encodeURIComponent(recipeID)}`],
+        { embedding_basic: `[${vector.join(",")}]` },
+        { prefer: "return=minimal" }
+      );
+    })().catch((embeddingError) => {
+      console.warn("[recipe-ingestion] user-import embedding failed:", embeddingError.message);
+    });
+  }, 0);
 }
 
 function assessRecipeQuality(normalized, source) {
@@ -5932,7 +5629,7 @@ async function runPhotoFallbackWebContext(visualAnalysis, photoContext, source) 
     return {
       matched_dish_name: visualAnalysis?.dish_candidates?.[0]?.name ?? photoContext?.dish_hint ?? null,
       confidence: 0.45,
-      reference_urls: (recipeSearchSource?.recipe_sources ?? []).map((entry) => entry.url).filter(Boolean).slice(0, 6),
+      reference_urls: (recipeSearchSource?.recipe_sources ?? []).map((entry) => entry.url).filter(Boolean).slice(0, RECIPE_REFERENCE_MAX_SOURCES),
       ingredient_patterns: (recipeSearchSource?.ingredient_candidates ?? []).slice(0, 24),
       quantity_patterns: [],
       technique_notes: (recipeSearchSource?.instruction_candidates ?? []).slice(0, 10),
@@ -6054,7 +5751,7 @@ async function runPhotoSonarContext(visualAnalysis, photoContext, source) {
     return {
       matched_dish_name: normalizeText(parsed?.matched_dish_name ?? "") || null,
       confidence: Number.isFinite(Number(parsed?.confidence)) ? Number(parsed.confidence) : 0.5,
-      reference_urls: Array.isArray(parsed?.reference_urls) ? parsed.reference_urls.map(cleanURL).filter(Boolean).slice(0, 8) : [],
+      reference_urls: Array.isArray(parsed?.reference_urls) ? parsed.reference_urls.map(cleanURL).filter(Boolean).slice(0, RECIPE_REFERENCE_MAX_SOURCES) : [],
       ingredient_patterns: uniqueStrings(Array.isArray(parsed?.ingredient_patterns) ? parsed.ingredient_patterns : []),
       quantity_patterns: uniqueStrings(Array.isArray(parsed?.quantity_patterns) ? parsed.quantity_patterns : []),
       technique_notes: uniqueStrings(Array.isArray(parsed?.technique_notes) ? parsed.technique_notes : []),
@@ -6791,7 +6488,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
 
   let lookupSource = null;
   try {
-    lookupSource = await extractRecipeSearchSource(completionQuery, [], { source });
+    lookupSource = await extractRecipeSearchSource(completionQuery, [], { source, jobID });
   } catch (error) {
     await storeWebCompletionLookupArtifact(jobID, {
       completionQuery,
@@ -6807,7 +6504,9 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
-  const recipeSources = Array.isArray(lookupSource?.recipe_sources) ? lookupSource.recipe_sources.slice(0, 6) : [];
+  const recipeSources = Array.isArray(lookupSource?.recipe_sources)
+    ? lookupSource.recipe_sources.slice(0, RECIPE_REFERENCE_MAX_SOURCES)
+    : [];
   await storeWebCompletionLookupArtifact(jobID, {
     completionQuery,
     source,
@@ -6824,88 +6523,92 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
-  const response = await withRecipeAIStage("recipe_import.web_completion", () => openai.chat.completions.create({
-    model: RECIPE_IMPORT_COMPLETION_MODEL,
-    ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.08),
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: [
-          `completion_query: ${completionQuery}`,
-          "",
-          "Current imported recipe:",
-          JSON.stringify(normalizedRecipe),
-          "",
-          "Original source evidence:",
-          JSON.stringify({
-            source_type: source.source_type ?? null,
-            platform: source.platform ?? null,
-            title: source.title ?? null,
-            description: source.description ?? source.meta_description ?? null,
-            transcript_text: source.transcript_text ?? null,
-            raw_text: source.raw_text ?? null,
-            ingredient_candidates: source.ingredient_candidates ?? [],
-            instruction_candidates: source.instruction_candidates ?? [],
-            structured_recipe: source.structured_recipe ?? null,
-          }),
-          "",
-          "Web recipe references:",
-          JSON.stringify(recipeSources.map((entry) => ({
-            title: entry.title ?? null,
-            site_name: entry.site_name ?? null,
-            source_url: entry.canonical_url ?? entry.source_url ?? null,
-            hero_image_url: entry.hero_image_url ?? null,
-            ingredient_candidates: (entry.ingredient_candidates ?? []).slice(0, 30),
-            instruction_candidates: (entry.instruction_candidates ?? []).slice(0, 20),
-            structured_recipe: entry.structured_recipe
-              ? {
-                  name: entry.structured_recipe.name ?? null,
-                  recipeCategory: entry.structured_recipe.recipeCategory ?? null,
-                  recipeCuisine: entry.structured_recipe.recipeCuisine ?? null,
-                  recipeYield: entry.structured_recipe.recipeYield ?? null,
-                  recipeIngredient: (entry.structured_recipe.recipeIngredient ?? []).slice(0, 30),
-                  recipeInstructions: (entry.structured_recipe.recipeInstructions ?? []).slice(0, 20),
-                }
-              : null,
-          }))),
-          "",
-          "Return JSON like:",
-          JSON.stringify({
-            recipe: {
-              title: "string|null",
-              description: "string|null",
-              category: "string|null",
-              recipe_type: "string|null",
-              skill_level: "string|null",
-              cook_time_text: "string|null",
-              servings_text: "string|null",
-              est_calories_text: "string|null",
-              calories_kcal: "number|null",
-              protein_g: "number|null",
-              carbs_g: "number|null",
-              fat_g: "number|null",
-              prep_time_minutes: "number|null",
-              cook_time_minutes: "number|null",
-              main_protein: "string|null",
-              cook_method: "string|null",
-              cuisine_tags: ["string"],
-              dietary_tags: ["string"],
-              flavor_tags: ["string"],
-              occasion_tags: ["string"],
-              hero_image_url: "string|null",
-              discover_card_image_url: "string|null",
-              ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
-              steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }],
-            },
-            quality_flags: ["string"],
-            review_reason: "string|null",
-          }),
-        ].join("\n"),
-      },
-    ],
-  }));
+  const response = await timeRecipeImportStage(
+    "web_completion",
+    { jobID, metadata: { reference_count: recipeSources.length } },
+    () => withRecipeAIStage("recipe_import.web_completion", () => openai.chat.completions.create({
+      model: RECIPE_IMPORT_COMPLETION_MODEL,
+      ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.08),
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            `completion_query: ${completionQuery}`,
+            "",
+            "Current imported recipe:",
+            JSON.stringify(normalizedRecipe),
+            "",
+            "Original source evidence:",
+            JSON.stringify({
+              source_type: source.source_type ?? null,
+              platform: source.platform ?? null,
+              title: source.title ?? null,
+              description: source.description ?? source.meta_description ?? null,
+              transcript_text: source.transcript_text ?? null,
+              raw_text: source.raw_text ?? null,
+              ingredient_candidates: source.ingredient_candidates ?? [],
+              instruction_candidates: source.instruction_candidates ?? [],
+              structured_recipe: source.structured_recipe ?? null,
+            }),
+            "",
+            "Web recipe references:",
+            JSON.stringify(recipeSources.map((entry) => ({
+              title: entry.title ?? null,
+              site_name: entry.site_name ?? null,
+              source_url: entry.canonical_url ?? entry.source_url ?? null,
+              hero_image_url: entry.hero_image_url ?? null,
+              ingredient_candidates: (entry.ingredient_candidates ?? []).slice(0, 30),
+              instruction_candidates: (entry.instruction_candidates ?? []).slice(0, 20),
+              structured_recipe: entry.structured_recipe
+                ? {
+                    name: entry.structured_recipe.name ?? null,
+                    recipeCategory: entry.structured_recipe.recipeCategory ?? null,
+                    recipeCuisine: entry.structured_recipe.recipeCuisine ?? null,
+                    recipeYield: entry.structured_recipe.recipeYield ?? null,
+                    recipeIngredient: (entry.structured_recipe.recipeIngredient ?? []).slice(0, 30),
+                    recipeInstructions: (entry.structured_recipe.recipeInstructions ?? []).slice(0, 20),
+                  }
+                : null,
+            }))),
+            "",
+            "Return JSON like:",
+            JSON.stringify({
+              recipe: {
+                title: "string|null",
+                description: "string|null",
+                category: "string|null",
+                recipe_type: "string|null",
+                skill_level: "string|null",
+                cook_time_text: "string|null",
+                servings_text: "string|null",
+                est_calories_text: "string|null",
+                calories_kcal: "number|null",
+                protein_g: "number|null",
+                carbs_g: "number|null",
+                fat_g: "number|null",
+                prep_time_minutes: "number|null",
+                cook_time_minutes: "number|null",
+                main_protein: "string|null",
+                cook_method: "string|null",
+                cuisine_tags: ["string"],
+                dietary_tags: ["string"],
+                flavor_tags: ["string"],
+                occasion_tags: ["string"],
+                hero_image_url: "string|null",
+                discover_card_image_url: "string|null",
+                ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
+                steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }],
+              },
+              quality_flags: ["string"],
+              review_reason: "string|null",
+            }),
+          ].join("\n"),
+        },
+      ],
+    }))
+  );
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -7245,50 +6948,54 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
   }
 
   try {
-    const response = await withRecipeAIStage("recipe_import.final_validator", () => openai.chat.completions.create({
-      model: RECIPE_FINAL_VALIDATOR_MODEL,
-      ...chatCompletionTemperatureParams(RECIPE_FINAL_VALIDATOR_MODEL, 0.02),
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            "Repair only these detected consistency issues:",
-            JSON.stringify(validationIssues),
-            "",
-            "Recipe:",
-            JSON.stringify(recipe),
-            "",
-            "Source hints:",
-            JSON.stringify({
-              source_type: source.source_type ?? null,
-              platform: source.platform ?? null,
-              title: source.title ?? null,
-              description: source.description ?? source.meta_description ?? null,
-              transcript_text: source.transcript_text ?? null,
-            }),
-            "",
-            "Return JSON like:",
-            JSON.stringify({
-              recipe: {
-                title: "string|null",
-                description: "string|null",
-                category: "string|null",
-                recipe_type: "string|null",
-                cook_time_text: "string|null",
-                servings_text: "string|null",
-                ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
-                steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }],
-              },
-              validation_notes: ["string"],
-              quality_flags: ["string"],
-              review_reason: "string|null",
-            }),
-          ].join("\n"),
-        },
-      ],
-    }));
+    const response = await timeRecipeImportStage(
+      "final_validation",
+      { jobID, metadata: { issue_count: validationIssues.length } },
+      () => withRecipeAIStage("recipe_import.final_validator", () => openai.chat.completions.create({
+        model: RECIPE_FINAL_VALIDATOR_MODEL,
+        ...chatCompletionTemperatureParams(RECIPE_FINAL_VALIDATOR_MODEL, 0.02),
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              "Repair only these detected consistency issues:",
+              JSON.stringify(validationIssues),
+              "",
+              "Recipe:",
+              JSON.stringify(recipe),
+              "",
+              "Source hints:",
+              JSON.stringify({
+                source_type: source.source_type ?? null,
+                platform: source.platform ?? null,
+                title: source.title ?? null,
+                description: source.description ?? source.meta_description ?? null,
+                transcript_text: source.transcript_text ?? null,
+              }),
+              "",
+              "Return JSON like:",
+              JSON.stringify({
+                recipe: {
+                  title: "string|null",
+                  description: "string|null",
+                  category: "string|null",
+                  recipe_type: "string|null",
+                  cook_time_text: "string|null",
+                  servings_text: "string|null",
+                  ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
+                  steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }],
+                },
+                validation_notes: ["string"],
+                quality_flags: ["string"],
+                review_reason: "string|null",
+              }),
+            ].join("\n"),
+          },
+        ],
+      }))
+    );
 
     const rawContent = response.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(rawContent);
@@ -7452,7 +7159,7 @@ function recipeNeedsSecondaryFill(recipe) {
   return missingServings || missingCookTime || criticallySparseQuantities;
 }
 
-async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
+async function enrichRecipeSecondaryFields(normalizedRecipe, source, { jobID = null } = {}) {
   if (!openai || !recipeNeedsSecondaryFill(normalizedRecipe)) {
     return {
       recipe: normalizedRecipe,
@@ -7506,21 +7213,25 @@ async function enrichRecipeSecondaryFields(normalizedRecipe, source) {
     ...collectRecipeEvidenceImageInputs(source, { maxCount: 3 }),
   ];
 
-  const response = await withRecipeAIStage("recipe_import.secondary_fill", () => openai.chat.completions.create({
-    model: RECIPE_IMPORT_COMPLETION_MODEL,
-    ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.02),
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: RECIPE_SECONDARY_FILL_SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content,
-      },
-    ],
-  }));
+  const response = await timeRecipeImportStage(
+    "secondary_fill",
+    { jobID },
+    () => withRecipeAIStage("recipe_import.secondary_fill", () => openai.chat.completions.create({
+      model: RECIPE_IMPORT_COMPLETION_MODEL,
+      ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.02),
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: RECIPE_SECONDARY_FILL_SYSTEM_PROMPT,
+        },
+        {
+          role: "user",
+          content,
+        },
+      ],
+    }))
+  );
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   const parsed = JSON.parse(rawContent);
@@ -7965,7 +7676,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
       ...(completion.applied ? ["import_completion_applied"] : []),
     ]);
     modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
-    const secondaryFill = await enrichRecipeSecondaryFields(normalized, source);
+    const secondaryFill = await enrichRecipeSecondaryFields(normalized, source, { jobID });
     normalized = secondaryFill.recipe;
     secondaryFillApplied = secondaryFill.applied;
     const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
@@ -7996,7 +7707,29 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
       ]);
       modelResult.review_reason = verification.review_reason ?? modelResult.review_reason ?? null;
     }
-    const secondaryFill = await enrichRecipeSecondaryFields(normalized, source);
+    const secondaryFill = await enrichRecipeSecondaryFields(normalized, source, { jobID });
+    normalized = secondaryFill.recipe;
+    secondaryFillApplied = secondaryFill.applied;
+    const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
+    normalized = finalValidation.recipe;
+    modelResult.quality_flags = uniqueStrings([
+      ...(modelResult.quality_flags ?? []),
+      ...(finalValidation.quality_flags ?? []),
+    ]);
+    modelResult.review_reason = finalValidation.review_reason ?? modelResult.review_reason ?? null;
+  }
+  if (source.source_type === "media_image") {
+    normalized = await repairSparseImportedRecipe(normalized, source);
+    normalized = await enrichRecipeLowRiskFields(normalized, source);
+    const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
+    normalized = completion.recipe;
+    modelResult.quality_flags = uniqueStrings([
+      ...(modelResult.quality_flags ?? []),
+      ...(completion.quality_flags ?? []),
+      ...(completion.applied ? ["import_completion_applied"] : []),
+    ]);
+    modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    const secondaryFill = await enrichRecipeSecondaryFields(normalized, source, { jobID });
     normalized = secondaryFill.recipe;
     secondaryFillApplied = secondaryFill.applied;
     const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
@@ -8534,41 +8267,6 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       qualityFlags: extraction.quality_flags,
     });
 
-    const importedRecipeHasImage = Boolean(
-      persisted.recipe_detail?.hero_image_url
-      || persisted.recipe_detail?.discover_card_image_url
-      || persisted.recipe_card?.hero_image_url
-      || persisted.recipe_card?.discover_card_image_url
-    );
-
-    if (ENABLE_IMPORTED_RECIPE_IMAGE_GEN && existingJob.user_id && (persisted.saved_state === "inserted" || !importedRecipeHasImage)) {
-      try {
-        const generatedImages = await maybeGenerateImportedRecipeImage(persisted.recipe_detail, source, {
-          accessToken: requestPayload.access_token ?? null,
-        });
-        if (generatedImages?.hero_image_url) {
-          await patchRecipeTableRow(USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable, persisted.recipe_id, {
-            hero_image_url: generatedImages.hero_image_url,
-            discover_card_image_url: generatedImages.discover_card_image_url ?? generatedImages.hero_image_url,
-            source_provenance_json: {
-              ...(persisted.recipe_detail?.source_provenance_json ?? {}),
-              image_generation: generatedImages.image_generation ?? null,
-            },
-          });
-          persisted.recipe_card = await fetchRecipeCardProjection(persisted.recipe_id) ?? persisted.recipe_card;
-          persisted.recipe_detail = await fetchCanonicalRecipeDetailByID(persisted.recipe_id, USER_IMPORTED_RECIPE_TABLE_CONFIG) ?? persisted.recipe_detail;
-        }
-      } catch (error) {
-        await storeArtifact(existingJob.id, {
-          artifact_type: "generated_image_failure",
-          content_type: "application/json",
-          raw_json: compactJSON({
-            message: error.message,
-          }),
-        }).catch(() => {});
-      }
-    }
-
     const finalStatus = "saved";
     job = await appendJobEvent(existingJob.id, finalStatus, {
       recipe_id: persisted.recipe_id,
@@ -8596,6 +8294,9 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       recipeID: persisted.recipe_id,
       recipeDetail: persisted.recipe_detail,
     });
+    if (existingJob.user_id && persisted.saved_state === "inserted") {
+      scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: existingJob.id });
+    }
     invalidateUserBootstrapCache(existingJob.user_id);
 
     return formatJobResponse(job, {
@@ -8636,37 +8337,49 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
 }
 
 export async function runRecipeIngestionWorkerBatch({ workerID = `daemon_${nanoid(8)}`, batchSize = 3 } = {}) {
-  const claimed = await callRpc("claim_recipe_ingestion_jobs", {
-    p_worker_id: workerID,
-    p_batch_size: batchSize,
-  });
-  const jobs = Array.isArray(claimed) ? claimed : [];
-  const concurrency = Math.max(
-    1,
-    Math.min(Number(batchSize) || 1, RECIPE_INGESTION_WORKER_CONCURRENCY)
-  );
-  let processed = 0;
-  const queue = [...jobs];
-
-  async function runWorkerLoop() {
-    while (queue.length > 0) {
-      const job = queue.shift();
-      if (!job) break;
-      try {
-        await processRecipeIngestionJob(job, { workerID });
-      } catch (error) {
-        console.warn(`[recipe-ingestion] job ${job.id} failed on this pass:`, error.message);
-      } finally {
-        processed += 1;
-      }
-    }
+  const lockKey = "recipe-ingestion:worker-batch";
+  const lockToken = await acquireRedisLock(lockKey, 55);
+  if (!lockToken && process.env.REDIS_URL && !REDIS_DISABLED_FOR_INGESTION_LOCK) {
+    return 0;
   }
 
-  await Promise.all(
-    Array.from({ length: concurrency }, () => runWorkerLoop())
-  );
+  try {
+    const claimed = await callRpc("claim_recipe_ingestion_jobs", {
+      p_worker_id: workerID,
+      p_batch_size: batchSize,
+    });
+    const jobs = Array.isArray(claimed) ? claimed : [];
+    const concurrency = Math.max(
+      1,
+      Math.min(Number(batchSize) || 1, RECIPE_INGESTION_WORKER_CONCURRENCY)
+    );
+    let processed = 0;
+    const queue = [...jobs];
 
-  return processed;
+    async function runWorkerLoop() {
+      while (queue.length > 0) {
+        const job = queue.shift();
+        if (!job) break;
+        try {
+          await processRecipeIngestionJob(job, { workerID });
+        } catch (error) {
+          console.warn(`[recipe-ingestion] job ${job.id} failed on this pass:`, error.message);
+        } finally {
+          processed += 1;
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: concurrency }, () => runWorkerLoop())
+    );
+
+    return processed;
+  } finally {
+    if (lockToken) {
+      void releaseRedisLock(lockKey, lockToken);
+    }
+  }
 }
 
 export {

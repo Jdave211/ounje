@@ -334,6 +334,10 @@ final class AppNotificationCenterManager: ObservableObject {
     private var lastTrackingAuthFailureUserID: String?
     private let passiveSyncInterval: TimeInterval = 5 * 60
 
+    init() {
+        configureNotificationCategories()
+    }
+
     func syncForCurrentSession(_ session: AuthSession?, force: Bool = false) async {
         guard let session,
               !session.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -482,6 +486,10 @@ final class AppNotificationCenterManager: ObservableObject {
     }
 
     private func scheduleNotificationIfNeeded(_ event: AppNotificationEvent) async throws {
+        guard OunjeNotificationPreferenceStore.load().allows(kind: event.kind, metadata: event.metadata) else {
+            return
+        }
+
         let identifier = "app-notification-\(event.id.uuidString)"
         let pending = await notificationCenter.pendingNotificationRequests()
         if pending.contains(where: { $0.identifier == identifier }) {
@@ -495,17 +503,85 @@ final class AppNotificationCenterManager: ObservableObject {
             content.subtitle = subtitle
         }
         content.sound = .default
+        content.categoryIdentifier = notificationCategoryIdentifier(for: event.kind)
+        content.threadIdentifier = notificationThreadIdentifier(for: event.kind)
+        content.targetContentIdentifier = event.recipeID ?? event.orderID?.uuidString ?? event.id.uuidString
         content.userInfo = [
             "eventID": event.id.uuidString,
+            "event_id": event.id.uuidString,
             "kind": event.kind,
             "actionURL": event.actionURLString ?? "",
+            "action_url": event.actionURLString ?? "",
+            "deep_link": event.actionURLString ?? "",
             "orderID": event.orderID?.uuidString ?? "",
+            "order_id": event.orderID?.uuidString ?? "",
+            "recipeID": event.recipeID ?? "",
+            "recipe_id": event.recipeID ?? "",
         ]
 
         let interval = max(1, event.scheduledFor.timeIntervalSinceNow)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         try await notificationCenter.add(request)
+    }
+
+    private func configureNotificationCategories() {
+        let openRecipe = UNNotificationAction(
+            identifier: "OUNJE_OPEN_RECIPE",
+            title: "Open recipe",
+            options: [.foreground]
+        )
+        let openCookbook = UNNotificationAction(
+            identifier: "OUNJE_OPEN_IMPORTS",
+            title: "Open imports",
+            options: [.foreground]
+        )
+        let openCart = UNNotificationAction(
+            identifier: "OUNJE_OPEN_CART",
+            title: "Open cart",
+            options: [.foreground]
+        )
+
+        notificationCenter.setNotificationCategories([
+            UNNotificationCategory(
+                identifier: "OUNJE_RECIPE_IMPORT",
+                actions: [openRecipe, openCookbook],
+                intentIdentifiers: [],
+                options: []
+            ),
+            UNNotificationCategory(
+                identifier: "OUNJE_AUTOSHOP",
+                actions: [openCart],
+                intentIdentifiers: [],
+                options: []
+            ),
+        ])
+    }
+
+    private func notificationCategoryIdentifier(for kind: String) -> String {
+        if kind.hasPrefix("recipe_import_") {
+            return "OUNJE_RECIPE_IMPORT"
+        }
+        if kind.hasPrefix("autoshop_")
+            || kind.hasPrefix("grocery_")
+            || kind == "cart_review_required"
+            || kind == "checkout_approval_required" {
+            return "OUNJE_AUTOSHOP"
+        }
+        return ""
+    }
+
+    private func notificationThreadIdentifier(for kind: String) -> String {
+        if kind.hasPrefix("recipe_import_") {
+            return "recipe-import"
+        }
+        if kind.hasPrefix("autoshop_")
+            || kind.hasPrefix("grocery_")
+            || kind == "cart_review_required"
+            || kind == "checkout_approval_required" {
+            return "autoshop"
+        }
+        return "ounje"
     }
 
     private func shouldBackoffTracking(for userID: String) -> Bool {
@@ -1738,6 +1814,7 @@ private struct WelcomeQuickTourPage {
 
 private struct MealPlannerShellView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var runtimeStore: UserRuntimeStore
     @EnvironmentObject private var realtimeCoordinator: AppRealtimeInvalidationCoordinator
@@ -1979,9 +2056,18 @@ private struct MealPlannerShellView: View {
         .onOpenURL { url in
             handleIncomingURL(url)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .ounjeNotificationDeepLinkReceived)) { notification in
+            if let url = notification.object as? URL ?? notification.userInfo?["url"] as? URL {
+                handleIncomingURL(url)
+            }
+        }
+        .task(id: "notification-deep-link-drain") {
+            consumePendingNotificationDeepLink()
+        }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
             Task {
+                consumePendingNotificationDeepLink()
                 await store.runAutomationPassIfNeeded(trigger: "scene_active")
                 await refreshSharedImportState(force: false)
                 lastSharedImportRefreshAt = .now
@@ -2007,7 +2093,7 @@ private struct MealPlannerShellView: View {
                 .environmentObject(sharedImportInbox)
                 .environmentObject(store)
                 .environmentObject(toastCenter)
-                .presentationDetents([.fraction(0.68), .large])
+                .presentationDetents([.height(306), .fraction(0.62), .large])
                 .presentationDragIndicator(.hidden)
         }
     }
@@ -2129,6 +2215,11 @@ private struct MealPlannerShellView: View {
         await sharedImportInbox.refresh()
         let session = await store.freshUserDataSession()
         await recipeImportHistory.refresh(userID: session?.userID, accessToken: session?.accessToken, force: force)
+        await MainActor.run {
+            for card in recipeImportHistory.completedItems.compactMap(\.savedRecipeCard) {
+                savedStore.saveImportedRecipe(card, showToast: false, respectUnsave: true)
+            }
+        }
         await sharedImportInbox.reconcileCompletedImports(
             recipeImportHistory.completedItems,
             accessToken: session?.accessToken,
@@ -2462,6 +2553,10 @@ private struct MealPlannerShellView: View {
     }
 
     private func handleIncomingURL(_ url: URL) {
+        if handleOunjeDeepLink(url) {
+            return
+        }
+
         if let shareID = RecipeDetailService.shareID(from: url) {
             Task { await openSharedRecipeLink(shareID) }
             return
@@ -2477,6 +2572,103 @@ private struct MealPlannerShellView: View {
             await processPendingSharedImports(scope: .queued)
             await refreshSharedImportState(force: true)
             lastSharedImportRefreshAt = .now
+        }
+    }
+
+    private func consumePendingNotificationDeepLink() {
+        guard let url = OunjeNotificationDeepLinkBuffer.shared.consume() else { return }
+        handleIncomingURL(url)
+    }
+
+    private func handleOunjeDeepLink(_ url: URL) -> Bool {
+        let scheme = url.scheme?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if scheme == "http" || scheme == "https" {
+            openURL(url)
+            return true
+        }
+
+        guard scheme == "ounje" || scheme == "net.ounje" else {
+            return false
+        }
+
+        let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let pathParts = url.pathComponents
+            .filter { $0 != "/" }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let route = host.isEmpty ? (pathParts.first?.lowercased() ?? "") : host
+        let firstPathValue = host.isEmpty ? pathParts.dropFirst().first : pathParts.first
+
+        switch route {
+        case "recipe":
+            guard let recipeID = firstPathValue?.removingPercentEncoding?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !recipeID.isEmpty else { return true }
+            Task { await openRecipeNotificationLink(recipeID: recipeID) }
+            return true
+        case "cookbook":
+            withAnimation(OunjeMotion.heroSpring) {
+                if pathParts.first?.lowercased() == "import" || pathParts.contains(where: { $0.lowercased() == "import" }) {
+                    requestedImportQueueTab = .completed
+                }
+                selectedTab = .cookbook
+            }
+            return true
+        case "imports", "import":
+            withAnimation(OunjeMotion.heroSpring) {
+                requestedImportQueueTab = .completed
+                selectedTab = .cookbook
+            }
+            return true
+        case "cart", "autoshop", "instacart":
+            withAnimation(OunjeMotion.heroSpring) {
+                selectedTab = .cart
+            }
+            return true
+        case "prep":
+            withAnimation(OunjeMotion.heroSpring) {
+                selectedTab = .prep
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    @MainActor
+    private func openRecipeNotificationLink(recipeID: String) async {
+        do {
+            let accessToken = (await store.freshUserDataSession())?.accessToken
+            let detail = try await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
+            let card = DiscoverRecipeCardData(
+                id: detail.id,
+                title: detail.title,
+                description: detail.description,
+                authorName: detail.authorName,
+                authorHandle: detail.authorHandle,
+                category: detail.category ?? detail.recipeType,
+                recipeType: detail.recipeType ?? detail.category,
+                cookTimeText: detail.cookTimeText,
+                cookTimeMinutes: detail.cookTimeMinutes,
+                publishedDate: nil,
+                imageURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString,
+                heroImageURLString: detail.heroImageURLString,
+                recipeURLString: detail.originalRecipeURLString ?? detail.recipeURLString,
+                source: detail.source ?? detail.sourcePlatform
+            )
+            withAnimation(OunjeMotion.heroSpring) {
+                selectedTab = .cookbook
+                presentedRecipe = PresentedRecipeDetail(recipeCard: card, initialDetail: detail)
+            }
+        } catch {
+            withAnimation(OunjeMotion.heroSpring) {
+                requestedImportQueueTab = .completed
+                selectedTab = .cookbook
+            }
+            toastCenter.show(
+                title: "Recipe is still syncing",
+                subtitle: "Open the completed imports list and try again.",
+                systemImage: "fork.knife.circle"
+            )
         }
     }
 
@@ -3364,7 +3556,7 @@ private struct CookbookTabView: View {
         }
         .animation(OunjeMotion.screenSpring, value: isSavedSearchExpanded)
         .alert("New prep", isPresented: $isNewCookbookPrepPromptPresented) {
-            TextField("Usual, Christmas theme…", text: $newCookbookPrepName)
+            TextField("Experimental & Weight Loss", text: $newCookbookPrepName)
                 .autocorrectionDisabled()
             Button("Create") {
                 let name = newCookbookPrepName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3411,7 +3603,7 @@ private struct CookbookTabView: View {
         }
         .sheet(isPresented: $isComposerPresented) {
             DiscoverComposerSheet(context: composerContext, initialText: composerInitialText)
-                .presentationDetents([.fraction(0.72), .large])
+                .presentationDetents([.height(306), .fraction(0.62), .large])
                 .presentationDragIndicator(.hidden)
                 .onDisappear {
                     composerInitialText = nil
@@ -3781,52 +3973,55 @@ private struct CookbookTabView: View {
     }
 
     private var cookbookPrepControls: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                if cookbookPrepBatches.isEmpty {
-                    cookbookPrepPill(
-                        title: "Usual",
-                        isSelected: true,
-                        action: {}
-                    )
-                } else {
-                    ForEach(cookbookPrepBatches) { batch in
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if cookbookPrepBatches.isEmpty {
                         cookbookPrepPill(
-                            title: batch.name,
-                            isSelected: store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id),
-                            action: {
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                                    store.activeBatchID = batch.id
-                                }
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            }
+                            title: "Usual",
+                            isSelected: true,
+                            action: {}
                         )
+                    } else {
+                        ForEach(cookbookPrepBatches) { batch in
+                            cookbookPrepPill(
+                                title: batch.name,
+                                isSelected: store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id),
+                                action: {
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                                        store.activeBatchID = batch.id
+                                    }
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                }
+                            )
+                        }
                     }
                 }
-
-                Button {
-                    newCookbookPrepName = ""
-                    isNewCookbookPrepPromptPresented = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(OunjePalette.primaryText.opacity(0.82))
-                    .frame(width: 34, height: 34)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(OunjePalette.surface)
-                            .overlay(
-                                Capsule(style: .continuous)
-                                    .stroke(OunjePalette.stroke, lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("New Prep")
+                .padding(.horizontal, 2)
+                .padding(.vertical, 2)
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 2)
+
+            Button {
+                presentNewCookbookPrepPrompt()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(OunjePalette.softCream)
+                    .frame(width: 56, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .accessibilityLabel("New Prep")
+            .zIndex(100)
         }
+        .zIndex(100)
+    }
+
+    private func presentNewCookbookPrepPrompt() {
+        newCookbookPrepName = ""
+        isNewCookbookPrepPromptPresented = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     private func cookbookPrepPill(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -7286,6 +7481,85 @@ private struct BottomNavigationDock: View {
     }
 }
 
+private struct NewRecipeTargetSwitcher: View {
+    @Binding var selection: CookbookComposerContext
+
+    private let options: [CookbookComposerContext] = [.prepped, .saved]
+
+    var body: some View {
+        VStack(spacing: 3) {
+            tracker
+
+            HStack(spacing: 2) {
+                targetButton(.prepped, title: "Prep")
+                targetButton(.saved, title: "Save")
+            }
+            .padding(3)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.92))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
+                    )
+            )
+
+            Text("tap or flick")
+                .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                .foregroundStyle(OunjePalette.secondaryText.opacity(0.64))
+                .textCase(.uppercase)
+                .tracking(0.5)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 8)
+                .onEnded { value in
+                    guard abs(value.translation.width) > 14 else { return }
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                        selection = value.translation.width < 0 ? .saved : .prepped
+                    }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Recipe destination")
+        .accessibilityValue(selection == .prepped ? "Prep" : "Save")
+        .accessibilityHint("Tap or flick to choose where the recipe goes.")
+    }
+
+    private var tracker: some View {
+        HStack(spacing: 4) {
+            ForEach(options, id: \.self) { option in
+                Capsule(style: .continuous)
+                    .fill(option == selection ? OunjePalette.softCream.opacity(0.96) : OunjePalette.softCream.opacity(0.24))
+                    .frame(width: option == selection ? 13 : 4, height: 4)
+            }
+        }
+        .frame(height: 4)
+        .animation(.spring(response: 0.24, dampingFraction: 0.82), value: selection)
+    }
+
+    private func targetButton(_ target: CookbookComposerContext, title: String) -> some View {
+        Button {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                selection = target
+            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        } label: {
+            Text(title)
+                .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                .foregroundStyle(target == selection ? OunjePalette.background : OunjePalette.softCream.opacity(0.76))
+                .frame(width: 42, height: 24)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(target == selection ? OunjePalette.softCream : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+}
+
 private struct DiscoverComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var savedStore: SavedRecipesStore
@@ -7294,6 +7568,7 @@ private struct DiscoverComposerSheet: View {
     @EnvironmentObject private var toastCenter: AppToastCenter
     let context: CookbookComposerContext
     let initialText: String?
+    @State private var selectedTargetContext: CookbookComposerContext
     @State private var draftText = ""
     @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var attachments: [RecipeImportMediaDraft] = []
@@ -7301,7 +7576,7 @@ private struct DiscoverComposerSheet: View {
     @State private var isPreparingMedia = false
     @State private var attachmentMessage: String?
     @State private var errorMessage: String?
-    @State private var selectedMode: NewRecipeImportMode = .web
+    @State private var selectedMode: NewRecipeImportMode?
     @State private var activeImportMode: NewRecipeImportMode?
     @State private var confirmation: NewRecipeImportConfirmation?
     @State private var isPhotoSourceDialogPresented = false
@@ -7309,12 +7584,23 @@ private struct DiscoverComposerSheet: View {
     @State private var isImportCameraPresented = false
     @FocusState private var isTextFocused: Bool
 
+    init(context: CookbookComposerContext, initialText: String?) {
+        self.context = context
+        self.initialText = initialText
+        _selectedTargetContext = State(initialValue: context)
+    }
+
     private var trimmedDraftText: String {
         draftText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var currentImportMode: NewRecipeImportMode? {
+        activeImportMode ?? selectedMode
+    }
+
     private var canSubmit: Bool {
-        switch selectedMode {
+        guard let currentImportMode else { return false }
+        switch currentImportMode {
         case .create:
             return !trimmedDraftText.isEmpty
         case .web:
@@ -7339,11 +7625,11 @@ private struct DiscoverComposerSheet: View {
     }
 
     private var primaryActionTitle: String {
-        switch context {
+        switch selectedTargetContext {
         case .prepped:
             return "Add to prep"
         case .saved:
-            switch selectedMode {
+            switch currentImportMode ?? .web {
             case .create:
                 return "Create recipe"
             case .web:
@@ -7355,11 +7641,11 @@ private struct DiscoverComposerSheet: View {
     }
 
     private var submittingActionTitle: String {
-        switch context {
+        switch selectedTargetContext {
         case .prepped:
             return "Saving..."
         case .saved:
-            return selectedMode == .create || (selectedMode == .web && hasPromptTextBeyondLinks) ? "Generating..." : "Saving..."
+            return currentImportMode == .create || (currentImportMode == .web && hasPromptTextBeyondLinks) ? "Generating..." : "Saving..."
         }
     }
 
@@ -7374,18 +7660,18 @@ private struct DiscoverComposerSheet: View {
     }
 
     private var helperCopy: String {
-        switch context {
+        switch selectedTargetContext {
         case .prepped:
-            return "Create from scratch, paste a link, or attach a photo. We’ll save it straight to prep."
+            return "Choose how to add the recipe. Each option stays focused."
         case .saved:
-            return "Create from scratch, import from the web, or use a photo. Everything lands in your cookbook."
+            return "Choose one import path. We’ll save the result to your cookbook."
         }
     }
 
     private var placeholderCopy: String {
-        switch selectedMode {
+        switch currentImportMode ?? .create {
         case .create:
-            return context == .prepped
+            return selectedTargetContext == .prepped
                 ? "Write the dish you want to prep. Add notes, cravings, or ingredients."
                 : "Write a recipe idea, ingredients, or dish name."
         case .web:
@@ -7419,45 +7705,36 @@ private struct DiscoverComposerSheet: View {
             OunjePalette.background
                 .ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 12) {
                 Capsule()
                     .fill(OunjePalette.stroke)
-                    .frame(width: 72, height: 6)
+                    .frame(width: 50, height: 5)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 8)
+                    .padding(.top, 6)
 
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top) {
                         Text("New recipe")
-                            .font(.system(size: 25, weight: .regular, design: .serif))
+                            .font(.system(size: 24, weight: .regular, design: .serif))
                             .foregroundStyle(OunjePalette.primaryText)
 
                         Spacer(minLength: 12)
 
-                        Text(context == .saved ? "Cookbook" : "Prep")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundStyle(OunjePalette.softCream)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(OunjePalette.surface.opacity(0.92))
-                            )
+                        NewRecipeTargetSwitcher(selection: $selectedTargetContext)
                     }
 
                     Text(helperCopy)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(2)
 
                     newRecipeOptions
 
                 }
-
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, 18)
-            .padding(.top, 14)
-            .padding(.bottom, 24)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
             .blur(radius: activeImportMode == nil && confirmation == nil ? 0 : 10)
             .scaleEffect(activeImportMode == nil && confirmation == nil ? 1 : 0.985)
             .allowsHitTesting(activeImportMode == nil && confirmation == nil)
@@ -7475,15 +7752,23 @@ private struct DiscoverComposerSheet: View {
             }
         }
         .onAppear {
-            if draftText.isEmpty,
-               let initialText = initialText?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !initialText.isEmpty {
-                draftText = initialText
+            let trimmedInitialText = initialText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            selectedTargetContext = context
+            if !trimmedInitialText.isEmpty {
+                draftText = trimmedInitialText
                 selectedMode = .web
                 activeImportMode = .web
+            } else {
+                draftText = ""
+                selectedMode = nil
+                activeImportMode = nil
+                attachments = []
+                selectedMediaItems = []
+                attachmentMessage = nil
+                errorMessage = nil
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                if initialText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                if !trimmedInitialText.isEmpty {
                     isTextFocused = true
                 }
             }
@@ -7508,9 +7793,15 @@ private struct DiscoverComposerSheet: View {
                     isPhotoPickerPresented = true
                 }
             }
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) {
+                clearPhotoSelectionIfEmpty()
+            }
         } message: {
             Text("Attach a dish photo, screenshot, or cookbook page.")
+        }
+        .onChange(of: isPhotoPickerPresented) { isPresented in
+            guard !isPresented else { return }
+            clearPhotoSelectionIfEmpty()
         }
         .photosPicker(
             isPresented: $isPhotoPickerPresented,
@@ -7527,6 +7818,7 @@ private struct DiscoverComposerSheet: View {
                 }
             } onCancel: {
                 isImportCameraPresented = false
+                clearPhotoSelectionIfEmpty()
             }
             .ignoresSafeArea()
         }
@@ -7541,18 +7833,18 @@ private struct DiscoverComposerSheet: View {
                     closeImportPanel()
                 }
 
-            VStack(spacing: 18) {
+            VStack(spacing: 14) {
                 ZStack {
                     Circle()
                         .fill(mode.tint.opacity(0.18))
-                        .frame(width: 68, height: 68)
+                        .frame(width: 56, height: 56)
 
                     Image(systemName: mode.systemImage)
-                        .font(.system(size: 28, weight: .bold))
+                        .font(.system(size: 23, weight: .bold))
                         .foregroundStyle(mode.tint)
                 }
 
-                VStack(spacing: 7) {
+                VStack(spacing: 5) {
                     Text(importModalTitle(for: mode))
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .foregroundStyle(OunjePalette.primaryText)
@@ -7574,9 +7866,9 @@ private struct DiscoverComposerSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 24)
-            .frame(maxWidth: 354)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
+            .frame(maxWidth: 344)
             .background(
                 RoundedRectangle(cornerRadius: 34, style: .continuous)
                     .fill(OunjePalette.panel)
@@ -7594,9 +7886,32 @@ private struct DiscoverComposerSheet: View {
     private func importEntryFields(for mode: NewRecipeImportMode) -> some View {
         switch mode {
         case .create:
-            VStack(alignment: .leading, spacing: 14) {
-                recipeTextEditor(minHeight: 142)
-                modalSubmitButton
+            VStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(mode.tint)
+
+                    TextField(placeholderCopy, text: $draftText, axis: .vertical)
+                        .textInputAutocapitalization(.sentences)
+                        .autocorrectionDisabled(false)
+                        .focused($isTextFocused)
+                        .font(.system(size: 15.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1...3)
+
+                    Button {
+                        submitImport()
+                    } label: {
+                        submitArrowIcon
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSubmit || isSubmitting || isPreparingMedia)
+                    .opacity(!canSubmit || isSubmitting || isPreparingMedia ? 0.5 : 1)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
+                .background(importFieldBackground(tint: mode.tint))
             }
 
         case .web:
@@ -7638,31 +7953,7 @@ private struct DiscoverComposerSheet: View {
 
         case .photo:
             VStack(alignment: .leading, spacing: 14) {
-                Button {
-                    isPhotoSourceDialogPresented = true
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "camera.viewfinder")
-                            .font(.system(size: 16, weight: .bold))
-                        Text(attachments.isEmpty ? "Take photo or choose from camera roll" : mediaButtonTitle)
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 14, weight: .bold))
-                    }
-                    .foregroundStyle(OunjePalette.primaryText)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 13)
-                    .background(importFieldBackground(tint: mode.tint))
-                }
-                .buttonStyle(.plain)
-                .disabled(isSubmitting || isPreparingMedia)
-
-                if isPreparingMedia || !attachments.isEmpty {
-                    importAttachmentStrip
-                }
-
+                importAttachmentReview
                 modalSubmitButton
             }
         }
@@ -7737,32 +8028,42 @@ private struct DiscoverComposerSheet: View {
         }
     }
 
-    private var importAttachmentStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                if isPreparingMedia {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(OunjePalette.primaryText)
-                        Text("Preparing media")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(OunjePalette.surface)
-                        )
-                }
+    private var importAttachmentReview: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(attachments.isEmpty ? "Preparing selected media" : mediaButtonTitle)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(OunjePalette.secondaryText)
 
-                ForEach(attachments) { attachment in
-                    importToken(
-                        title: attachment.title,
-                        systemImage: attachment.kind == .image ? "photo" : "video",
-                        action: { removeAttachment(id: attachment.id) }
-                    )
+            if isPreparingMedia && attachments.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(OunjePalette.primaryText)
+                    Text("Getting the photo ready...")
+                        .font(.system(size: 13.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(importFieldBackground(tint: NewRecipeImportMode.photo.tint))
+            } else if attachments.isEmpty {
+                Text("No photo selected.")
+                    .font(.system(size: 13.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(importFieldBackground(tint: NewRecipeImportMode.photo.tint))
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(attachments) { attachment in
+                            RecipeImportAttachmentPreviewCard(
+                                attachment: attachment,
+                                onRemove: { removeAttachment(id: attachment.id) }
+                            )
+                        }
+                    }
+                    .padding(.vertical, 1)
                 }
             }
         }
@@ -7839,7 +8140,7 @@ private struct DiscoverComposerSheet: View {
             } label: {
                 NewRecipeImportOptionRow(
                     mode: .create,
-                    isSelected: selectedMode == .create
+                    isSelected: false
                 )
             }
             .buttonStyle(.plain)
@@ -7850,18 +8151,18 @@ private struct DiscoverComposerSheet: View {
             } label: {
                 NewRecipeImportOptionRow(
                     mode: .web,
-                    isSelected: selectedMode == .web
+                    isSelected: false
                 )
             }
             .buttonStyle(.plain)
             .disabled(isSubmitting)
 
             Button {
-                openImportPanel(.photo, focusText: false)
+                beginPhotoImport()
             } label: {
                 NewRecipeImportOptionRow(
                     mode: .photo,
-                    isSelected: selectedMode == .photo || !attachments.isEmpty
+                    isSelected: false
                 )
             }
             .buttonStyle(.plain)
@@ -7875,11 +8176,9 @@ private struct DiscoverComposerSheet: View {
             draftText = ""
             errorMessage = nil
         }
-        if mode != .photo {
-            attachments = []
-            selectedMediaItems = []
-            attachmentMessage = nil
-        }
+        attachments = []
+        selectedMediaItems = []
+        attachmentMessage = nil
         selectedMode = mode
         errorMessage = nil
         withAnimation(OunjeMotion.screenSpring) {
@@ -7891,12 +8190,27 @@ private struct DiscoverComposerSheet: View {
             }
         } else {
             isTextFocused = false
-            if mode == .photo, attachments.isEmpty {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-                    isPhotoSourceDialogPresented = true
-                }
-            }
         }
+    }
+
+    private func beginPhotoImport() {
+        draftText = ""
+        attachments = []
+        selectedMediaItems = []
+        attachmentMessage = nil
+        errorMessage = nil
+        selectedMode = .photo
+        activeImportMode = nil
+        isTextFocused = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            isPhotoSourceDialogPresented = true
+        }
+    }
+
+    private func clearPhotoSelectionIfEmpty() {
+        guard selectedMode == .photo, activeImportMode == nil, attachments.isEmpty, selectedMediaItems.isEmpty else { return }
+        selectedMode = nil
+        attachmentMessage = nil
     }
 
     private func closeImportPanel() {
@@ -7904,17 +8218,18 @@ private struct DiscoverComposerSheet: View {
             activeImportMode = nil
         }
         isTextFocused = false
+        selectedMode = nil
     }
 
     private func submitImport() {
-        guard canSubmit, !isSubmitting, !isPreparingMedia else { return }
+        guard let mode = currentImportMode, canSubmit, !isSubmitting, !isPreparingMedia else { return }
 
         isSubmitting = true
         errorMessage = nil
         attachmentMessage = nil
-        let attachmentsForImport = selectedMode == .photo ? attachments : []
-        let sourceURLForImport = selectedMode == .web ? detectedLinks.first : nil
-        let sourceTextForImport = selectedMode == .photo ? "" : trimmedDraftText
+        let attachmentsForImport = mode == .photo ? attachments : []
+        let sourceURLForImport = mode == .web ? detectedLinks.first : nil
+        let sourceTextForImport = mode == .photo ? "" : trimmedDraftText
         let hasImageAttachments = attachmentsForImport.contains { $0.kind == .image }
         let isPhotoRecipeImport = sourceURLForImport == nil && hasImageAttachments
         let isTypedPromptImport = sourceURLForImport == nil && !sourceTextForImport.isEmpty && !isPhotoRecipeImport
@@ -7928,11 +8243,15 @@ private struct DiscoverComposerSheet: View {
         Task {
             do {
                 let session = await store.freshUserDataSession()
+                let trimmedAccessToken = session?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard let session, !trimmedAccessToken.isEmpty else {
+                    throw RecipeImportServiceError.requestFailed("Sign in again before importing a recipe.")
+                }
                 let localEnvelope = SharedRecipeImportEnvelope(
                     id: UUID().uuidString,
                     createdAt: Date(),
                     jobID: nil,
-                    targetState: context == .prepped ? "prepped" : "saved",
+                    targetState: selectedTargetContext == .prepped ? "prepped" : "saved",
                     sourceText: sourceTextForImport,
                     sourceURLString: sourceURLForImport,
                     canonicalSourceURLString: nil,
@@ -7948,11 +8267,11 @@ private struct DiscoverComposerSheet: View {
                 await sharedImportInbox.refresh()
 
                 let response = try await RecipeImportAPIService.shared.importRecipe(
-                    userID: session?.userID,
-                    accessToken: session?.accessToken,
+                    userID: session.userID,
+                    accessToken: trimmedAccessToken,
                     sourceURL: sourceURLForImport,
                     sourceText: sourceTextForImport,
-                    targetState: context == .prepped ? "prepped" : "saved",
+                    targetState: selectedTargetContext == .prepped ? "prepped" : "saved",
                     attachments: attachmentsForImport.map(\.payload),
                     photoContext: photoContext
                 )
@@ -7963,17 +8282,17 @@ private struct DiscoverComposerSheet: View {
 
                 await MainActor.run {
                     let importedRecipe = response.recipe
-                    if let importedRecipe, context == .saved {
+                    if let importedRecipe, selectedTargetContext == .saved {
                         savedStore.saveImportedRecipe(
                             importedRecipe,
-                            showToast: context == .saved,
+                            showToast: selectedTargetContext == .saved,
                             respectUnsave: true
                         )
                     }
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
 
-                if context == .prepped, let detail = response.recipeDetail {
+                if selectedTargetContext == .prepped, let detail = response.recipeDetail {
                     await store.updateLatestPlan(with: recipeFromImportedDetail(detail), servings: detail.displayServings)
                 }
 
@@ -8001,7 +8320,7 @@ private struct DiscoverComposerSheet: View {
                         return "queued"
                     }
                 }()
-                let shouldTrackAsQueued = !shouldFailImport && ((context == .saved && isTypedPromptImport) || isLiveBackendState)
+                let shouldTrackAsQueued = !shouldFailImport && ((selectedTargetContext == .saved && isTypedPromptImport) || isLiveBackendState)
 
                 if shouldFailImport {
                     let failedEnvelope = SharedRecipeImportEnvelope(
@@ -8089,7 +8408,7 @@ private struct DiscoverComposerSheet: View {
                             systemImage: isPhotoRecipeImport ? "camera.viewfinder" : "tray.and.arrow.down.fill",
                             showsProgress: true
                         )
-                    } else if context == .prepped, let detail = response.recipeDetail {
+                    } else if selectedTargetContext == .prepped, let detail = response.recipeDetail {
                         toastCenter.show(
                             title: "Added to next prep",
                             subtitle: detail.title,
@@ -8103,7 +8422,7 @@ private struct DiscoverComposerSheet: View {
                             systemImage: "calendar.badge.plus",
                             showsProgress: false
                         )
-                    } else if context == .saved {
+                    } else if selectedTargetContext == .saved {
                         showConfirmation(
                             title: "Saved to cookbook",
                             subtitle: response.recipeDetail?.title ?? response.recipe?.title ?? "Recipe is ready in your cookbook.",
@@ -8137,6 +8456,8 @@ private struct DiscoverComposerSheet: View {
             isPreparingMedia = true
             attachmentMessage = "Preparing attachments…"
             errorMessage = nil
+            selectedMode = .photo
+            activeImportMode = .photo
         }
 
         do {
@@ -8455,7 +8776,7 @@ private struct NewRecipeImportOptionRow: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(mode.tint.opacity(isSelected ? 0.22 : 0.13))
-                    .frame(width: 42, height: 42)
+                    .frame(width: 40, height: 40)
 
                 Image(systemName: mode.systemImage)
                     .font(.system(size: 16, weight: .bold))
@@ -8464,10 +8785,10 @@ private struct NewRecipeImportOptionRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(mode.title)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.system(size: 14.5, weight: .bold, design: .rounded))
                     .foregroundStyle(OunjePalette.primaryText)
                 Text(mode.subtitle)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -8479,7 +8800,7 @@ private struct NewRecipeImportOptionRow: View {
                 .font(.system(size: isSelected ? 17 : 14, weight: .bold))
                 .foregroundStyle(isSelected ? mode.tint : OunjePalette.secondaryText.opacity(0.72))
         }
-        .padding(12)
+        .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(isSelected ? OunjePalette.surface.opacity(0.98) : OunjePalette.panel.opacity(0.92))
@@ -8489,6 +8810,56 @@ private struct NewRecipeImportOptionRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+private struct RecipeImportAttachmentPreviewCard: View {
+    let attachment: RecipeImportMediaDraft
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let previewData = attachment.previewData,
+                   let image = UIImage(data: previewData) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: attachment.kind == .image ? "photo" : "video")
+                            .font(.system(size: 22, weight: .bold))
+                        Text(attachment.title)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .multilineTextAlignment(.center)
+                    }
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(OunjePalette.surface)
+                }
+            }
+            .frame(width: 104, height: 116)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(OunjePalette.stroke.opacity(0.82), lineWidth: 1)
+            )
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .frame(width: 25, height: 25)
+                    .background(
+                        Circle()
+                            .fill(OunjePalette.background.opacity(0.88))
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(7)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(attachment.title), \(attachment.subtitle)")
     }
 }
 
@@ -8564,6 +8935,7 @@ private struct RecipeImportMediaDraft: Identifiable {
     let kind: Kind
     let title: String
     let subtitle: String
+    let previewData: Data?
     let payload: RecipeImportAttachmentPayload
 
     static func load(from item: PhotosPickerItem, userID: String?, accessToken: String?) async throws -> RecipeImportMediaDraft? {
@@ -8647,6 +9019,7 @@ private struct RecipeImportMediaDraft: Identifiable {
             kind: .image,
             title: "Photo attached",
             subtitle: subtitle,
+            previewData: jpegData,
             payload: payload
         )
     }
@@ -8685,6 +9058,7 @@ private struct RecipeImportMediaDraft: Identifiable {
             kind: .video,
             title: "Short video attached",
             subtitle: subtitle,
+            previewData: nil,
             payload: payload
         )
     }

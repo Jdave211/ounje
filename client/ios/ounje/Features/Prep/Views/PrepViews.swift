@@ -20,17 +20,33 @@ struct PrepTabView: View {
     @State private var isFoodPhotoSourceDialogPresented = false
     @State private var isFoodPhotoLibraryPresented = false
     @State private var isFoodCameraPresented = false
+    @State private var stablePrepRecipes: [PlannedRecipe] = []
+    @State private var isUserRegeneratingPrep = false
 
     private var currentPrepRecipeCount: Int {
-        store.prepDisplayRecipes.count
+        displayPrepRecipes.count
     }
 
     private var currentRecurringCount: Int {
         store.resolvedRecurringAnchorCount
     }
 
+    private var currentPrepRecipes: [PlannedRecipe] {
+        store.prepDisplayRecipes
+    }
+
+    private var displayPrepRecipes: [PlannedRecipe] {
+        if currentPrepRecipes.isEmpty,
+           !stablePrepRecipes.isEmpty,
+           store.isRefreshingPrepRecipes || store.isGenerating || store.isHydratingRemoteState {
+            return stablePrepRecipes
+        }
+
+        return currentPrepRecipes
+    }
+
     private var showsPrepLoadingState: Bool {
-        let hasRenderablePlan = store.latestPlan?.recipes.isEmpty == false
+        let hasRenderablePlan = !displayPrepRecipes.isEmpty
         guard !hasRenderablePlan else { return false }
         return store.isRefreshingPrepRecipes
             || store.isGenerating
@@ -39,7 +55,7 @@ struct PrepTabView: View {
     }
 
     private var showsRegenerationPlaceholders: Bool {
-        store.isGenerating && store.latestPlan?.recipes.isEmpty == false
+        isUserRegeneratingPrep && !displayPrepRecipes.isEmpty
     }
 
     var body: some View {
@@ -57,7 +73,7 @@ struct PrepTabView: View {
                             PrepBatchPickerRow(
                                 plan: store.latestPlan,
                                 activeBatchID: $store.activeBatchID,
-                                isGenerating: store.isGenerating,
+                                isGenerating: isUserRegeneratingPrep,
                                 onRenameBatch: { id, name in store.renamePrepBatch(id: id, to: name) },
                                 onDeleteBatch: { id in store.deletePrepBatch(id: id) },
                                 onOpenCookbook: {
@@ -74,7 +90,7 @@ struct PrepTabView: View {
                             )
 
                             MealsPrepCarousel(
-                                plannedRecipes: store.prepDisplayRecipes,
+                                plannedRecipes: displayPrepRecipes,
                                 showsLoadingState: showsPrepLoadingState,
                                 showsRegenerationPlaceholders: showsRegenerationPlaceholders,
                                 recurringRecipeIDs: store.activeRecurringPrepRecipeIDs,
@@ -87,35 +103,16 @@ struct PrepTabView: View {
                     }
                     .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
                     .padding(.top, 14)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 24)
                 }
                 .scrollIndicators(.hidden)
-
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    isFoodPhotoSourceDialogPresented = true
-                } label: {
-                    Image(systemName: "camera.viewfinder")
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundStyle(OunjePalette.softCream)
-                        .frame(width: 52, height: 52)
-                        .background(
-                            Circle()
-                                .fill(OunjePalette.panel.opacity(0.96))
-                                .overlay(
-                                    Circle()
-                                        .stroke(OunjePalette.softCream.opacity(0.46), lineWidth: 1.1)
-                                )
-                                .shadow(color: Color.black.opacity(0.34), radius: 18, x: 0, y: 8)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Import recipe from photo")
-                .padding(.trailing, 18)
-                .padding(.bottom, 104)
+                .onAppear(perform: syncStablePrepRecipes)
             }
         }
         .background(OunjePalette.background.ignoresSafeArea())
+        .onChange(of: prepRecipeStabilityKey) { _ in
+            syncStablePrepRecipes()
+        }
         .confirmationDialog("Add food photo", isPresented: $isFoodPhotoSourceDialogPresented, titleVisibility: .visible) {
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Take photo") {
@@ -159,7 +156,7 @@ struct PrepTabView: View {
                 selectedFocus: $selectedRegenerationFocus,
                 recipeCount: currentPrepRecipeCount,
                 recurringCount: currentRecurringCount,
-                isGenerating: store.isGenerating,
+                isGenerating: store.isGenerating || isUserRegeneratingPrep,
                 onCancel: {
                     isRegenerationSheetPresented = false
                 },
@@ -171,9 +168,11 @@ struct PrepTabView: View {
                         subtitle: "Fresh meals are on the way.",
                         systemImage: "wand.and.stars"
                     )
+                    isUserRegeneratingPrep = true
                     Task {
                         let succeeded = await store.regeneratePrepBatch(using: options)
                         await MainActor.run {
+                            isUserRegeneratingPrep = false
                             if succeeded {
                                 showPrepGenerationCompleteToast()
                             } else {
@@ -190,6 +189,15 @@ struct PrepTabView: View {
             .presentationDetents([.height(500)])
             .presentationDragIndicator(.visible)
         }
+    }
+
+    private var prepRecipeStabilityKey: String {
+        currentPrepRecipes.map(\.id).joined(separator: "|")
+    }
+
+    private func syncStablePrepRecipes() {
+        guard !currentPrepRecipes.isEmpty else { return }
+        stablePrepRecipes = currentPrepRecipes
     }
 
     private func recipeForSlot(_ index: Int) -> Recipe? {
@@ -674,6 +682,7 @@ struct PrepBatchPickerRow: View {
     @ViewBuilder
     private func batchPill(_ batch: PrepBatch) -> some View {
         let isActive = batch.id == resolvedActiveBatchID
+        let tint = prepBatchTint(batch)
         Button {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
                 activeBatchID = batch.id
@@ -682,15 +691,15 @@ struct PrepBatchPickerRow: View {
         } label: {
             Text(batch.name)
                 .font(.system(size: 13, weight: isActive ? .bold : .semibold, design: .rounded))
-                .foregroundStyle(isActive ? OunjePalette.background : OunjePalette.primaryText.opacity(0.7))
+                .foregroundStyle(isActive ? Color.white : OunjePalette.primaryText.opacity(0.78))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(isActive ? OunjePalette.softCream : OunjePalette.surface)
+                        .fill(isActive ? tint : tint.opacity(0.16))
                         .overlay(
                             Capsule(style: .continuous)
-                                .stroke(isActive ? Color.clear : OunjePalette.stroke, lineWidth: 1)
+                                .stroke(isActive ? Color.white.opacity(0.12) : tint.opacity(0.45), lineWidth: 1)
                         )
                 )
         }
@@ -711,6 +720,23 @@ struct PrepBatchPickerRow: View {
                 }
             }
         }
+    }
+
+    private func prepBatchTint(_ batch: PrepBatch) -> Color {
+        let palette = [
+            Color(hex: "2E7D57"),
+            Color(hex: "A46A2A"),
+            Color(hex: "7A5EA8"),
+            Color(hex: "3E7893"),
+            Color(hex: "9A4E45"),
+            Color(hex: "6F7D2E"),
+            Color(hex: "B56A3A")
+        ]
+        let key = "\(batch.id.uuidString)-\(batch.name)"
+        let hash = key.utf8.reduce(UInt64(1469598103934665603)) { partial, byte in
+            (partial ^ UInt64(byte)) &* 1099511628211
+        }
+        return palette[Int(hash % UInt64(palette.count))]
     }
 }
 
@@ -1285,7 +1311,7 @@ struct CookbookCycleTablePreview: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let height = proxy.size.height
-            let basePlateSize = min(max(width * 0.23, 72), 100)
+            let basePlateSize = min(max(width * 0.20, 64), 88)
             let activePlacements = placements(for: recipes.count)
 
             ZStack(alignment: .topTrailing) {
@@ -1353,33 +1379,33 @@ struct CookbookCycleTablePreview: View {
         case 0:
             return []
         case 1:
-            return [(0.50, 0.52, 1.34)]
+            return [(0.50, 0.50, 1.28)]
         case 2:
             return [
-                (0.36, 0.52, 1.16),
-                (0.64, 0.52, 1.16)
+                (0.38, 0.48, 1.10),
+                (0.62, 0.48, 1.10)
             ]
         case 3:
             return [
-                (0.22, 0.54, 1.04),
-                (0.50, 0.50, 1.10),
-                (0.78, 0.54, 1.04)
+                (0.28, 0.46, 1.00),
+                (0.50, 0.56, 1.08),
+                (0.72, 0.46, 1.00)
             ]
         case 4:
             return [
-                (0.22, 0.46, 0.98),
-                (0.50, 0.43, 1.06),
-                (0.78, 0.47, 0.98),
-                (0.50, 0.74, 0.92)
+                (0.26, 0.42, 0.94),
+                (0.47, 0.53, 1.00),
+                (0.68, 0.42, 0.94),
+                (0.78, 0.64, 0.86)
             ]
         default:
             return [
-                (0.20, 0.48, 0.96),
-                (0.50, 0.43, 1.04),
-                (0.80, 0.49, 0.96),
-                (0.30, 0.74, 0.88),
-                (0.62, 0.75, 0.90),
-                (0.88, 0.65, 0.84)
+                (0.22, 0.42, 0.90),
+                (0.42, 0.52, 0.98),
+                (0.62, 0.42, 0.90),
+                (0.78, 0.55, 0.86),
+                (0.32, 0.70, 0.80),
+                (0.58, 0.72, 0.82)
             ]
         }
     }
@@ -2332,6 +2358,7 @@ struct PrepTrackerCard: View {
     @State private var selectedCadence: MealCadence = .weekly
     @State private var selectedAnchorDate = Date()
     @State private var selectedAutoshopLeadDays = 1
+    @State private var createRecipePulse = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -2347,27 +2374,26 @@ struct PrepTrackerCard: View {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         onCreateNewRecipe()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("New Recipe")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                        }
-                        .foregroundStyle(OunjePalette.primaryText)
-                        .padding(.horizontal, 11)
-                        .frame(height: 34)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color(hex: "174C32"))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(OunjePalette.accent.opacity(0.34), lineWidth: 1)
-                                )
-                        )
-                        .shadow(color: Color(hex: "174C32").opacity(0.25), radius: 10, x: 0, y: 5)
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(OunjePalette.softCream)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                Circle()
+                                    .fill(Color(hex: "1E6B45"))
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.black.opacity(0.92), lineWidth: 1.25)
+                                    )
+                                    .shadow(color: Color(hex: "1E6B45").opacity(0.34), radius: 14, x: 0, y: 7)
+                            )
                     }
                     .buttonStyle(.plain)
+                    .scaleEffect(createRecipePulse ? 1.05 : 0.98)
+                    .offset(y: createRecipePulse ? -2 : 0)
+                    .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: createRecipePulse)
                     .accessibilityLabel("Create new recipe")
+                    .zIndex(20)
                 }
 
                 BiroScriptDisplayText(
@@ -2392,6 +2418,9 @@ struct PrepTrackerCard: View {
                     .padding(.top, 10)
 
                 }
+            }
+            .onAppear {
+                createRecipePulse = true
             }
 
             let autoshopEnabled = store.profile.map({ isAutoshopEnabled(for: $0) }) == true

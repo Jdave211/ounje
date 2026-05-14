@@ -3098,7 +3098,9 @@ struct FirstLoginOnboardingView: View {
             _ = try? await SupabaseAgentBriefService.shared.generateBrief(for: completedProfile)
         }
 
-        if OunjeLaunchFlags.paywallsEnabled && !hasCompletedOnboardingBeforePaywall {
+        if OunjeLaunchFlags.paywallsEnabled
+            && !OunjeLaunchFlags.usesSimulatorBillingBypass
+            && !hasCompletedOnboardingBeforePaywall {
             pendingCompletedOnboardingProfile = completedProfile
             pendingCompletedOnboardingStep = completedStep
             paywallInitialTier = .plus

@@ -567,13 +567,16 @@ final class SupabaseSavedRecipesService {
             throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
-        return try JSONDecoder().decode([SupabaseSavedRecipeIDRow].self, from: data).map(\.recipeID)
+        let tombstones = try await fetchSavedRecipeTombstoneIDs(userID: userID, accessToken: accessToken)
+        return try JSONDecoder().decode([SupabaseSavedRecipeIDRow].self, from: data)
+            .map(\.recipeID)
+            .filter { !tombstones.contains($0) }
     }
 
     func fetchSavedRecipeTitles(userID: String, accessToken: String? = nil) async throws -> [String] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
-                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=title&user_id=eq.\(encodedUserID)&order=saved_at.desc"
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title&user_id=eq.\(encodedUserID)&order=saved_at.desc"
               ) else {
             throw SupabaseSavedRecipesError.invalidRequest
         }
@@ -588,7 +591,9 @@ final class SupabaseSavedRecipesService {
             throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
+        let tombstones = try await fetchSavedRecipeTombstoneIDs(userID: userID, accessToken: accessToken)
         return try JSONDecoder().decode([SupabaseSavedRecipeTitleRow].self, from: data)
+            .filter { !tombstones.contains($0.recipeID) }
             .map(\.title)
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
@@ -611,23 +616,46 @@ final class SupabaseSavedRecipesService {
             throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
         }
 
+        let tombstones = try await fetchSavedRecipeTombstoneIDs(userID: userID, accessToken: accessToken)
         let rows = try JSONDecoder().decode([SupabaseSavedRecipeRow].self, from: data)
+            .filter { !tombstones.contains($0.recipeID) }
         let hydratedRows = (try? await hydrateSavedRecipeRows(rows, accessToken: accessToken)) ?? rows
         return hydratedRows.map(\.recipe)
     }
 
-    func upsertSavedRecipes(userID: String, recipes: [DiscoverRecipeCardData], accessToken: String? = nil) async throws {
-        guard !recipes.isEmpty,
-              let url = URL(string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?on_conflict=user_id,recipe_id") else {
+    func upsertSavedRecipes(
+        userID: String,
+        recipes: [DiscoverRecipeCardData],
+        accessToken: String? = nil,
+        clearTombstones: Bool = false,
+        touchSavedAt: Bool = false
+    ) async throws {
+        guard !recipes.isEmpty else { return }
+
+        let recipesToPersist: [DiscoverRecipeCardData]
+        if clearTombstones {
+            try await deleteSavedRecipeTombstones(
+                userID: userID,
+                recipeIDs: recipes.map(\.id),
+                accessToken: accessToken
+            )
+            recipesToPersist = recipes
+        } else {
+            let tombstones = try await fetchSavedRecipeTombstoneIDs(userID: userID, accessToken: accessToken)
+            recipesToPersist = recipes.filter { !tombstones.contains($0.id) }
+        }
+
+        guard !recipesToPersist.isEmpty else { return }
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?on_conflict=user_id,recipe_id") else {
             throw SupabaseSavedRecipesError.invalidRequest
         }
 
         let formatter = ISO8601DateFormatter()
-        let payload = recipes.map {
+        let payload = recipesToPersist.map {
             SupabaseSavedRecipeUpsertPayload(
                 userID: userID,
                 recipe: $0,
-                savedAt: formatter.string(from: Date())
+                savedAt: touchSavedAt ? formatter.string(from: Date()) : nil
             )
         }
 
@@ -646,6 +674,8 @@ final class SupabaseSavedRecipesService {
     }
 
     func deleteSavedRecipe(userID: String, recipeID: String, accessToken: String? = nil) async throws {
+        try await upsertSavedRecipeTombstone(userID: userID, recipeID: recipeID, accessToken: accessToken)
+
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let encodedRecipeID = recipeID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
@@ -677,10 +707,91 @@ final class SupabaseSavedRecipesService {
             let countPart = contentRange.split(separator: "/").last.map(String.init) ?? "*"
             let deletedCount = Int(countPart) ?? 1
             if deletedCount == 0 {
-                throw SupabaseSavedRecipesError.requestFailed("Recipe bookmark was not found for this account.")
+                return
             }
         }
         // No Content-Range → assume the delete was processed (HTTP 2xx already confirmed).
+    }
+
+    private func fetchSavedRecipeTombstoneIDs(userID: String, accessToken: String? = nil) async throws -> Set<String> {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipe_tombstones?select=recipe_id&user_id=eq.\(encodedUserID)"
+              ) else {
+            throw SupabaseSavedRecipesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        try applyAuthHeaders(to: &request, accessToken: accessToken)
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to read saved recipe tombstones (\(httpResponse.statusCode))."
+            throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
+        }
+
+        return Set(try JSONDecoder().decode([SupabaseSavedRecipeTombstoneRow].self, from: data).map(\.recipeID))
+    }
+
+    private func upsertSavedRecipeTombstone(userID: String, recipeID: String, accessToken: String? = nil) async throws {
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/saved_recipe_tombstones?on_conflict=user_id,recipe_id") else {
+            throw SupabaseSavedRecipesError.invalidRequest
+        }
+
+        let payload = [
+            SupabaseSavedRecipeTombstoneUpsertPayload(
+                userID: userID,
+                recipeID: recipeID,
+                deletedAt: ISO8601DateFormatter().string(from: Date()),
+                reason: "user_unsaved"
+            )
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        try applyAuthHeaders(to: &request, accessToken: accessToken)
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to record saved recipe tombstone (\(httpResponse.statusCode))."
+            throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
+        }
+    }
+
+    private func deleteSavedRecipeTombstones(userID: String, recipeIDs: [String], accessToken: String? = nil) async throws {
+        let uniqueIDs = Array(Set(recipeIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }))
+        guard !uniqueIDs.isEmpty else { return }
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            throw SupabaseSavedRecipesError.invalidRequest
+        }
+
+        for chunkStart in stride(from: 0, to: uniqueIDs.count, by: 40) {
+            let chunk = Array(uniqueIDs[chunkStart..<min(chunkStart + 40, uniqueIDs.count)])
+            let encodedIDs = chunk
+                .compactMap { $0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) }
+                .joined(separator: ",")
+            guard !encodedIDs.isEmpty,
+                  let url = URL(
+                    string: "\(SupabaseConfig.url)/rest/v1/saved_recipe_tombstones?user_id=eq.\(encodedUserID)&recipe_id=in.(\(encodedIDs))"
+                  ) else {
+                throw SupabaseSavedRecipesError.invalidRequest
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+            try applyAuthHeaders(to: &request, accessToken: accessToken)
+
+            let (data, httpResponse) = try await perform(request)
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let fallback = "Failed to clear saved recipe tombstone (\(httpResponse.statusCode))."
+                throw SupabaseSavedRecipesError.requestFailed(SupabaseUserDataRequest.message(from: data, statusCode: httpResponse.statusCode, fallback: fallback))
+            }
+        }
     }
 
     private func applyAuthHeaders(to request: inout URLRequest, accessToken: String?) throws {
@@ -3402,7 +3513,35 @@ struct SupabaseSavedRecipeIDRow: Codable {
 }
 
 struct SupabaseSavedRecipeTitleRow: Codable {
+    let recipeID: String
     let title: String
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+        case title
+    }
+}
+
+struct SupabaseSavedRecipeTombstoneRow: Codable {
+    let recipeID: String
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+    }
+}
+
+struct SupabaseSavedRecipeTombstoneUpsertPayload: Codable {
+    let userID: String
+    let recipeID: String
+    let deletedAt: String
+    let reason: String
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case recipeID = "recipe_id"
+        case deletedAt = "deleted_at"
+        case reason
+    }
 }
 
 struct SupabaseSavedRecipeUpsertPayload: Codable {
@@ -3420,9 +3559,9 @@ struct SupabaseSavedRecipeUpsertPayload: Codable {
     let heroImageURL: String?
     let recipeURL: String?
     let source: String?
-    let savedAt: String
+    let savedAt: String?
 
-    init(userID: String, recipe: DiscoverRecipeCardData, savedAt: String) {
+    init(userID: String, recipe: DiscoverRecipeCardData, savedAt: String?) {
         self.userID = userID
         self.recipeID = recipe.id
         self.title = recipe.title

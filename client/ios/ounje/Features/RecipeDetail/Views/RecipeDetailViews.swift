@@ -84,6 +84,8 @@ struct RecipeDetailExperienceView: View {
     @State private var showStorySheet = false
     @State private var showAskSheet = false
     @State private var isPrepTargetPickerPresented = false
+    @State private var isNewPrepTargetPromptPresented = false
+    @State private var newPrepTargetName = ""
     @State private var showInlineVideo = false
     @State private var showInlineVideoFullscreen = false
     @State private var shouldResumeInlineVideoAfterFullscreen = false
@@ -1012,9 +1014,27 @@ struct RecipeDetailExperienceView: View {
                     }
                 }
             }
+            Button("New prep...") {
+                newPrepTargetName = ""
+                isNewPrepTargetPromptPresented = true
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Add this recipe to one prep.")
+        }
+        .alert("New prep", isPresented: $isNewPrepTargetPromptPresented) {
+            TextField("Experimental & Weight Loss", text: $newPrepTargetName)
+                .autocorrectionDisabled()
+            Button("Create and add") {
+                Task {
+                    await createPrepTargetAndAddRecipe()
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                newPrepTargetName = ""
+            }
+        } message: {
+            Text("Name the prep, then Ounje will add this recipe there.")
         }
         .fullScreenCover(item: $relatedPresentedRecipe) { recipe in
             RecipeDetailExperienceView(
@@ -1187,6 +1207,14 @@ struct RecipeDetailExperienceView: View {
             await Task.yield()
             await store.updateLatestPlan(with: recipe, servings: servingsCount, targetBatchID: targetBatchID)
         }
+    }
+
+    @MainActor
+    private func createPrepTargetAndAddRecipe() async {
+        let name = newPrepTargetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        newPrepTargetName = ""
+        guard let batchID = store.addPrepBatch(name: name.isEmpty ? nil : name) else { return }
+        await addCurrentRecipeToPrep(targetBatchID: batchID)
     }
 
     @MainActor
@@ -5070,11 +5098,19 @@ struct RecipeDetailMetricsGrid: View {
         LazyVGrid(columns: columns, spacing: 0) {
             ForEach(Array(metrics.enumerated()), id: \.offset) { index, metric in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(metric.title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
+                    HStack(spacing: 5) {
+                        Text(metric.title)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+
+                        if let accent = accentColor(for: metric.title) {
+                            Circle()
+                                .fill(accent.opacity(0.78))
+                                .frame(width: 5, height: 5)
+                        }
+                    }
                     Text(metric.value)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(OunjePalette.primaryText)
@@ -5104,6 +5140,21 @@ struct RecipeDetailMetricsGrid: View {
                         .stroke(OunjePalette.stroke, lineWidth: 1)
                 )
         )
+    }
+
+    private func accentColor(for title: String) -> Color? {
+        switch title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "calories":
+            return Color(red: 0.28, green: 0.76, blue: 0.46)
+        case "carbs":
+            return Color(red: 0.34, green: 0.57, blue: 0.95)
+        case "protein":
+            return Color(red: 0.88, green: 0.26, blue: 0.24)
+        case "fats":
+            return Color(red: 0.96, green: 0.76, blue: 0.26)
+        default:
+            return nil
+        }
     }
 }
 

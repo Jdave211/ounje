@@ -564,8 +564,7 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
     }
 
     var detailsGrid: [RecipeDetailMetric] {
-        let values: [RecipeDetailMetric?] = [
-            skillLevel.map { RecipeDetailMetric(title: "Skill", value: $0) },
+        let primaryValues: [RecipeDetailMetric?] = [
             RecipeDetailMetric(title: "Cook Time", value: compactCookTime),
             RecipeDetailMetric(title: "Servings", value: "\(displayServings)"),
             caloriesDisplayText.map { RecipeDetailMetric(title: "Calories", value: $0) },
@@ -574,14 +573,18 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
             (Self.macroDisplayText(from: fatsText) ?? fatG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Fats", value: $0) },
             (recipeType ?? category ?? subcategory).map { RecipeDetailMetric(title: "Type", value: $0.capitalized) },
             (cuisineTags.first ?? category ?? subcategory).map { RecipeDetailMetric(title: "Cuisine", value: $0) },
-            (cookMethod ?? mainProtein).map { RecipeDetailMetric(title: "Method", value: $0) },
-            (dailyDietText ?? dietaryTags.first).map { RecipeDetailMetric(title: "Diet", value: $0) },
-            occasionTags.first.map { RecipeDetailMetric(title: "Occasion", value: $0) },
-            estCostText.map { RecipeDetailMetric(title: "Est. Cost", value: $0) },
             sourceDisplayLine.map { RecipeDetailMetric(title: "Source", value: $0) }
         ]
 
-        return values
+        let fallbackValues: [RecipeDetailMetric?] = [
+            skillLevel.map { RecipeDetailMetric(title: "Skill", value: $0) },
+            (cookMethod ?? mainProtein).map { RecipeDetailMetric(title: "Method", value: $0) },
+            (dailyDietText ?? dietaryTags.first).map { RecipeDetailMetric(title: "Diet", value: $0) },
+            occasionTags.first.map { RecipeDetailMetric(title: "Occasion", value: $0) },
+            estCostText.map { RecipeDetailMetric(title: "Est. Cost", value: $0) }
+        ]
+
+        return (primaryValues + fallbackValues)
             .compactMap { $0 }
             .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.value != "—" }
             .prefix(9)

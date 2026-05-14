@@ -39,7 +39,7 @@ function sleep(ms) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  const workerID = args.workerID ?? `recipe_ingest_daemon_${process.pid}`;
+  const workerID = args.workerID ?? `vm_recipe_ingest_${process.pid}`;
   let emptyQueueSleepMs = args.idleSleepMs;
 
   do {
