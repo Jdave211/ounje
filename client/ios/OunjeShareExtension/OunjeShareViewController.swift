@@ -153,7 +153,17 @@ final class OunjeShareViewController: UIViewController {
                 try SharedRecipeImportInbox.write(envelope)
 
                 if let authSession = self.sharedAuthSession() {
-                    let response = try await self.submitEnvelopeToBackend(envelope, authSession: authSession)
+                    let response: RecipeImportResponse
+                    do {
+                        response = try await self.submitEnvelopeToBackend(envelope, authSession: authSession)
+                    } catch {
+                        await MainActor.run {
+                            self.openContainingApp(for: envelope.id)
+                            self.extensionContext?.completeRequest(returningItems: nil)
+                        }
+                        return
+                    }
+
                     let backendState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
                     if Self.terminalBackendStates.contains(backendState) {
@@ -401,12 +411,15 @@ final class OunjeShareViewController: UIViewController {
         guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
             throw URLError(.badURL)
         }
+        guard let accessToken = authSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
+            throw URLError(.userAuthenticationRequired)
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 90
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(authSession.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(authSession.userID, forHTTPHeaderField: "x-user-id")
         request.httpBody = try JSONEncoder().encode(
             RecipeImportRequestPayload(

@@ -1672,6 +1672,13 @@ final class MealPlanningAppStore: ObservableObject {
         let override = PrepRecipeOverride(recipe: recipe, servings: sanitizedServings, isIncludedInPrep: true)
         cachePrepRecipeOverride(override)
 
+        if let resolvedTargetBatchID {
+            assignRecipeToPrepBatch(immediatePlannedRecipe, batchID: resolvedTargetBatchID)
+            await persistPrepRecipeOverrideIfPossible(override)
+            await syncPrepMutationToAutomation(trigger: "prep_recipe_updated", forceCartSync: true)
+            return
+        }
+
         let updatedRecipes: [PlannedRecipe]
         let mutationSummary: String
         if let latestPlan {
@@ -1700,9 +1707,6 @@ final class MealPlanningAppStore: ObservableObject {
         )
         await persistPrepRecipeOverrideIfPossible(override)
         await syncPrepMutationToAutomation(trigger: "prep_recipe_updated", forceCartSync: true)
-        if let resolvedTargetBatchID {
-            assignRecipeToPrepBatch(immediatePlannedRecipe, batchID: resolvedTargetBatchID)
-        }
     }
 
     func ensureFreshPlanIfNeeded() async {
@@ -2553,6 +2557,8 @@ final class MealPlanningAppStore: ObservableObject {
         plan.batches = currentBatches
         activeBatchID = newBatch.id
         updateCurrentPlanCache(with: plan, persistRemote: false)
+        let submittedBatchSignature = prepBatchSignature(for: plan)
+        let submittedRecipeSignature = plan.recipes.map(\.recipe.id).joined(separator: "|")
 
         Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -2572,6 +2578,12 @@ final class MealPlanningAppStore: ObservableObject {
                 )
                 await MainActor.run {
                     guard self.latestPlan?.id == plan.id else { return }
+                    let currentBatchSignature = self.prepBatchSignature(for: self.latestPlan)
+                    let currentRecipeSignature = self.latestPlan?.recipes.map(\.recipe.id).joined(separator: "|") ?? ""
+                    if currentBatchSignature != submittedBatchSignature || currentRecipeSignature != submittedRecipeSignature {
+                        self.activeBatchID = response.activeBatchID ?? newBatch.id
+                        return
+                    }
                     self.updateCurrentPlanCache(with: response.plan, persistRemote: false)
                     self.activeBatchID = response.activeBatchID ?? newBatch.id
                 }

@@ -1022,8 +1022,8 @@ struct RecipeDetailExperienceView: View {
         } message: {
             Text("Add this recipe to one prep.")
         }
-        .alert("New prep", isPresented: $isNewPrepTargetPromptPresented) {
-            TextField("Experimental & Weight Loss", text: $newPrepTargetName)
+        .alert("Name this prep by intent", isPresented: $isNewPrepTargetPromptPresented) {
+            TextField("Experimental, low calo...", text: $newPrepTargetName)
                 .autocorrectionDisabled()
             Button("Create and add") {
                 Task {
@@ -1033,8 +1033,6 @@ struct RecipeDetailExperienceView: View {
             Button("Cancel", role: .cancel) {
                 newPrepTargetName = ""
             }
-        } message: {
-            Text("Name the prep, then Ounje will add this recipe there.")
         }
         .fullScreenCover(item: $relatedPresentedRecipe) { recipe in
             RecipeDetailExperienceView(

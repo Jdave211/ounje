@@ -2531,6 +2531,34 @@ function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
   };
 }
 
+function summarizeCompletedImportedRecipe(row) {
+  const rawSourceURL = normalizeText(
+    row?.original_recipe_url
+      ?? row?.recipe_url
+      ?? row?.attached_video_url
+      ?? null
+  );
+  const sourceType = normalizeText(row?.source_platform ?? row?.source ?? "");
+
+  return {
+    id: row?.source_job_id ?? `imported:${row.id}`,
+    recipe_id: row?.id ?? null,
+    title: normalizeText(row?.title) || "Imported recipe",
+    status: "saved",
+    review_state: row?.review_state ?? "approved",
+    source_type: sourceType || null,
+    source_url: rawSourceURL || null,
+    canonical_url: normalizeText(row?.original_recipe_url ?? null) || null,
+    source_text: null,
+    recipe_url: rawSourceURL || null,
+    image_url: row?.discover_card_image_url ?? row?.hero_image_url ?? null,
+    source: row?.source ?? null,
+    cook_time_text: row?.cook_time_text ?? null,
+    completed_at: row?.updated_at ?? row?.created_at ?? null,
+    created_at: row?.created_at ?? null,
+  };
+}
+
 export async function listCompletedRecipeImportItems({ userID = null, limit = null } = {}) {
   const filters = [
     `status=in.${buildInClause(["saved", "needs_review", "draft"])}`,
@@ -2545,12 +2573,20 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
   ];
 
   let rows = [];
+  let importedRows = [];
   let lastError = null;
   let totalCount = 0;
+  let importedTotalCount = 0;
   try {
     totalCount = await countRows("recipe_ingestion_jobs", { filters });
   } catch {
     totalCount = 0;
+  }
+  try {
+    const importedFilters = userID ? [`user_id=eq.${encodeURIComponent(userID)}`] : [];
+    importedTotalCount = await countRows(USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable, { filters: importedFilters });
+  } catch {
+    importedTotalCount = 0;
   }
 
   const parsedLimit = Number.parseInt(String(limit ?? ""), 10);
@@ -2580,21 +2616,40 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
     throw lastError;
   }
 
-  const projections = await Promise.all(
-    rows.map(async (row) => {
-      if (!row?.recipe_id) return null;
-      try {
-        return await fetchRecipeCardProjection(row.recipe_id);
-      } catch {
-        return null;
+  try {
+    const importedFilters = userID ? [`user_id=eq.${encodeURIComponent(userID)}`] : [];
+    importedRows = await fetchRows(
+      USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
+      "id,user_id,source_job_id,title,source,source_platform,recipe_url,original_recipe_url,attached_video_url,hero_image_url,discover_card_image_url,cook_time_text,review_state,created_at,updated_at",
+      {
+        filters: importedFilters,
+        order: ["updated_at.desc", "created_at.desc"],
+        limit: resolvedLimit,
       }
-    })
-  );
+    );
+  } catch {
+    importedRows = [];
+  }
 
-  const items = rows.map((row, index) => summarizeCompletedImportJob(row, projections[index] ?? null));
+  const importedRecipeIDs = new Set(importedRows.map((row) => normalizeText(row?.id)).filter(Boolean));
+  const importedSourceJobIDs = new Set(importedRows.map((row) => normalizeText(row?.source_job_id)).filter(Boolean));
+  const importedItems = importedRows.map(summarizeCompletedImportedRecipe);
+  const jobItems = rows
+    .filter((row) => {
+      const recipeID = normalizeText(row?.recipe_id);
+      const jobID = normalizeText(row?.id);
+      return (!recipeID || !importedRecipeIDs.has(recipeID)) && (!jobID || !importedSourceJobIDs.has(jobID));
+    })
+    .map((row) => summarizeCompletedImportJob(row, null));
+  const timestampValue = (item) => {
+    const parsed = Date.parse(item?.completed_at ?? item?.created_at ?? "");
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const items = [...jobItems, ...importedItems]
+    .sort((left, right) => timestampValue(right) - timestampValue(left));
   return {
     items,
-    totalCount: totalCount || items.length,
+    totalCount: Math.max(importedTotalCount || 0, items.length),
   };
 }
 

@@ -365,6 +365,7 @@ final class AppNotificationCenterManager: ObservableObject {
         guard authorizationStatus == .authorized || authorizationStatus == .provisional else {
             return
         }
+        await registerForRemoteNotificationsIfAllowed()
 
         do {
             if let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -467,16 +468,18 @@ final class AppNotificationCenterManager: ObservableObject {
         do {
             let granted = try await notificationCenter.requestAuthorization(options: [.alert, .sound, .badge])
             authorizationStatus = granted ? .authorized : .denied
-            // Register with APNs so remote pushes can reach the device while
-            // the app is killed/backgrounded. The AppDelegate captures the
-            // resulting device token and forwards it to our backend.
             if granted {
-                await MainActor.run {
-                    UIApplication.shared.registerForRemoteNotifications()
-                }
+                await registerForRemoteNotificationsIfAllowed()
             }
         } catch {
             authorizationStatus = .denied
+        }
+    }
+
+    private func registerForRemoteNotificationsIfAllowed() async {
+        guard authorizationStatus == .authorized || authorizationStatus == .provisional else { return }
+        await MainActor.run {
+            UIApplication.shared.registerForRemoteNotifications()
         }
     }
 
@@ -735,11 +738,14 @@ private final class RecipeImportHistoryStore: ObservableObject {
 
     func refresh(userID: String?, accessToken: String?, force: Bool = false) async {
         let trimmedToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !trimmedToken.isEmpty else {
+        guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             completedItems = []
             totalCompletedCount = 0
             lastRefreshUserID = nil
             lastRefreshAt = nil
+            return
+        }
+        guard !trimmedToken.isEmpty else {
             return
         }
         if !force,
@@ -751,9 +757,6 @@ private final class RecipeImportHistoryStore: ObservableObject {
         if let page = try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID, accessToken: accessToken) {
             completedItems = page.items
             totalCompletedCount = page.totalCount
-        } else {
-            completedItems = []
-            totalCompletedCount = 0
         }
         lastRefreshUserID = userID
         lastRefreshAt = .now
@@ -3555,8 +3558,8 @@ private struct CookbookTabView: View {
             }
         }
         .animation(OunjeMotion.screenSpring, value: isSavedSearchExpanded)
-        .alert("New prep", isPresented: $isNewCookbookPrepPromptPresented) {
-            TextField("Experimental & Weight Loss", text: $newCookbookPrepName)
+        .alert("Name this prep by intent", isPresented: $isNewCookbookPrepPromptPresented) {
+            TextField("Experimental, low calo...", text: $newCookbookPrepName)
                 .autocorrectionDisabled()
             Button("Create") {
                 let name = newCookbookPrepName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3567,8 +3570,6 @@ private struct CookbookTabView: View {
             Button("Cancel", role: .cancel) {
                 newCookbookPrepName = ""
             }
-        } message: {
-            Text("Name this prep by intent, not date.")
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
             updateSavedSearchKeyboardHeight(from: notification)
@@ -7833,24 +7834,24 @@ private struct DiscoverComposerSheet: View {
                     closeImportPanel()
                 }
 
-            VStack(spacing: 14) {
+            VStack(spacing: 16) {
                 ZStack {
                     Circle()
                         .fill(mode.tint.opacity(0.18))
-                        .frame(width: 56, height: 56)
+                        .frame(width: 62, height: 62)
 
                     Image(systemName: mode.systemImage)
-                        .font(.system(size: 23, weight: .bold))
+                        .font(.system(size: 25, weight: .bold))
                         .foregroundStyle(mode.tint)
                 }
 
-                VStack(spacing: 5) {
+                VStack(spacing: 7) {
                     Text(importModalTitle(for: mode))
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .font(.system(size: 21, weight: .bold, design: .rounded))
                         .foregroundStyle(OunjePalette.primaryText)
 
                     Text(importModalSubtitle(for: mode))
-                        .font(.system(size: 13.5, weight: .medium))
+                        .font(.system(size: 14.5, weight: .medium))
                         .foregroundStyle(OunjePalette.secondaryText)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
@@ -7866,9 +7867,9 @@ private struct DiscoverComposerSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 18)
-            .frame(maxWidth: 344)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 22)
+            .frame(maxWidth: 360)
             .background(
                 RoundedRectangle(cornerRadius: 34, style: .continuous)
                     .fill(OunjePalette.panel)
@@ -7896,7 +7897,7 @@ private struct DiscoverComposerSheet: View {
                         .textInputAutocapitalization(.sentences)
                         .autocorrectionDisabled(false)
                         .focused($isTextFocused)
-                        .font(.system(size: 15.5, weight: .semibold, design: .rounded))
+                        .font(.system(size: 16.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(OunjePalette.primaryText)
                         .lineLimit(1...3)
 
@@ -7909,8 +7910,8 @@ private struct DiscoverComposerSheet: View {
                     .disabled(!canSubmit || isSubmitting || isPreparingMedia)
                     .opacity(!canSubmit || isSubmitting || isPreparingMedia ? 0.5 : 1)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 13)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 15)
                 .background(importFieldBackground(tint: mode.tint))
             }
 
@@ -7926,7 +7927,7 @@ private struct DiscoverComposerSheet: View {
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
                         .focused($isTextFocused)
-                        .font(.system(size: 15.5, weight: .semibold, design: .rounded))
+                        .font(.system(size: 16.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(OunjePalette.primaryText)
                         .lineLimit(1...3)
 
@@ -7939,8 +7940,8 @@ private struct DiscoverComposerSheet: View {
                     .disabled(!canSubmit || isSubmitting || isPreparingMedia)
                     .opacity(!canSubmit || isSubmitting || isPreparingMedia ? 0.5 : 1)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 13)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 15)
                 .background(importFieldBackground(tint: mode.tint))
 
                 PasteButton(payloadType: String.self) { pastedStrings in
@@ -8134,7 +8135,7 @@ private struct DiscoverComposerSheet: View {
 
     @ViewBuilder
     private var newRecipeOptions: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             Button {
                 openImportPanel(.create, focusText: true)
             } label: {
@@ -8772,23 +8773,23 @@ private struct NewRecipeImportOptionRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 13) {
+        HStack(spacing: 15) {
             ZStack {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(mode.tint.opacity(isSelected ? 0.22 : 0.13))
-                    .frame(width: 40, height: 40)
+                    .frame(width: 46, height: 46)
 
                 Image(systemName: mode.systemImage)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(mode.tint)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(mode.title)
-                    .font(.system(size: 14.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 15.5, weight: .bold, design: .rounded))
                     .foregroundStyle(OunjePalette.primaryText)
                 Text(mode.subtitle)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12.8, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -8800,7 +8801,8 @@ private struct NewRecipeImportOptionRow: View {
                 .font(.system(size: isSelected ? 17 : 14, weight: .bold))
                 .foregroundStyle(isSelected ? mode.tint : OunjePalette.secondaryText.opacity(0.72))
         }
-        .padding(10)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(isSelected ? OunjePalette.surface.opacity(0.98) : OunjePalette.panel.opacity(0.92))
