@@ -5,6 +5,7 @@ import UIKit
 @MainActor
 final class SavedRecipesStore: ObservableObject {
     @Published private(set) var savedRecipes: [DiscoverRecipeCardData] = []
+    @Published private(set) var isSyncingRemote = false
 
     private let legacyKey = "ounje-saved-recipes-v1"
     private let keyPrefix = "ounje-saved-recipes-v2"
@@ -38,7 +39,14 @@ final class SavedRecipesStore: ObservableObject {
     func applyRuntimeSnapshot(_ snapshot: UserRuntimeSnapshot) {
         if activeUserID != snapshot.userID {
             activeUserID = snapshot.userID
-            load(for: snapshot.userID)
+            load(for: snapshot.userID, preserveExistingWhenMissing: true)
+        }
+
+        if snapshot.savedRecipes.isEmpty, !snapshot.savedRecipeIDs.isEmpty {
+            if savedRecipes.isEmpty {
+                isSyncingRemote = true
+            }
+            return
         }
 
         let remoteRecipes = snapshot.savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
@@ -56,14 +64,21 @@ final class SavedRecipesStore: ObservableObject {
 
         if activeUserID != resolvedUserID {
             activeUserID = resolvedUserID
-            load(for: resolvedUserID)
+            load(for: resolvedUserID, preserveExistingWhenMissing: true)
         }
         activeAccessToken = authSession?.accessToken
 
-        guard let authSession else { return }
-        if shouldSkipRemoteSync(for: authSession.userID) {
+        guard let authSession else {
+            isSyncingRemote = false
             return
         }
+        if shouldSkipRemoteSync(for: authSession.userID) {
+            isSyncingRemote = false
+            return
+        }
+
+        isSyncingRemote = true
+        defer { isSyncingRemote = false }
 
         do {
             if !pendingRemoteDeleteRecipeIDs.isEmpty {
@@ -92,12 +107,15 @@ final class SavedRecipesStore: ObservableObject {
 
         if activeUserID != authSession.userID {
             activeUserID = authSession.userID
-            load(for: authSession.userID)
+            load(for: authSession.userID, preserveExistingWhenMissing: true)
         }
         activeAccessToken = authSession.accessToken
         if !force, shouldSkipRemoteSync(for: authSession.userID) {
             return
         }
+
+        isSyncingRemote = true
+        defer { isSyncingRemote = false }
 
         do {
             if !pendingRemoteDeleteRecipeIDs.isEmpty {
@@ -300,7 +318,7 @@ final class SavedRecipesStore: ObservableObject {
         }
     }
 
-    private func load(for userID: String?) {
+    private func load(for userID: String?, preserveExistingWhenMissing: Bool = false) {
         let defaults = UserDefaults.standard
         let primaryKey = storageKey(for: userID)
         let deletedKey = deletedStorageKey(for: userID)
@@ -317,9 +335,15 @@ final class SavedRecipesStore: ObservableObject {
         let decoded = deduplicated(primaryRecipes)
 
         guard !decoded.isEmpty else {
-            savedRecipes = []
             deletedSavedRecipeIDs = loadDeletedRecipeIDs(from: deletedData)
             pendingRemoteDeleteRecipeIDs = loadDeletedRecipeIDs(from: pendingDeleteData)
+            if preserveExistingWhenMissing,
+               data == nil,
+               !savedRecipes.isEmpty {
+                savedRecipes = deduplicated(savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) })
+            } else {
+                savedRecipes = []
+            }
             return
         }
 

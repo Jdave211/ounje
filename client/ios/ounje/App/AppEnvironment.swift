@@ -30,7 +30,7 @@ struct ProviderConnectionListResponse: Decodable {
     let providers: [ProviderConnectionRecord]
 }
 
-struct ProviderConnectionRecord: Decodable {
+struct ProviderConnectionRecord: Codable, Hashable {
     let id: String
     let name: String
     let connected: Bool
@@ -561,9 +561,18 @@ final class MealPlanningAppStore: ObservableObject {
             latestBlockingInstacartRun = (status == "running" || status == "queued" || retryState == "queued" || retryState == "running" || status == "partial")
                 ? latestRun
                 : latestBlockingInstacartRun
+        } else if source == .remote {
+            latestInstacartRun = nil
+            latestBlockingInstacartRun = nil
         }
         if let latestOrder = snapshot.cartSummary.latestGroceryOrder {
             latestGroceryOrder = latestOrder
+        } else if source == .remote {
+            latestGroceryOrder = nil
+        }
+
+        if let providerConnections = snapshot.providerConnections {
+            applyProviderConnections(providerConnections, for: snapshotUserID)
         }
 
         hasResolvedInitialState = true
@@ -613,6 +622,15 @@ final class MealPlanningAppStore: ObservableObject {
     func setInstacartProviderConnected(_ isConnected: Bool, for userID: String? = nil) {
         isInstacartProviderConnected = isConnected
         savePersistedProviderConnectionState(isConnected, for: userID ?? resolvedLiveUserID ?? authSession?.userID)
+    }
+
+    private func applyProviderConnections(_ providers: [ProviderConnectionRecord], for userID: String) {
+        let instacartConnected = providers.contains { provider in
+            provider.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "instacart"
+                && provider.connected
+        }
+        isInstacartProviderConnected = instacartConnected
+        savePersistedProviderConnectionState(instacartConnected, for: userID)
     }
 
     @discardableResult
@@ -3075,9 +3093,11 @@ final class MealPlanningAppStore: ObservableObject {
                 userID: userID,
                 accessToken: accessToken
             )
-            guard !fetched.isEmpty else { return }
-            completedMealPrepCycles = fetched.sorted { $0.sortDate > $1.sortDate }
-            saveCompletedMealPrepCycleCache()
+            let nextCompletedCycles = fetched.sorted { $0.sortDate > $1.sortDate }
+            if completedMealPrepCycles != nextCompletedCycles {
+                completedMealPrepCycles = nextCompletedCycles
+                saveCompletedMealPrepCycleCache()
+            }
         } catch {
             // Keep the local cache if remote sync fails.
         }

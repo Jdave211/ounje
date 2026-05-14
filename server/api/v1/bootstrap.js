@@ -19,6 +19,11 @@ const USER_BOOTSTRAP_CACHE_TTL_SECONDS = 60;
 const ALLOWED_TIERS = new Set(["free", "plus", "autopilot", "foundingLifetime"]);
 const ALLOWED_STATUSES = new Set(["active", "expired", "revoked", "inactive"]);
 const ALLOWED_SOURCES = new Set(["app_store", "manual", "system"]);
+const GROCERY_PROVIDER_NAMES = {
+  instacart: "Instacart",
+  kroger: "Kroger",
+  walmart: "Walmart",
+};
 
 function getServiceSupabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -163,6 +168,37 @@ function compactImportStatus(row) {
   };
 }
 
+function parseSessionCookies(rawCookies) {
+  if (Array.isArray(rawCookies)) return rawCookies;
+  if (typeof rawCookies !== "string") return [];
+  try {
+    const parsed = JSON.parse(rawCookies);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function isProviderAccountConnected(row = {}) {
+  const isActive = row.is_active !== false;
+  const loginStatus = normalizeText(row.login_status).toLowerCase();
+  return isActive && loginStatus !== "logged_out" && parseSessionCookies(row.session_cookies).length > 0;
+}
+
+function providerConnectionsPayload(rows = []) {
+  const connectedProviders = new Set(
+    rows
+      .filter(isProviderAccountConnected)
+      .map((row) => normalizeText(row.provider).toLowerCase())
+      .filter(Boolean)
+  );
+  return Object.entries(GROCERY_PROVIDER_NAMES).map(([id, name]) => ({
+    id,
+    name,
+    connected: connectedProviders.has(id),
+  }));
+}
+
 router.get("/bootstrap/user", async (req, res) => {
   try {
     const { userID } = await resolveAuthorizedUserID(req);
@@ -186,6 +222,7 @@ router.get("/bootstrap/user", async (req, res) => {
       baseCartCount,
       latestOrderResult,
       latestRunSummary,
+      providerAccountsResult,
     ] = await Promise.all([
       supabase
         .from("profiles")
@@ -262,6 +299,13 @@ router.get("/bootstrap/user", async (req, res) => {
         { data: null, error: null }
       ),
       getCurrentInstacartRunLogSummary({ userID }).catch(() => null),
+      safeQuery(
+        supabase
+          .from("user_provider_accounts")
+          .select("provider,is_active,login_status,session_cookies")
+          .eq("user_id", userID),
+        { data: [], error: null }
+      ),
     ]);
 
     if (profileResult.error) throw profileResult.error;
@@ -271,6 +315,7 @@ router.get("/bootstrap/user", async (req, res) => {
     if (latestSavedResult.error) throw latestSavedResult.error;
     if (savedTombstonesResult.error) throw savedTombstonesResult.error;
     if (latestOrderResult.error) throw latestOrderResult.error;
+    if (providerAccountsResult.error) throw providerAccountsResult.error;
 
     const profile = profileResult.data ?? null;
     const tombstonedSavedRecipeIDs = new Set(
@@ -336,6 +381,7 @@ router.get("/bootstrap/user", async (req, res) => {
         latest_grocery_order: latestOrderResult.data ?? null,
         latest_instacart_run: latestRunSummary ?? null,
       },
+      providers: providerConnectionsPayload(providerAccountsResult.data ?? []),
       cached_at: new Date().toISOString(),
     };
 

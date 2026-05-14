@@ -2727,7 +2727,8 @@ private struct MealPlannerShellView: View {
         let userKey = store.authSession?.userID ?? "signed-out"
         let planKey = store.latestPlan?.id.uuidString ?? "no-plan"
         let activeKey = scenePhase == .active ? "active" : "inactive"
-        return "cart-support-warmup::\(userKey)::\(planKey)::\(store.latestPlanRevision)::\(activeKey)"
+        let hydrationKey = store.isHydratingRemoteState ? "hydrating" : "ready"
+        return "cart-support-warmup::\(userKey)::\(planKey)::\(store.latestPlanRevision)::\(activeKey)::\(hydrationKey)"
     }
 
     private var savedStoreAuthKey: String {
@@ -3879,7 +3880,13 @@ private struct CookbookTabView: View {
                 }
             }
 
-            if filteredRecipes.isEmpty {
+            if filteredRecipes.isEmpty && savedStore.isSyncingRemote {
+                LazyVGrid(columns: columns, spacing: 14) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        DiscoverRecipeCardLoadingPlaceholder()
+                    }
+                }
+            } else if filteredRecipes.isEmpty {
                 CookbookSavedEmptyState(
                     hasSavedRecipes: !savedStore.savedRecipes.isEmpty,
                     onBrowseDiscover: { selectedTab = .discover },
@@ -3997,52 +4004,47 @@ private struct CookbookTabView: View {
     }
 
     private var cookbookPrepControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Prep brackets")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(OunjePalette.primaryText)
-                Spacer(minLength: 0)
-                Button {
-                    presentNewCookbookPrepPrompt()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(
-                            Circle()
-                                .fill(Color(hex: "174C32"))
-                                .overlay(Circle().stroke(Color.black, lineWidth: 1.5))
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    if cookbookPrepBatches.isEmpty {
+                        cookbookPrepPill(
+                            title: "Usual",
+                            isSelected: true,
+                            action: {
+                                selectedTab = .prep
+                            }
                         )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("New Prep")
-            }
-
-            VStack(spacing: 8) {
-                if cookbookPrepBatches.isEmpty {
-                    cookbookPrepRow(
-                        title: "Usual",
-                        detail: "Current prime prep",
-                        isSelected: true,
-                        action: {
-                            selectedTab = .prep
+                    } else {
+                        ForEach(cookbookPrepBatches) { batch in
+                            let isSelected = store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id)
+                            cookbookPrepPill(
+                                title: batch.name,
+                                isSelected: isSelected,
+                                action: { selectCookbookPrepBatch(batch) }
+                            )
                         }
-                    )
-                } else {
-                    ForEach(cookbookPrepBatches) { batch in
-                        let isSelected = store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id)
-                        cookbookPrepRow(
-                            title: batch.name,
-                            detail: "\(batch.recipes.count) recipes",
-                            isSelected: isSelected,
-                            action: { selectCookbookPrepBatch(batch) }
-                        )
                     }
                 }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 2)
             }
+
+            Button {
+                presentNewCookbookPrepPrompt()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 56, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .accessibilityLabel("New Prep")
+            .zIndex(100)
         }
+        .zIndex(100)
     }
 
     private func presentNewCookbookPrepPrompt() {
@@ -4051,38 +4053,21 @@ private struct CookbookTabView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    private func cookbookPrepRow(title: String, detail: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func cookbookPrepPill(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(isSelected ? OunjePalette.accent : OunjePalette.secondaryText.opacity(0.35))
-                    .frame(width: 9, height: 9)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-                    Text(isSelected ? "Prime prep - drives cart" : detail)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                }
-
-                Spacer(minLength: 0)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.7))
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(isSelected ? Color(hex: "174C32").opacity(0.82) : OunjePalette.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(isSelected ? OunjePalette.accent.opacity(0.45) : OunjePalette.stroke, lineWidth: 1)
-                    )
-            )
+            Text(title)
+                .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
+                .foregroundStyle(isSelected ? OunjePalette.background : OunjePalette.primaryText.opacity(0.72))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(isSelected ? OunjePalette.softCream : OunjePalette.surface)
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(isSelected ? Color.clear : OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
         }
         .buttonStyle(.plain)
     }

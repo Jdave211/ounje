@@ -77,6 +77,7 @@ struct UserRuntimeSnapshot: Codable {
     var importCounts: UserRuntimeImportCounts
     var prepSummary: UserRuntimePrepSummary
     var cartSummary: UserRuntimeCartSummary
+    var providerConnections: [ProviderConnectionRecord]?
     var selectedRecipeTypographyStyle: RecipeTypographyStyle?
     var updatedAt: Date
 
@@ -99,6 +100,7 @@ struct UserRuntimeSnapshot: Codable {
             latestGroceryOrder: nil,
             latestInstacartRun: nil
         ),
+        providerConnections: [ProviderConnectionRecord]? = nil,
         selectedRecipeTypographyStyle: RecipeTypographyStyle? = nil,
         updatedAt: Date = .now
     ) {
@@ -113,6 +115,7 @@ struct UserRuntimeSnapshot: Codable {
         self.importCounts = importCounts
         self.prepSummary = prepSummary
         self.cartSummary = cartSummary
+        self.providerConnections = providerConnections
         self.selectedRecipeTypographyStyle = selectedRecipeTypographyStyle ?? RecipeTypographyPreferenceStore.style(in: profile)
         self.updatedAt = updatedAt
     }
@@ -436,6 +439,7 @@ private struct UserBootstrapEnvelope: Decodable {
     let saved: UserBootstrapSavedEnvelope
     let imports: UserBootstrapImportsEnvelope
     let cart: UserBootstrapCartEnvelope
+    let providers: [ProviderConnectionRecord]?
     let cachedAt: Date?
 
     enum CodingKeys: String, CodingKey {
@@ -447,6 +451,7 @@ private struct UserBootstrapEnvelope: Decodable {
         case saved
         case imports
         case cart
+        case providers
         case cachedAt = "cached_at"
     }
 
@@ -491,6 +496,7 @@ private struct UserBootstrapEnvelope: Decodable {
                 latestGroceryOrder: cart.latestGroceryOrder,
                 latestInstacartRun: cart.latestInstacartRun
             ),
+            providerConnections: providers,
             selectedRecipeTypographyStyle: RecipeTypographyPreferenceStore.style(in: profile),
             updatedAt: cachedAt ?? .now
         )

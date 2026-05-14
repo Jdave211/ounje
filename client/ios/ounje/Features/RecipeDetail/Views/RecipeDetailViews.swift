@@ -154,8 +154,12 @@ struct RecipeDetailExperienceView: View {
     @MainActor
     private func loadResolvedRecipeDetail() async {
         guard !isOnboardingDemo else { return }
+        let freshSession = await store.freshUserDataSession()
+        let freshAccessToken = freshSession?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         let currentAccessToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let initialAccessToken = currentAccessToken?.isEmpty == false ? currentAccessToken : nil
+        let initialAccessToken = freshAccessToken?.isEmpty == false
+            ? freshAccessToken
+            : (currentAccessToken?.isEmpty == false ? currentAccessToken : nil)
         let firstError = await viewModel.load(
             for: presentedRecipe.id,
             similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
