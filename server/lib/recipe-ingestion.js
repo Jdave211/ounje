@@ -6806,7 +6806,7 @@ function mergeCompletedRecipe(baseRecipe, completedRecipe) {
 }
 
 async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, { jobID = null } = {}) {
-  if (!openai || source.source_type === "recipe_search" || !recipeNeedsCompletionPass(normalizedRecipe)) {
+  if (!openai || source?.source_type === "recipe_search") {
     return {
       recipe: normalizedRecipe,
       quality_flags: [],
@@ -8169,6 +8169,53 @@ async function maybeFillMissingMacros(normalizedRecipe) {
   }
 }
 
+function hasCompleteDisplayMacros(recipe) {
+  return Number.isFinite(Number(recipe?.calories_kcal))
+    && Number.isFinite(Number(recipe?.protein_g))
+    && Number.isFinite(Number(recipe?.carbs_g))
+    && Number.isFinite(Number(recipe?.fat_g));
+}
+
+function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
+  if (hasCompleteDisplayMacros(normalizedRecipe)) return normalizedRecipe;
+
+  const text = [
+    normalizedRecipe?.title,
+    normalizedRecipe?.description,
+    normalizedRecipe?.category,
+    normalizedRecipe?.recipe_type,
+    normalizedRecipe?.main_protein,
+    normalizedRecipe?.cook_method,
+  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join(" ");
+
+  let fallback = { calories_kcal: 420, protein_g: 22, carbs_g: 44, fat_g: 16 };
+  if (/smoothie|shake|juice|drink/.test(text)) {
+    fallback = { calories_kcal: 280, protein_g: /protein/.test(text) ? 28 : 12, carbs_g: 38, fat_g: 7 };
+  } else if (/salad|greens|slaw/.test(text)) {
+    fallback = { calories_kcal: 360, protein_g: /chicken|salmon|tuna|beef|tofu|egg/.test(text) ? 28 : 14, carbs_g: 26, fat_g: 18 };
+  } else if (/brownie|cookie|cake|dessert|sweet|pancake|waffle/.test(text)) {
+    fallback = { calories_kcal: 330, protein_g: /protein|yogurt|egg/.test(text) ? 14 : 7, carbs_g: 42, fat_g: 13 };
+  } else if (/bowl|rice|pasta|noodle|wrap|sandwich|burger|taco|burrito/.test(text)) {
+    fallback = { calories_kcal: 520, protein_g: 30, carbs_g: 58, fat_g: 18 };
+  } else if (/soup|stew|chili/.test(text)) {
+    fallback = { calories_kcal: 380, protein_g: 24, carbs_g: 34, fat_g: 14 };
+  } else if (/high protein|protein/.test(text)) {
+    fallback = { calories_kcal: 450, protein_g: 36, carbs_g: 42, fat_g: 14 };
+  }
+
+  const caloriesKcal = Number.isFinite(Number(normalizedRecipe?.calories_kcal))
+    ? Number(normalizedRecipe.calories_kcal)
+    : fallback.calories_kcal;
+  return {
+    ...normalizedRecipe,
+    calories_kcal: caloriesKcal,
+    protein_g: Number.isFinite(Number(normalizedRecipe?.protein_g)) ? Number(normalizedRecipe.protein_g) : fallback.protein_g,
+    carbs_g: Number.isFinite(Number(normalizedRecipe?.carbs_g)) ? Number(normalizedRecipe.carbs_g) : fallback.carbs_g,
+    fat_g: Number.isFinite(Number(normalizedRecipe?.fat_g)) ? Number(normalizedRecipe.fat_g) : fallback.fat_g,
+    est_calories_text: normalizeText(normalizedRecipe?.est_calories_text) || `${caloriesKcal} kcal per serving (estimate)`,
+  };
+}
+
 async function buildNormalizedRecipe(source, { accessToken = null, jobID = null } = {}) {
   const directStructured = source.structured_recipe
     ? coerceStructuredRecipeCandidate(
@@ -8306,6 +8353,10 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
 
   // Estimate macros if still missing after all enrichment passes.
   normalized = await maybeFillMissingMacros(normalized);
+  if (!hasCompleteDisplayMacros(normalized)) {
+    normalized = fillRecipeMacrosWithDisplayFallback(normalized);
+    modelResult.quality_flags = uniqueStrings([...(modelResult.quality_flags ?? []), "macro_display_fallback"]);
+  }
 
   const inferredDiscoverBrackets = sanitizeDiscoverBrackets(normalized, normalized.discover_brackets ?? []);
   const normalizedCategory = normalizeText(normalized.category ?? "");
@@ -9003,7 +9054,6 @@ export {
   extractRecipeSearchSource,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
-  recipeNeedsWebCompletionPass,
   recipeNeedsSecondaryFill,
   requiresUserScopedRecipeImport,
   shouldProcessImportInline,
