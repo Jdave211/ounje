@@ -14,17 +14,7 @@
     <array>
       <string>applinks:ounje-idbl.onrender.com</string>
     </array>
-    <!--
-      APNs environment.
-        "development" = Xcode-installed Debug builds, ad-hoc dev provisioning →
-          server must POST to api.development.push.apple.com.
-        "production"  = TestFlight + App Store builds →
-          server posts to api.push.apple.com.
-      Release uses ounje-release.entitlements with "production". The iOS client
-      tells the server which environment it's in via the `environment` field on
-      /v1/push-tokens/register, so the server picks the right gateway.
-    -->
     <key>aps-environment</key>
-    <string>development</string>
+    <string>production</string>
   </dict>
 </plist>

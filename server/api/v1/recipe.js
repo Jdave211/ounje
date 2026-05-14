@@ -18,6 +18,7 @@ import {
 } from "../../lib/recipe-detail-utils.js";
 import {
   fetchRecipeIngestionJob,
+  estimateRecipeMacrosLocally,
   listCompletedRecipeImportItems,
   maybeGenerateImportedRecipeImage,
   persistNormalizedRecipe,
@@ -8087,10 +8088,6 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
     return res.status(400).json({ error: "Recipe ID is required." });
   }
 
-  if (!openai) {
-    return res.status(503).json({ error: "AI enrichment is unavailable." });
-  }
-
   try {
     let accessToken = null;
     const isUserImport = recipeId.startsWith("uir_");
@@ -8169,35 +8166,53 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
       recipe.fat_g != null ? `Known fat_g: ${recipe.fat_g}` : null,
     ].filter(Boolean).join("\n");
 
-    const completion = await openai.chat.completions.create({
-      model: RECIPE_IMPORT_COMPLETION_MODEL,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You are a nutrition estimator. Estimate per-serving macros for a recipe based on its title and ingredient list.",
-            "Use serving count, ingredients, method, cooking time, category, and title to infer a good per-serving estimate.",
-            "Return conservative, realistic estimates - not lab-accurate, but reasonable for app display.",
-            "If 'Known' values are supplied for a field, return those exact values unchanged.",
-            "Do not leave a macro null when recipe context is available; infer a practical estimate instead.",
-            "Return only valid JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (string like '420 kcal per serving').",
-            "Only return null for a field if there is no usable title, serving, ingredient, or method context.",
-          ].join("\n"),
-        },
-        {
-          role: "user",
-          content: context,
-        },
-      ],
-    });
+    let parsed = {};
+    if (openai) {
+      try {
+        const completion = await openai.chat.completions.create({
+          model: RECIPE_IMPORT_COMPLETION_MODEL,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: [
+                "You are a nutrition estimator. Estimate per-serving macros for a recipe based on its title and ingredient list.",
+                "Use serving count, ingredients, method, cooking time, category, and title to infer a good per-serving estimate.",
+                "Return conservative, realistic estimates - not lab-accurate, but reasonable for app display.",
+                "If 'Known' values are supplied for a field, return those exact values unchanged.",
+                "Do not leave a macro null when recipe context is available; infer a practical estimate instead.",
+                "Return only valid JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (string like '420 kcal per serving').",
+                "Only return null for a field if there is no usable title, serving, ingredient, or method context.",
+              ].join("\n"),
+            },
+            {
+              role: "user",
+              content: context,
+            },
+          ],
+        });
+        parsed = JSON.parse(completion.choices?.[0]?.message?.content ?? "{}");
+      } catch (error) {
+        console.warn("[recipe/enrich-macros] AI estimate failed; trying local estimate:", error.message);
+      }
+    }
 
-    const parsed = JSON.parse(completion.choices?.[0]?.message?.content ?? "{}");
-    const caloriesKcal = Number.isFinite(Number(parsed?.calories_kcal)) ? Number(parsed.calories_kcal) : null;
-    const proteinG = Number.isFinite(Number(parsed?.protein_g)) ? Number(parsed.protein_g) : null;
-    const carbsG = Number.isFinite(Number(parsed?.carbs_g)) ? Number(parsed.carbs_g) : null;
-    const fatG = Number.isFinite(Number(parsed?.fat_g)) ? Number(parsed.fat_g) : null;
-    const estCaloriesText = typeof parsed?.est_calories_text === "string" ? parsed.est_calories_text.trim() : null;
+    const localEstimate = estimateRecipeMacrosLocally(normalizedDetail);
+    const caloriesKcal = Number.isFinite(Number(parsed?.calories_kcal))
+      ? Number(parsed.calories_kcal)
+      : localEstimate?.calories_kcal ?? null;
+    const proteinG = Number.isFinite(Number(parsed?.protein_g))
+      ? Number(parsed.protein_g)
+      : localEstimate?.protein_g ?? null;
+    const carbsG = Number.isFinite(Number(parsed?.carbs_g))
+      ? Number(parsed.carbs_g)
+      : localEstimate?.carbs_g ?? null;
+    const fatG = Number.isFinite(Number(parsed?.fat_g))
+      ? Number(parsed.fat_g)
+      : localEstimate?.fat_g ?? null;
+    const estCaloriesText = typeof parsed?.est_calories_text === "string" && parsed.est_calories_text.trim()
+      ? parsed.est_calories_text.trim()
+      : localEstimate?.est_calories_text ?? null;
 
     const existingCaloriesKcal = Number.isFinite(Number(recipe.calories_kcal)) ? Number(recipe.calories_kcal) : null;
     const existingProteinG = Number.isFinite(Number(recipe.protein_g)) ? Number(recipe.protein_g) : null;

@@ -42,7 +42,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const RECIPE_INGESTION_MODEL = process.env.RECIPE_INGESTION_MODEL ?? "gpt-4o-mini";
 const RECIPE_SEARCH_SYNTHESIS_MODEL = process.env.RECIPE_SEARCH_SYNTHESIS_MODEL ?? "gpt-5-nano";
 const RECIPE_IMPORT_COMPLETION_MODEL = process.env.RECIPE_IMPORT_COMPLETION_MODEL ?? "gpt-5-nano";
-const RECIPE_WEB_REFERENCE_MODEL = process.env.RECIPE_WEB_REFERENCE_MODEL ?? "gpt-5-mini";
+const RECIPE_WEB_REFERENCE_MODEL = process.env.RECIPE_WEB_REFERENCE_MODEL ?? "gpt-5-nano";
 const RECIPE_FINAL_VALIDATOR_MODEL = process.env.RECIPE_FINAL_VALIDATOR_MODEL ?? RECIPE_IMPORT_COMPLETION_MODEL;
 const RECIPE_GATE_MODEL = process.env.RECIPE_GATE_MODEL ?? "gpt-5-nano";
 const PHOTO_RECIPE_VISION_MODEL = process.env.PHOTO_RECIPE_VISION_MODEL ?? RECIPE_INGESTION_MODEL;
@@ -7878,6 +7878,229 @@ async function repairSparseImportedRecipe(normalizedRecipe, source) {
     : normalizedRecipe;
 }
 
+const LOCAL_MACRO_PROFILES = [
+  {
+    pattern: /\b(banana|bananas)\b/,
+    per100g: { calories_kcal: 89, protein_g: 1.1, carbs_g: 22.8, fat_g: 0.3 },
+    eachGrams: 118,
+  },
+  {
+    pattern: /\b(egg|eggs)\b/,
+    each: { calories_kcal: 72, protein_g: 6.3, carbs_g: 0.4, fat_g: 4.8 },
+    eachGrams: 50,
+  },
+  {
+    pattern: /\b(greek yogurt|yoghurt|skyr)\b/,
+    per100g: { calories_kcal: 59, protein_g: 10.3, carbs_g: 3.6, fat_g: 0.4 },
+    cupGrams: 245,
+    tablespoonGrams: 15,
+  },
+  {
+    pattern: /\b(cocoa powder|cacao powder)\b/,
+    per100g: { calories_kcal: 228, protein_g: 19.6, carbs_g: 57.9, fat_g: 13.7 },
+    tablespoonGrams: 5,
+  },
+  {
+    pattern: /\b(whey protein|protein powder)\b/,
+    per100g: { calories_kcal: 400, protein_g: 80, carbs_g: 8, fat_g: 6 },
+    scoopGrams: 30,
+  },
+  {
+    pattern: /\b(oat|oats|oat flour)\b/,
+    per100g: { calories_kcal: 389, protein_g: 16.9, carbs_g: 66.3, fat_g: 6.9 },
+    cupGrams: 80,
+  },
+  {
+    pattern: /\b(flour|all purpose flour|whole wheat flour)\b/,
+    per100g: { calories_kcal: 364, protein_g: 10.3, carbs_g: 76.3, fat_g: 1 },
+    cupGrams: 120,
+  },
+  {
+    pattern: /\b(sugar|brown sugar|coconut sugar)\b/,
+    per100g: { calories_kcal: 387, protein_g: 0, carbs_g: 100, fat_g: 0 },
+    cupGrams: 200,
+    tablespoonGrams: 12.5,
+  },
+  {
+    pattern: /\b(honey|maple syrup)\b/,
+    per100g: { calories_kcal: 304, protein_g: 0.3, carbs_g: 82.4, fat_g: 0 },
+    tablespoonGrams: 21,
+  },
+  {
+    pattern: /\b(peanut butter|almond butter)\b/,
+    per100g: { calories_kcal: 588, protein_g: 25, carbs_g: 20, fat_g: 50 },
+    tablespoonGrams: 16,
+  },
+  {
+    pattern: /\b(oil|olive oil|avocado oil|coconut oil)\b/,
+    per100g: { calories_kcal: 884, protein_g: 0, carbs_g: 0, fat_g: 100 },
+    tablespoonGrams: 13.5,
+    teaspoonGrams: 4.5,
+  },
+  {
+    pattern: /\b(butter)\b/,
+    per100g: { calories_kcal: 717, protein_g: 0.9, carbs_g: 0.1, fat_g: 81 },
+    tablespoonGrams: 14,
+  },
+  {
+    pattern: /\b(milk)\b/,
+    per100g: { calories_kcal: 50, protein_g: 3.4, carbs_g: 5, fat_g: 1.9 },
+    cupGrams: 244,
+  },
+  {
+    pattern: /\b(cream cheese)\b/,
+    per100g: { calories_kcal: 342, protein_g: 6.2, carbs_g: 4.1, fat_g: 34 },
+    tablespoonGrams: 14.5,
+  },
+  {
+    pattern: /\b(cottage cheese)\b/,
+    per100g: { calories_kcal: 98, protein_g: 11.1, carbs_g: 3.4, fat_g: 4.3 },
+    cupGrams: 226,
+  },
+];
+
+function normalizeMacroUnit(unit) {
+  const raw = normalizeText(unit).toLowerCase().replace(/\./g, "");
+  if (!raw) return "ct";
+  if (["g", "gram", "grams"].includes(raw)) return "g";
+  if (["kg", "kilogram", "kilograms"].includes(raw)) return "kg";
+  if (["oz", "ounce", "ounces"].includes(raw)) return "oz";
+  if (["lb", "lbs", "pound", "pounds"].includes(raw)) return "lb";
+  if (["ml", "milliliter", "milliliters", "millilitre", "millilitres"].includes(raw)) return "ml";
+  if (["l", "liter", "liters", "litre", "litres"].includes(raw)) return "l";
+  if (["cup", "cups", "c"].includes(raw)) return "cup";
+  if (["tbsp", "tablespoon", "tablespoons", "tbs"].includes(raw)) return "tbsp";
+  if (["tsp", "teaspoon", "teaspoons"].includes(raw)) return "tsp";
+  if (["scoop", "scoops"].includes(raw)) return "scoop";
+  if (["large", "medium", "small", "whole", "ct", "count", "counts"].includes(raw)) return "ct";
+  return raw;
+}
+
+function quantityForMacroEstimate(quantityText) {
+  const raw = normalizeText(quantityText);
+  if (!raw) return null;
+  const parsed = parseIngredientMeasurement(raw);
+  if (parsed) {
+    return {
+      amount: parsed.amount,
+      unit: normalizeMacroUnit(parsed.unit),
+    };
+  }
+
+  const match = raw.match(/(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?|[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])/u);
+  const amount = match ? parseQuantityAmount(match[1]) : null;
+  return amount == null ? null : { amount, unit: "ct" };
+}
+
+function gramsForMacroProfile(quantity, profile) {
+  if (!quantity || !profile?.per100g) return null;
+  const amount = Number(quantity.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  switch (quantity.unit) {
+    case "g": return amount;
+    case "kg": return amount * 1000;
+    case "oz": return amount * 28.3495;
+    case "lb": return amount * 453.592;
+    case "ml": return amount;
+    case "l": return amount * 1000;
+    case "cup": return amount * (profile.cupGrams ?? 240);
+    case "tbsp": return amount * (profile.tablespoonGrams ?? 15);
+    case "tsp": return amount * (profile.teaspoonGrams ?? 5);
+    case "scoop": return amount * (profile.scoopGrams ?? 30);
+    case "ct": return profile.eachGrams ? amount * profile.eachGrams : null;
+    default: return null;
+  }
+}
+
+function macroTotalsForIngredient(ingredient) {
+  const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
+  const quantity = quantityForMacroEstimate(ingredient?.quantity_text ?? ingredient?.quantity ?? "");
+  if (!name || !quantity) return null;
+
+  const profile = LOCAL_MACRO_PROFILES.find((entry) => entry.pattern.test(name.toLowerCase()));
+  if (!profile) return null;
+
+  if (profile.each && quantity.unit === "ct") {
+    const amount = Number(quantity.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    return {
+      calories_kcal: profile.each.calories_kcal * amount,
+      protein_g: profile.each.protein_g * amount,
+      carbs_g: profile.each.carbs_g * amount,
+      fat_g: profile.each.fat_g * amount,
+    };
+  }
+
+  const grams = gramsForMacroProfile(quantity, profile);
+  if (!Number.isFinite(grams) || grams <= 0 || !profile.per100g) return null;
+  const multiplier = grams / 100;
+  return {
+    calories_kcal: profile.per100g.calories_kcal * multiplier,
+    protein_g: profile.per100g.protein_g * multiplier,
+    carbs_g: profile.per100g.carbs_g * multiplier,
+    fat_g: profile.per100g.fat_g * multiplier,
+  };
+}
+
+function estimateRecipeMacrosLocally(recipe) {
+  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  if (ingredients.length < 2) return null;
+
+  const servings = Number.isFinite(Number(recipe?.servings_count))
+    ? Number(recipe.servings_count)
+    : parseFirstInteger(recipe?.servings_text);
+  if (!Number.isFinite(servings) || servings <= 0) return null;
+
+  let matchedCount = 0;
+  const totals = {
+    calories_kcal: 0,
+    protein_g: 0,
+    carbs_g: 0,
+    fat_g: 0,
+  };
+
+  for (const ingredient of ingredients) {
+    const macros = macroTotalsForIngredient(ingredient);
+    if (!macros) continue;
+    matchedCount += 1;
+    totals.calories_kcal += macros.calories_kcal;
+    totals.protein_g += macros.protein_g;
+    totals.carbs_g += macros.carbs_g;
+    totals.fat_g += macros.fat_g;
+  }
+
+  const matchedRatio = matchedCount / Math.max(1, ingredients.length);
+  if (matchedCount < 2 || matchedRatio < 0.4 || totals.calories_kcal <= 0) return null;
+
+  const perServing = {
+    calories_kcal: Math.max(1, Math.round(totals.calories_kcal / servings)),
+    protein_g: Number((totals.protein_g / servings).toFixed(1)),
+    carbs_g: Number((totals.carbs_g / servings).toFixed(1)),
+    fat_g: Number((totals.fat_g / servings).toFixed(1)),
+  };
+  return {
+    ...perServing,
+    est_calories_text: `${perServing.calories_kcal} kcal per serving`,
+    matched_ingredient_count: matchedCount,
+    matched_ingredient_ratio: Number(matchedRatio.toFixed(3)),
+  };
+}
+
+function fillRecipeMacrosWithLocalEstimate(normalizedRecipe) {
+  const estimate = estimateRecipeMacrosLocally(normalizedRecipe);
+  if (!estimate) return normalizedRecipe;
+
+  return {
+    ...normalizedRecipe,
+    calories_kcal: Number.isFinite(normalizedRecipe.calories_kcal) ? normalizedRecipe.calories_kcal : estimate.calories_kcal,
+    protein_g: Number.isFinite(normalizedRecipe.protein_g) ? normalizedRecipe.protein_g : estimate.protein_g,
+    carbs_g: Number.isFinite(normalizedRecipe.carbs_g) ? normalizedRecipe.carbs_g : estimate.carbs_g,
+    fat_g: Number.isFinite(normalizedRecipe.fat_g) ? normalizedRecipe.fat_g : estimate.fat_g,
+    est_calories_text: normalizedRecipe.est_calories_text ?? estimate.est_calories_text,
+  };
+}
+
 // Lightweight macro estimation — runs when any core macro is still missing
 // after the main synthesis passes. Uses a small, cheap model focused solely on
 // estimating per-serving calories/protein/carbs/fat from the finalized ingredient list.
@@ -7887,10 +8110,11 @@ async function maybeFillMissingMacros(normalizedRecipe) {
     || !Number.isFinite(normalizedRecipe.protein_g)
     || !Number.isFinite(normalizedRecipe.carbs_g)
     || !Number.isFinite(normalizedRecipe.fat_g);
-  if (!missingAny || !openai) return normalizedRecipe;
+  if (!missingAny) return normalizedRecipe;
+  if (!openai) return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
 
   const ingredients = Array.isArray(normalizedRecipe.ingredients) ? normalizedRecipe.ingredients : [];
-  if (ingredients.length < 2) return normalizedRecipe;
+  if (ingredients.length < 2) return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
 
   const ingredientSummary = ingredients
     .map((i) => [i.quantity_text, i.display_name].filter(Boolean).join(" "))
@@ -7931,8 +8155,7 @@ async function maybeFillMissingMacros(normalizedRecipe) {
     const carbsG = Number.isFinite(Number(parsed?.carbs_g)) ? Number(parsed.carbs_g) : null;
     const fatG = Number.isFinite(Number(parsed?.fat_g)) ? Number(parsed.fat_g) : null;
     const estCaloriesText = typeof parsed?.est_calories_text === "string" ? parsed.est_calories_text.trim() : null;
-    if (caloriesKcal == null && proteinG == null && carbsG == null && fatG == null) return normalizedRecipe;
-    return {
+    const aiFilledRecipe = {
       ...normalizedRecipe,
       calories_kcal: normalizedRecipe.calories_kcal ?? caloriesKcal,
       protein_g: normalizedRecipe.protein_g ?? proteinG,
@@ -7940,8 +8163,9 @@ async function maybeFillMissingMacros(normalizedRecipe) {
       fat_g: normalizedRecipe.fat_g ?? fatG,
       est_calories_text: normalizedRecipe.est_calories_text ?? estCaloriesText,
     };
+    return fillRecipeMacrosWithLocalEstimate(aiFilledRecipe);
   } catch {
-    return normalizedRecipe;
+    return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
   }
 }
 
@@ -8775,9 +8999,11 @@ export {
   PHOTO_MEAL_GATE_MODEL,
   maybeGenerateImportedRecipeImage,
   buildFinalRecipeValidationIssues,
+  estimateRecipeMacrosLocally,
   extractRecipeSearchSource,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
+  recipeNeedsWebCompletionPass,
   recipeNeedsSecondaryFill,
   requiresUserScopedRecipeImport,
   shouldProcessImportInline,
