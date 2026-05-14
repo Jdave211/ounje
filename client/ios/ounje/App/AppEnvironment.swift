@@ -154,6 +154,8 @@ final class ProviderConnectionAPIService {
 
 @MainActor
 final class MealPlanningAppStore: ObservableObject {
+    static let maxPrepBatchCount = 4
+
     @Published var authSession: AuthSession?
     @Published var isOnboarded = false
     @Published var profile: UserProfile?
@@ -2593,6 +2595,19 @@ final class MealPlanningAppStore: ObservableObject {
         activeBatch?.recipes ?? latestPlan?.recipes ?? []
     }
 
+    var prepBatchCount: Int {
+        guard let latestPlan else { return 0 }
+        let batches = latestPlan.batches ?? []
+        if !batches.isEmpty {
+            return batches.count
+        }
+        return latestPlan.recipes.isEmpty ? 0 : 1
+    }
+
+    var canAddPrepBatch: Bool {
+        prepBatchCount < Self.maxPrepBatchCount
+    }
+
     /// Creates a new named batch on the latest plan and selects it.
     @discardableResult
     func addPrepBatch(name: String? = nil) -> UUID? {
@@ -2608,6 +2623,7 @@ final class MealPlanningAppStore: ObservableObject {
             )
             currentBatches = [seedBatch]
         }
+        guard currentBatches.count < Self.maxPrepBatchCount else { return nil }
         let newIndex = currentBatches.count + 1
         let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedName: String

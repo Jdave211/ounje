@@ -20,7 +20,8 @@ struct PrepTabView: View {
     @State private var isFoodPhotoSourceDialogPresented = false
     @State private var isFoodPhotoLibraryPresented = false
     @State private var isFoodCameraPresented = false
-    @State private var stablePrepRecipes: [PlannedRecipe] = []
+    @State private var stablePrepRecipesByBatchID: [UUID: [PlannedRecipe]] = [:]
+    @State private var stableLegacyPrepRecipes: [PlannedRecipe] = []
     @State private var isUserRegeneratingPrep = false
 
     private var currentPrepRecipeCount: Int {
@@ -35,14 +36,29 @@ struct PrepTabView: View {
         store.prepDisplayRecipes
     }
 
+    private var currentPrepBatchID: UUID? {
+        store.activeBatch?.id ?? store.latestPlan?.activeBatchID
+    }
+
     private var displayPrepRecipes: [PlannedRecipe] {
-        if currentPrepRecipes.isEmpty,
-           !stablePrepRecipes.isEmpty,
-           store.isRefreshingPrepRecipes || store.isGenerating || store.isHydratingRemoteState {
-            return stablePrepRecipes
+        guard currentPrepRecipes.isEmpty else {
+            return currentPrepRecipes
+        }
+
+        if let stableRecipes = stablePrepRecipes(for: currentPrepBatchID),
+           !stableRecipes.isEmpty,
+           shouldUseStablePrepRecipes {
+            return stableRecipes
         }
 
         return currentPrepRecipes
+    }
+
+    private var shouldUseStablePrepRecipes: Bool {
+        store.isRefreshingPrepRecipes
+            || store.isGenerating
+            || store.isHydratingRemoteState
+            || !store.hasResolvedInitialState
     }
 
     private var showsPrepLoadingState: Bool {
@@ -201,12 +217,24 @@ struct PrepTabView: View {
     }
 
     private var prepRecipeStabilityKey: String {
-        currentPrepRecipes.map(\.id).joined(separator: "|")
+        let batchKey = currentPrepBatchID?.uuidString ?? "legacy"
+        return "\(batchKey)::\(currentPrepRecipes.map(\.id).joined(separator: "|"))"
     }
 
     private func syncStablePrepRecipes() {
         guard !currentPrepRecipes.isEmpty else { return }
-        stablePrepRecipes = currentPrepRecipes
+        if let currentPrepBatchID {
+            stablePrepRecipesByBatchID[currentPrepBatchID] = currentPrepRecipes
+        } else {
+            stableLegacyPrepRecipes = currentPrepRecipes
+        }
+    }
+
+    private func stablePrepRecipes(for batchID: UUID?) -> [PlannedRecipe]? {
+        if let batchID {
+            return stablePrepRecipesByBatchID[batchID]
+        }
+        return stableLegacyPrepRecipes
     }
 
     private func recipeForSlot(_ index: Int) -> Recipe? {
@@ -215,7 +243,7 @@ struct PrepTabView: View {
     }
 
     private func showPrepGenerationCompleteToast() {
-        let recipeCard = store.latestPlan?.recipes
+        let recipeCard = store.prepDisplayRecipes
             .map(DiscoverRecipeCardData.init(preppedRecipe:))
             .randomElement()
         toastCenter.show(
@@ -830,7 +858,14 @@ struct MealsPrepCarousel: View {
             return
         }
 
-        revealedRecipeIDs = revealedRecipeIDs.intersection(Set(ids))
+        let currentIDs = Set(ids)
+        let stillVisibleIDs = revealedRecipeIDs.intersection(currentIDs)
+        if stillVisibleIDs.isEmpty {
+            revealedRecipeIDs = currentIDs
+            return
+        }
+
+        revealedRecipeIDs = stillVisibleIDs
         let missingIDs = ids.filter { !revealedRecipeIDs.contains($0) }
 
         for (index, id) in missingIDs.enumerated() {

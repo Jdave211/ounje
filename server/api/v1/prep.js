@@ -9,6 +9,7 @@ const prepRouter = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const APPLE_REFERENCE_DATE_MS = Date.UTC(2001, 0, 1, 0, 0, 0);
+const MAX_PREP_BATCHES = 4;
 
 let serviceSupabase = null;
 
@@ -154,6 +155,9 @@ prepRouter.post("/prep/batches", async (req, res) => {
     const existingRequestedBatch = requestedBatchID
       ? batches.find((batch) => normalizeUUID(batch?.id) === requestedBatchID)
       : null;
+    if (!existingRequestedBatch && batches.length >= MAX_PREP_BATCHES) {
+      return res.status(409).json({ error: `You can keep up to ${MAX_PREP_BATCHES} prep brackets.` });
+    }
     const newBatch = existingRequestedBatch ?? makePrepBatch({
       id: requestedBatchID,
       name: normalizedBatchName(req.body?.name, `New Prep ${batches.length + 1}`),

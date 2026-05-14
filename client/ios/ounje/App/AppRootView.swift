@@ -1916,7 +1916,7 @@ private struct MealPlannerShellView: View {
             .background(OunjePalette.background.ignoresSafeArea())
             .overlay(alignment: .top) {
                 ZStack {
-                    if let toast = toastCenter.toast {
+                    if let toast = toastCenter.toast, presentedRecipe == nil {
                         AppToastBanner(
                             toast: toast,
                             onTap: toast.destination == nil ? nil : {
@@ -3475,7 +3475,7 @@ private struct CookbookTabView: View {
     }
 
     private var upcomingCycle: CookbookPreppedCycle? {
-        guard let latestPlan = store.latestPlan, !latestPlan.recipes.isEmpty else { return nil }
+        guard let latestPlan = store.latestPlan else { return nil }
         let displayRecipes = store.prepDisplayRecipes
         guard !displayRecipes.isEmpty else { return nil }
         return CookbookPreppedCycle(
@@ -3586,6 +3586,12 @@ private struct CookbookTabView: View {
                         title: "Prime prep changed",
                         subtitle: name.isEmpty ? "New prep is now driving Prep and Cart." : "\(name) is now driving Prep and Cart.",
                         systemImage: "checkmark.circle.fill"
+                    )
+                } else {
+                    toastCenter.show(
+                        title: "Prep limit reached",
+                        subtitle: "You can keep up to \(MealPlanningAppStore.maxPrepBatchCount) prep brackets.",
+                        systemImage: "exclamationmark.circle.fill"
                     )
                 }
                 newCookbookPrepName = ""
@@ -4030,24 +4036,34 @@ private struct CookbookTabView: View {
                 .padding(.vertical, 2)
             }
 
-            Button {
-                presentNewCookbookPrepPrompt()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 56, height: 44)
-                    .contentShape(Rectangle())
+            if store.canAddPrepBatch {
+                Button {
+                    presentNewCookbookPrepPrompt()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 56, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .accessibilityLabel("New Prep")
+                .zIndex(100)
             }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .accessibilityLabel("New Prep")
-            .zIndex(100)
         }
         .zIndex(100)
     }
 
     private func presentNewCookbookPrepPrompt() {
+        guard store.canAddPrepBatch else {
+            toastCenter.show(
+                title: "Prep limit reached",
+                subtitle: "You can keep up to \(MealPlanningAppStore.maxPrepBatchCount) prep brackets.",
+                systemImage: "exclamationmark.circle.fill"
+            )
+            return
+        }
         newCookbookPrepName = ""
         isNewCookbookPrepPromptPresented = true
         UIImpactFeedbackGenerator(style: .light).impactOccurred()

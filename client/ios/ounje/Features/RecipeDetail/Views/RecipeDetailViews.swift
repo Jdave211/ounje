@@ -598,6 +598,7 @@ struct RecipeDetailExperienceView: View {
             let heroTopBleed = safeTop + (isImportedRecipe ? -16 : 18)
             let heroHeight = max(isImportedRecipe ? 216 : 198, heroSize - heroTopCrop + (isImportedRecipe ? 44 : 18))
             let topControlTop = max(safeTop + 26, 72)
+            let recipeToastTop = max(safeTop + 66, topControlTop + 48)
             let videoButtonTop = topControlTop + 64
             let ingredientGrid = Self.ingredientGridSpec(for: pageWidth)
             ScrollViewReader { proxy in
@@ -962,7 +963,7 @@ struct RecipeDetailExperienceView: View {
                         }
                     )
                         .padding(.horizontal, 16)
-                        .padding(.top, safeTop + 12)
+                        .padding(.top, recipeToastTop)
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .allowsHitTesting(toast.destination != nil || toast.action != nil)
                 }
@@ -1022,6 +1023,7 @@ struct RecipeDetailExperienceView: View {
                 newPrepTargetName = ""
                 isNewPrepTargetPromptPresented = true
             }
+            .disabled(!store.canAddPrepBatch)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Add this recipe to one prep.")
@@ -1215,7 +1217,14 @@ struct RecipeDetailExperienceView: View {
     private func createPrepTargetAndAddRecipe() async {
         let name = newPrepTargetName.trimmingCharacters(in: .whitespacesAndNewlines)
         newPrepTargetName = ""
-        guard let batchID = store.addPrepBatch(name: name.isEmpty ? nil : name) else { return }
+        guard let batchID = store.addPrepBatch(name: name.isEmpty ? nil : name) else {
+            toastCenter.show(
+                title: "Prep limit reached",
+                subtitle: "You can keep up to \(MealPlanningAppStore.maxPrepBatchCount) prep brackets.",
+                systemImage: "exclamationmark.circle.fill"
+            )
+            return
+        }
         await addCurrentRecipeToPrep(targetBatchID: batchID)
     }
 
