@@ -1402,13 +1402,30 @@ actor RecipeDetailService {
         }
 
         guard let host = url.host?.lowercased(),
-              host == "ounje-idbl.onrender.com",
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               url.pathComponents.count >= 3,
               url.pathComponents[1] == "r"
         else {
             return nil
         }
-        return url.pathComponents[2]
+        let shareID = url.pathComponents[2]
+        guard shareID.range(of: #"^[A-Za-z0-9_-]{8,64}$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+
+        let configuredHosts = Set(
+            OunjeDevelopmentServer.candidateBaseURLs
+                .compactMap { URL(string: $0)?.host?.lowercased() }
+        )
+        guard configuredHosts.contains(host)
+            || host == "ounje.com"
+            || host.hasSuffix(".ounje.com")
+            || host == "ounje.app"
+            || host.hasSuffix(".ounje.app")
+        else {
+            return nil
+        }
+        return shareID
     }
 
     private func fetchSimilarRecipes(baseURL: String, id: String, accessToken: String? = nil) async throws -> [DiscoverRecipeCardData] {

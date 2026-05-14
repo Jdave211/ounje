@@ -599,7 +599,7 @@ struct RecipeDetailExperienceView: View {
             let heroHeight = max(isImportedRecipe ? 216 : 198, heroSize - heroTopCrop + (isImportedRecipe ? 44 : 18))
             let topControlTop = max(safeTop + 26, 72)
             let recipeToastTop = max(safeTop + 66, topControlTop + 48)
-            let videoButtonTop = topControlTop + 64
+            let videoButtonTop = topControlTop + 82
             let ingredientGrid = Self.ingredientGridSpec(for: pageWidth)
             ScrollViewReader { proxy in
                 ZStack(alignment: .bottom) {

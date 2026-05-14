@@ -440,10 +440,11 @@ const RECIPE_CONCEPT_SYSTEM_PROMPT = `You turn a recipe idea into a realistic, s
 
 Rules:
 - Return JSON only.
-- Use the user's prompt plus the nearby example recipes as style guidance, not as content to copy.
+- Use the user's prompt, creation-intent classification, web references, and nearby example recipes as grounding. Do not copy reference text.
 - Build a coherent recipe that feels like a real recipe Ounje would save.
+- If the user asks to combine recipes, act like a chef: preserve the recognizable base dishes while making one viable home-cookable method.
 - Be conservative with quantities and timings. If a detail is not easy to infer, leave it null.
-- Do not invent nutrition unless it is directly supplied.
+- Estimate practical per-serving macros when ingredient quantities and serving count are clear enough; otherwise leave nutrition null.
 - Ingredients must be practical and cookable.
 - Steps must be sequential, specific, and usable.
 - Never fabricate source provenance. This is a direct_input prompt-generated recipe, not a scraped web recipe.
@@ -536,6 +537,22 @@ Rules:
 - Prefer consensus details.
 - If the recipe is strong and grounded, keep it mostly intact.
 - If an ingredient, measurement, or step appears unsupported, either delete it or soften it rather than hallucinating a justification.
+- Do not include commentary outside the JSON object.`;
+
+const RECIPE_CREATE_INTENT_SYSTEM_PROMPT = `You classify a user's "create recipe" request before recipe generation.
+
+Intent labels:
+- base_recipe: the user primarily wants a normal recipe for one known dish.
+- fusion_recipe: the user wants to combine, mash up, hybridize, or reconcile multiple dishes/recipes/styles.
+- custom_recipe: the user gives constraints, ingredients, macros, diet, mood, or meal-prep goals and wants a new viable recipe.
+- direct_recipe_text: the user pasted an existing recipe with ingredients/steps that should be extracted, not invented.
+
+Rules:
+- Return JSON only.
+- Use fusion_recipe when the user asks to combine different recipes, create a viable version of two dishes together, or make an "X meets Y" recipe.
+- Use base_recipe for short dish names like "chicken tikka masala" or "banana bread".
+- Use custom_recipe for "make/create/generate" prompts with dietary, macro, ingredient, or meal-prep constraints.
+- Include 1-3 web search queries when web references would improve grounding. For fusion_recipe, include separate base-dish queries and a combined query.
 - Do not include commentary outside the JSON object.`;
 
 const RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT = `You are the final import completion pass for Ounje recipes.
@@ -1696,6 +1713,155 @@ function looksLikeRecipeSearchRequest(text) {
   const words = normalized.split(/\s+/).filter(Boolean);
   if (words.length < 2 || words.length > 12) return false;
   return true;
+}
+
+function fallbackRecipeCreateIntent(text) {
+  const normalized = normalizeText(text);
+  const lowered = normalized.toLowerCase();
+  const hasStructuredRecipeText = /(ingredients|instructions|method|directions|step\s*\d|prep time|cook time|serves)/i.test(normalized)
+    || /(^|\n)\s*\d+[\).\s]/m.test(text)
+    || /(^|\n)\s*[-*•]\s+/m.test(text);
+  if (hasStructuredRecipeText) {
+    return {
+      intent: "direct_recipe_text",
+      confidence: 0.72,
+      recipe_brief: normalized,
+      search_queries: [],
+      reason: "Input appears to include existing recipe structure.",
+    };
+  }
+
+  const fusionPattern = /\b(combine|mash\s*up|mashup|fusion|hybrid|cross between|mix|merge|blend|meets|inspired by|take on|version of)\b/i;
+  if (fusionPattern.test(lowered) || /\bwith\b.+\b(twist|style|vibe|flavors?)\b/i.test(lowered)) {
+    return {
+      intent: "fusion_recipe",
+      confidence: 0.68,
+      recipe_brief: normalized,
+      search_queries: uniqueStrings([normalized, ...normalized.split(/\b(?:and|with|meets|plus|\+)\b/i).map((part) => normalizeText(`${part} recipe`))]).slice(0, 3),
+      reason: "Prompt asks to combine or adapt recipe ideas.",
+    };
+  }
+
+  if (looksLikeRecipeSearchRequest(normalized)) {
+    return {
+      intent: "base_recipe",
+      confidence: 0.7,
+      recipe_brief: normalized,
+      search_queries: [normalized],
+      reason: "Short dish name is best grounded as a base recipe.",
+    };
+  }
+
+  return {
+    intent: looksLikeRecipeIdeaPrompt(normalized) ? "custom_recipe" : "direct_recipe_text",
+    confidence: 0.58,
+    recipe_brief: normalized,
+    search_queries: looksLikeRecipeIdeaPrompt(normalized) ? [normalized] : [],
+    reason: "Fallback heuristic classification.",
+  };
+}
+
+function normalizeRecipeCreateIntent(value, fallbackText) {
+  const fallback = fallbackRecipeCreateIntent(fallbackText);
+  const allowed = new Set(["base_recipe", "fusion_recipe", "custom_recipe", "direct_recipe_text"]);
+  const intent = allowed.has(normalizeText(value?.intent).toLowerCase())
+    ? normalizeText(value.intent).toLowerCase()
+    : fallback.intent;
+  const searchQueries = uniqueStrings(Array.isArray(value?.search_queries) ? value.search_queries : fallback.search_queries)
+    .slice(0, intent === "fusion_recipe" ? 3 : 2);
+  return {
+    intent,
+    confidence: Number.isFinite(Number(value?.confidence)) ? Math.max(0, Math.min(Number(value.confidence), 1)) : fallback.confidence,
+    recipe_brief: limitText(normalizeText(value?.recipe_brief ?? value?.brief ?? fallback.recipe_brief), 500) || fallback.recipe_brief,
+    search_queries: searchQueries,
+    reason: limitText(normalizeText(value?.reason ?? fallback.reason), 300) || fallback.reason,
+  };
+}
+
+async function classifyRecipeCreateIntent(text) {
+  const fallback = fallbackRecipeCreateIntent(text);
+  if (!openai) return fallback;
+  try {
+    const response = await withRecipeAIStage("recipe_import.create_intent", () => openai.chat.completions.create({
+      model: RECIPE_GATE_MODEL,
+      ...chatCompletionTemperatureParams(RECIPE_GATE_MODEL, 0),
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: RECIPE_CREATE_INTENT_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            "Classify this create-recipe request.",
+            "",
+            `request: ${limitText(text, 1200)}`,
+            "",
+            "Return JSON like:",
+            JSON.stringify({
+              intent: "base_recipe|fusion_recipe|custom_recipe|direct_recipe_text",
+              confidence: 0.0,
+              recipe_brief: "short normalized brief",
+              search_queries: ["query"],
+              reason: "short reason",
+            }),
+          ].join("\n"),
+        },
+      ],
+    }));
+    const parsed = JSON.parse(response.choices?.[0]?.message?.content ?? "{}");
+    return normalizeRecipeCreateIntent(parsed, text);
+  } catch {
+    return fallback;
+  }
+}
+
+async function collectCreateIntentReferenceSources(intent, prompt, { maxQueries = 2 } = {}) {
+  const normalizedIntent = normalizeText(intent?.intent).toLowerCase();
+  if (!["fusion_recipe", "custom_recipe"].includes(normalizedIntent)) return { recipeSources: [], referenceLookups: [] };
+
+  const queryLimit = normalizedIntent === "fusion_recipe" ? Math.max(2, maxQueries) : 1;
+  const queries = uniqueStrings([
+    ...(Array.isArray(intent?.search_queries) ? intent.search_queries : []),
+    prompt,
+  ]).slice(0, queryLimit);
+  const referenceLookups = [];
+  const recipeSources = [];
+  const seenURLs = new Set();
+
+  for (const query of queries) {
+    try {
+      const lookup = await extractRecipeSearchSource(query, [], {
+        source: {
+          source_type: "concept_prompt",
+          platform: "direct_input",
+          raw_text: prompt,
+          creation_intent: intent,
+        },
+      });
+      const sources = Array.isArray(lookup?.recipe_sources) ? lookup.recipe_sources : [];
+      referenceLookups.push({
+        query,
+        source_count: sources.length,
+        search_methods: lookup?.search_methods ?? [],
+      });
+      for (const source of sources) {
+        const url = cleanURL(source.canonical_url ?? source.source_url ?? "");
+        const key = url || normalizeKey([source.title, source.site_name].filter(Boolean).join(" "));
+        if (!key || seenURLs.has(key)) continue;
+        seenURLs.add(key);
+        recipeSources.push(source);
+        if (recipeSources.length >= 6) break;
+      }
+    } catch (error) {
+      referenceLookups.push({
+        query,
+        source_count: 0,
+        error: errorSummary(error),
+      });
+    }
+    if (recipeSources.length >= 6) break;
+  }
+
+  return { recipeSources, referenceLookups };
 }
 
 function scoreScrapedRecipeSource(source, query = "") {
@@ -5453,10 +5619,15 @@ async function extractSocialSource(sourceURL, platform) {
 
 async function extractTextSource(text, attachments = []) {
   const trimmedText = limitText(text);
-  if (!attachments.length && looksLikeRecipeSearchRequest(trimmedText)) {
-    return extractRecipeSearchSource(trimmedText, attachments);
+  let creationIntent = null;
+  if (!attachments.length) {
+    creationIntent = await classifyRecipeCreateIntent(trimmedText);
+    if (creationIntent.intent === "base_recipe") {
+      return extractRecipeSearchSource(creationIntent.search_queries?.[0] ?? trimmedText, attachments);
+    }
   }
-  const isConceptPrompt = looksLikeRecipeIdeaPrompt(trimmedText);
+  const isConceptPrompt = ["fusion_recipe", "custom_recipe"].includes(creationIntent?.intent)
+    || looksLikeRecipeIdeaPrompt(trimmedText);
   const promptExamples = isConceptPrompt ? await fetchPromptRecipeExamples(trimmedText) : [];
   const styleExamples = isConceptPrompt
     ? findRecipeStyleExamples({
@@ -5469,6 +5640,9 @@ async function extractTextSource(text, attachments = []) {
       })
     : [];
   const flavorSeeds = isConceptPrompt ? extractIngredientSignals(trimmedText) : [];
+  const referenceContext = isConceptPrompt
+    ? await collectCreateIntentReferenceSources(creationIntent ?? fallbackRecipeCreateIntent(trimmedText), trimmedText)
+    : { recipeSources: [], referenceLookups: [] };
 
   return {
     source_type: attachments.some((attachment) => attachment.kind === "image") ? "media_image" : attachments.some((attachment) => attachment.kind === "video") ? "media_video" : isConceptPrompt ? "concept_prompt" : "text",
@@ -5477,6 +5651,9 @@ async function extractTextSource(text, attachments = []) {
     canonical_url: null,
     raw_text: trimmedText,
     attachments,
+    creation_intent: creationIntent,
+    recipe_sources: referenceContext.recipeSources,
+    reference_lookups: referenceContext.referenceLookups,
     prompt_examples: promptExamples,
     style_examples: styleExamples,
     flavor_seed_terms: uniqueStrings([
@@ -5502,6 +5679,8 @@ async function extractTextSource(text, attachments = []) {
       evidenceBundle: {
         source_type: attachments.some((attachment) => attachment.kind === "image") ? "media_image" : attachments.some((attachment) => attachment.kind === "video") ? "media_video" : isConceptPrompt ? "concept_prompt" : "text",
         raw_text: trimmedText,
+        creation_intent: creationIntent,
+        reference_lookups: referenceContext.referenceLookups,
         attachments: attachments.map((attachment) => ({
           kind: attachment.kind,
           source_url: attachment.source_url ?? null,
@@ -5523,6 +5702,8 @@ async function extractTextSource(text, attachments = []) {
             raw_json: compactJSON({
               prompt_examples: promptExamples,
               style_examples: styleExamples,
+              recipe_sources: referenceContext.recipeSources,
+              creation_intent: creationIntent,
             }),
           }]
         : []),
@@ -6184,8 +6365,30 @@ async function synthesizeRecipeFromPrompt(source) {
             "",
             `prompt: ${limitText(source.raw_text ?? "")}`,
             "",
+            "Creation intent:",
+            JSON.stringify(source.creation_intent ?? null),
+            "",
             "Flavor hints:",
             JSON.stringify(source.flavor_seed_terms ?? []),
+            "",
+            "Web recipe references:",
+            JSON.stringify((source.recipe_sources ?? []).slice(0, 6).map((entry) => ({
+              title: entry.title ?? null,
+              site_name: entry.site_name ?? null,
+              source_url: entry.canonical_url ?? entry.source_url ?? null,
+              ingredient_candidates: (entry.ingredient_candidates ?? []).slice(0, 24),
+              instruction_candidates: (entry.instruction_candidates ?? []).slice(0, 18),
+              structured_recipe: entry.structured_recipe
+                ? {
+                    name: entry.structured_recipe.name ?? null,
+                    recipeCategory: entry.structured_recipe.recipeCategory ?? null,
+                    recipeCuisine: entry.structured_recipe.recipeCuisine ?? null,
+                    recipeYield: entry.structured_recipe.recipeYield ?? null,
+                    recipeIngredient: (entry.structured_recipe.recipeIngredient ?? []).slice(0, 24),
+                    recipeInstructions: (entry.structured_recipe.recipeInstructions ?? []).slice(0, 18),
+                  }
+                : null,
+            }))),
             "",
             "Nearby embedding examples (use these as grounding references for structure, ingredient realism, and technique):",
             JSON.stringify(buildPromptExamplesContext(source.prompt_examples ?? [])),
@@ -6200,6 +6403,9 @@ async function synthesizeRecipeFromPrompt(source) {
             "- at least 3 ingredients must have concrete quantity_text (not null, not 'to taste')",
             "- steps must include concrete cooking actions (prep, combine, cook, finish) and ingredient references",
             "- keep quantities practical and concise",
+            "- estimate per-serving calories_kcal, protein_g, carbs_g, and fat_g when ingredients and servings are specific enough",
+            "- if creation_intent.intent is fusion_recipe, create one viable chef-tested style recipe that combines the requested dishes or techniques coherently; use web references for base ratios and methods, not as text to copy",
+            "- if creation_intent.intent is custom_recipe, satisfy the user's constraints while keeping the dish cookable and ordinary enough for home cooking",
             "- do not output generic placeholder steps",
             "",
             "Return a JSON object with the same shape used for structured recipe extraction.",

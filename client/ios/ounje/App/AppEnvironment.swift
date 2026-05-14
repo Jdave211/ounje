@@ -156,6 +156,8 @@ final class ProviderConnectionAPIService {
 final class MealPlanningAppStore: ObservableObject {
     static let maxPrepBatchCount = 4
 
+    /// Canonical auth state for user data reads and writes. Callers that need a token
+    /// should go through `freshUserDataSession()` instead of falling back to cached IDs.
     @Published var authSession: AuthSession?
     @Published var isOnboarded = false
     @Published var profile: UserProfile?
@@ -191,6 +193,7 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var hasResolvedInitialState = false
     @Published var lastOnboardingStep = 0
     @Published private(set) var isCompletingOnboarding = false
+    @Published private(set) var authSessionNilMetrics: [String: Int] = [:]
 
     private let planner = MealPlanningAgent()
     private var activeGenerationToken = UUID()
@@ -240,6 +243,13 @@ final class MealPlanningAppStore: ObservableObject {
         case transientFailure
     }
 
+    private enum FreshUserDataSessionNilReason: String {
+        case noAuthSession
+        case needsReauthentication
+        case refreshUnavailable
+        case missingAccessToken
+    }
+
     private struct PersistedAuthSessionCandidate {
         let session: AuthSession
         let sourcePriority: Int
@@ -248,6 +258,8 @@ final class MealPlanningAppStore: ObservableObject {
     private var authRefreshTask: Task<AuthSessionRefreshOutcome, Never>?
     private var authSessionNeedsReauthentication = false
     private var lastTransientAuthRefreshFailureAt: Date?
+    private var freshUserDataSessionNilCounts: [FreshUserDataSessionNilReason: Int] = [:]
+    private var lastFreshUserDataSessionNilLogAt: [FreshUserDataSessionNilReason: Date] = [:]
     private var cachedAuthenticatedEntryRoute: CachedAuthenticatedEntryRoute?
     private var hasPersistedOnboardingState = false
     // Set to true only when the server (or a completed onboarding flow) has positively
@@ -260,6 +272,8 @@ final class MealPlanningAppStore: ObservableObject {
     private var activeAutoPrepGenerationKey: String?
     @Published private(set) var hiddenMainShopItemKeys: Set<String> = []
     private var hiddenMainShopPlanID: UUID?
+    /// UI/tracking hint restored from disk when token refresh is not available.
+    /// It must not be treated as proof that user-scoped Supabase writes can run.
     private var cachedLiveUserID: String?
     var onRuntimeProfileStateChanged: ((String?, UserProfile?, Bool, Int, AppUserEntitlement?) -> Void)?
     private var sharedDefaults: UserDefaults? {
@@ -546,7 +560,7 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         if let latestPlan = snapshot.latestPlan,
-           latestPlan.recipes.isEmpty == false || latestPlan.batches?.isEmpty == false {
+           hasPersistablePrepContent(latestPlan) {
             let shouldSkipStaleRemotePlan = lastLocalPrepMutationAt.map {
                 source == .remote && Date().timeIntervalSince($0) < 45
             } ?? false
@@ -589,7 +603,7 @@ final class MealPlanningAppStore: ObservableObject {
         guard authSession?.userID == session.userID || resolvedLiveUserID == session.userID else { return }
         guard isOnboarded else { return }
 
-        let shouldLoadRemotePlan = latestPlan.map { $0.recipes.isEmpty && ($0.batches?.isEmpty ?? true) } ?? true
+        let shouldLoadRemotePlan = latestPlan.map { !hasPersistablePrepContent($0) } ?? true
         if shouldLoadRemotePlan {
             isRefreshingPrepRecipes = true
         }
@@ -660,9 +674,36 @@ final class MealPlanningAppStore: ObservableObject {
 
     @discardableResult
     func freshUserDataSession() async -> AuthSession? {
-        guard let session = await refreshAuthSessionIfNeeded() else { return nil }
+        guard authSession != nil else {
+            recordFreshUserDataSessionNil(reason: .noAuthSession)
+            return nil
+        }
+        guard !authSessionNeedsReauthentication else {
+            recordFreshUserDataSessionNil(reason: .needsReauthentication)
+            return nil
+        }
+        guard let session = await refreshAuthSessionIfNeeded() else {
+            recordFreshUserDataSessionNil(reason: .refreshUnavailable)
+            return nil
+        }
         let token = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return token.isEmpty ? nil : session
+        guard !token.isEmpty else {
+            recordFreshUserDataSessionNil(reason: .missingAccessToken)
+            return nil
+        }
+        return session
+    }
+
+    private func recordFreshUserDataSessionNil(reason: FreshUserDataSessionNilReason) {
+        let count = (freshUserDataSessionNilCounts[reason] ?? 0) + 1
+        freshUserDataSessionNilCounts[reason] = count
+        authSessionNilMetrics[reason.rawValue] = count
+
+        let now = Date()
+        let lastLoggedAt = lastFreshUserDataSessionNilLogAt[reason] ?? .distantPast
+        guard count == 1 || count.isMultiple(of: 10) || now.timeIntervalSince(lastLoggedAt) > 300 else { return }
+        lastFreshUserDataSessionNilLogAt[reason] = now
+        print("[MealPlanningAppStore] freshUserDataSession returned nil reason=\(reason.rawValue) count=\(count) hasAuthSession=\(authSession != nil) hasCachedUserID=\(cachedLiveUserID != nil) needsReauth=\(authSessionNeedsReauthentication)")
     }
 
     func refreshMembershipEntitlement(trigger: String) async {
@@ -1141,7 +1182,7 @@ final class MealPlanningAppStore: ObservableObject {
             _ = await recurringLoad
 
             guard authStateRevision == bootstrapRevision else { return }
-            if latestPlan?.recipes.isEmpty == false {
+            if latestPlan.map(hasPersistablePrepContent) == true {
                 isRefreshingPrepRecipes = false
             }
             await repairRemotePrepStateIfNeeded(session: session, remotePlanLoadState: remotePlanLoadState)
@@ -1179,7 +1220,7 @@ final class MealPlanningAppStore: ObservableObject {
                 _ = await providerLoad
                 // Persist a locally-preferred plan back to Supabase only when the
                 // remote had no usable data (the plan came from local cache).
-                if let plan = capturedLatestPlan, !plan.recipes.isEmpty,
+                if let plan = capturedLatestPlan, self.hasPersistablePrepContent(plan),
                    capturedPlanLoadState.confirmsNoUsablePrep {
                     _ = await self.persistLatestPlanRemotelyIfPossible(plan)
                 }
@@ -1757,7 +1798,7 @@ final class MealPlanningAppStore: ObservableObject {
     func ensureFreshPlanIfNeeded() async {
         guard hasResolvedInitialState, isOnboarded, let profile, profile.isPlanningReady else { return }
         guard !isHydratingRemoteState else { return }
-        if let latestPlan, !latestPlan.recipes.isEmpty || latestPlan.batches?.isEmpty == false {
+        if let latestPlan, hasPersistablePrepContent(latestPlan) {
             return
         }
         guard remoteMealPrepCycleLoadState.confirmsNoUsablePrep else {
@@ -1772,7 +1813,7 @@ final class MealPlanningAppStore: ObservableObject {
                 activeAutoPrepGenerationKey = nil
             }
         }
-        if latestPlan?.recipes.isEmpty != false {
+        if latestPlan.map(hasPersistablePrepContent) != true {
             await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
         }
     }
@@ -2654,16 +2695,17 @@ final class MealPlanningAppStore: ObservableObject {
         currentBatches.append(newBatch)
         plan.batches = currentBatches
         plan.activeBatchID = newBatch.id
+        let submittedPlan = planMirroringPrimeBatch(plan, preferredBatchID: newBatch.id)
         lastLocalPrepMutationAt = .now
-        updateCurrentPlanCache(with: plan, persistRemote: false)
-        let submittedBatchSignature = prepBatchSignature(for: plan)
-        let submittedRecipeSignature = plan.recipes.map(\.recipe.id).joined(separator: "|")
+        updateCurrentPlanCache(with: submittedPlan, persistRemote: false)
+        let submittedBatchSignature = prepBatchSignature(for: submittedPlan)
+        let submittedRecipeSignature = submittedPlan.recipes.map(\.recipe.id).joined(separator: "|")
 
         Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let session = await self.freshUserDataSession()
             guard let session else {
-                _ = await self.persistLatestPlanRemotelyIfPossible(plan)
+                _ = await self.persistLatestPlanRemotelyIfPossible(submittedPlan)
                 return
             }
 
@@ -2671,12 +2713,12 @@ final class MealPlanningAppStore: ObservableObject {
                 let response = try await PrepBatchAPIService.shared.createBatch(
                     name: resolvedName,
                     clientBatchID: newBatch.id,
-                    plan: plan,
+                    plan: submittedPlan,
                     userID: session.userID,
                     accessToken: session.accessToken
                 )
                 await MainActor.run {
-                    guard self.latestPlan?.id == plan.id else { return }
+                    guard self.latestPlan?.id == submittedPlan.id else { return }
                     let currentBatchSignature = self.prepBatchSignature(for: self.latestPlan)
                     let currentRecipeSignature = self.latestPlan?.recipes.map(\.recipe.id).joined(separator: "|") ?? ""
                     if currentBatchSignature != submittedBatchSignature || currentRecipeSignature != submittedRecipeSignature {
@@ -2688,7 +2730,7 @@ final class MealPlanningAppStore: ObservableObject {
                 }
             } catch {
                 print("[MealPlanningAppStore] Remote prep batch creation failed; falling back to meal_prep_cycles upsert: \(error.localizedDescription)")
-                _ = await self.persistLatestPlanRemotelyIfPossible(plan)
+                _ = await self.persistLatestPlanRemotelyIfPossible(submittedPlan)
             }
         }
 
@@ -3013,7 +3055,7 @@ final class MealPlanningAppStore: ObservableObject {
             let localLatestPlan = latestPlan
             let remoteLatestPlan = usableFetched.first
             let preferredLatestPlan: MealPlan? = {
-                guard let localLatestPlan, !localLatestPlan.recipes.isEmpty else {
+                guard let localLatestPlan, hasPersistablePrepContent(localLatestPlan) else {
                     return remoteLatestPlan
                 }
                 guard let remoteLatestPlan else {
@@ -3069,7 +3111,7 @@ final class MealPlanningAppStore: ObservableObject {
         var remaining: [MealPlan] = []
 
         func appendIfNeeded(_ plan: MealPlan) {
-            guard !plan.recipes.isEmpty, !seenPlanIDs.contains(plan.id) else { return }
+            guard hasPersistablePrepContent(plan), !seenPlanIDs.contains(plan.id) else { return }
             seenPlanIDs.insert(plan.id)
             if plan.id != preferredLatestPlan.id {
                 remaining.append(plan)
@@ -3093,13 +3135,13 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func repairRemotePrepStateIfNeeded(session: AuthSession, remotePlanLoadState: RemoteMealPrepCycleLoadState) async {
         guard remotePlanLoadState.confirmsNoUsablePrep else { return }
-        guard let localPlan = latestPlan, !localPlan.recipes.isEmpty else { return }
+        guard let localPlan = latestPlan, hasPersistablePrepContent(localPlan) else { return }
 
         if latestPlanNeedsGroceryRebuild(localPlan) {
             _ = await rebuildLatestPlanGroceriesIfNeeded(force: true)
         }
 
-        guard let repairedPlan = latestPlan, !repairedPlan.recipes.isEmpty else { return }
+        guard let repairedPlan = latestPlan, hasPersistablePrepContent(repairedPlan) else { return }
 
         do {
             try await SupabaseMealPrepCycleService.shared.upsertMealPrepCycle(
@@ -3457,7 +3499,7 @@ final class MealPlanningAppStore: ObservableObject {
         }
         lastRealtimeMealPrepRefreshAt = now
 
-        let shouldShowPrepRefresh = latestPlan?.recipes.isEmpty != false
+        let shouldShowPrepRefresh = latestPlan.map { !hasPersistablePrepContent($0) } ?? true
         if shouldShowPrepRefresh {
             isRefreshingPrepRecipes = true
         }
@@ -3640,7 +3682,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func persistMealPrepCycleIfPossible(_ plan: MealPlan) {
-        guard !plan.recipes.isEmpty else {
+        guard hasPersistablePrepContent(plan) else {
             print("[MealPlanningAppStore] Skipping remote meal prep cycle persistence for empty-shell plan \(plan.id)")
             return
         }
@@ -5244,10 +5286,22 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func isUsablePersistedPlan(_ plan: MealPlan) -> Bool {
-        guard !plan.recipes.isEmpty else { return false }
-        return !plan.recipes.contains(where: { recipe in
+        let persistedRecipes = persistedPrepRecipes(in: plan)
+        guard !persistedRecipes.isEmpty else { return false }
+        return !persistedRecipes.contains(where: { recipe in
             recipe.recipe.isLegacySeedRecipe || recipe.recipe.isKnownSampleRecipe
         })
+    }
+
+    private func hasPersistablePrepContent(_ plan: MealPlan) -> Bool {
+        !persistedPrepRecipes(in: plan).isEmpty
+    }
+
+    private func persistedPrepRecipes(in plan: MealPlan) -> [PlannedRecipe] {
+        if let batches = plan.batches, !batches.isEmpty {
+            return batches.flatMap(\.recipes)
+        }
+        return plan.recipes
     }
 
     private func recordCompletedMealPrepCycleIfNeeded(for plan: MealPlan) async {

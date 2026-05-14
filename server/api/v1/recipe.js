@@ -852,34 +852,16 @@ recipe_router.post("/recipe/share-links", async (req, res) => {
       }
     }
 
-    const recipe = await fetchRecipeById(recipeId, accessToken);
-    if (!recipe) {
+    const shareSnapshot = await buildRecipeShareSnapshot(recipeId, { userID, accessToken });
+    if (!shareSnapshot) {
       return res.status(404).json({ error: "Recipe not found." });
     }
-
-    const [recipeIngredients, recipeSteps] = await Promise.all([
-      fetchRecipeIngredientRows(recipeId, accessToken),
-      fetchRecipeStepRows(recipeId, accessToken),
-    ]);
-    const stepIngredients = recipeSteps.length
-      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
-      : [];
-    const recipeDetail = normalizeRecipeDetail(recipe, {
-      recipeIngredients,
-      recipeSteps,
-      stepIngredients,
-    });
-    const recipeCard = toRecipeCardPayload(recipeDetail);
 
     const link = await createOrReuseRecipeShareLink({
       recipeID: recipeId,
       recipeKind: recipeId.startsWith("uir_") ? "user_import" : "public",
       userID,
-      snapshot: {
-        version: 1,
-        recipe_card: recipeCard,
-        recipe_detail: recipeDetail,
-      },
+      snapshot: shareSnapshot.snapshot,
     });
 
     return res.status(201).json({
@@ -901,7 +883,16 @@ recipe_router.get("/recipe/share-links/:shareID", async (req, res) => {
     if (!link) {
       return res.status(404).json({ error: "Recipe share link not found." });
     }
-    const snapshot = link.snapshot_json ?? {};
+    let snapshot = link.snapshot_json ?? {};
+    if (!snapshot.recipe_card || !snapshot.recipe_detail) {
+      const repaired = await buildRecipeShareSnapshot(link.recipe_id, {
+        userID: link.created_by_user_id,
+        accessToken: null,
+      });
+      if (repaired) {
+        snapshot = repaired.snapshot;
+      }
+    }
     return res.json({
       share_id: link.share_id,
       recipe_id: link.recipe_id,
@@ -6556,6 +6547,48 @@ async function fetchRecipeStepIngredientRows(stepIDs, accessToken = null) {
     null,
     accessToken
   );
+}
+
+async function buildRecipeShareSnapshot(recipeId, { userID = null, accessToken = null } = {}) {
+  const normalizedRecipeID = String(recipeId ?? "").trim();
+  if (!normalizedRecipeID) return null;
+
+  const isUserImport = normalizedRecipeID.startsWith("uir_");
+  const recipe = isUserImport
+    ? await fetchAuthorizedUserImportRecipeById(normalizedRecipeID, userID)
+    : await fetchRecipeById(normalizedRecipeID, accessToken);
+  if (!recipe) return null;
+
+  let recipeDetail = null;
+  if (isUserImport && hasStructuredRecipeJSON(recipe)) {
+    recipeDetail = normalizeRecipeDetail(recipe);
+  } else {
+    const detailAccessToken = isUserImport ? SUPABASE_SERVICE_ROLE_KEY : accessToken;
+    const [recipeIngredients, recipeSteps] = await Promise.all([
+      fetchRecipeIngredientRows(normalizedRecipeID, detailAccessToken),
+      fetchRecipeStepRows(normalizedRecipeID, detailAccessToken),
+    ]);
+    const stepIngredients = recipeSteps.length
+      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), detailAccessToken)
+      : [];
+    recipeDetail = normalizeRecipeDetail(recipe, {
+      recipeIngredients,
+      recipeSteps,
+      stepIngredients,
+    });
+  }
+
+  const recipeCard = toRecipeCardPayload(recipeDetail);
+  return {
+    recipe,
+    recipeCard,
+    recipeDetail,
+    snapshot: {
+      version: 1,
+      recipe_card: recipeCard,
+      recipe_detail: recipeDetail,
+    },
+  };
 }
 
 function normalizeRecipeDetail(recipe, related = {}) {

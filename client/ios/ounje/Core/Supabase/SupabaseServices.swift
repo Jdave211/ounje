@@ -1281,7 +1281,7 @@ final class SupabaseMealPrepCycleService {
 
         return try JSONDecoder().decode([SupabaseMealPrepCycleRow].self, from: data)
             .map(\.plan)
-            .filter { !$0.recipes.isEmpty }
+            .filter(Self.hasPersistablePrepContent)
     }
 
     func upsertMealPrepCycle(
@@ -1333,6 +1333,13 @@ final class SupabaseMealPrepCycleService {
             throw SupabaseMealPrepCyclesError.invalidResponse
         }
         return (data, httpResponse)
+    }
+
+    private static func hasPersistablePrepContent(_ plan: MealPlan) -> Bool {
+        if let batches = plan.batches, !batches.isEmpty {
+            return batches.contains { !$0.recipes.isEmpty }
+        }
+        return !plan.recipes.isEmpty
     }
 
     private func syncMainShopAndBaseCart(userID: String, plan: MealPlan, accessToken: String?) async throws {

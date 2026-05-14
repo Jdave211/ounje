@@ -7754,7 +7754,7 @@ private struct DiscoverComposerSheet: View {
         case .create:
             return selectedTargetContext == .prepped
                 ? "Write the dish you want to prep. Add notes, cravings, or ingredients."
-                : "Write a recipe idea, ingredients, or dish name."
+                : "Describe a base dish, combo, ingredients, macros, or constraints."
         case .web:
             return "Paste a TikTok, Instagram, blog, or recipe link."
         case .photo:
@@ -7786,7 +7786,7 @@ private struct DiscoverComposerSheet: View {
             OunjePalette.background
                 .ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 13) {
                 Capsule()
                     .fill(OunjePalette.stroke)
                     .frame(width: 50, height: 5)
@@ -7807,7 +7807,9 @@ private struct DiscoverComposerSheet: View {
                     Text(helperCopy)
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .lineSpacing(1.5)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     newRecipeOptions
 
@@ -7815,7 +7817,7 @@ private struct DiscoverComposerSheet: View {
             }
             .padding(.horizontal, 18)
             .padding(.top, 10)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
             .blur(radius: activeImportMode == nil && confirmation == nil ? 0 : 10)
             .scaleEffect(activeImportMode == nil && confirmation == nil ? 1 : 0.985)
             .allowsHitTesting(activeImportMode == nil && confirmation == nil)
@@ -8205,7 +8207,7 @@ private struct DiscoverComposerSheet: View {
     private func importModalSubtitle(for mode: NewRecipeImportMode) -> String {
         switch mode {
         case .create:
-            return "Write a dish, ingredients, or rough idea."
+            return "Describe a base dish, combo, ingredients, macros, or rough idea."
         case .web:
             return "Paste a URL from any recipe website or video."
         case .photo:
@@ -8215,7 +8217,7 @@ private struct DiscoverComposerSheet: View {
 
     @ViewBuilder
     private var newRecipeOptions: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 15) {
             Button {
                 openImportPanel(.create, focusText: true)
             } label: {
@@ -8823,7 +8825,7 @@ private enum NewRecipeImportMode: CaseIterable, Hashable {
     var subtitle: String {
         switch self {
         case .create:
-            return "Write a recipe from scratch"
+            return "Base dish, combo, or recipe idea"
         case .web:
             return "TikTok, Instagram, websites, and blogs"
         case .photo:
@@ -8853,14 +8855,14 @@ private struct NewRecipeImportOptionRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 15) {
+        HStack(spacing: 16) {
             ZStack {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(mode.tint.opacity(isSelected ? 0.22 : 0.13))
-                    .frame(width: 46, height: 46)
+                    .frame(width: 49, height: 49)
 
                 Image(systemName: mode.systemImage)
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 19, weight: .bold))
                     .foregroundStyle(mode.tint)
             }
 
@@ -8871,8 +8873,8 @@ private struct NewRecipeImportOptionRow: View {
                 Text(mode.subtitle)
                     .font(.system(size: 12.8, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
@@ -8881,8 +8883,8 @@ private struct NewRecipeImportOptionRow: View {
                 .font(.system(size: isSelected ? 17 : 14, weight: .bold))
                 .foregroundStyle(isSelected ? mode.tint : OunjePalette.secondaryText.opacity(0.72))
         }
-        .padding(.horizontal, 13)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(isSelected ? OunjePalette.surface.opacity(0.98) : OunjePalette.panel.opacity(0.92))
