@@ -151,7 +151,7 @@ enum DiscoverPreset: CaseIterable {
     }
 }
 
-struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
+struct DiscoverRecipeCardData: Identifiable, Codable, Hashable, Sendable {
     let id: String
     let title: String
     let description: String?
@@ -209,10 +209,10 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
     }
 
     var authorLabel: String {
-        if let authorHandle, !authorHandle.isEmpty {
-            return authorHandle.hasPrefix("@") ? authorHandle : "@\(authorHandle)"
+        if let authorHandle = Self.displayableCreatorHandle(authorHandle) {
+            return authorHandle
         }
-        if let authorName, !authorName.isEmpty { return authorName }
+        if let authorName, !authorName.isEmpty, !Self.isOpaqueNumericCreator(authorName) { return authorName }
         return "Source pending"
     }
 
@@ -284,6 +284,27 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable {
                 }
                 .joined(separator: " ")
         }
+    }
+
+    private static func displayableCreatorHandle(_ value: String?) -> String? {
+        guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        let withoutAt = raw
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !withoutAt.isEmpty, !isOpaqueNumericCreator(withoutAt) else {
+            return nil
+        }
+        return "@\(withoutAt)"
+    }
+
+    private static func isOpaqueNumericCreator(_ value: String) -> Bool {
+        let compact = value
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .replacingOccurrences(of: #"[^A-Za-z0-9]"#, with: "", options: .regularExpression)
+        let digits = compact.replacingOccurrences(of: #"[^0-9]"#, with: "", options: .regularExpression)
+        return !compact.isEmpty && compact == digits && digits.count >= 8
     }
 
     var compactCookTime: String? {

@@ -13,7 +13,9 @@ enum OunjeLaunchFlags {
     }
 
     static var allowsLocalOnlyAuthFallback: Bool {
-#if DEBUG
+#if DEBUG && targetEnvironment(simulator)
+        ProcessInfo.processInfo.environment["OUNJE_ALLOW_LOCAL_AUTH_FALLBACK"] != "0"
+#elseif DEBUG
         ProcessInfo.processInfo.environment["OUNJE_ALLOW_LOCAL_AUTH_FALLBACK"] == "1"
 #else
         false
@@ -77,16 +79,13 @@ enum OunjeDevelopmentServer {
     }
 
     private static func explicitBaseURL(hostKey: String, portKey: String, defaultPort: String) -> String? {
-        guard
-            let rawHost = Bundle.main.object(forInfoDictionaryKey: hostKey) as? String
-        else {
-            return nil
-        }
+        let environment = ProcessInfo.processInfo.environment
+        let rawHost = environment[hostKey] ?? (Bundle.main.object(forInfoDictionaryKey: hostKey) as? String)
 
-        let host = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = rawHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !host.isEmpty else { return nil }
 
-        let configuredPort = (Bundle.main.object(forInfoDictionaryKey: portKey) as? String)?
+        let configuredPort = (environment[portKey] ?? (Bundle.main.object(forInfoDictionaryKey: portKey) as? String))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let port = (configuredPort?.isEmpty == false ? configuredPort! : defaultPort)
 

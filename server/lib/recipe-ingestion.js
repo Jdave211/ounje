@@ -175,7 +175,7 @@ async function execFileWithTimeout(command, args = [], timeoutMs = 10_000) {
 // has already been imported in this process lifetime.
 const CANONICAL_IMPORT_CACHE_MAX = 500;
 const CANONICAL_IMPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-const WARM_RECIPE_DETAIL_CACHE_TTL_SECONDS = 5 * 60;
+const WARM_RECIPE_DETAIL_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const IMPORT_ENQUEUE_LOCK_TTL_SECONDS = 15;
 const IMPORT_PROCESS_LOCK_TTL_SECONDS = 30 * 60;
 const SOURCE_METADATA_CACHE_TTL_SECONDS = 6 * 60 * 60;
@@ -635,7 +635,34 @@ function normalizeCreatorHandle(value) {
     .replace(/\s+/g, "")
     .trim();
   if (!cleaned) return null;
+  if (/^\d{8,}$/.test(cleaned)) return null;
+  if (!/[a-z_]/i.test(cleaned)) return null;
   return cleaned.startsWith("@") ? cleaned : `@${cleaned}`;
+}
+
+function normalizeCreatorHandleFromURL(value) {
+  const raw = normalizeText(value);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    const pathParts = parsed.pathname.split("/").map((part) => part.trim()).filter(Boolean);
+    const atPart = pathParts.find((part) => part.startsWith("@"));
+    if (atPart) return normalizeCreatorHandle(atPart);
+    if (parsed.hostname.includes("instagram.com") || parsed.hostname.includes("tiktok.com")) {
+      return normalizeCreatorHandle(pathParts[0] ?? "");
+    }
+    return null;
+  } catch {
+    return normalizeCreatorHandle(raw);
+  }
+}
+
+function firstCreatorHandle(...values) {
+  for (const value of values) {
+    const normalized = normalizeCreatorHandle(value) ?? normalizeCreatorHandleFromURL(value);
+    if (normalized) return normalized;
+  }
+  return null;
 }
 
 function normalizeStringArray(value, limit = 12) {
@@ -5465,6 +5492,16 @@ async function extractSocialSource(sourceURL, platform) {
   const title = normalizeText(metadata?.title ?? pageSignals?.title ?? "");
   const description = normalizeText(metadata?.description ?? pageSignals?.meta_description ?? pageSignals?.body_text ?? "");
   const thumbnailURL = cleanURL(bestThumbnail(metadata) ?? pageSignals?.hero_image_url ?? null);
+  const creatorHandle = firstCreatorHandle(
+    metadata?.uploader_id,
+    metadata?.channel_id,
+    metadata?.creator,
+    metadata?.uploader_url,
+    metadata?.channel_url,
+    pageSignals?.author_handle,
+    pageSignals?.author_url
+  );
+
   const evidenceBundle = buildVideoEvidenceBundle({
     source_type: platform,
     platform,
@@ -5474,7 +5511,7 @@ async function extractSocialSource(sourceURL, platform) {
     title,
     description,
     author_name: normalizeText(metadata?.uploader ?? pageSignals?.author_name ?? "") || null,
-    author_handle: normalizeText(metadata?.uploader_id ? `@${metadata.uploader_id}` : "") || null,
+    author_handle: creatorHandle,
     author_url: cleanURL(metadata?.uploader_url ?? metadata?.channel_url ?? null),
     attached_video_url: cleanURL(metadata?.webpage_url ?? sourceURL),
     meta_description: description,
@@ -5499,7 +5536,7 @@ async function extractSocialSource(sourceURL, platform) {
     title: title || null,
     description: description || null,
     author_name: normalizeText(metadata?.uploader ?? pageSignals?.author_name ?? "") || null,
-    author_handle: normalizeText(metadata?.uploader_id ? `@${metadata.uploader_id}` : "") || null,
+    author_handle: creatorHandle,
     author_url: cleanURL(metadata?.uploader_url ?? metadata?.channel_url ?? null),
     hero_image_url: thumbnailURL,
     thumbnail_url: thumbnailURL,
@@ -7791,16 +7828,16 @@ async function repairSparseImportedRecipe(normalizedRecipe, source) {
     : normalizedRecipe;
 }
 
-// Lightweight macro estimation — runs only when all four macros are still null
+// Lightweight macro estimation — runs when any core macro is still missing
 // after the main synthesis passes. Uses a small, cheap model focused solely on
 // estimating per-serving calories/protein/carbs/fat from the finalized ingredient list.
 async function maybeFillMissingMacros(normalizedRecipe) {
-  const alreadyHas =
-    Number.isFinite(normalizedRecipe.calories_kcal)
-    || Number.isFinite(normalizedRecipe.protein_g)
-    || Number.isFinite(normalizedRecipe.carbs_g)
-    || Number.isFinite(normalizedRecipe.fat_g);
-  if (alreadyHas || !openai) return normalizedRecipe;
+  const missingAny =
+    !Number.isFinite(normalizedRecipe.calories_kcal)
+    || !Number.isFinite(normalizedRecipe.protein_g)
+    || !Number.isFinite(normalizedRecipe.carbs_g)
+    || !Number.isFinite(normalizedRecipe.fat_g);
+  if (!missingAny || !openai) return normalizedRecipe;
 
   const ingredients = Array.isArray(normalizedRecipe.ingredients) ? normalizedRecipe.ingredients : [];
   if (ingredients.length < 2) return normalizedRecipe;

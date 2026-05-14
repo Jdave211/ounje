@@ -164,6 +164,7 @@ const RECIPE_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
 const RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS = 2 * 1000;
 const RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS = 60 * 1000;
 const RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const SUPABASE_TABLE_FETCH_TIMEOUT_MS = 8_000;
 
 globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
   searchResponse: searchResponseCache.size,
@@ -180,6 +181,11 @@ globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
 
 function trimString(value) {
   return String(value ?? "").trim();
+}
+
+function hasStructuredRecipeJSON(recipe = {}) {
+  return (Array.isArray(recipe.ingredients_json) && recipe.ingredients_json.length > 0)
+    || (Array.isArray(recipe.steps_json) && recipe.steps_json.length > 0);
 }
 
 function encodedStoragePath(path) {
@@ -743,18 +749,39 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     );
     if (cached) return res.json(cached);
 
-    const recipe = await fetchRecipeById(recipeId, accessToken);
+    const recipe = recipeId.startsWith("uir_")
+      ? await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID)
+      : await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found." });
     }
 
+    if (recipeId.startsWith("uir_") && hasStructuredRecipeJSON(recipe)) {
+      const payload = {
+        recipe: normalizeRecipeDetail(recipe),
+      };
+
+      await writeSharedTimedCache(
+        recipeDetailCache,
+        detailCacheKey,
+        payload,
+        RECIPE_DETAIL_CACHE_TTL_MS,
+        "recipe-detail"
+      );
+
+      return res.json(payload);
+    }
+
     const [recipeIngredients, recipeSteps] = await Promise.all([
-      fetchRecipeIngredientRows(recipeId, accessToken),
-      fetchRecipeStepRows(recipeId, accessToken),
+      fetchRecipeIngredientRows(recipeId, recipeId.startsWith("uir_") ? SUPABASE_SERVICE_ROLE_KEY : accessToken),
+      fetchRecipeStepRows(recipeId, recipeId.startsWith("uir_") ? SUPABASE_SERVICE_ROLE_KEY : accessToken),
     ]);
 
     const stepIngredients = recipeSteps.length
-      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
+      ? await fetchRecipeStepIngredientRows(
+          recipeSteps.map((step) => step.id),
+          recipeId.startsWith("uir_") ? SUPABASE_SERVICE_ROLE_KEY : accessToken
+        )
       : [];
 
     const payload = {
@@ -6235,7 +6262,7 @@ async function fetchRecipeById(id, accessToken = null) {
       "id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
       [`id=eq.${encodeURIComponent(normalizedID)}`],
       [],
-      [],
+      null,
       accessToken
     );
     return rows[0] ?? null;
@@ -6243,6 +6270,25 @@ async function fetchRecipeById(id, accessToken = null) {
 
   const recipes = await fetchRecipesByIds([normalizedID]);
   return recipes[0] ?? null;
+}
+
+async function fetchAuthorizedUserImportRecipeById(id, userID) {
+  const normalizedID = String(id ?? "").trim();
+  const normalizedUserID = String(userID ?? "").trim();
+  if (!normalizedID || !normalizedUserID) return null;
+
+  const rows = await fetchSupabaseTableRows(
+    "user_import_recipes",
+    "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
+    [
+      `id=eq.${encodeURIComponent(normalizedID)}`,
+      `user_id=eq.${encodeURIComponent(normalizedUserID)}`,
+    ],
+    [],
+    1,
+    SUPABASE_SERVICE_ROLE_KEY || null
+  );
+  return rows[0] ?? null;
 }
 
 function recipeTableConfigForID(recipeID) {
@@ -6274,12 +6320,17 @@ async function fetchSupabaseTableRows(tableName, select, filters = [], orderClau
     url += `&limit=${Math.max(1, Math.min(Number(limit) || 1, 500))}`;
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SUPABASE_TABLE_FETCH_TIMEOUT_MS);
   const response = await fetch(url, {
+    signal: controller.signal,
     headers: {
-      apikey: SUPABASE_ANON_KEY,
+      apikey: String(accessToken ?? "").trim() === SUPABASE_SERVICE_ROLE_KEY
+        ? SUPABASE_SERVICE_ROLE_KEY
+        : SUPABASE_ANON_KEY,
       Authorization: `Bearer ${String(accessToken ?? "").trim() || SUPABASE_ANON_KEY}`,
     },
-  });
+  }).finally(() => clearTimeout(timeout));
 
   const data = await response.json().catch(() => []);
   if (!response.ok) {

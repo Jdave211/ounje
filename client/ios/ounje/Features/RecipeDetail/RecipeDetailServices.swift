@@ -31,7 +31,7 @@ struct PresentedRecipeDetail: Identifiable {
     var id: String { recipeCard.id }
 }
 
-struct RecipeDetailStep: Decodable, Hashable {
+struct RecipeDetailStep: Codable, Hashable {
     let number: Int
     let text: String
     let tipText: String?
@@ -72,6 +72,15 @@ struct RecipeDetailStep: Decodable, Hashable {
         ingredients = (try? container.decode([RecipeDetailIngredient].self, forKey: .ingredients)) ?? []
     }
 
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(number, forKey: .number)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(tipText, forKey: .tipText)
+        try container.encode(ingredientRefs, forKey: .ingredientRefs)
+        try container.encode(ingredients, forKey: .ingredients)
+    }
+
     func replacingIngredients(_ ingredients: [RecipeDetailIngredient]) -> RecipeDetailStep {
         RecipeDetailStep(
             number: number,
@@ -83,7 +92,7 @@ struct RecipeDetailStep: Decodable, Hashable {
     }
 }
 
-struct RecipeDetailIngredient: Decodable, Hashable, Identifiable {
+struct RecipeDetailIngredient: Codable, Hashable, Identifiable {
     let id: String?
     let ingredientID: String?
     let displayName: String
@@ -416,7 +425,7 @@ enum RecipeQuantityFormatter {
     }
 }
 
-struct RecipeDetailData: Identifiable, Decodable, Hashable {
+struct RecipeDetailData: Identifiable, Codable, Hashable {
     let id: String
     let title: String
     let description: String
@@ -529,10 +538,14 @@ struct RecipeDetailData: Identifiable, Decodable, Hashable {
     }
 
     var sourceDisplayLine: String? {
-        if let authorHandle, !authorHandle.isEmpty {
-            return authorHandle.hasPrefix("@") ? authorHandle : "@\(authorHandle)"
+        if let authorHandle = Self.displayableCreatorHandle(authorHandle) {
+            return authorHandle
         }
-        if let authorName, !authorName.isEmpty { return authorName }
+        if let authorName,
+           !authorName.isEmpty,
+           !Self.isOpaqueNumericCreator(authorName) {
+            return authorName
+        }
         if let source, !source.isEmpty, source.lowercased() != "withjulienne" { return source.capitalized }
         return nil
     }
@@ -595,6 +608,64 @@ struct RecipeDetailData: Identifiable, Decodable, Hashable {
         return cookTimeText ?? combinedCookTimeText ?? "—"
     }
 
+    static func lightweightPreview(from card: DiscoverRecipeCardData) -> RecipeDetailData {
+        let sourceValue = card.source?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourcePlatform: String? = {
+            guard let sourceValue, !sourceValue.isEmpty else { return nil }
+            let lowered = sourceValue.lowercased()
+            if lowered.contains("tiktok") { return "TikTok" }
+            if lowered.contains("instagram") { return "Instagram" }
+            if lowered.contains("youtube") { return "YouTube" }
+            return sourceValue
+        }()
+
+        return RecipeDetailData(
+            id: card.id,
+            title: card.displayTitle,
+            description: card.description ?? "",
+            authorName: card.authorName,
+            authorHandle: card.authorHandle,
+            authorURLString: card.recipeURLString,
+            source: sourceValue,
+            sourcePlatform: sourcePlatform,
+            category: card.category,
+            subcategory: nil,
+            recipeType: card.recipeType,
+            skillLevel: nil,
+            cookTimeText: card.cookTimeText,
+            servingsText: nil,
+            servingSizeText: nil,
+            dailyDietText: nil,
+            estCostText: nil,
+            estCaloriesText: nil,
+            carbsText: nil,
+            proteinText: nil,
+            fatsText: nil,
+            caloriesKcal: nil,
+            proteinG: nil,
+            carbsG: nil,
+            fatG: nil,
+            prepTimeMinutes: nil,
+            cookTimeMinutes: card.cookTimeMinutes,
+            heroImageURLString: card.heroImageURLString,
+            discoverCardImageURLString: card.imageURLString,
+            recipeURLString: card.recipeURLString,
+            originalRecipeURLString: card.recipeURLString,
+            attachedVideoURLString: nil,
+            detailFootnote: nil,
+            imageCaption: nil,
+            dietaryTags: [],
+            flavorTags: [],
+            cuisineTags: [],
+            occasionTags: [],
+            mainProtein: nil,
+            cookMethod: nil,
+            ingredients: [],
+            steps: [],
+            servingsCount: nil
+        )
+    }
+
     private var caloriesDisplayText: String? {
         if let caloriesKcal, caloriesKcal > 0 {
             return "\(Int(caloriesKcal.rounded())) kcal"
@@ -619,6 +690,27 @@ struct RecipeDetailData: Identifiable, Decodable, Hashable {
             .replacingOccurrences(of: "https://firebasestorage.googleapis.com:443/", with: "https://firebasestorage.googleapis.com/")
             .replacingOccurrences(of: " ", with: "%20")
         return URL(string: normalized)
+    }
+
+    private static func displayableCreatorHandle(_ value: String?) -> String? {
+        guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        let withoutAt = raw
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !withoutAt.isEmpty, !isOpaqueNumericCreator(withoutAt) else {
+            return nil
+        }
+        return withoutAt.hasPrefix("@") ? withoutAt : "@\(withoutAt)"
+    }
+
+    private static func isOpaqueNumericCreator(_ value: String) -> Bool {
+        let compact = value
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            .replacingOccurrences(of: #"[^A-Za-z0-9]"#, with: "", options: .regularExpression)
+        let digits = compact.replacingOccurrences(of: #"[^0-9]"#, with: "", options: .regularExpression)
+        return !compact.isEmpty && compact == digits && digits.count >= 8
     }
 
     private static func extractLeadingInteger(from value: String?) -> Int? {
@@ -1156,10 +1248,50 @@ actor RecipeDetailService {
     static let shared = RecipeDetailService()
 
     private var cache: [String: RecipeDetailData] = [:]
+    private var inFlightDetailLoads: [String: Task<RecipeDetailData, Error>] = [:]
     private var similarCache: [String: [DiscoverRecipeCardData]] = [:]
+
+    func cacheDetail(_ detail: RecipeDetailData) async {
+        cache[detail.id] = detail
+        await RecipeDetailDiskCache.shared.store(detail)
+    }
 
     func fetchRecipeDetail(id: String, forceRefresh: Bool = false, accessToken: String? = nil) async throws -> RecipeDetailData {
         if !forceRefresh, let cached = cache[id] {
+            return cached
+        }
+
+        if !forceRefresh, let persisted = await RecipeDetailDiskCache.shared.detail(for: id) {
+            cache[id] = persisted
+            return persisted
+        }
+
+        if !forceRefresh, let inFlight = inFlightDetailLoads[id] {
+            return try await inFlight.value
+        }
+
+        let task = Task { [accessToken] in
+            try await self.fetchRecipeDetailUncached(id: id, accessToken: accessToken)
+        }
+        inFlightDetailLoads[id] = task
+
+        do {
+            let detail = try await task.value
+            cache[detail.id] = detail
+            if detail.id != id {
+                cache[id] = detail
+            }
+            await RecipeDetailDiskCache.shared.store(detail)
+            inFlightDetailLoads[id] = nil
+            return detail
+        } catch {
+            inFlightDetailLoads[id] = nil
+            throw error
+        }
+    }
+
+    private func fetchRecipeDetailUncached(id: String, accessToken: String? = nil) async throws -> RecipeDetailData {
+        if let cached = cache[id] {
             return cached
         }
 
@@ -1175,14 +1307,10 @@ actor RecipeDetailService {
         // Now we collect results until one succeeds; only throw if both fail.
         let baseDetail: RecipeDetailData
         if id.hasPrefix("uir_") {
-            // Imported recipes need auth on both paths — try Supabase first,
-            // fall back to backend. Both share the same token so a second try
-            // with a stale token is pointless; caller must pass a fresh one.
-            do {
-                baseDetail = try await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)
-            } catch {
-                baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
-            }
+            // Imported recipes are owned user data. Keep the phone off the
+            // direct PostgREST/RLS detail path and let the backend do one
+            // owner-verified service-role read plus cache lookup.
+            baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
         } else {
             // Public recipes: race both sources; take whichever succeeds first.
             // If the first finisher throws (e.g. transient Supabase error, flaky
@@ -1213,16 +1341,9 @@ actor RecipeDetailService {
         }
 
         if id.hasPrefix("uir_") {
-            let quantityResolved = resolvedIngredientQuantities(
-                ingredients: baseDetail.ingredients,
-                steps: baseDetail.steps
-            )
-            let immediateDetail = baseDetail.replacing(
-                ingredients: quantityResolved.ingredients,
-                steps: quantityResolved.steps
-            )
-            cache[immediateDetail.id] = immediateDetail
-            return immediateDetail
+            let detail = await enrichCanonicalImages(in: baseDetail)
+            cache[detail.id] = detail
+            return detail
         }
 
         let detail = await enrichCanonicalImages(in: baseDetail)
@@ -1833,6 +1954,69 @@ actor RecipeDetailService {
             )
         }
         return try JSONDecoder().decode(type, from: data)
+    }
+}
+
+actor RecipeDetailDiskCache {
+    static let shared = RecipeDetailDiskCache()
+
+    private let schemaVersion = 1
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    private init() {
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .iso8601
+    }
+
+    func detail(for id: String) async -> RecipeDetailData? {
+        let normalizedID = normalizeID(id)
+        guard !normalizedID.isEmpty else { return nil }
+        let url = fileURL(for: normalizedID)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(RecipeDetailData.self, from: data)
+    }
+
+    func store(_ detail: RecipeDetailData) async {
+        guard shouldPersist(detail) else { return }
+        let normalizedID = normalizeID(detail.id)
+        guard !normalizedID.isEmpty else { return }
+        let url = fileURL(for: normalizedID)
+
+        do {
+            try FileManager.default.createDirectory(
+                at: cacheDirectory,
+                withIntermediateDirectories: true
+            )
+            let data = try encoder.encode(detail)
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            #if DEBUG
+            print("[RecipeDetailDiskCache] failed to store \(detail.id): \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    private func shouldPersist(_ detail: RecipeDetailData) -> Bool {
+        !detail.ingredients.isEmpty || !detail.steps.isEmpty
+    }
+
+    private var cacheDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("Ounje", isDirectory: true)
+            .appendingPathComponent("RecipeDetails", isDirectory: true)
+    }
+
+    private func fileURL(for id: String) -> URL {
+        cacheDirectory.appendingPathComponent("detail-v\(schemaVersion)-\(id).json")
+    }
+
+    private func normalizeID(_ id: String) -> String {
+        id.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"[^A-Za-z0-9_\-\.]"#, with: "_", options: .regularExpression)
     }
 }
 

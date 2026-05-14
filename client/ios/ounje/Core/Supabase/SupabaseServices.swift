@@ -137,14 +137,12 @@ final class SupabaseAuthSessionRefreshService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 10
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
-        var bodyComponents = URLComponents()
-        bodyComponents.queryItems = [
-            URLQueryItem(name: "refresh_token", value: normalizedRefreshToken),
-        ]
-        request.httpBody = bodyComponents.percentEncodedQuery?.data(using: .utf8)
+        request.httpBody = try JSONEncoder().encode(
+            SupabaseRefreshTokenRequest(refreshToken: normalizedRefreshToken)
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -2540,9 +2538,13 @@ struct CanonicalIngredientImageIndex {
             return record
         }
 
-        let key = SupabaseIngredientsCatalogService.normalizedName(displayName)
-        guard !key.isEmpty else { return nil }
-        return recordsByName[key]
+        let keys = SupabaseIngredientsCatalogService.ingredientLookupKeys(for: displayName)
+        for key in keys {
+            if let record = recordsByName[key] {
+                return record
+            }
+        }
+        return nil
     }
 
     private func replacementDisplayName(ingredientID: String?, displayName: String) -> String? {
@@ -2645,7 +2647,7 @@ final class SupabaseIngredientsCatalogService {
         let names = Array(
             Set(
                 normalizedNames
-                    .map { Self.normalizedName($0) }
+                    .flatMap { Self.ingredientLookupKeys(for: $0) }
                     .filter { !$0.isEmpty }
             )
         ).sorted()
@@ -2695,18 +2697,26 @@ final class SupabaseIngredientsCatalogService {
     }
 
     func fetchImageLookup(normalizedNames: [String]) async throws -> [String: String] {
-        let names = Array(
+        let requestedNames = Array(
             Set(
                 normalizedNames
                     .map { Self.normalizedName($0) }
                     .filter { !$0.isEmpty }
             )
         ).sorted()
-        guard !names.isEmpty else { return [:] }
+        guard !requestedNames.isEmpty else { return [:] }
+
+        let names = Array(
+            Set(
+                requestedNames
+                    .flatMap { Self.ingredientLookupKeys(for: $0) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted()
 
         let cached = await SupabaseIngredientImageLookupCache.shared.cachedLookup(for: names)
-        guard !cached.missingNames.isEmpty else {
-            return cached.imageURLStringsByName
+        if cached.missingNames.isEmpty {
+            return Self.projectImageLookup(cached.imageURLStringsByName, onto: requestedNames)
         }
 
         let records = try await fetchIngredients(
@@ -2736,7 +2746,7 @@ final class SupabaseIngredientsCatalogService {
         for (key, value) in lookup where merged[key] == nil {
             merged[key] = value
         }
-        return merged
+        return Self.projectImageLookup(merged, onto: requestedNames)
     }
 
     private func fetch(byColumn column: String, values: [String]) async throws -> [SupabaseIngredientRecord] {
@@ -2826,6 +2836,74 @@ final class SupabaseIngredientsCatalogService {
             .lowercased()
             .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func ingredientLookupKeys(for value: String) -> [String] {
+        let normalized = normalizedName(value)
+        guard !normalized.isEmpty else { return [] }
+
+        var keys: [String] = []
+        func append(_ key: String) {
+            let normalizedKey = normalizedName(key)
+            guard !normalizedKey.isEmpty, !keys.contains(normalizedKey) else { return }
+            keys.append(normalizedKey)
+        }
+
+        append(normalized)
+
+        let phraseAliases: [String: String] = [
+            "unsalted butter": "butter",
+            "salted butter": "butter",
+            "melted butter": "butter",
+            "softened butter": "butter",
+            "lemon juice": "lemon",
+            "fresh lemon juice": "lemon",
+            "lemon zest": "lemon",
+            "lime juice": "lime",
+            "fresh lime juice": "lime",
+            "lime zest": "lime",
+            "orange juice": "orange",
+            "orange zest": "orange"
+        ]
+
+        for (needle, alias) in phraseAliases where normalized.contains(needle) {
+            append(alias)
+        }
+
+        let tokens = normalized.split(separator: " ").map(String.init)
+        let descriptorTokens: Set<String> = [
+            "fresh", "freshly", "raw", "dried", "ground", "whole", "chopped", "minced",
+            "grated", "sliced", "crushed", "peeled", "large", "small", "medium",
+            "melted", "softened", "unsalted", "salted", "cold", "warm", "hot"
+        ]
+        let stripped = tokens.filter { !descriptorTokens.contains($0) }.joined(separator: " ")
+        if stripped != normalized {
+            append(stripped)
+        }
+
+        if tokens.contains("butter") {
+            append("butter")
+        }
+        if tokens.contains("lemon"), tokens.contains(where: { ["juice", "zest", "wedge", "wedges", "slice", "slices"].contains($0) }) {
+            append("lemon")
+        }
+        if tokens.contains("lime"), tokens.contains(where: { ["juice", "zest", "wedge", "wedges", "slice", "slices"].contains($0) }) {
+            append("lime")
+        }
+
+        return keys
+    }
+
+    private static func projectImageLookup(_ lookup: [String: String], onto requestedNames: [String]) -> [String: String] {
+        var projected: [String: String] = [:]
+        for requestedName in requestedNames {
+            for key in ingredientLookupKeys(for: requestedName) {
+                guard let imageURLString = lookup[key], !imageURLString.isEmpty else { continue }
+                projected[requestedName] = imageURLString
+                break
+            }
+        }
+        return projected
     }
 }
 
@@ -2969,6 +3047,14 @@ struct SupabaseIdTokenRequest: Codable {
         case provider
         case idToken = "id_token"
         case nonce
+    }
+}
+
+struct SupabaseRefreshTokenRequest: Codable {
+    let refreshToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case refreshToken = "refresh_token"
     }
 }
 

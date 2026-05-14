@@ -12,6 +12,7 @@ struct PrepTabView: View {
     let onSelectRecipe: (PlannedRecipe) -> Void
     let onImportFoodPhotos: ([PhotosPickerItem]) -> Void
     let onCaptureFoodPhoto: (UIImage) -> Void
+    let onCreateNewRecipe: () -> Void
     @State private var isRegenerationSheetPresented = false
     @State private var selectedRegenerationFocus: PrepRegenerationFocus = .balanced
     @State private var prepLinkPulse = false
@@ -26,10 +27,6 @@ struct PrepTabView: View {
 
     private var currentRecurringCount: Int {
         store.resolvedRecurringAnchorCount
-    }
-
-    private var activeAnchors: [RecurringPrepRecipe] {
-        store.recurringPrepRecipes.filter(\.isEnabled)
     }
 
     private var showsPrepLoadingState: Bool {
@@ -50,7 +47,10 @@ struct PrepTabView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 26) {
-                        PrepTrackerCard(store: store)
+                        PrepTrackerCard(
+                            store: store,
+                            onCreateNewRecipe: onCreateNewRecipe
+                        )
 
                         VStack(alignment: .leading, spacing: 16) {
                             // Batch picker — multi-batch header
@@ -58,7 +58,6 @@ struct PrepTabView: View {
                                 plan: store.latestPlan,
                                 activeBatchID: $store.activeBatchID,
                                 isGenerating: store.isGenerating,
-                                onAddBatch: { store.addPrepBatch() },
                                 onRenameBatch: { id, name in store.renamePrepBatch(id: id, to: name) },
                                 onDeleteBatch: { id in store.deletePrepBatch(id: id) },
                                 onOpenCookbook: {
@@ -74,19 +73,6 @@ struct PrepTabView: View {
                                 prepLinkPulse: $prepLinkPulse
                             )
 
-                            // Anchor strip — shows active recurring anchors above
-                            // the carousel so the user always knows what's locked.
-                            if !activeAnchors.isEmpty {
-                                PrepAnchorStrip(
-                                    anchors: activeAnchors,
-                                    onRemove: { recipe in
-                                        guard !store.isRecurringPrepRecipeToggleInFlight(recipeID: recipe.id) else { return }
-                                        Task { _ = await store.toggleRecurringPrepRecipe(recipe) }
-                                    }
-                                )
-                                .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
-                            }
-
                             MealsPrepCarousel(
                                 plannedRecipes: store.prepDisplayRecipes,
                                 showsLoadingState: showsPrepLoadingState,
@@ -95,7 +81,6 @@ struct PrepTabView: View {
                                 recipeTransitionNamespace: recipeTransitionNamespace,
                                 onSelectRecipe: onSelectRecipe
                             )
-                            .id("\(store.latestPlan?.id.uuidString ?? "empty")::\(store.latestPlanRevision)::\(store.activeBatchID?.uuidString ?? "main")::\(showsRegenerationPlaceholders)")
                             .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
                         }
                         .padding(.top, 4)
@@ -226,7 +211,7 @@ struct PrepTabView: View {
     }
 }
 
-private struct PrepFoodCameraCaptureView: UIViewControllerRepresentable {
+struct PrepFoodCameraCaptureView: UIViewControllerRepresentable {
     let onCapture: (UIImage) -> Void
     let onCancel: () -> Void
 
@@ -584,7 +569,6 @@ struct PrepBatchPickerRow: View {
     let plan: MealPlan?
     @Binding var activeBatchID: UUID?
     let isGenerating: Bool
-    let onAddBatch: () -> Void
     let onRenameBatch: (UUID, String) -> Void
     let onDeleteBatch: (UUID) -> Void
     let onOpenCookbook: () -> Void
@@ -595,59 +579,38 @@ struct PrepBatchPickerRow: View {
     @State private var editingName: String = ""
 
     private var batches: [PrepBatch] { plan?.batches ?? [] }
-    private var isMultiBatch: Bool { !batches.isEmpty }
+    private var hasUsablePlan: Bool { plan?.recipes.isEmpty == false || !batches.isEmpty }
+    private var showsNamedPrepPicker: Bool { hasUsablePlan }
     private var resolvedActiveBatchID: UUID? {
         activeBatchID ?? batches.first?.id
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            if isMultiBatch {
+            if showsNamedPrepPicker {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(batches) { batch in
-                            batchPill(batch)
+                        if batches.isEmpty {
+                            legacyDefaultPrepPill
+                        } else {
+                            ForEach(batches) { batch in
+                                batchPill(batch)
+                            }
                         }
-                        addBatchPill
                     }
                     .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
                     .padding(.vertical, 2)
                 }
                 .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
             } else {
-                // Legacy single-batch header
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Meals in")
+                    Text("Meals")
                         .biroHeaderFont(26)
                         .foregroundStyle(OunjePalette.primaryText)
 
-                    Button(action: onOpenCookbook) {
-                        HStack(alignment: .center, spacing: 5) {
-                            Text("this prep")
-                                .sleeDisplayFont(22)
-                                .foregroundStyle(prepLinkPulse
-                                    ? OunjePalette.softCream
-                                    : OunjePalette.softCream.opacity(0.96))
-
-                            Image(systemName: "pencil")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(OunjePalette.softCream.opacity(prepLinkPulse ? 1 : 0.88))
-                                .scaleEffect(prepLinkPulse ? 1.08 : 0.98)
-                                .rotationEffect(.degrees(prepLinkPulse ? 6 : -3))
-                                .offset(y: prepLinkPulse ? -1 : 0)
-                        }
-                        .padding(.horizontal, 2)
-                        .padding(.vertical, 1)
-                        .scaleEffect(prepLinkPulse ? 1.03 : 0.985)
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                    .onAppear {
-                        guard !prepLinkPulse else { return }
-                        withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
-                            prepLinkPulse = true
-                        }
-                    }
+                    Text("in prep")
+                        .sleeDisplayFont(22)
+                        .foregroundStyle(OunjePalette.softCream.opacity(0.96))
                 }
             }
 
@@ -687,6 +650,25 @@ struct PrepBatchPickerRow: View {
             }
             Button("Cancel", role: .cancel) { editingBatchID = nil }
         }
+    }
+
+    private var legacyDefaultPrepPill: some View {
+        Button(action: onOpenCookbook) {
+            HStack(spacing: 7) {
+                Image(systemName: "fork.knife.circle.fill")
+                    .font(.system(size: 13, weight: .bold))
+                Text("Usual")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(OunjePalette.background)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(OunjePalette.softCream)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -729,103 +711,6 @@ struct PrepBatchPickerRow: View {
                 }
             }
         }
-    }
-
-    private var addBatchPill: some View {
-        Button(action: onAddBatch) {
-            HStack(spacing: 5) {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
-                Text("New")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-            }
-            .foregroundStyle(OunjePalette.secondaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(OunjePalette.surface)
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(OunjePalette.stroke, lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Anchor strip
-
-/// Horizontal scrollable strip of anchored (recurring) recipe pills shown
-/// above the prep carousel. Lets the user immediately see and remove anchors
-/// without navigating to Profile.
-struct PrepAnchorStrip: View {
-    let anchors: [RecurringPrepRecipe]
-    let onRemove: (Recipe) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "repeat.circle.fill")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                Text("Anchored every prep")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(OunjePalette.secondaryText)
-            }
-            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(anchors) { anchor in
-                        anchorPill(anchor)
-                    }
-                }
-                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.vertical, 2)
-            }
-        }
-    }
-
-    private func anchorPill(_ anchor: RecurringPrepRecipe) -> some View {
-        HStack(spacing: 6) {
-            if let urlStr = anchor.recipe.heroImageURLString ?? anchor.recipe.cardImageURLString,
-               let url = URL(string: urlStr) {
-                AsyncImage(url: url) { img in
-                    img.resizable().scaledToFill()
-                } placeholder: {
-                    OunjePalette.surface
-                }
-                .frame(width: 22, height: 22)
-                .clipShape(Circle())
-            }
-
-            Text(anchor.recipe.title)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(OunjePalette.primaryText)
-                .lineLimit(1)
-
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                onRemove(anchor.recipe)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(OunjePalette.secondaryText)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            Capsule(style: .continuous)
-                .fill(OunjePalette.surface)
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                )
-        )
     }
 }
 
@@ -1196,7 +1081,7 @@ struct MealDeckCard: View {
                 HStack(spacing: 4) {
                     Image(systemName: "repeat")
                         .font(.system(size: 9, weight: .bold))
-                    Text("Anchored")
+                    Text("Locked")
                         .font(.system(size: 9, weight: .bold))
                 }
                 .foregroundStyle(OunjePalette.softCream)
@@ -2440,6 +2325,7 @@ struct MealsSummaryCard: View {
 
 struct PrepTrackerCard: View {
     @ObservedObject var store: MealPlanningAppStore
+    let onCreateNewRecipe: () -> Void
     @Environment(\.openURL) private var openURL
     @State private var isScheduleEditorPresented = false
     @State private var isAutoshopLeadEditorPresented = false
@@ -2450,9 +2336,39 @@ struct PrepTrackerCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Next prep")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(OunjePalette.secondaryText)
+                HStack(alignment: .center, spacing: 10) {
+                    Text("Next prep")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onCreateNewRecipe()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("New Recipe")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                        }
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .padding(.horizontal, 11)
+                        .frame(height: 34)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color(hex: "174C32"))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(OunjePalette.accent.opacity(0.34), lineWidth: 1)
+                                )
+                        )
+                        .shadow(color: Color(hex: "174C32").opacity(0.25), radius: 10, x: 0, y: 5)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Create new recipe")
+                }
 
                 BiroScriptDisplayText(
                     nextPrepTitle,
@@ -3155,6 +3071,18 @@ struct PrepDeliverySnapshot {
     var liveUpdateText: String? {
         nil
     }
+
+    var posterSeed: String {
+        [
+            nextPrepDate.map { String(Int($0.timeIntervalSince1970 / 86_400)) },
+            generatedAt.map { String(Int($0.timeIntervalSince1970 / 86_400)) },
+            displayStoreTitle,
+            statusLabel
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: "::")
+    }
 }
 
 enum PrepAutoshopOverlayPhase: Equatable {
@@ -3205,17 +3133,19 @@ struct PrepDeliveryMapPanel: View {
     let onOpenAutoshop: (() -> Void)?
     let onRefreshTracking: (() -> Void)?
 
-    @State private var selectedPoster = PrepCityPoster.random()
+    private var selectedPoster: PrepCityPoster {
+        PrepCityPoster.stable(for: snapshot.posterSeed)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .center) {
                 PrepCityPosterCard(poster: selectedPoster)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.opacity.combined(with: .scale(scale: 0.985)))
             }
-            .frame(height: 168)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .frame(height: 112)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
             PrepRouteOverlay(
                 snapshot: snapshot,
@@ -3226,10 +3156,6 @@ struct PrepDeliveryMapPanel: View {
                 onRefreshTracking: onRefreshTracking
             )
         }
-        .onAppear {
-            selectedPoster = PrepCityPoster.random(excluding: selectedPoster)
-        }
-        .animation(OunjeMotion.screenSpring, value: selectedPoster.assetName)
         .animation(.spring(response: 0.34, dampingFraction: 0.78), value: autoshopOverlayPhase)
     }
 }
@@ -3281,6 +3207,17 @@ struct PrepCityPoster {
     static func random(excluding current: PrepCityPoster? = nil) -> PrepCityPoster {
         let candidates = all.filter { $0.assetName != current?.assetName }
         return (candidates.isEmpty ? all : candidates).randomElement() ?? all[0]
+    }
+
+    static func stable(for seed: String) -> PrepCityPoster {
+        guard !all.isEmpty else {
+            return PrepCityPoster(assetName: "PrepCityPosterLagos", cityName: "Lagos")
+        }
+        let normalizedSeed = seed.isEmpty ? "default" : seed
+        let hash = normalizedSeed.unicodeScalars.reduce(0) { partial, scalar in
+            ((partial &* 31) &+ Int(scalar.value)) & 0x7fffffff
+        }
+        return all[hash % all.count]
     }
 }
 

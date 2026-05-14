@@ -338,6 +338,14 @@ final class SupabaseUserBootstrapService {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
+            if let numericValue = try? container.decode(Double.self) {
+                // Swift's default Date Codable representation is seconds since
+                // 2001-01-01. Older persisted meal plans use that numeric form.
+                if numericValue > 1_500_000_000 {
+                    return Date(timeIntervalSince1970: numericValue)
+                }
+                return Date(timeIntervalSinceReferenceDate: numericValue)
+            }
             let rawValue = try container.decode(String.self)
             if let date = iso8601FractionalFormatter.date(from: rawValue)
                 ?? iso8601Formatter.date(from: rawValue) {
@@ -553,11 +561,7 @@ private struct UserBootstrapProfileState: Decodable {
     }
 
     var decodedProfile: UserProfile? {
-        if let profileJSON {
-            return profileJSON
-        }
-
-        return SupabaseProfileRow(
+        let resolvedProfile = profileJSON ?? SupabaseProfileRow(
             id: nil,
             email: email,
             displayName: displayName,
@@ -588,6 +592,83 @@ private struct UserBootstrapProfileState: Decodable {
             foodPersona: foodPersona,
             foodGoals: foodGoals
         ).decodedProfile
+
+        guard var profile = resolvedProfile else {
+            return nil
+        }
+
+        if let preferredName = nonEmpty(preferredName) {
+            profile.preferredName = preferredName
+        } else if profile.trimmedPreferredName == nil, let displayName = nonEmpty(displayName) {
+            profile.preferredName = displayName
+        }
+        if let cadenceValue = cadence.flatMap(MealCadence.init(rawValue:)) {
+            profile.cadence = cadenceValue
+        }
+        if let deliveryAnchorDayValue = deliveryAnchorDay.flatMap(DeliveryAnchorDay.init(rawValue:)) {
+            profile.deliveryAnchorDay = deliveryAnchorDayValue
+        }
+        if let adults {
+            profile.consumption.adults = adults
+        }
+        if let kids {
+            profile.consumption.kids = kids
+        }
+        if let mealsPerWeek {
+            profile.consumption.mealsPerWeek = mealsPerWeek
+        }
+        if let cooksForOthers {
+            profile.cooksForOthers = cooksForOthers
+        }
+        if let budgetPerCycle {
+            profile.budgetPerCycle = budgetPerCycle
+        }
+        if let budgetWindowValue = budgetWindow.flatMap(BudgetWindow.init(rawValue:)) {
+            profile.budgetWindow = budgetWindowValue
+        }
+        if let orderingAutonomyValue = orderingAutonomy.flatMap(OrderingAutonomyLevel.init(rawValue:)) {
+            profile.orderingAutonomy = orderingAutonomyValue
+        }
+        if let dietaryPatterns {
+            profile.dietaryPatterns = dietaryPatterns
+        }
+        if let hardRestrictions {
+            profile.hardRestrictions = hardRestrictions
+            if profile.allergies.isEmpty {
+                profile.allergies = hardRestrictions
+            }
+        }
+        if let line1 = nonEmpty(addressLine1) {
+            profile.deliveryAddress.line1 = line1
+        }
+        if let line2 = nonEmpty(addressLine2) {
+            profile.deliveryAddress.line2 = line2
+        }
+        if let city = nonEmpty(city) {
+            profile.deliveryAddress.city = city
+        }
+        if let region = nonEmpty(region) {
+            profile.deliveryAddress.region = region
+        }
+        if let postalCode = nonEmpty(postalCode) {
+            profile.deliveryAddress.postalCode = postalCode
+        }
+        if let deliveryNotes = nonEmpty(deliveryNotes) {
+            profile.deliveryAddress.deliveryNotes = deliveryNotes
+        }
+        if let foodPersona = nonEmpty(foodPersona) {
+            profile.foodPersona = foodPersona
+        }
+        if let foodGoals {
+            profile.foodGoals = foodGoals
+        }
+
+        return profile
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

@@ -15,6 +15,15 @@ enum RecipeAskMode {
     case onboarding(RecipeAskOnboardingConfig)
 }
 
+private struct RecipePrepTargetOption: Identifiable, Hashable {
+    let batchID: UUID?
+    let title: String
+
+    var id: String {
+        batchID?.uuidString ?? "default-prep"
+    }
+}
+
 enum RecipeDetailOnboardingContext {
     case baseDemo(
         demoRecipe: OnboardingRecipeEditDemoRecipe,
@@ -74,6 +83,7 @@ struct RecipeDetailExperienceView: View {
     @State private var preparedShareItems: [Any] = []
     @State private var showStorySheet = false
     @State private var showAskSheet = false
+    @State private var isPrepTargetPickerPresented = false
     @State private var showInlineVideo = false
     @State private var showInlineVideoFullscreen = false
     @State private var shouldResumeInlineVideoAfterFullscreen = false
@@ -118,8 +128,17 @@ struct RecipeDetailExperienceView: View {
         _viewModel = StateObject(wrappedValue: RecipeDetailViewModel(initialDetail: presentedRecipe.initialDetail))
     }
 
+    private var localImportedPreviewDetail: RecipeDetailData? {
+        guard presentedRecipe.id.hasPrefix("uir_"), viewModel.detail == nil else { return nil }
+        return RecipeDetailData.lightweightPreview(from: presentedRecipe.recipeCard)
+    }
+
     private var detail: RecipeDetailData? {
-        viewModel.detail
+        viewModel.detail ?? localImportedPreviewDetail
+    }
+
+    private var isShowingImportedPreviewDetail: Bool {
+        viewModel.detail == nil && localImportedPreviewDetail != nil
     }
 
     private var recipeID: String {
@@ -189,13 +208,21 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var primaryBottomActionTitle: String {
-        if replaceablePrepRecipeID != nil { return "Replace" }
-        return isInCurrentPrep ? "Remove" : "Add"
+        if replaceablePrepRecipeID != nil { return "Replace prep" }
+        return isInCurrentPrep ? "Remove" : "Add to prep"
     }
 
     private var ingredientSecondaryActionTitle: String {
         if replaceablePrepRecipeID != nil { return "Replace in prep" }
-        return isInCurrentPrep ? "Remove from prep" : "Add to next prep"
+        return isInCurrentPrep ? "Remove from prep" : "Add to prep"
+    }
+
+    private var prepTargetOptions: [RecipePrepTargetOption] {
+        let batches = store.latestPlan?.batches ?? []
+        guard !batches.isEmpty else {
+            return [RecipePrepTargetOption(batchID: nil, title: "Usual")]
+        }
+        return batches.map { RecipePrepTargetOption(batchID: $0.id, title: $0.name) }
     }
 
     private var servingsScale: Double {
@@ -641,7 +668,7 @@ struct RecipeDetailExperienceView: View {
                                         HStack(spacing: 8) {
                                             if showsRecipeSaveAction {
                                                 RecipeDetailCompactActionButton(
-                                                    title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Save",
+                                                    title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Cookbook",
                                                     systemImage: savedStore.isSaved(presentedRecipe.recipeCard) ? "bookmark.fill" : "bookmark",
                                                     compact: true
                                                 ) {
@@ -693,6 +720,18 @@ struct RecipeDetailExperienceView: View {
                                         .lineLimit(nil)
                                         .fixedSize(horizontal: false, vertical: true)
                                         .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 14, delay: 0.06))
+                                }
+
+                                if isShowingImportedPreviewDetail {
+                                    RecipeDetailHydratingState(
+                                        isLoading: viewModel.isLoading,
+                                        message: viewModel.errorMessage
+                                    ) {
+                                        Task {
+                                            await loadResolvedRecipeDetail()
+                                        }
+                                    }
+                                    .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 14, delay: 0.07))
                                 }
 
                                 Group {
@@ -965,6 +1004,18 @@ struct RecipeDetailExperienceView: View {
             )
             .ignoresSafeArea()
         }
+        .confirmationDialog("Choose prep", isPresented: $isPrepTargetPickerPresented, titleVisibility: .visible) {
+            ForEach(prepTargetOptions) { target in
+                Button(target.title) {
+                    Task {
+                        await addCurrentRecipeToPrep(targetBatchID: target.batchID)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Add this recipe to one prep.")
+        }
         .fullScreenCover(item: $relatedPresentedRecipe) { recipe in
             RecipeDetailExperienceView(
                 presentedRecipe: recipe,
@@ -1060,7 +1111,7 @@ struct RecipeDetailExperienceView: View {
                 } else if isInCurrentPrep {
                     await removeCurrentRecipeFromPrep()
                 } else {
-                    await addCurrentRecipeToPrep()
+                    await presentPrepTargetPicker()
                 }
             }
         } label: {
@@ -1107,19 +1158,26 @@ struct RecipeDetailExperienceView: View {
             } else if isInCurrentPrep {
                 await removeCurrentRecipeFromPrep()
             } else {
-                await addCurrentRecipeToPrep()
+                await presentPrepTargetPicker()
             }
         }
     }
 
     @MainActor
-    private func addCurrentRecipeToPrep() async {
+    private func presentPrepTargetPicker() async {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        isPrepTargetPickerPresented = true
+    }
+
+    @MainActor
+    private func addCurrentRecipeToPrep(targetBatchID: UUID?) async {
         guard let detail else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let recipe = recipeFromDetail(detail)
         baseServingsCount = max(1, servingsCount)
+        let targetName = prepTargetOptions.first(where: { $0.batchID == targetBatchID })?.title ?? "prep"
         toastCenter.show(
-            title: "Added to next prep",
+            title: "Added to \(targetName)",
             subtitle: titleText,
             systemImage: "wand.and.stars",
             thumbnailURLString: toastPreviewImageURLString(for: detail),
@@ -1127,7 +1185,7 @@ struct RecipeDetailExperienceView: View {
         )
         Task {
             await Task.yield()
-            await store.updateLatestPlan(with: recipe, servings: servingsCount)
+            await store.updateLatestPlan(with: recipe, servings: servingsCount, targetBatchID: targetBatchID)
         }
     }
 
@@ -3641,7 +3699,7 @@ struct RecipeAskInlineResultPanel: View {
                     HStack(spacing: 6) {
                         Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                             .font(.system(size: 12, weight: .semibold))
-                        Text(isSaved ? "Saved" : "Save")
+                        Text(isSaved ? "Saved" : "Cookbook")
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
@@ -3722,7 +3780,7 @@ struct OnboardingRecipeAskInlineResultPanel: View {
                     Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                         .font(.system(size: 13, weight: .semibold))
 
-                    Text(isSaved ? "Saved" : "Save this recipe")
+                    Text(isSaved ? "Saved" : "Save to cookbook")
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
@@ -3920,7 +3978,7 @@ struct RecipeAdaptationResultSheet: View {
                     HStack(spacing: 8) {
                         Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                             .font(.system(size: 15, weight: .semibold))
-                        Text(isSaved ? "Saved" : "Save")
+                        Text(isSaved ? "Saved" : "Cookbook")
                             .font(.system(size: 16, weight: .semibold))
                     }
                     .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
@@ -3939,8 +3997,10 @@ struct RecipeAdaptationResultSheet: View {
                 .disabled(isSaved)
 
                 Button(action: onAddToPrep) {
-                    Text("Add")
+                    Text("Add to prep")
                         .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
                         .foregroundStyle(OunjePalette.primaryText)
                         .frame(maxWidth: .infinity)
                         .frame(height: 54)
@@ -5302,7 +5362,7 @@ struct RecipeCookBottomBar: View {
     var body: some View {
         GeometryReader { proxy in
             let availableWidth = proxy.size.width - 32
-            let actionButtonWidth = min(max(118, availableWidth * 0.30), 142)
+            let actionButtonWidth = min(max(134, availableWidth * 0.38), 168)
 
             HStack(spacing: 0) {
                 HStack(spacing: 10) {
@@ -5429,6 +5489,55 @@ struct RecipeDetailLoadingSections: View {
                 }
             }
         }
+    }
+}
+
+struct RecipeDetailHydratingState: View {
+    let isLoading: Bool
+    let message: String?
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(OunjePalette.softCream)
+            } else {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.94, green: 0.53, blue: 0.49))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isLoading ? "Loading full recipe details" : "Full recipe details unavailable")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                Text(isLoading ? "Showing the saved card while Ounje hydrates ingredients and steps." : (message ?? "Try again to fetch ingredients and steps."))
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            if !isLoading {
+                Button("Retry", action: onRetry)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.softCream)
+                    .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.86))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.76), lineWidth: 1)
+                )
+        )
     }
 }
 

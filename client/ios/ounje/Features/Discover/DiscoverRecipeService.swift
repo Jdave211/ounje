@@ -3,10 +3,48 @@ import Foundation
 final class SupabaseDiscoverRecipeService {
     static let shared = SupabaseDiscoverRecipeService()
 
-    private struct CatalogPoolResult {
+    private struct CatalogPoolResult: Sendable {
         let recipes: [DiscoverRecipeCardData]
         let totalCount: Int
         let windowsFetched: Int
+    }
+
+    private actor CatalogCache {
+        private var catalogPoolCache: [String: CatalogPoolResult] = [:]
+        private var recipeCountCache: (count: Int, fetchedAt: Date)?
+
+        func recipeCount(ttl: TimeInterval, forceRefresh: Bool) -> Int? {
+            guard !forceRefresh,
+                  let cached = recipeCountCache,
+                  Date().timeIntervalSince(cached.fetchedAt) < ttl
+            else {
+                return nil
+            }
+            return cached.count
+        }
+
+        func saveRecipeCount(_ count: Int) {
+            recipeCountCache = (count: count, fetchedAt: Date())
+        }
+
+        func pool(for key: String, minimumCount: Int, forceRefresh: Bool) -> CatalogPoolResult? {
+            guard !forceRefresh,
+                  let cached = catalogPoolCache[key],
+                  cached.recipes.count >= minimumCount
+            else {
+                return nil
+            }
+            return cached
+        }
+
+        func pool(for key: String, forceRefresh: Bool) -> CatalogPoolResult? {
+            guard !forceRefresh else { return nil }
+            return catalogPoolCache[key]
+        }
+
+        func savePool(_ result: CatalogPoolResult, for key: String) {
+            catalogPoolCache[key] = result
+        }
     }
 
     private static let recipeSelect = [
@@ -27,8 +65,7 @@ final class SupabaseDiscoverRecipeService {
         "discover_brackets"
     ].joined(separator: ",")
 
-    private var catalogPoolCache: [String: CatalogPoolResult] = [:]
-    private var recipeCountCache: (count: Int, fetchedAt: Date)?
+    private let catalogCache = CatalogCache()
     private let baseCatalogPoolCacheKey = "base-catalog-pool-v2"
     private let recipeCountCacheTTL: TimeInterval = 10 * 60
 
@@ -395,10 +432,11 @@ final class SupabaseDiscoverRecipeService {
     }
 
     private func fetchRecipeCount(forceRefresh: Bool = false) async throws -> Int {
-        if !forceRefresh,
-           let cached = recipeCountCache,
-           Date().timeIntervalSince(cached.fetchedAt) < recipeCountCacheTTL {
-            return cached.count
+        if let cachedCount = await catalogCache.recipeCount(
+            ttl: recipeCountCacheTTL,
+            forceRefresh: forceRefresh
+        ) {
+            return cachedCount
         }
 
         guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipes?select=id&limit=1") else {
@@ -422,7 +460,7 @@ final class SupabaseDiscoverRecipeService {
 
         let contentRange = httpResponse.value(forHTTPHeaderField: "Content-Range") ?? ""
         let total = Int(contentRange.split(separator: "/").last ?? "") ?? 0
-        recipeCountCache = (count: total, fetchedAt: Date())
+        await catalogCache.saveRecipeCount(total)
         return total
     }
 
@@ -433,9 +471,11 @@ final class SupabaseDiscoverRecipeService {
     ) async throws -> CatalogPoolResult {
         let normalizedFetchLimit = max(1, fetchLimit)
         let cacheKey = baseCatalogPoolCacheKey
-        if !forceRefresh,
-           let cached = catalogPoolCache[cacheKey],
-           cached.recipes.count >= normalizedFetchLimit {
+        if let cached = await catalogCache.pool(
+            for: cacheKey,
+            minimumCount: normalizedFetchLimit,
+            forceRefresh: forceRefresh
+        ) {
             return cached
         }
 
@@ -447,11 +487,11 @@ final class SupabaseDiscoverRecipeService {
                 totalCount: max(totalCount, recipes.count),
                 windowsFetched: 0
             )
-            catalogPoolCache[cacheKey] = result
+            await catalogCache.savePool(result, for: cacheKey)
             return result
         }
 
-        let cached = forceRefresh ? nil : catalogPoolCache[cacheKey]
+        let cached = await catalogCache.pool(for: cacheKey, forceRefresh: forceRefresh)
         let existingRecipes = cached?.recipes ?? []
         if !existingRecipes.isEmpty, existingRecipes.count >= totalCount {
             let result = CatalogPoolResult(
@@ -459,7 +499,7 @@ final class SupabaseDiscoverRecipeService {
                 totalCount: totalCount,
                 windowsFetched: cached?.windowsFetched ?? 0
             )
-            catalogPoolCache[cacheKey] = result
+            await catalogCache.savePool(result, for: cacheKey)
             return result
         }
 
@@ -505,7 +545,7 @@ final class SupabaseDiscoverRecipeService {
             totalCount: totalCount,
             windowsFetched: max(cached?.windowsFetched ?? 0, targetWindowCount)
         )
-        catalogPoolCache[cacheKey] = result
+        await catalogCache.savePool(result, for: cacheKey)
         return result
     }
 

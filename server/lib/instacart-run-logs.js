@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import crypto from "node:crypto";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 
@@ -7,6 +8,10 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const INSTACART_RUN_LOGS_TABLE = "instacart_run_logs";
 const INSTACART_RUN_LOG_TRACES_TABLE = "instacart_run_log_traces";
+const AUTH_USER_CACHE_TTL_MS = 5 * 60 * 1000;
+const AUTH_USER_CACHE_MAX_ENTRIES = 500;
+const AUTH_USER_VERIFY_TIMEOUT_MS = 8_000;
+const authUserCache = new Map();
 
 function normalizeText(value) {
   return String(value ?? "")
@@ -167,15 +172,94 @@ export async function resolveAuthenticatedUserID(accessToken = null) {
   const token = String(accessToken ?? "").trim();
   if (!token) return null;
 
+  const cacheKey = authUserCacheKey(token);
+  const cached = readCachedAuthUser(cacheKey);
+  if (cached) return cached;
+
   const client = createSupabaseClient(token);
   if (!client?.auth?.getUser) return null;
 
-  const { data, error } = await client.auth.getUser(token);
-  if (error) {
-    throw error;
+  if (typeof client.auth.getClaims === "function") {
+    const { data, error } = await withAuthVerifyTimeout(client.auth.getClaims(token));
+    if (!error) {
+      const claims = data?.claims ?? data?.payload ?? data ?? {};
+      const userID = typeof claims?.sub === "string" ? claims.sub.trim() : "";
+      if (userID) {
+        writeCachedAuthUser(cacheKey, userID, claims?.exp);
+        return userID;
+      }
+    }
+    throw error ?? new Error("Unable to verify authorization claims");
   }
 
-  return data?.user?.id ?? null;
+  const { data, error } = await withAuthVerifyTimeout(client.auth.getUser(token));
+  if (error) throw error;
+
+  const userID = data?.user?.id ?? null;
+  if (userID) {
+    const exp = parseJWTExpiration(token);
+    writeCachedAuthUser(cacheKey, userID, exp);
+  }
+  return userID;
+}
+
+function withAuthVerifyTimeout(promise) {
+  let timeout = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new Error("Authorization verification timed out");
+      error.statusCode = 401;
+      reject(error);
+    }, AUTH_USER_VERIFY_TIMEOUT_MS);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+function authUserCacheKey(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function readCachedAuthUser(cacheKey) {
+  const cached = authUserCache.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    authUserCache.delete(cacheKey);
+    return null;
+  }
+  return cached.userID;
+}
+
+function writeCachedAuthUser(cacheKey, userID, expSeconds = null) {
+  const normalizedUserID = String(userID ?? "").trim();
+  if (!cacheKey || !normalizedUserID) return;
+
+  const jwtExpiresAt = Number(expSeconds) > 0 ? Number(expSeconds) * 1000 : null;
+  const cacheExpiresAt = Date.now() + AUTH_USER_CACHE_TTL_MS;
+  const expiresAt = jwtExpiresAt ? Math.min(jwtExpiresAt, cacheExpiresAt) : cacheExpiresAt;
+  if (expiresAt <= Date.now()) return;
+
+  authUserCache.set(cacheKey, { userID: normalizedUserID, expiresAt });
+  while (authUserCache.size > AUTH_USER_CACHE_MAX_ENTRIES) {
+    const oldestKey = authUserCache.keys().next().value;
+    if (!oldestKey) break;
+    authUserCache.delete(oldestKey);
+  }
+}
+
+function parseJWTExpiration(token) {
+  const payload = String(token ?? "").split(".")[1];
+  if (!payload) return null;
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+    return Number(decoded?.exp) > 0 ? Number(decoded.exp) : null;
+  } catch {
+    return null;
+  }
 }
 
 function statusKind(trace) {
