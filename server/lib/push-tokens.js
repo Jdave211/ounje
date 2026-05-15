@@ -108,9 +108,11 @@ export async function pushToUser({
   userInfo = {},
   limitLatest = false,
   maxTokens = null,
+  deviceToken = null,
 }) {
   const normalizedUserId = normalize(userId);
   if (!normalizedUserId) return [];
+  const normalizedDeviceToken = normalize(deviceToken);
 
   let tokens = [];
   try {
@@ -120,7 +122,9 @@ export async function pushToUser({
       .select("token, environment, platform, last_seen_at")
       .eq("user_id", normalizedUserId)
       .order("last_seen_at", { ascending: false });
-    if (limitLatest) {
+    if (normalizedDeviceToken) {
+      query = query.eq("token", normalizedDeviceToken).limit(1);
+    } else if (limitLatest) {
       query = query.limit(1);
     } else if (Number.isInteger(maxTokens) && maxTokens > 0) {
       query = query.limit(maxTokens);
@@ -228,7 +232,7 @@ export async function pushToUser({
   return results;
 }
 
-export async function pushTestNotificationToLatestDevice({ userId, testId = null }) {
+export async function pushTestNotificationToLatestDevice({ userId, testId = null, deviceToken = null }) {
   const normalizedTestId = normalize(testId);
   return pushToUser({
     userId,
@@ -240,6 +244,7 @@ export async function pushTestNotificationToLatestDevice({ userId, testId = null
       deep_link: "ounje://notifications",
       action_url: "ounje://notifications",
     },
+    deviceToken,
     maxTokens: 5,
   });
 }

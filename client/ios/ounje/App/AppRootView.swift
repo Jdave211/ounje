@@ -581,8 +581,8 @@ final class AppNotificationCenterManager: ObservableObject {
             return "Sign in again before testing server notifications."
         }
 
-        let registeredToken = await OunjePushTokenRegistrar.shared.registerCurrentTokenIfPossibleNow(session: session, force: true)
-        guard registeredToken else {
+        let currentDeviceToken = await OunjePushTokenRegistrar.shared.currentTokenRegisteringIfNeeded(session: session, force: true)
+        guard let currentDeviceToken, !currentDeviceToken.isEmpty else {
             return "Ounje could not register this device token with the server yet. Reopen the app after allowing notifications, then try again."
         }
 
@@ -599,23 +599,27 @@ final class AppNotificationCenterManager: ObservableObject {
         let testID = UUID().uuidString
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "user_id": session.userID,
-            "test_id": testID
+            "test_id": testID,
+            "token": currentDeviceToken
         ])
+        let receiptTask = Task { await waitForServerTestNotificationReceipt(testID: testID) }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
+                receiptTask.cancel()
                 return "Server notification test returned an invalid response."
             }
 
             let payload = try? JSONDecoder().decode(ServerPushTestResponse.self, from: data)
             if (200 ... 299).contains(httpResponse.statusCode), payload?.ok == true {
-                if await waitForServerTestNotificationReceipt(testID: testID) {
+                if await receiptTask.value {
                     return "Server APNs delivered the test push to this app."
                 }
                 return "Server APNs accepted the test push, but this app did not receive it within 8 seconds. Check Focus mode, notification summary, or device notification settings."
             }
 
+            receiptTask.cancel()
             if let message = payload?.message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
                 return message
             }
@@ -631,6 +635,7 @@ final class AppNotificationCenterManager: ObservableObject {
             }
             return "Server notification test failed (\(httpResponse.statusCode))."
         } catch {
+            receiptTask.cancel()
             return "Server notification test failed: \(error.localizedDescription)"
         }
     }
@@ -2456,7 +2461,7 @@ private struct MealPlannerShellView: View {
                 .environmentObject(sharedImportInbox)
                 .environmentObject(store)
                 .environmentObject(toastCenter)
-                .presentationDetents([.height(306), .fraction(0.62), .large])
+                .presentationDetents([.height(430), .fraction(0.62), .large])
                 .presentationDragIndicator(.hidden)
         }
     }
@@ -4065,7 +4070,7 @@ private struct CookbookTabView: View {
         }
         .sheet(isPresented: $isComposerPresented) {
             DiscoverComposerSheet(context: composerContext, initialText: composerInitialText)
-                .presentationDetents([.height(306), .fraction(0.62), .large])
+                .presentationDetents([.height(430), .fraction(0.62), .large])
                 .presentationDragIndicator(.hidden)
                 .onDisappear {
                     composerInitialText = nil

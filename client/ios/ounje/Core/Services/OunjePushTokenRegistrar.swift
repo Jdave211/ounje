@@ -67,19 +67,24 @@ final class OunjePushTokenRegistrar {
 
     @discardableResult
     func registerCurrentTokenIfPossibleNow(session: AuthSession?, force: Bool = false) async -> Bool {
-        guard let session else { return false }
+        await currentTokenRegisteringIfNeeded(session: session, force: force) != nil
+    }
+
+    @discardableResult
+    func currentTokenRegisteringIfNeeded(session: AuthSession?, force: Bool = false) async -> String? {
+        guard let session else { return nil }
         let existingToken = pendingTokenString ?? UserDefaults.standard.string(forKey: tokenStorageKey)
         let refreshed = force ? await requestFreshRemoteNotificationToken() : nil
-        guard let token = refreshed ?? existingToken, !token.isEmpty else { return false }
+        guard let token = refreshed ?? existingToken, !token.isEmpty else { return nil }
         let lastUserID = UserDefaults.standard.string(forKey: lastRegisteredSessionKey)
         let lastRegisteredAt = UserDefaults.standard.object(forKey: lastRegisteredAtKey) as? Date
         if !force,
            lastUserID == session.userID,
            let lastRegisteredAt,
            Date().timeIntervalSince(lastRegisteredAt) < registrationRefreshInterval {
-            return true
+            return token
         }
-        return await post(token: token, session: session)
+        return await post(token: token, session: session) ? token : nil
     }
 
     private func persistAndPostIfReady(tokenString: String) async {

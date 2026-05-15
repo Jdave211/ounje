@@ -979,7 +979,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.0.4;
+				MARKETING_VERSION = 2.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;
@@ -1007,7 +1007,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.0.4;
+				MARKETING_VERSION = 2.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;

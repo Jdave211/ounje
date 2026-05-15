@@ -50,13 +50,16 @@ router.post("/push-tokens/test", async (req, res) => {
   try {
     const { userID } = await resolveAuthorizedUserID(req);
     const testId = String(req.body?.test_id ?? req.body?.testId ?? "").trim();
-    const results = await pushTestNotificationToLatestDevice({ userId: userID, testId });
+    const deviceToken = String(req.body?.token ?? req.body?.device_token ?? req.body?.deviceToken ?? "").trim();
+    const results = await pushTestNotificationToLatestDevice({ userId: userID, testId, deviceToken });
     const ok = results.some((result) => result.ok);
     const reasons = [...new Set(results.map((result) => result.reason).filter(Boolean))];
     const message = ok
       ? "Server APNs test push accepted."
       : results.length === 0
-        ? "No APNs device token is registered for this account yet. Open Ounje once with notifications allowed, then try again."
+        ? deviceToken
+          ? "This app's current APNs token is not registered for this account yet. Reopen Ounje once with notifications allowed, then try again."
+          : "No APNs device token is registered for this account yet. Open Ounje once with notifications allowed, then try again."
         : `Server APNs test push failed${reasons.length ? `: ${reasons.join(", ")}` : "."}`;
     return res.json({ ok, message, results });
   } catch (error) {
