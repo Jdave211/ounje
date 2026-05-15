@@ -609,7 +609,6 @@ struct ProfileSettingsPage: View {
     @State private var isSignOutDialogPresented = false
     @State private var isDeleteAccountDialogPresented = false
     @State private var deleteAccountErrorMessage: String?
-    @State private var notificationTestAlertMessage: String?
 
     private var currentTier: OunjePricingTier {
         store.effectivePricingTier
@@ -708,21 +707,6 @@ struct ProfileSettingsPage: View {
                         trailingValue: notificationStatusTitle,
                         trailingTint: notificationStatusTint,
                         action: { isNotificationPreferencesPresented = true }
-                    ),
-                    ProfileSettingsMenuRowModel(
-                        icon: "bell.badge.fill",
-                        iconTint: OunjePalette.accent,
-                        title: "Send server notification",
-                        detail: "Checks backend APNs delivery for this device",
-                        trailingValue: nil,
-                        trailingTint: OunjePalette.secondaryText,
-                        showsChevron: false,
-                        action: {
-                            Task {
-                                let session = await store.freshUserDataSession()
-                                notificationTestAlertMessage = await notificationCenter.sendServerTestNotification(session: session)
-                            }
-                        }
                     ),
                     ProfileSettingsMenuRowModel(
                         icon: "star.bubble.fill",
@@ -957,14 +941,6 @@ struct ProfileSettingsPage: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(deleteAccountErrorMessage ?? "Please try again.")
-        }
-        .alert("Notification test", isPresented: Binding(
-            get: { notificationTestAlertMessage != nil },
-            set: { if !$0 { notificationTestAlertMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(notificationTestAlertMessage ?? "")
         }
     }
 

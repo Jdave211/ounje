@@ -567,111 +567,6 @@ final class AppNotificationCenterManager: ObservableObject {
         )
     }
 
-    @discardableResult
-    func sendServerTestNotification(session: AuthSession?) async -> String {
-        await ensureLocalNotificationAuthorization()
-        guard canPresentLocalNotifications else {
-            return "Notifications are not allowed for Ounje on this device. Open iOS Settings and enable notifications."
-        }
-        guard let session,
-              !session.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !accessToken.isEmpty
-        else {
-            return "Sign in again before testing server notifications."
-        }
-
-        let currentDeviceToken = await OunjePushTokenRegistrar.shared.currentTokenRegisteringIfNeeded(session: session, force: true)
-        guard let currentDeviceToken, !currentDeviceToken.isEmpty else {
-            return "Ounje could not register this device token with the server yet. Reopen the app after allowing notifications, then try again."
-        }
-
-        guard let url = URL(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/push-tokens/test") else {
-            return "Server notification test URL is invalid."
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 20
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue(session.userID, forHTTPHeaderField: "x-user-id")
-        let testID = UUID().uuidString
-        request.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "user_id": session.userID,
-            "test_id": testID,
-            "token": currentDeviceToken
-        ])
-        let receiptTask = Task { await waitForServerTestNotificationReceipt(testID: testID) }
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                receiptTask.cancel()
-                return "Server notification test returned an invalid response."
-            }
-
-            let payload = try? JSONDecoder().decode(ServerPushTestResponse.self, from: data)
-            if (200 ... 299).contains(httpResponse.statusCode), payload?.ok == true {
-                if await receiptTask.value {
-                    return "Server APNs delivered the test push to this app."
-                }
-                return "Server APNs accepted the test push, but this app did not receive it within 8 seconds. Check Focus mode, notification summary, or device notification settings."
-            }
-
-            receiptTask.cancel()
-            if let message = payload?.message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
-                return message
-            }
-            let reasons = payload?.results?
-                .compactMap { $0.reason?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .reduce(into: [String]()) { result, reason in
-                    if !result.contains(reason) { result.append(reason) }
-                }
-                .joined(separator: ", ")
-            if let reasons, !reasons.isEmpty {
-                return "Server APNs test failed: \(reasons)."
-            }
-            return "Server notification test failed (\(httpResponse.statusCode))."
-        } catch {
-            receiptTask.cancel()
-            return "Server notification test failed: \(error.localizedDescription)"
-        }
-    }
-
-    private func waitForServerTestNotificationReceipt(testID: String, timeout: TimeInterval = 8) async -> Bool {
-        await withCheckedContinuation { continuation in
-            var didResume = false
-            var token: NSObjectProtocol?
-            let resume: (Bool) -> Void = { value in
-                guard !didResume else { return }
-                didResume = true
-                if let token {
-                    NotificationCenter.default.removeObserver(token)
-                }
-                continuation.resume(returning: value)
-            }
-
-            token = NotificationCenter.default.addObserver(
-                forName: .ounjeRemoteNotificationReceived,
-                object: nil,
-                queue: .main
-            ) { notification in
-                let userInfo = notification.userInfo ?? [:]
-                let kind = (userInfo["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                let receivedTestID = (userInfo["test_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    ?? (userInfo["testId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard kind == "apns_test", receivedTestID == testID else { return }
-                resume(true)
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
-                resume(false)
-            }
-        }
-    }
-
     private var canPresentLocalNotifications: Bool {
         authorizationStatus == .authorized
             || authorizationStatus == .provisional
@@ -869,17 +764,6 @@ final class AppNotificationCenterManager: ObservableObject {
             || message.contains("userauthenticationrequired")
     }
 
-    private struct ServerPushTestResponse: Decodable {
-        let ok: Bool
-        let message: String?
-        let results: [ServerPushTestResult]?
-    }
-
-    private struct ServerPushTestResult: Decodable {
-        let ok: Bool?
-        let status: Int?
-        let reason: String?
-    }
 }
 
 @MainActor
@@ -8006,7 +7890,10 @@ private struct SharedRecipeImportQueueRow: View {
                 Spacer(minLength: 0)
 
                 if item.isRetryNeeded, let onDelete {
-                    Button(role: .destructive, action: onDelete) {
+                    Button(role: .destructive) {
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        onDelete()
+                    } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(Color.red)
@@ -8296,12 +8183,6 @@ private struct NewRecipeTargetSwitcher: View {
                             .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
                     )
             )
-
-            Text("tap or flick")
-                .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                .foregroundStyle(OunjePalette.secondaryText.opacity(0.64))
-                .textCase(.uppercase)
-                .tracking(0.5)
         }
         .contentShape(Rectangle())
         .simultaneousGesture(
@@ -8453,12 +8334,7 @@ private struct DiscoverComposerSheet: View {
     }
 
     private var helperCopy: String {
-        switch selectedTargetContext {
-        case .prepped:
-            return "Choose how to add the recipe. Each option stays focused."
-        case .saved:
-            return "Choose one import path. We’ll save the result to your cookbook."
-        }
+        "Choose one import path. We'll save the result."
     }
 
     private var placeholderCopy: String {
@@ -9594,9 +9470,11 @@ private struct NewRecipeImportOptionRow: View {
             Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
                 .font(.system(size: isSelected ? 17 : 14, weight: .bold))
                 .foregroundStyle(isSelected ? mode.tint : OunjePalette.secondaryText.opacity(0.72))
+                .frame(width: 22, height: 22)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
+        .frame(minHeight: 75)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(isSelected ? OunjePalette.surface.opacity(0.98) : OunjePalette.panel.opacity(0.92))
