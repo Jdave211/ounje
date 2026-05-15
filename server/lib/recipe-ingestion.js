@@ -8367,6 +8367,20 @@ const LOCAL_MACRO_PROFILES = [
     tablespoonGrams: 14.5,
   },
   {
+    pattern: /\b(ground beef|beef mince|minced beef)\b/,
+    per100g: { calories_kcal: 250, protein_g: 17.2, carbs_g: 0, fat_g: 19.6 },
+  },
+  {
+    pattern: /\b(cheddar|mozzarella|shredded cheese|cheese)\b/,
+    per100g: { calories_kcal: 402, protein_g: 25, carbs_g: 1.3, fat_g: 33 },
+    cupGrams: 113,
+  },
+  {
+    pattern: /\b(corn tortilla|corn tortillas|flour tortilla|flour tortillas|tortilla|tortillas|taco shell|taco shells)\b/,
+    each: { calories_kcal: 60, protein_g: 1.5, carbs_g: 12, fat_g: 1 },
+    eachGrams: 25,
+  },
+  {
     pattern: /\b(cottage cheese)\b/,
     per100g: { calories_kcal: 98, protein_g: 11.1, carbs_g: 3.4, fat_g: 4.3 },
     cupGrams: 226,
@@ -8525,62 +8539,7 @@ async function maybeFillMissingMacros(normalizedRecipe) {
     || !Number.isFinite(normalizedRecipe.carbs_g)
     || !Number.isFinite(normalizedRecipe.fat_g);
   if (!missingAny) return normalizedRecipe;
-  if (!openai) return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
-
-  const ingredients = Array.isArray(normalizedRecipe.ingredients) ? normalizedRecipe.ingredients : [];
-  if (ingredients.length < 2) return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
-
-  const ingredientSummary = ingredients
-    .map((i) => [i.quantity_text, i.display_name].filter(Boolean).join(" "))
-    .filter(Boolean)
-    .join(", ");
-
-  const context = [
-    `Title: ${normalizedRecipe.title ?? "Recipe"}`,
-    normalizedRecipe.servings_text ? `Servings: ${normalizedRecipe.servings_text}` : null,
-    Number.isFinite(normalizedRecipe.servings_count) ? `Serving count: ${normalizedRecipe.servings_count}` : null,
-    `Ingredients: ${ingredientSummary}`,
-    normalizedRecipe.category ? `Category: ${normalizedRecipe.category}` : null,
-    normalizedRecipe.recipe_type ? `Type: ${normalizedRecipe.recipe_type}` : null,
-  ].filter(Boolean).join("\n");
-
-  try {
-    const response = await withRecipeAIStage("recipe_import.macro_fill", () => openai.chat.completions.create({
-      model: RECIPE_IMPORT_COMPLETION_MODEL,
-      ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0),
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You are a nutrition estimator. Given a recipe title and ingredient list, estimate conservative per-serving macros.",
-            "Return realistic estimates for app display — not lab-accurate.",
-            "Return JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (e.g. '420 kcal per serving').",
-            "If the recipe is too vague to estimate any single field, return null for that field only.",
-            "Do NOT return null for all fields unless the recipe is completely unintelligible.",
-          ].join("\n"),
-        },
-        { role: "user", content: context },
-      ],
-    }));
-    const parsed = JSON.parse(response.choices?.[0]?.message?.content ?? "{}");
-    const caloriesKcal = Number.isFinite(Number(parsed?.calories_kcal)) ? Number(parsed.calories_kcal) : null;
-    const proteinG = Number.isFinite(Number(parsed?.protein_g)) ? Number(parsed.protein_g) : null;
-    const carbsG = Number.isFinite(Number(parsed?.carbs_g)) ? Number(parsed.carbs_g) : null;
-    const fatG = Number.isFinite(Number(parsed?.fat_g)) ? Number(parsed.fat_g) : null;
-    const estCaloriesText = typeof parsed?.est_calories_text === "string" ? parsed.est_calories_text.trim() : null;
-    const aiFilledRecipe = {
-      ...normalizedRecipe,
-      calories_kcal: normalizedRecipe.calories_kcal ?? caloriesKcal,
-      protein_g: normalizedRecipe.protein_g ?? proteinG,
-      carbs_g: normalizedRecipe.carbs_g ?? carbsG,
-      fat_g: normalizedRecipe.fat_g ?? fatG,
-      est_calories_text: normalizedRecipe.est_calories_text ?? estCaloriesText,
-    };
-    return fillRecipeMacrosWithLocalEstimate(aiFilledRecipe);
-  } catch {
-    return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
-  }
+  return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
 }
 
 function hasCompleteDisplayMacros(recipe) {
@@ -8640,12 +8599,128 @@ function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
   };
 }
 
+function parseServingUnitAmount(servingText) {
+  const raw = normalizeText(servingText).toLowerCase();
+  if (!raw) return null;
+  const unitMatch = raw.match(/\b(taco|tacos|tortilla|tortillas|wrap|wraps|piece|pieces|slice|slices|serving|servings)\b/);
+  if (!unitMatch) return null;
+  return {
+    amount: parseQuantityAmount(raw.match(/(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?|[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])/u)?.[1] ?? "1") ?? 1,
+    unit: unitMatch[1].replace(/s$/, ""),
+  };
+}
+
+function ingredientCountForServingUnit(recipe, unit) {
+  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const patterns = {
+    taco: /\b(tortilla|tortillas|taco shell|taco shells)\b/i,
+    tortilla: /\b(tortilla|tortillas)\b/i,
+    wrap: /\b(tortilla|tortillas|wrap|wraps)\b/i,
+    piece: /\b(piece|pieces)\b/i,
+    slice: /\b(slice|slices)\b/i,
+  };
+  const pattern = patterns[unit];
+  if (!pattern) return null;
+
+  let count = 0;
+  for (const ingredient of ingredients) {
+    const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
+    if (!pattern.test(name)) continue;
+    const quantity = quantityForMacroEstimate(ingredient?.quantity_text ?? ingredient?.quantity ?? "");
+    if (quantity?.unit === "ct" && Number.isFinite(Number(quantity.amount))) {
+      count += Number(quantity.amount);
+    }
+  }
+  return count > 0 ? count : null;
+}
+
+function formatServingCount(count, unit) {
+  const rounded = Math.abs(count - Math.round(count)) < 0.05
+    ? Math.round(count)
+    : Number(count.toFixed(1));
+  const suffix = rounded === 1 ? unit : `${unit}s`;
+  return `${rounded} ${suffix}`;
+}
+
+function normalizeNutritionEstimateFields(recipe) {
+  if (!recipe || typeof recipe !== "object") return recipe;
+
+  const qualityFlags = uniqueStrings(Array.isArray(recipe.quality_flags) ? recipe.quality_flags : []);
+  const hasAnyMacro = ["calories_kcal", "protein_g", "carbs_g", "fat_g"].some((field) => isFiniteMacroValue(recipe[field]));
+  let nextRecipe = { ...recipe };
+  if (hasAnyMacro) {
+    qualityFlags.push("nutrition_estimate");
+  }
+
+  const currentServing = parseServingUnitAmount(nextRecipe.serving_size_text);
+  const servings = Number.isFinite(Number(nextRecipe.servings_count))
+    ? Number(nextRecipe.servings_count)
+    : parseFirstInteger(nextRecipe.servings_text);
+  const itemCount = currentServing?.unit && Number.isFinite(servings) && servings > 0
+    ? ingredientCountForServingUnit(nextRecipe, currentServing.unit)
+    : null;
+  const expectedPerServing = itemCount && servings ? itemCount / servings : null;
+
+  if (
+    currentServing
+    && Number.isFinite(expectedPerServing)
+    && expectedPerServing >= 1.5
+    && expectedPerServing <= 4
+    && Math.abs(expectedPerServing - currentServing.amount) >= 0.5
+  ) {
+    const existingText = normalizeText(nextRecipe.est_calories_text).toLowerCase();
+    const looksPerItem = new RegExp(`\\bper\\s+${currentServing.unit}s?\\b`).test(existingText);
+    const multiplier = looksPerItem && currentServing.amount > 0
+      ? expectedPerServing / currentServing.amount
+      : 1;
+
+    if (multiplier !== 1) {
+      nextRecipe = {
+        ...nextRecipe,
+        calories_kcal: isFiniteMacroValue(nextRecipe.calories_kcal) ? Math.round(Number(nextRecipe.calories_kcal) * multiplier) : nextRecipe.calories_kcal,
+        protein_g: isFiniteMacroValue(nextRecipe.protein_g) ? Number((Number(nextRecipe.protein_g) * multiplier).toFixed(1)) : nextRecipe.protein_g,
+        carbs_g: isFiniteMacroValue(nextRecipe.carbs_g) ? Number((Number(nextRecipe.carbs_g) * multiplier).toFixed(1)) : nextRecipe.carbs_g,
+        fat_g: isFiniteMacroValue(nextRecipe.fat_g) ? Number((Number(nextRecipe.fat_g) * multiplier).toFixed(1)) : nextRecipe.fat_g,
+      };
+    }
+
+    nextRecipe.serving_size_text = formatServingCount(expectedPerServing, currentServing.unit);
+    qualityFlags.push("serving_basis_normalized");
+
+    const localEstimate = estimateRecipeMacrosLocally(nextRecipe);
+    if (localEstimate) {
+      nextRecipe = {
+        ...nextRecipe,
+        calories_kcal: localEstimate.calories_kcal,
+        protein_g: localEstimate.protein_g,
+        carbs_g: localEstimate.carbs_g,
+        fat_g: localEstimate.fat_g,
+      };
+      qualityFlags.push("nutrition_local_estimate");
+    }
+  }
+
+  if (hasAnyMacro && isFiniteMacroValue(nextRecipe.calories_kcal)) {
+    const servingBasis = normalizeText(nextRecipe.serving_size_text);
+    nextRecipe.est_calories_text = servingBasis
+      ? `Approximately ${Math.round(Number(nextRecipe.calories_kcal))} kcal per serving (about ${servingBasis}; estimate)`
+      : `Approximately ${Math.round(Number(nextRecipe.calories_kcal))} kcal per serving (estimate)`;
+  } else if (normalizeText(nextRecipe.est_calories_text) && !/\b(per serving|per plate|per portion|estimate)\b/i.test(nextRecipe.est_calories_text)) {
+    nextRecipe.est_calories_text = `${normalizeText(nextRecipe.est_calories_text)} per serving (estimate)`;
+  }
+
+  return {
+    ...nextRecipe,
+    quality_flags: uniqueStrings(qualityFlags),
+  };
+}
+
 async function guaranteeRecipeDisplayMacros(normalizedRecipe) {
   let nextRecipe = await maybeFillMissingMacros(normalizedRecipe ?? {});
   if (!hasCompleteDisplayMacros(nextRecipe)) {
     nextRecipe = fillRecipeMacrosWithDisplayFallback(nextRecipe);
   }
-  return nextRecipe;
+  return normalizeNutritionEstimateFields(nextRecipe);
 }
 
 function missingDisplayMacroPatch(existingRecipe, candidateRecipe) {
@@ -8801,6 +8876,10 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   if (!hasCompleteDisplayMacros(modelResult.recipe ?? {}) && hasCompleteDisplayMacros(normalized)) {
     modelResult.quality_flags = uniqueStrings([...(modelResult.quality_flags ?? []), "macro_display_fallback"]);
   }
+  modelResult.quality_flags = uniqueStrings([
+    ...(modelResult.quality_flags ?? []),
+    ...(Array.isArray(normalized.quality_flags) ? normalized.quality_flags : []),
+  ]);
 
   const inferredDiscoverBrackets = sanitizeDiscoverBrackets(normalized, normalized.discover_brackets ?? []);
   const normalizedCategory = normalizeText(normalized.category ?? "");
@@ -9642,6 +9721,7 @@ export {
   fillRecipeMacrosWithDisplayFallback,
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
+  normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
   recipeNeedsSecondaryFill,

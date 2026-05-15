@@ -13,7 +13,7 @@ struct OnboardingRecipeEditDemoRecipe: Identifiable {
         let defaultFixtures = defaultResolvedFixtures
         let selectedDiets = Set(selectedDietaryPatterns.map(Self.normalizedDietName))
         guard !selectedDiets.isEmpty else {
-            return Array(defaultFixtures.prefix(3))
+            return Array(defaultFixtures.prefix(4))
         }
 
         let dietFixtures = dietFixturePriority.compactMap { entry -> OnboardingRecipeEditDemoOptionFixture? in
@@ -36,18 +36,22 @@ struct OnboardingRecipeEditDemoRecipe: Identifiable {
             return true
         }
 
-        return Array(prioritizedFixtures.prefix(3))
+        return Array(prioritizedFixtures.prefix(4))
     }
 
     private var defaultResolvedFixtures: [OnboardingRecipeEditDemoOptionFixture] {
-        guard let healthyFixture = OnboardingRecipeEditDemoOptionFixture.healthyFixture(for: self),
-              !optionFixtures.contains(where: { $0.intent == healthyFixture.intent })
-        else {
-            return optionFixtures
+        var fixtures = optionFixtures
+
+        if let lowCaloriesFixture = OnboardingRecipeEditDemoOptionFixture.lowCaloriesFixture(for: self),
+           !fixtures.contains(where: { $0.intent == lowCaloriesFixture.intent }) {
+            fixtures.insert(lowCaloriesFixture, at: min(1, fixtures.count))
         }
 
-        var fixtures = optionFixtures
-        fixtures.insert(healthyFixture, at: min(1, fixtures.count))
+        if let healthyFixture = OnboardingRecipeEditDemoOptionFixture.healthyFixture(for: self),
+           !fixtures.contains(where: { $0.intent == healthyFixture.intent }) {
+            fixtures.append(healthyFixture)
+        }
+
         return fixtures
     }
 
@@ -144,6 +148,8 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
         switch (recipeID, intent) {
         case ("cdf56b03-71e8-4386-acb1-262837286a36", .moreProtein):
             return "Added Greek yogurt, added more eggs, removed powdered sugar."
+        case ("cdf56b03-71e8-4386-acb1-262837286a36", .lowCalories):
+            return "Cut sugar and cream cheese, added Greek yogurt, kept the custard."
         case ("cdf56b03-71e8-4386-acb1-262837286a36", .healthier):
             return "Added whole-grain bread, added Greek yogurt, removed added sugar."
         case ("cdf56b03-71e8-4386-acb1-262837286a36", .lessSugar):
@@ -154,12 +160,16 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
             return "Added coconut milk, added dairy-free cream cheese, removed dairy milk."
         case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .moreProtein):
             return "Added black beans, adjusted chicken."
+        case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .lowCalories):
+            return "Trimmed oil, used skinless chicken, steamed rice, air-fried plantain."
         case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .spicy):
             return "Added cayenne, added lime, added more heat."
         case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .mealPrep):
             return "Separate components, extra sauce, reheat-friendly steps."
         case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .moreProtein):
             return "Added shredded chicken, added Greek yogurt."
+        case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .lowCalories):
+            return "Reduced pasta and oil, added more spinach, kept anchovy-Parmesan flavor."
         case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .keto):
             return "Removed pasta, added spinach, added lemon."
         case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .lighter):
@@ -168,6 +178,8 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
             return "Added nutritional yeast, added pasta water, removed Parmesan."
         case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .lessSugar):
             return "Removed powdered sugar, removed granulated sugar."
+        case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .lowCalories):
+            return "Thinner shortbread, less butter and sugar, brighter guava-lemon filling."
         case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .glutenFree):
             return "Added gluten-free flour."
         case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .lighter):
@@ -440,6 +452,201 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
         return RecipeAlterationIntent.allCases.first {
             $0.rawValue.lowercased() == normalized.lowercased()
                 || $0.intentKey.replacingOccurrences(of: "_", with: "") == normalized.lowercased()
+        }
+    }
+
+    static func lowCaloriesFixture(
+        for recipe: OnboardingRecipeEditDemoRecipe
+    ) -> OnboardingRecipeEditDemoOptionFixture? {
+        switch recipe.id {
+        case "cdf56b03-71e8-4386-acb1-262837286a36":
+            let summary = "Kept the berry French toast bake custardy, but reduced the sweetened cream-cheese layer, used Greek yogurt for body, and cut the added sugar."
+            return OnboardingRecipeEditDemoOptionFixture(
+                recipeID: recipe.id,
+                intent: .lowCalories,
+                preplannedSummary: summary,
+                adaptedRecipe: RecipeAdaptationRecipe(
+                    title: "Lower-Calorie Berries & Cream French Toast Bake",
+                    summary: "A lighter berry French toast bake that still has a creamy custard center, using Greek yogurt, light cream cheese, more berries, and less added sugar.",
+                    cookTimeText: "50 mins",
+                    ingredients: [
+                        "12 oz French bread, cubed",
+                        "1/2 cup light cream cheese",
+                        "1/2 cup plain nonfat Greek yogurt",
+                        "2 tbsp powdered sugar",
+                        "2 1/2 cups mixed berries",
+                        "6 large eggs",
+                        "1 1/2 cups low-fat milk",
+                        "1 tsp vanilla extract",
+                        "1 1/2 tsp cinnamon",
+                        "1/2 tsp kosher salt",
+                        "1 tbsp maple syrup, optional for serving"
+                    ],
+                    steps: [
+                        "Grease a baking dish and spread the cubed French bread across the bottom.",
+                        "Beat the light cream cheese, Greek yogurt, and powdered sugar until creamy but still tangy.",
+                        "Dollop the yogurt-cream cheese mixture over the bread, then scatter the mixed berries through the dish.",
+                        "Whisk eggs, low-fat milk, vanilla, cinnamon, and salt until smooth, then pour the custard evenly over the bread.",
+                        "Rest for 15 minutes so the bread absorbs the custard.",
+                        "Bake at 375 degrees F until puffed, golden, and set in the center, about 35 to 40 minutes.",
+                        "Serve warm with a light drizzle of maple syrup if you want extra sweetness."
+                    ],
+                    substitutions: [
+                        "Light cream cheese and Greek yogurt replace most of the full-fat cream cheese.",
+                        "Extra berries and cinnamon carry sweetness so the sugar can come down.",
+                        "Low-fat milk keeps the custard texture with fewer calories."
+                    ],
+                    pairingNotes: [
+                        "Serve with extra fresh berries instead of syrup.",
+                        "Add lemon zest if you want more brightness without more sugar."
+                    ],
+                    dietaryFit: ["Lower-Calorie", "Breakfast", "Balanced"]
+                ),
+                changeSummary: summary
+            )
+        case "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7":
+            let summary = "Kept the tomato-pepper stew, rice, and plantain, but trimmed the oil, used skinless chicken, reduced the rice portion, and air-fried the plantain."
+            return OnboardingRecipeEditDemoOptionFixture(
+                recipeID: recipe.id,
+                intent: .lowCalories,
+                preplannedSummary: summary,
+                adaptedRecipe: RecipeAdaptationRecipe(
+                    title: "Lower-Calorie Nigerian Rice & Chicken Stew",
+                    summary: "The same peppery chicken stew plate, made lighter with skinless chicken, less oil, a smaller rice base, and sweet plantain crisped without deep frying.",
+                    cookTimeText: "60 mins",
+                    ingredients: [
+                        "1 1/2 lbs skinless chicken thighs",
+                        "3 tomatoes",
+                        "1 red bell pepper",
+                        "1 habanero pepper",
+                        "1 large onion, divided",
+                        "2 tbsp olive oil",
+                        "1 cup low-sodium chicken stock",
+                        "1 tsp bouillon powder",
+                        "1/2 tsp thyme",
+                        "1/2 tsp curry powder",
+                        "1/2 tsp black pepper, plus more to taste",
+                        "1/2 tsp kosher salt, plus more to taste",
+                        "2 cups uncooked white rice",
+                        "4 cups water",
+                        "1 ripe plantain, sliced",
+                        "1 tsp neutral oil or oil spray"
+                    ],
+                    steps: [
+                        "Season the skinless chicken thighs with salt and black pepper.",
+                        "Blend tomatoes, red bell pepper, habanero, and half the onion until smooth.",
+                        "Heat olive oil in a wide pot, brown the chicken lightly on both sides, then set it aside.",
+                        "Saute the remaining chopped onion in the same pot until softened.",
+                        "Pour in the blended pepper mixture and cook it down for 8 to 10 minutes so the stew tastes concentrated without needing extra oil.",
+                        "Add chicken stock, bouillon powder, thyme, curry powder, and black pepper, then return the chicken to the sauce.",
+                        "Simmer until the chicken is cooked through and the stew thickens, about 20 minutes; adjust salt to taste.",
+                        "Cook the rice in water until tender, then fluff and portion it as a smaller base for the stew.",
+                        "Toss plantain slices with 1 tsp oil or spray lightly, then air-fry or bake at 400 degrees F until golden, about 10 to 14 minutes.",
+                        "Serve the stew over rice with the crisp plantain on the side."
+                    ],
+                    substitutions: [
+                        "Skinless chicken thighs keep the stew juicy with less fat.",
+                        "Two tablespoons of oil replace the heavier stew oil base.",
+                        "Air-fried plantain keeps the sweet side without deep frying.",
+                        "A smaller rice base keeps the full plate recognizable while lowering calories."
+                    ],
+                    pairingNotes: [
+                        "Add steamed cabbage or cucumber salad if you want more volume.",
+                        "Keep extra stew sauce for reheating instead of adding more oil."
+                    ],
+                    dietaryFit: ["Lower-Calorie", "Dinner", "West African"]
+                ),
+                changeSummary: summary
+            )
+        case "eaa85ffd-1a66-44e9-84e7-2c7d4b950390":
+            let summary = "Kept the one-pot anchovy, lemon, spinach, and Parmesan profile, but used less pasta and oil, more spinach, and pasta water for body."
+            return OnboardingRecipeEditDemoOptionFixture(
+                recipeID: recipe.id,
+                intent: .lowCalories,
+                preplannedSummary: summary,
+                adaptedRecipe: RecipeAdaptationRecipe(
+                    title: "Lower-Calorie Spinach One-Pot Pasta",
+                    summary: "A lighter version of the same salty, lemony spinach pasta, with more greens, less pasta, less oil, and just enough Parmesan to keep the sauce savory.",
+                    cookTimeText: "25 mins",
+                    ingredients: [
+                        "8 oz short-shaped pasta",
+                        "20 oz mature spinach",
+                        "1 tbsp olive oil",
+                        "4 anchovy fillets",
+                        "5 tbsp grated Parmesan",
+                        "1/4 tsp red-pepper flakes",
+                        "1 lemon, zested and juiced",
+                        "Salt",
+                        "3/4 cup reserved pasta water"
+                    ],
+                    steps: [
+                        "Bring a large pot of salted water to a boil and cook the pasta until just shy of al dente.",
+                        "Reserve 3/4 cup pasta water, then drain the pasta over the spinach in a colander so the greens start to wilt.",
+                        "Return the pot to medium heat and warm 1 tbsp olive oil with the anchovies and red-pepper flakes until the anchovies melt into the oil.",
+                        "Add the pasta and spinach back to the pot with 1/2 cup reserved pasta water.",
+                        "Stir in Parmesan, lemon zest, and lemon juice until the sauce turns glossy, adding more pasta water as needed.",
+                        "Taste and adjust with salt, lemon, or red-pepper flakes before serving."
+                    ],
+                    substitutions: [
+                        "Eight ounces of pasta replaces twelve ounces while extra spinach keeps the bowl full.",
+                        "One tablespoon of oil replaces two because anchovies, lemon, and pasta water carry the sauce.",
+                        "A smaller amount of Parmesan keeps the savory finish without making the dish heavy."
+                    ],
+                    pairingNotes: [
+                        "Serve with a tomato-cucumber salad for freshness.",
+                        "Add grilled shrimp if you want more protein without making it heavy."
+                    ],
+                    dietaryFit: ["Lower-Calorie", "Dinner", "Quick"]
+                ),
+                changeSummary: summary
+            )
+        case "4bcf072c-b95d-49fa-9997-d2749a118a15":
+            let summary = "Preserved the buttery bar format and guava-lemon flavor, but made a thinner crust, cut sugar, and boosted lemon so the filling still tastes bright."
+            return OnboardingRecipeEditDemoOptionFixture(
+                recipeID: recipe.id,
+                intent: .lowCalories,
+                preplannedSummary: summary,
+                adaptedRecipe: RecipeAdaptationRecipe(
+                    title: "Lower-Calorie Guava Lemon Bars",
+                    summary: "A brighter, lighter guava lemon bar with a thinner shortbread crust, less butter and sugar, and enough guava to keep the tropical flavor.",
+                    cookTimeText: "55 mins",
+                    ingredients: [
+                        "1 1/2 cups all-purpose flour",
+                        "6 tbsp powdered sugar, divided",
+                        "1/4 tsp kosher salt",
+                        "6 tbsp cold unsalted butter, cubed",
+                        "1 tbsp cold water, if needed",
+                        "4 large eggs",
+                        "2/3 cup granulated sugar",
+                        "1 tbsp lemon zest",
+                        "1/2 cup lemon juice",
+                        "1/2 cup guava puree",
+                        "1 tbsp all-purpose flour"
+                    ],
+                    steps: [
+                        "Preheat the oven to 350 degrees F and line a 9x13-inch baking dish with parchment.",
+                        "Whisk 1 1/2 cups flour, 3 tbsp powdered sugar, and salt in a bowl.",
+                        "Cut in the cold butter until the mixture looks sandy, adding 1 tbsp cold water only if needed to help it hold together.",
+                        "Press the thinner crust evenly into the pan and bake until lightly golden, about 18 to 20 minutes.",
+                        "Whisk eggs, granulated sugar, lemon zest, lemon juice, guava puree, and 1 tbsp flour until smooth.",
+                        "Pour the filling over the hot crust and bake until just set, about 22 to 25 minutes.",
+                        "Cool completely, chill for clean slices, then dust with the remaining powdered sugar only if desired."
+                    ],
+                    substitutions: [
+                        "A thinner crust uses less flour and butter while keeping the shortbread bite.",
+                        "Less granulated sugar is balanced with more lemon juice and zest.",
+                        "Guava puree stays in the filling so the dessert still tastes like guava lemon bars."
+                    ],
+                    pairingNotes: [
+                        "Cut into smaller squares for a brighter sweet bite.",
+                        "Serve chilled so the lighter filling sets cleanly."
+                    ],
+                    dietaryFit: ["Lower-Calorie", "Dessert", "Citrus"]
+                ),
+                changeSummary: summary
+            )
+        default:
+            return nil
         }
     }
 

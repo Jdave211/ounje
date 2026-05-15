@@ -23,10 +23,10 @@ import {
   listCompletedRecipeImportItems,
   listRecipeImportQueueItems,
   maybeGenerateImportedRecipeImage,
+  normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
   processRecipeIngestionJob,
   queueRecipeIngestion,
-  RECIPE_IMPORT_COMPLETION_MODEL,
 } from "../../lib/recipe-ingestion.js";
 import {
   attachDiscoverBrackets,
@@ -8253,13 +8253,25 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
       && recipe.carbs_g != null
       && recipe.fat_g != null;
     if (hasAllMacros) {
+      const normalizedRecipe = normalizeNutritionEstimateFields(recipe);
+      const normalizationPatch = {};
+      for (const field of ["serving_size_text", "est_calories_text", "calories_kcal", "protein_g", "carbs_g", "fat_g"]) {
+        if (normalizedRecipe[field] !== recipe[field]) {
+          normalizationPatch[field] = normalizedRecipe[field];
+        }
+      }
+      if (Object.keys(normalizationPatch).length > 0) {
+        await patchRecipeRow(recipeId, normalizationPatch).catch((err) => {
+          console.warn("[recipe/enrich-macros] nutrition basis patch failed:", err.message);
+        });
+      }
       invalidateRecipeDetailCache(recipeId, authorizedUserID);
       return res.json({
-        calories_kcal: recipe.calories_kcal,
-        protein_g: recipe.protein_g,
-        carbs_g: recipe.carbs_g,
-        fat_g: recipe.fat_g,
-        est_calories_text: recipe.est_calories_text ?? null,
+        calories_kcal: normalizedRecipe.calories_kcal,
+        protein_g: normalizedRecipe.protein_g,
+        carbs_g: normalizedRecipe.carbs_g,
+        fat_g: normalizedRecipe.fat_g,
+        est_calories_text: normalizedRecipe.est_calories_text ?? null,
         cached: true,
       });
     }
@@ -8278,82 +8290,13 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
       stepIngredients,
     });
 
-    const ingredientSummary = (normalizedDetail.ingredients ?? [])
-      .map((ingredient) => [ingredient.quantity_text, ingredient.display_name ?? ingredient.name].filter(Boolean).join(" "))
-      .filter(Boolean)
-      .slice(0, 80)
-      .join(", ");
-    const stepSummary = (normalizedDetail.steps ?? [])
-      .map((step) => String(step.text ?? "").trim())
-      .filter(Boolean)
-      .slice(0, 10)
-      .join(" ");
-
-    const context = [
-      `Title: ${recipe.title ?? "Unknown dish"}`,
-      recipe.description ? `Description: ${recipe.description}` : null,
-      normalizedDetail.servings_text ? `Servings: ${normalizedDetail.servings_text}` : null,
-      normalizedDetail.servings_count ? `Serving count: ${normalizedDetail.servings_count}` : null,
-      normalizedDetail.cook_time_text ? `Cook time: ${normalizedDetail.cook_time_text}` : null,
-      ingredientSummary ? `Ingredients: ${ingredientSummary}` : null,
-      stepSummary ? `Method: ${stepSummary}` : null,
-      normalizedDetail.recipe_type ? `Type: ${normalizedDetail.recipe_type}` : null,
-      normalizedDetail.category ? `Category: ${normalizedDetail.category}` : null,
-      // Pass any already-known macros so the model fills only what's missing.
-      recipe.calories_kcal != null ? `Known calories_kcal: ${recipe.calories_kcal}` : null,
-      recipe.protein_g != null ? `Known protein_g: ${recipe.protein_g}` : null,
-      recipe.carbs_g != null ? `Known carbs_g: ${recipe.carbs_g}` : null,
-      recipe.fat_g != null ? `Known fat_g: ${recipe.fat_g}` : null,
-    ].filter(Boolean).join("\n");
-
-    let parsed = {};
-    if (openai) {
-      try {
-        const completion = await openai.chat.completions.create({
-          model: RECIPE_IMPORT_COMPLETION_MODEL,
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content: [
-                "You are a nutrition estimator. Estimate per-serving macros for a recipe based on its title and ingredient list.",
-                "Use serving count, ingredients, method, cooking time, category, and title to infer a good per-serving estimate.",
-                "Return conservative, realistic estimates - not lab-accurate, but reasonable for app display.",
-                "If 'Known' values are supplied for a field, return those exact values unchanged.",
-                "Do not leave a macro null when recipe context is available; infer a practical estimate instead.",
-                "Return only valid JSON with: calories_kcal (number), protein_g (number), carbs_g (number), fat_g (number), est_calories_text (string like '420 kcal per serving').",
-                "Only return null for a field if there is no usable title, serving, ingredient, or method context.",
-              ].join("\n"),
-            },
-            {
-              role: "user",
-              content: context,
-            },
-          ],
-        });
-        parsed = JSON.parse(completion.choices?.[0]?.message?.content ?? "{}");
-      } catch (error) {
-        console.warn("[recipe/enrich-macros] AI estimate failed; trying local estimate:", error.message);
-      }
-    }
-
     const localEstimate = estimateRecipeMacrosLocally(normalizedDetail);
     const displayFallback = displayMacroFallbackForRecipe(normalizedDetail);
-    const caloriesKcal = Number.isFinite(Number(parsed?.calories_kcal))
-      ? Number(parsed.calories_kcal)
-      : localEstimate?.calories_kcal ?? displayFallback.calories_kcal;
-    const proteinG = Number.isFinite(Number(parsed?.protein_g))
-      ? Number(parsed.protein_g)
-      : localEstimate?.protein_g ?? displayFallback.protein_g;
-    const carbsG = Number.isFinite(Number(parsed?.carbs_g))
-      ? Number(parsed.carbs_g)
-      : localEstimate?.carbs_g ?? displayFallback.carbs_g;
-    const fatG = Number.isFinite(Number(parsed?.fat_g))
-      ? Number(parsed.fat_g)
-      : localEstimate?.fat_g ?? displayFallback.fat_g;
-    const estCaloriesText = typeof parsed?.est_calories_text === "string" && parsed.est_calories_text.trim()
-      ? parsed.est_calories_text.trim()
-      : localEstimate?.est_calories_text ?? displayFallback.est_calories_text;
+    const caloriesKcal = localEstimate?.calories_kcal ?? displayFallback.calories_kcal;
+    const proteinG = localEstimate?.protein_g ?? displayFallback.protein_g;
+    const carbsG = localEstimate?.carbs_g ?? displayFallback.carbs_g;
+    const fatG = localEstimate?.fat_g ?? displayFallback.fat_g;
+    const estCaloriesText = localEstimate?.est_calories_text ?? displayFallback.est_calories_text;
 
     const existingCaloriesKcal = Number.isFinite(Number(recipe.calories_kcal)) ? Number(recipe.calories_kcal) : null;
     const existingProteinG = Number.isFinite(Number(recipe.protein_g)) ? Number(recipe.protein_g) : null;
@@ -8363,16 +8306,25 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
     const finalProteinG = existingProteinG ?? proteinG;
     const finalCarbsG = existingCarbsG ?? carbsG;
     const finalFatG = existingFatG ?? fatG;
-    const finalEstCaloriesText = recipe.est_calories_text
-      ?? estCaloriesText
-      ?? (finalCaloriesKcal != null ? `${Math.round(finalCaloriesKcal)} kcal per serving` : null);
+    const normalizedNutrition = normalizeNutritionEstimateFields({
+      ...normalizedDetail,
+      calories_kcal: finalCaloriesKcal,
+      protein_g: finalProteinG,
+      carbs_g: finalCarbsG,
+      fat_g: finalFatG,
+      est_calories_text: recipe.est_calories_text ?? estCaloriesText ?? (finalCaloriesKcal != null ? `${Math.round(finalCaloriesKcal)} kcal per serving` : null),
+    });
+    const finalEstCaloriesText = normalizedNutrition.est_calories_text ?? null;
 
     if (caloriesKcal != null || proteinG != null || carbsG != null || fatG != null) {
       const patch = {};
-      if (existingCaloriesKcal == null && caloriesKcal != null) patch.calories_kcal = caloriesKcal;
-      if (existingProteinG == null && proteinG != null) patch.protein_g = proteinG;
-      if (existingCarbsG == null && carbsG != null) patch.carbs_g = carbsG;
-      if (existingFatG == null && fatG != null) patch.fat_g = fatG;
+      if (existingCaloriesKcal == null && normalizedNutrition.calories_kcal != null) patch.calories_kcal = normalizedNutrition.calories_kcal;
+      if (existingProteinG == null && normalizedNutrition.protein_g != null) patch.protein_g = normalizedNutrition.protein_g;
+      if (existingCarbsG == null && normalizedNutrition.carbs_g != null) patch.carbs_g = normalizedNutrition.carbs_g;
+      if (existingFatG == null && normalizedNutrition.fat_g != null) patch.fat_g = normalizedNutrition.fat_g;
+      if (normalizedNutrition.serving_size_text && normalizedNutrition.serving_size_text !== recipe.serving_size_text) {
+        patch.serving_size_text = normalizedNutrition.serving_size_text;
+      }
       if (!recipe.est_calories_text && finalEstCaloriesText) patch.est_calories_text = finalEstCaloriesText;
       await patchRecipeRow(recipeId, patch).catch((err) => {
         console.warn("[recipe/enrich-macros] DB patch failed:", err.message);
@@ -8381,10 +8333,10 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
     }
 
     return res.json({
-      calories_kcal: finalCaloriesKcal,
-      protein_g: finalProteinG,
-      carbs_g: finalCarbsG,
-      fat_g: finalFatG,
+      calories_kcal: normalizedNutrition.calories_kcal,
+      protein_g: normalizedNutrition.protein_g,
+      carbs_g: normalizedNutrition.carbs_g,
+      fat_g: normalizedNutrition.fat_g,
       est_calories_text: finalEstCaloriesText,
       cached: false,
     });
