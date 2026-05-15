@@ -2975,7 +2975,7 @@ private struct MealPlannerShellView: View {
     private var hasLiveSharedImportWork: Bool {
         sharedImportInbox.envelopes.contains { envelope in
             switch envelope.normalizedProcessingState {
-            case "queued", "processing", "fetching", "parsing", "normalized":
+            case "queued", "submitted", "processing", "fetching", "parsing", "normalized":
                 return true
             default:
                 return false

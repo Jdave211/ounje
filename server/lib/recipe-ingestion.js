@@ -1725,6 +1725,49 @@ function shouldContinueRecipeImportDespiteGate(recipeGate, source) {
   return looksLikeRecipeLead && gateRejectedForMissingDetails;
 }
 
+function socialSourceHasFoodIdentity(source) {
+  const sourceType = normalizeText(source?.source_type ?? source?.platform ?? "").toLowerCase();
+  const isSocialSource = ["tiktok", "instagram", "youtube", "shorts", "reel", "social"].some((token) => sourceType.includes(token));
+  if (!isSocialSource) return false;
+
+  const text = [
+    source?.title,
+    source?.description,
+    source?.meta_description,
+    source?.transcript_text,
+  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join("\n");
+
+  if (!text) return false;
+  return /\b(recipe|food|dish|meal|cook|bake|fried|roasted|grilled|cheesy|garlic|rolls?|bread|pizza|pasta|noodles?|rice|bowl|taco|burger|sandwich|chicken|beef|pork|salmon|shrimp|egg|tofu|sauce|dessert|cake|cookie|brownie|soup|stew|salad)\b/i.test(text);
+}
+
+function buildReferenceRecipeQueryFromSocialSource(source) {
+  const candidates = [
+    source?.title,
+    source?.description,
+    source?.meta_description,
+    source?.transcript_text,
+  ].map((value) => normalizeText(value)).filter(Boolean);
+
+  const cleaned = candidates
+    .map((value) => value
+      .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/[@#][\w.-]+/g, " ")
+      .replace(/\b(link in bio|follow for more|full recipe|recipe below|ad|sponsored|promo|promotion|limited time|order now)\b/gi, " ")
+      .replace(/[^\p{L}\p{N}\s'&-]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim())
+    .find((value) => value.split(/\s+/).length >= 2);
+
+  if (!cleaned) return "";
+  const words = cleaned
+    .split(/\s+/)
+    .filter((word) => !/^(the|and|with|for|this|that|from|make|made|easy|best|viral|food|recipe)$/i.test(word))
+    .slice(0, 10);
+  const query = words.join(" ").trim() || cleaned.split(/\s+/).slice(0, 10).join(" ");
+  return normalizeText(`${query} recipe`);
+}
+
 function looksLikeRecipeSearchRequest(text) {
   const normalized = normalizeText(text);
   if (!normalized || isProbablyURL(normalized)) return false;
@@ -6489,6 +6532,9 @@ async function synthesizeRecipeFromRecipeSearch(source) {
               : null,
           }))),
           "",
+          "Nutrition requirement:",
+          "Always provide conservative per-serving calories_kcal, protein_g, carbs_g, fat_g, and est_calories_text for app display. Use cited source nutrition when present; otherwise infer from the synthesized ingredients and servings.",
+          "",
           "Return a JSON object with:",
           JSON.stringify({
             recipe: {
@@ -6500,6 +6546,11 @@ async function synthesizeRecipeFromRecipeSearch(source) {
               cook_time_text: "string|null",
               prep_time_minutes: "number|null",
               cook_time_minutes: "number|null",
+              est_calories_text: "string|null",
+              calories_kcal: "number|null",
+              protein_g: "number|null",
+              carbs_g: "number|null",
+              fat_g: "number|null",
               hero_image_url: "string|null",
               discover_card_image_url: "string|null",
               ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
@@ -8736,7 +8787,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     }
 
     const resumedSourceArtifact = await fetchLatestJobArtifact(existingJob.id, "source_evidence_bundle").catch(() => null);
-    const source = resumedSourceArtifact?.raw_json && existingJob.fetched_at
+    let source = resumedSourceArtifact?.raw_json && existingJob.fetched_at
       ? {
           ...(resumedSourceArtifact.raw_json ?? {}),
           source_provenance_json: resumedSourceArtifact.raw_json,
@@ -8813,7 +8864,95 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
         },
       }).catch(() => {});
       if (!recipeGate.is_recipe) {
-        if (shouldContinueRecipeImportDespiteGate(recipeGate, source)) {
+        if (socialSourceHasFoodIdentity(source)) {
+          const referenceQuery = buildReferenceRecipeQueryFromSocialSource(source);
+          let referenceSource = null;
+          if (referenceQuery) {
+            referenceSource = await extractRecipeSearchSource(referenceQuery, [], {
+              source,
+              jobID: existingJob.id,
+            }).catch((error) => ({
+              source_type: "recipe_search",
+              platform: "web_search_from_social_reference",
+              source_url: null,
+              canonical_url: null,
+              raw_text: referenceQuery,
+              title: referenceQuery.replace(/\s+recipe$/i, ""),
+              description: null,
+              hero_image_url: source.hero_image_url ?? source.thumbnail_url ?? null,
+              discover_card_image_url: source.hero_image_url ?? source.thumbnail_url ?? null,
+              attachments: [],
+              recipe_sources: [],
+              source_provenance_json: buildSourceProvenanceRecord({
+                source_type: "recipe_search",
+                platform: "web_search_from_social_reference",
+                title: referenceQuery,
+              }, {
+                evidenceBundle: {
+                  query: referenceQuery,
+                  original_social_gate: recipeGate,
+                  search_error: errorSummary(error),
+                },
+              }),
+              artifacts: [],
+            }));
+          }
+
+          if (referenceSource) {
+            source = {
+              ...referenceSource,
+              platform: "web_search_from_social_reference",
+              original_social_source: {
+                source_type: source.source_type ?? null,
+                platform: source.platform ?? null,
+                source_url: source.source_url ?? null,
+                canonical_url: source.canonical_url ?? null,
+                title: source.title ?? null,
+                description: source.description ?? source.meta_description ?? null,
+                author_name: source.author_name ?? null,
+                author_handle: source.author_handle ?? null,
+                recipe_gate: recipeGate,
+              },
+            };
+            job = await appendJobEvent(existingJob.id, "not_recipe_converted_to_reference_recipe", {
+              worker_id: workerID,
+              reason: recipeGate.reason,
+              confidence: recipeGate.confidence,
+              method: recipeGate.method,
+              reference_query: referenceQuery,
+              reference_count: Array.isArray(referenceSource.recipe_sources) ? referenceSource.recipe_sources.length : 0,
+            }, {
+              quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "social_reference_recipe"]),
+            });
+          } else if (shouldContinueRecipeImportDespiteGate(recipeGate, source)) {
+            job = await appendJobEvent(existingJob.id, "not_recipe_gate_overridden", {
+              worker_id: workerID,
+              reason: recipeGate.reason,
+              confidence: recipeGate.confidence,
+              method: recipeGate.method,
+            }, {
+              quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "recipe_lead_gate_override"]),
+            });
+          } else {
+            const completedAt = nowIso();
+            job = await appendJobEvent(existingJob.id, "failed_not_recipe", {
+              worker_id: workerID,
+              reason: recipeGate.reason,
+              confidence: recipeGate.confidence,
+              method: recipeGate.method,
+            }, {
+              status: "failed",
+              canonical_url: source.canonical_url ?? requestPayload.source_url,
+              fetched_at: nowIso(),
+              completed_at: completedAt,
+              error_message: "Source does not appear to be a recipe.",
+              review_state: "needs_review",
+              review_reason: recipeGate.reason,
+              quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "not_recipe"]),
+            });
+            return formatJobResponse(job);
+          }
+        } else if (shouldContinueRecipeImportDespiteGate(recipeGate, source)) {
           job = await appendJobEvent(existingJob.id, "not_recipe_gate_overridden", {
             worker_id: workerID,
             reason: recipeGate.reason,

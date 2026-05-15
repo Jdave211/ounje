@@ -6,6 +6,8 @@ import UserNotifications
 /// not expose the `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`
 /// callback.
 final class OunjeAppDelegate: NSObject, UIApplicationDelegate {
+    private var shareImportBackgroundDelegates: [String: OunjeShareImportBackgroundSessionDelegate] = [:]
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -50,6 +52,48 @@ final class OunjeAppDelegate: NSObject, UIApplicationDelegate {
             userInfo: userInfo
         )
         completionHandler(.newData)
+    }
+
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard identifier.hasPrefix("net.ounje.share-import.") else {
+            completionHandler()
+            return
+        }
+
+        let delegate = OunjeShareImportBackgroundSessionDelegate { [weak self] in
+            completionHandler()
+            self?.shareImportBackgroundDelegates.removeValue(forKey: identifier)
+            NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
+        }
+        shareImportBackgroundDelegates[identifier] = delegate
+
+        let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
+        configuration.sharedContainerIdentifier = SharedRecipeImportConstants.appGroupID
+        configuration.sessionSendsLaunchEvents = true
+        _ = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+    }
+}
+
+private final class OunjeShareImportBackgroundSessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDelegate {
+    private let completionHandler: () -> Void
+
+    init(completionHandler: @escaping () -> Void) {
+        self.completionHandler = completionHandler
+        super.init()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error {
+            print("[ShareImportBackground] upload failed:", error.localizedDescription)
+        }
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        completionHandler()
     }
 }
 
