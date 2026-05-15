@@ -26,12 +26,18 @@ final class OunjePushTokenRegistrar {
     private let lastRegisteredAtKey = "ounje.apns.lastRegisteredAt"
     private let registrationRefreshInterval: TimeInterval = 6 * 60 * 60
 
+    private struct PendingTokenWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<String?, Never>
+    }
+
     /// Provides the current AuthSession when the registrar needs to ship a
     /// token. Wired by `OunjeAppScene` so we don't have to import the full
     /// store into the registrar's module.
     var sessionProvider: (() async -> AuthSession?)?
 
     private var pendingTokenString: String?
+    private var pendingTokenWaiters: [PendingTokenWaiter] = []
 
     /// Called by `OunjeAppDelegate` when iOS delivers the device token.
     nonisolated func handleRegistered(tokenString: String) {
@@ -62,8 +68,9 @@ final class OunjePushTokenRegistrar {
     @discardableResult
     func registerCurrentTokenIfPossibleNow(session: AuthSession?, force: Bool = false) async -> Bool {
         guard let session else { return false }
-        let cached = pendingTokenString ?? UserDefaults.standard.string(forKey: tokenStorageKey)
-        guard let token = cached, !token.isEmpty else { return false }
+        let existingToken = pendingTokenString ?? UserDefaults.standard.string(forKey: tokenStorageKey)
+        let refreshed = force ? await requestFreshRemoteNotificationToken() : nil
+        guard let token = refreshed ?? existingToken, !token.isEmpty else { return false }
         let lastUserID = UserDefaults.standard.string(forKey: lastRegisteredSessionKey)
         let lastRegisteredAt = UserDefaults.standard.object(forKey: lastRegisteredAtKey) as? Date
         if !force,
@@ -78,12 +85,37 @@ final class OunjePushTokenRegistrar {
     private func persistAndPostIfReady(tokenString: String) async {
         pendingTokenString = tokenString
         UserDefaults.standard.set(tokenString, forKey: tokenStorageKey)
+        resumePendingTokenWaiters(with: tokenString)
 
         guard let session = await sessionProvider?(),
               !session.userID.isEmpty,
               !(session.accessToken ?? "").isEmpty
         else { return }
         _ = await post(token: tokenString, session: session)
+    }
+
+    private func requestFreshRemoteNotificationToken(timeout: TimeInterval = 4) async -> String? {
+        await withCheckedContinuation { continuation in
+            let id = UUID()
+            pendingTokenWaiters.append(PendingTokenWaiter(id: id, continuation: continuation))
+            UIApplication.shared.registerForRemoteNotifications()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                Task { @MainActor in
+                    guard let self,
+                          let index = self.pendingTokenWaiters.firstIndex(where: { $0.id == id })
+                    else { return }
+                    let waiter = self.pendingTokenWaiters.remove(at: index)
+                    waiter.continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private func resumePendingTokenWaiters(with tokenString: String) {
+        let waiters = pendingTokenWaiters
+        pendingTokenWaiters.removeAll()
+        waiters.forEach { $0.continuation.resume(returning: tokenString) }
     }
 
     @discardableResult

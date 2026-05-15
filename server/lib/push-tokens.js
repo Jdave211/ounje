@@ -107,6 +107,7 @@ export async function pushToUser({
   threadId = null,
   userInfo = {},
   limitLatest = false,
+  maxTokens = null,
 }) {
   const normalizedUserId = normalize(userId);
   if (!normalizedUserId) return [];
@@ -121,6 +122,8 @@ export async function pushToUser({
       .order("last_seen_at", { ascending: false });
     if (limitLatest) {
       query = query.limit(1);
+    } else if (Number.isInteger(maxTokens) && maxTokens > 0) {
+      query = query.limit(maxTokens);
     }
     const { data, error } = await query;
     if (error) throw error;
@@ -235,6 +238,6 @@ export async function pushTestNotificationToLatestDevice({ userId }) {
       deep_link: "ounje://notifications",
       action_url: "ounje://notifications",
     },
-    limitLatest: true,
+    maxTokens: 5,
   });
 }

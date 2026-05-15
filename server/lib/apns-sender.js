@@ -25,10 +25,10 @@
 import crypto from "node:crypto";
 import http2 from "node:http2";
 
-const APNS_KEY_ID = process.env.APNS_KEY_ID ?? "";
-const APNS_TEAM_ID = process.env.APNS_TEAM_ID ?? "";
-const APNS_BUNDLE_ID = process.env.APNS_BUNDLE_ID ?? "";
-const APNS_KEY_BASE64 = process.env.APNS_KEY_BASE64 ?? "";
+const APNS_KEY_ID = String(process.env.APNS_KEY_ID ?? "").trim();
+const APNS_TEAM_ID = String(process.env.APNS_TEAM_ID ?? "").trim();
+const APNS_BUNDLE_ID = String(process.env.APNS_BUNDLE_ID ?? "").trim();
+const APNS_KEY_BASE64 = String(process.env.APNS_KEY_BASE64 ?? "").trim();
 const APNS_TOPIC = APNS_TEAM_ID && APNS_BUNDLE_ID.startsWith(`${APNS_TEAM_ID}.`)
   ? APNS_BUNDLE_ID.slice(APNS_TEAM_ID.length + 1)
   : APNS_BUNDLE_ID;
@@ -136,18 +136,20 @@ export async function sendApnsNotification({
   userInfo = {},
 }) {
   const topic = APNS_TOPIC;
+  const normalizedEnvironment = environment === "sandbox" ? "sandbox" : "production";
+  const normalizedToken = String(token ?? "").trim().replace(/\s+/g, "");
   if (!isApnsConfigured()) {
-    return { ok: false, reason: "apns_not_configured", topic };
+    return { ok: false, reason: "apns_not_configured", topic, environment: normalizedEnvironment };
   }
-  if (!token || !title || !body) {
-    return { ok: false, reason: "missing_parameters", topic };
+  if (!normalizedToken || !title || !body) {
+    return { ok: false, reason: "missing_parameters", topic, environment: normalizedEnvironment };
   }
 
   const jwt = mintJwt();
-  if (!jwt) return { ok: false, reason: "jwt_failed", topic };
+  if (!jwt) return { ok: false, reason: "jwt_failed", topic, environment: normalizedEnvironment };
 
-  const host = environment === "sandbox" ? SANDBOX_HOST : PRODUCTION_HOST;
-  const path = `/3/device/${token}`;
+  const host = normalizedEnvironment === "sandbox" ? SANDBOX_HOST : PRODUCTION_HOST;
+  const path = `/3/device/${normalizedToken}`;
   const payload = JSON.stringify({
     aps: {
       alert: subtitle ? { title, subtitle, body } : { title, body },
@@ -170,7 +172,7 @@ export async function sendApnsNotification({
     };
 
     client.on("error", (err) => {
-      safeResolve({ ok: false, reason: `http2_error:${err.message}` });
+      safeResolve({ ok: false, reason: `http2_error:${err.message}`, topic, environment: normalizedEnvironment });
     });
 
     const request = client.request({
@@ -193,18 +195,18 @@ export async function sendApnsNotification({
     request.on("data", (chunk) => { responseBody += chunk.toString(); });
     request.on("end", () => {
       if (status >= 200 && status < 300) {
-        safeResolve({ ok: true, status, topic });
+        safeResolve({ ok: true, status, topic, environment: normalizedEnvironment });
       } else {
         let reason = `apns_${status}`;
         try {
           const parsed = JSON.parse(responseBody);
           if (parsed?.reason) reason = parsed.reason;
         } catch (_) { /* keep generic reason */ }
-        safeResolve({ ok: false, status, reason, topic });
+        safeResolve({ ok: false, status, reason, topic, environment: normalizedEnvironment });
       }
     });
     request.on("error", (err) => {
-      safeResolve({ ok: false, reason: `req_error:${err.message}` });
+      safeResolve({ ok: false, reason: `req_error:${err.message}`, topic, environment: normalizedEnvironment });
     });
 
     request.end(payload);
