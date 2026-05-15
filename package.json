@@ -18,7 +18,7 @@
     "recipes:classify-discover": "node server/scripts/classify_discover_brackets.mjs",
     "recipes:backfill-measurements": "node server/scripts/backfill_recipe_measurements.mjs",
     "recipes:ingestion-worker": "node server/scripts/recipe_ingestion_worker.mjs",
-    "recipes:ingestion-worker:vm": "node server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 1 --wake-mode redis --wake-timeout-ms 900000",
+    "recipes:ingestion-worker:vm": "node server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 1 --wake-mode redis --wake-timeout-ms 60000",
     "recipes:ingestion-once": "node server/scripts/recipe_ingestion_worker.mjs --once",
     "recipes:ingestion-health": "node server/scripts/check_recipe_ingestion_worker_health.mjs",
     "recipes:ingestion-repair-stale": "node server/scripts/repair_stale_recipe_ingestion_jobs.mjs",

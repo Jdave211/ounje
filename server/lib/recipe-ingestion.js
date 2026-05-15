@@ -70,6 +70,10 @@ const SOCIAL_FETCH_TIMEOUT_MS = Math.max(
   3_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FETCH_TIMEOUT_MS ?? "10000", 10) || 10_000
 );
+const IMPORT_ENQUEUE_CANONICAL_RESOLVE_TIMEOUT_MS = Math.max(
+  750,
+  Number.parseInt(process.env.RECIPE_IMPORT_ENQUEUE_CANONICAL_TIMEOUT_MS ?? "3000", 10) || 3_000
+);
 const SOCIAL_FRAME_PROBE_TIMEOUT_MS = Math.max(
   2_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_PROBE_TIMEOUT_MS ?? "5000", 10) || 5_000
@@ -1094,6 +1098,41 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   return normalized;
 }
 
+async function expandCanonicalSourceURLForEnqueue(sourceURL, sourceType = null) {
+  const normalized = cleanURL(sourceURL);
+  if (!normalized) return null;
+
+  const host = hostForURL(normalized);
+  const loweredSourceType = normalizeText(sourceType).toLowerCase();
+  const isTikTok = loweredSourceType === "tiktok" || host.includes("tiktok.com");
+  if (!isTikTok) return normalized;
+
+  const canonicalCacheKey = sourceMetadataCacheKey("canonical-url", normalized);
+  const cachedCanonical = await readRedisJSON(canonicalCacheKey);
+  if (cachedCanonical?.canonical_url) {
+    return cachedCanonical.canonical_url;
+  }
+
+  try {
+    const response = await fetchWithTimeout(normalized, {
+      redirect: "follow",
+      headers: {
+        "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      },
+    }, IMPORT_ENQUEUE_CANONICAL_RESOLVE_TIMEOUT_MS, "TikTok enqueue redirect resolve");
+
+    const redirected = cleanURL(response.url ?? normalized);
+    if (redirected && redirected !== normalized) {
+      void writeRedisJSON(canonicalCacheKey, { canonical_url: redirected }, SOURCE_METADATA_CACHE_TTL_SECONDS);
+      return redirected;
+    }
+  } catch {
+    return normalized;
+  }
+
+  return normalized;
+}
+
 function buildDedupeKey({ sourceUrl = null, canonicalUrl = null, sourceText = null }) {
   const candidate = canonicalImportIdentityForRequest({ sourceUrl, canonicalUrl })
     || cleanURL(canonicalUrl)
@@ -1832,16 +1871,27 @@ function shouldContinueRecipeImportDespiteGate(recipeGate, source) {
   if (!isSocialSource) return false;
 
   const reason = normalizeText(recipeGate?.reason ?? "").toLowerCase();
-  const text = [
-    source?.title,
-    source?.description,
-    source?.meta_description,
-    source?.transcript_text,
-  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join("\n");
+  const text = socialRecipeRecoveryText(source);
 
   const looksLikeRecipeLead = /\b(recipe|ingredients?|method|cook|bake|meal prep|protein|calories|macros?)\b/i.test(text);
   const gateRejectedForMissingDetails = /\b(no actual recipe content|no ingredients?|no steps?|promotion|promotional|full recipe|recipe link|link in bio)\b/i.test(reason);
   return looksLikeRecipeLead && gateRejectedForMissingDetails;
+}
+
+function socialRecipeRecoveryText(source) {
+  return [
+    source?.title,
+    source?.description,
+    source?.meta_description,
+    source?.caption_text,
+    source?.raw_text,
+    source?.body_text,
+    source?.transcript_text,
+    source?.page_signals_summary?.title,
+    source?.page_signals_summary?.meta_title,
+    source?.page_signals_summary?.meta_description,
+    summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], { maxFrames: 4, textLimit: 700 }),
+  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join("\n");
 }
 
 function socialSourceHasFoodIdentity(source) {
@@ -1849,12 +1899,7 @@ function socialSourceHasFoodIdentity(source) {
   const isSocialSource = ["tiktok", "instagram", "youtube", "shorts", "reel", "social"].some((token) => sourceType.includes(token));
   if (!isSocialSource) return false;
 
-  const text = [
-    source?.title,
-    source?.description,
-    source?.meta_description,
-    source?.transcript_text,
-  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join("\n");
+  const text = socialRecipeRecoveryText(source);
 
   if (!text) return false;
   return /\b(recipe|food|dish|meal|cook|bake|fried|roasted|grilled|cheesy|garlic|rolls?|bread|pizza|pasta|noodles?|rice|bowl|taco|burger|sandwich|chicken|beef|pork|salmon|shrimp|egg|tofu|sauce|dessert|cake|cookie|brownie|soup|stew|salad)\b/i.test(text);
@@ -1862,21 +1907,27 @@ function socialSourceHasFoodIdentity(source) {
 
 function buildReferenceRecipeQueryFromSocialSource(source) {
   const candidates = [
-    source?.title,
+    source?.caption_text,
+    source?.raw_text,
     source?.description,
     source?.meta_description,
+    source?.body_text,
     source?.transcript_text,
+    summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], { maxFrames: 2, textLimit: 350 }),
+    source?.title,
   ].map((value) => normalizeText(value)).filter(Boolean);
 
   const cleaned = candidates
     .map((value) => value
       .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/\btiktok\s*[-–—]?\s*make your day\b/gi, " ")
+      .replace(/\btiktok\s*[-–—]?\s*your day\b/gi, " ")
       .replace(/[@#][\w.-]+/g, " ")
       .replace(/\b(link in bio|follow for more|full recipe|recipe below|ad|sponsored|promo|promotion|limited time|order now)\b/gi, " ")
       .replace(/[^\p{L}\p{N}\s'&-]/gu, " ")
       .replace(/\s+/g, " ")
       .trim())
-    .find((value) => value.split(/\s+/).length >= 2);
+    .find((value) => value.split(/\s+/).length >= 2 && !/^tiktok\b/i.test(value));
 
   if (!cleaned) return "";
   const words = cleaned
@@ -1885,6 +1936,33 @@ function buildReferenceRecipeQueryFromSocialSource(source) {
     .slice(0, 10);
   const query = words.join(" ").trim() || cleaned.split(/\s+/).slice(0, 10).join(" ");
   return normalizeText(`${query} recipe`);
+}
+
+function mergePreviousGateEvidenceIntoSource(source, gateArtifact) {
+  const previousText = normalizeText(gateArtifact?.raw_json?.signals?.combinedText ?? "");
+  if (!previousText) return source;
+
+  const currentRecoveryText = socialRecipeRecoveryText(source);
+  if (currentRecoveryText.includes(previousText.toLowerCase().slice(0, 120))) {
+    return source;
+  }
+
+  const firstLine = previousText
+    .split("\n")
+    .map((line) => normalizeText(line))
+    .find(Boolean);
+  const currentDescription = normalizeText(source?.description ?? source?.meta_description ?? "");
+  const genericDescription = /\btiktok\s*[-–—]?\s*(make\s+)?your day\b/i.test(currentDescription);
+
+  return {
+    ...source,
+    raw_text: [previousText, source?.raw_text].map((value) => normalizeText(value)).filter(Boolean).join("\n"),
+    description: genericDescription ? (firstLine || currentDescription || null) : (currentDescription || firstLine || source?.description || null),
+    source_provenance_json: {
+      ...(source?.source_provenance_json ?? {}),
+      recovered_gate_text: true,
+    },
+  };
 }
 
 function looksLikeRecipeSearchRequest(text) {
@@ -2850,6 +2928,26 @@ async function fetchLatestJobArtifact(jobID, artifactType) {
   return rows[0] ?? null;
 }
 
+async function fetchLatestJobArtifactWithCombinedText(jobID, artifactType) {
+  if (!jobID || !artifactType) return null;
+  const rows = await fetchRows(
+    "recipe_ingestion_artifacts",
+    "id,job_id,artifact_type,content_type,source_url,text_content,raw_json,metadata,created_at",
+    {
+      filters: [
+        `job_id=eq.${encodeURIComponent(jobID)}`,
+        `artifact_type=eq.${encodeURIComponent(artifactType)}`,
+      ],
+      order: ["created_at.desc"],
+      limit: 8,
+    }
+  );
+  return rows.find((row) => socialSourceHasFoodIdentity({
+    source_type: "social",
+    raw_text: row?.raw_json?.signals?.combinedText ?? "",
+  })) ?? rows.find((row) => normalizeText(row?.raw_json?.signals?.combinedText ?? "")) ?? rows[0] ?? null;
+}
+
 function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
   const requestPayload = jobRow?.request_payload && typeof jobRow.request_payload === "object"
     ? jobRow.request_payload
@@ -2967,7 +3065,7 @@ export async function listRecipeImportQueueItems({ userID = null, limit = null }
 
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,created_at,updated_at",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,created_at,updated_at",
     {
       filters,
       order: ["updated_at.desc", "created_at.desc"],
@@ -2975,9 +3073,24 @@ export async function listRecipeImportQueueItems({ userID = null, limit = null }
     }
   );
 
+  const visibleRows = [];
+  for (const row of rows) {
+    if (normalizeText(row.status).toLowerCase() === "failed") {
+      const completedDuplicate = await findCompletedCanonicalImportForRequest(row, {
+        canonicalURL: row.canonical_url ?? row.source_url ?? null,
+        dedupeKey: row.dedupe_key ?? null,
+        excludeJobID: row.id,
+      }).catch(() => null);
+      if (completedDuplicate) {
+        continue;
+      }
+    }
+    visibleRows.push(row);
+  }
+
   return {
-    items: rows.map(summarizeRecipeImportQueueJob),
-    totalCount,
+    items: visibleRows.map(summarizeRecipeImportQueueJob),
+    totalCount: Math.max(0, totalCount - (rows.length - visibleRows.length)),
   };
 }
 
@@ -3550,6 +3663,16 @@ async function createCompletedJobRowFromExistingJob(request, job, { dedupeKey = 
 
 async function createJobRow(request) {
   const jobID = `ri_${nanoid(14)}`;
+  const enqueueCanonicalURL = await expandCanonicalSourceURLForEnqueue(
+    request.source_url ?? request.canonical_url ?? null,
+    request.source_type
+  ).catch(() => null);
+  if (enqueueCanonicalURL) {
+    request = {
+      ...request,
+      canonical_url: enqueueCanonicalURL,
+    };
+  }
   const photoAttachmentKey = request.source_type === "media_image"
     ? (request.attachments ?? [])
         .map((attachment) => [
@@ -9145,6 +9268,8 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     }
 
     if (!hasResumableNormalizedRecipe && ["tiktok", "instagram", "youtube", "media_video"].includes(source.source_type)) {
+      const previousGateArtifact = await fetchLatestJobArtifactWithCombinedText(existingJob.id, "recipe_gate_assessment").catch(() => null);
+      source = mergePreviousGateEvidenceIntoSource(source, previousGateArtifact);
       const recipeGate = await assessRecipeLikelihood(source);
       await storeArtifact(existingJob.id, {
         artifact_type: "recipe_gate_assessment",

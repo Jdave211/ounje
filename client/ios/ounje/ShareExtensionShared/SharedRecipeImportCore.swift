@@ -52,6 +52,11 @@ enum SharedRecipeImportInbox {
         let now = Date()
         let staleStates: Set<String> = ["submitted", "processing", "fetching", "parsing", "normalized"]
         for envelope in all where staleStates.contains(envelope.normalizedProcessingState) {
+            let jobID = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !jobID.isEmpty {
+                continue
+            }
+
             let ref = envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
             guard now.timeIntervalSince(ref) >= seconds else { continue }
             let failed = SharedRecipeImportEnvelope(
@@ -68,9 +73,7 @@ enum SharedRecipeImportInbox {
                 attemptCount: envelope.attemptCount,
                 lastAttemptAt: envelope.lastAttemptAt,
                 serverSubmittedAt: envelope.serverSubmittedAt,
-                lastError: envelope.jobID == nil
-                    ? "Import handoff was interrupted. Tap Retry imports."
-                    : "Import timed out on the server. Tap Retry imports.",
+                lastError: "Import handoff was interrupted. Tap Retry imports.",
                 updatedAt: Date()
             )
             try update(failed)
