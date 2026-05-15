@@ -762,9 +762,22 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
     private static func macroDisplayText(from rawValue: String?) -> String? {
         let trimmed = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmed.isEmpty else { return nil }
-        return trimmed
+        let cleaned = trimmed
             .replacingOccurrences(of: #"\s*\(\s*\d+(?:\.\d+)?\s*%\s*\)"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*\([^)]*\bestimat(?:e|ed|es|ing)[^)]*\)"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\b(?:approximately|approx\.?|estimated|estimate)\b"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\bper\s+(?:serving|portion|plate)\b"#, with: "", options: [.regularExpression, .caseInsensitive])
             .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let compact = cleaned.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+        if compact.range(of: #"^\d+(?:\.\d+)?g$"#, options: .regularExpression) != nil {
+            return compact
+        }
+        if let match = cleaned.range(of: #"\d+(?:\.\d+)?"#, options: .regularExpression),
+           let value = Double(cleaned[match]) {
+            return "\(value.roundedString(0))g"
+        }
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     private static func normalizedImageURL(from rawValue: String?) -> URL? {
