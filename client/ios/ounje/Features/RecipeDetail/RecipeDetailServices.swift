@@ -564,31 +564,17 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
     }
 
     var detailsGrid: [RecipeDetailMetric] {
-        let primaryValues: [RecipeDetailMetric?] = [
-            RecipeDetailMetric(title: "Cook Time", value: compactCookTime),
-            RecipeDetailMetric(title: "Servings", value: "\(displayServings)"),
-            caloriesDisplayText.map { RecipeDetailMetric(title: "Calories", value: $0) },
-            (Self.macroDisplayText(from: proteinText) ?? proteinG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Protein", value: $0) },
-            (Self.macroDisplayText(from: carbsText) ?? carbsG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Carbs", value: $0) },
-            (Self.macroDisplayText(from: fatsText) ?? fatG.map { "\($0.roundedString(0))g" }).map { RecipeDetailMetric(title: "Fats", value: $0) },
-            (recipeType ?? category ?? subcategory).map { RecipeDetailMetric(title: "Type", value: $0.capitalized) },
-            (cuisineTags.first ?? category ?? subcategory).map { RecipeDetailMetric(title: "Cuisine", value: $0) },
-            sourceDisplayLine.map { RecipeDetailMetric(title: "Source", value: $0) }
+        [
+            RecipeDetailMetric(title: "Cooktime", value: nonEmptyMetricValue(compactCookTime)),
+            RecipeDetailMetric(title: "Serving", value: "\(displayServings)"),
+            RecipeDetailMetric(title: "Calories", value: nonEmptyMetricValue(caloriesDisplayText)),
+            RecipeDetailMetric(title: "Protein", value: nonEmptyMetricValue(proteinDisplayText)),
+            RecipeDetailMetric(title: "Carbs", value: nonEmptyMetricValue(carbsDisplayText)),
+            RecipeDetailMetric(title: "Fats", value: nonEmptyMetricValue(fatsDisplayText)),
+            RecipeDetailMetric(title: "Type", value: nonEmptyMetricValue((recipeType ?? category ?? subcategory)?.capitalized)),
+            RecipeDetailMetric(title: "Cuisine", value: nonEmptyMetricValue(cuisineTags.first ?? category ?? subcategory)),
+            RecipeDetailMetric(title: "Source", value: nonEmptyMetricValue(sourceMetricText))
         ]
-
-        let fallbackValues: [RecipeDetailMetric?] = [
-            skillLevel.map { RecipeDetailMetric(title: "Skill", value: $0) },
-            (cookMethod ?? mainProtein).map { RecipeDetailMetric(title: "Method", value: $0) },
-            (dailyDietText ?? dietaryTags.first).map { RecipeDetailMetric(title: "Diet", value: $0) },
-            occasionTags.first.map { RecipeDetailMetric(title: "Occasion", value: $0) },
-            estCostText.map { RecipeDetailMetric(title: "Est. Cost", value: $0) }
-        ]
-
-        return (primaryValues + fallbackValues)
-            .compactMap { $0 }
-            .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.value != "—" }
-            .prefix(9)
-            .map { $0 }
     }
 
     var hasCompleteDisplayMacros: Bool {
@@ -598,8 +584,8 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
             && fatG != nil
     }
 
-    var shouldRefreshImportedMacros: Bool {
-        id.hasPrefix("uir_") && !hasCompleteDisplayMacros
+    var shouldRefreshDisplayMacros: Bool {
+        !hasCompleteDisplayMacros
     }
 
     func replacingMacros(
@@ -742,6 +728,34 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
             return nil
         }
         return "\(parsed) kcal"
+    }
+
+    private var proteinDisplayText: String? {
+        Self.macroDisplayText(from: proteinText) ?? proteinG.map { "\($0.roundedString(0))g" }
+    }
+
+    private var carbsDisplayText: String? {
+        Self.macroDisplayText(from: carbsText) ?? carbsG.map { "\($0.roundedString(0))g" }
+    }
+
+    private var fatsDisplayText: String? {
+        Self.macroDisplayText(from: fatsText) ?? fatG.map { "\($0.roundedString(0))g" }
+    }
+
+    private var sourceMetricText: String? {
+        if let sourceDisplayLine { return sourceDisplayLine }
+        if let sourcePlatform, !sourcePlatform.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return sourcePlatform
+        }
+        if let source = source?.trimmingCharacters(in: .whitespacesAndNewlines), !source.isEmpty {
+            return source.caseInsensitiveCompare("withjulienne") == .orderedSame ? "Julienne" : source.capitalized
+        }
+        return nil
+    }
+
+    private func nonEmptyMetricValue(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "—" : trimmed
     }
 
     private static func macroDisplayText(from rawValue: String?) -> String? {
@@ -1325,13 +1339,11 @@ actor RecipeDetailService {
     }
 
     private func shouldUseCachedDetail(_ detail: RecipeDetailData, accessToken: String?) -> Bool {
-        guard detail.shouldRefreshImportedMacros else { return true }
-        let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return token.isEmpty
+        !detail.shouldRefreshDisplayMacros
     }
 
     private func fetchRecipeDetailUncached(id: String, accessToken: String? = nil) async throws -> RecipeDetailData {
-        if let cached = cache[id] {
+        if let cached = cache[id], shouldUseCachedDetail(cached, accessToken: accessToken) {
             return cached
         }
 

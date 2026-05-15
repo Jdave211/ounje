@@ -47,7 +47,7 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
         case "failed":
             return "Retry needed"
         case "queued":
-            return (attemptCount ?? 0) > 0 ? "Queued on server" : "Queued"
+            return (jobID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? "Queued on server" : "Queued"
         case "submitted":
             return "Sending to server"
         case "processing":
@@ -81,7 +81,7 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
 
         if state == "submitted" {
             let referenceDate = lastAttemptAt ?? updatedAt ?? createdAt
-            return Date().timeIntervalSince(referenceDate) >= 5 * 60
+            return Date().timeIntervalSince(referenceDate) >= 15
         }
 
         let referenceDate = lastAttemptAt ?? updatedAt ?? createdAt

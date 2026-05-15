@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 final class OunjeShareViewController: UIViewController {
+    private static let quickBackendSubmitTimeout: TimeInterval = 6
+
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let previewLabel = UILabel()
@@ -155,30 +157,34 @@ final class OunjeShareViewController: UIViewController {
                 await Self.sendQueuedNotificationIfAllowed(for: envelope)
 
                 if let authSession = self.sharedAuthSession() {
-                    do {
-                        try await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
-                        let submitted = SharedRecipeImportEnvelope(
-                            id: envelope.id,
-                            createdAt: envelope.createdAt,
-                            jobID: envelope.jobID,
-                            targetState: envelope.targetState,
-                            sourceText: envelope.sourceText,
-                            sourceURLString: envelope.sourceURLString,
-                            canonicalSourceURLString: envelope.canonicalSourceURLString,
-                            sourceApp: envelope.sourceApp,
-                            attachments: envelope.attachments,
-                            processingState: "submitted",
-                            attemptCount: max(envelope.attemptCount ?? 0, 1),
-                            lastAttemptAt: Date(),
-                            lastError: nil,
-                            updatedAt: Date()
-                        )
-                        try? SharedRecipeImportInbox.update(submitted)
-                    } catch {
-                        // If the background upload cannot be scheduled, hand off to
-                        // the containing app so the durable local envelope can be sent.
-                        await MainActor.run {
-                            self.openContainingApp(for: envelope.id)
+                    var backendJobCreated = false
+
+                    if envelope.attachments.isEmpty {
+                        do {
+                            let response = try await self.submitEnvelopeToBackend(
+                                envelope,
+                                authSession: authSession,
+                                timeoutInterval: Self.quickBackendSubmitTimeout
+                            )
+                            try? SharedRecipeImportInbox.update(
+                                self.reconciledEnvelope(envelope, response: response)
+                            )
+                            backendJobCreated = true
+                        } catch {
+                            backendJobCreated = false
+                        }
+                    }
+
+                    if !backendJobCreated {
+                        do {
+                            try await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
+                            try? SharedRecipeImportInbox.update(self.submittedEnvelope(envelope))
+                        } catch {
+                            // If the background upload cannot be scheduled, hand off to
+                            // the containing app so the durable local envelope can be sent.
+                            await MainActor.run {
+                                self.openContainingApp(for: envelope.id)
+                            }
                         }
                     }
 
@@ -461,7 +467,8 @@ final class OunjeShareViewController: UIViewController {
 
     private func submitEnvelopeToBackend(
         _ envelope: SharedRecipeImportEnvelope,
-        authSession: SharedAuthSession
+        authSession: SharedAuthSession,
+        timeoutInterval: TimeInterval = 90
     ) async throws -> RecipeImportResponse {
         let attachments = try await makeRecipeImportAttachmentPayloads(from: envelope.attachments)
         let sourceText = envelope.resolvedSourceText
@@ -474,7 +481,8 @@ final class OunjeShareViewController: UIViewController {
                     envelope: envelope,
                     authSession: authSession,
                     sourceText: sourceText,
-                    attachments: attachments
+                    attachments: attachments,
+                    timeoutInterval: timeoutInterval
                 )
             } catch {
                 lastError = error
@@ -489,7 +497,8 @@ final class OunjeShareViewController: UIViewController {
         envelope: SharedRecipeImportEnvelope,
         authSession: SharedAuthSession,
         sourceText: String,
-        attachments: [RecipeImportAttachmentPayload]
+        attachments: [RecipeImportAttachmentPayload],
+        timeoutInterval: TimeInterval = 90
     ) async throws -> RecipeImportResponse {
         guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
             throw URLError(.badURL)
@@ -500,7 +509,7 @@ final class OunjeShareViewController: UIViewController {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 90
+        request.timeoutInterval = timeoutInterval
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(authSession.userID, forHTTPHeaderField: "x-user-id")
@@ -525,6 +534,52 @@ final class OunjeShareViewController: UIViewController {
         }
 
         return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+    }
+
+    private func submittedEnvelope(_ envelope: SharedRecipeImportEnvelope) -> SharedRecipeImportEnvelope {
+        SharedRecipeImportEnvelope(
+            id: envelope.id,
+            createdAt: envelope.createdAt,
+            jobID: envelope.jobID,
+            targetState: envelope.targetState,
+            sourceText: envelope.sourceText,
+            sourceURLString: envelope.sourceURLString,
+            canonicalSourceURLString: envelope.canonicalSourceURLString,
+            sourceApp: envelope.sourceApp,
+            attachments: envelope.attachments,
+            processingState: "submitted",
+            attemptCount: max(envelope.attemptCount ?? 0, 1),
+            lastAttemptAt: Date(),
+            lastError: nil,
+            updatedAt: Date()
+        )
+    }
+
+    private func reconciledEnvelope(
+        _ envelope: SharedRecipeImportEnvelope,
+        response: RecipeImportResponse
+    ) -> SharedRecipeImportEnvelope {
+        let backendState = response.job.status
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let liveBackendStates = ["queued", "processing", "fetching", "parsing", "normalized"]
+        let localState = liveBackendStates.contains(backendState) ? backendState : "queued"
+        return SharedRecipeImportEnvelope(
+            id: envelope.id,
+            createdAt: envelope.createdAt,
+            jobID: response.job.id,
+            targetState: envelope.targetState,
+            sourceText: envelope.sourceText,
+            sourceURLString: envelope.sourceURLString,
+            canonicalSourceURLString: response.job.canonicalURL ?? response.job.sourceURL ?? envelope.canonicalSourceURLString,
+            sourceApp: envelope.sourceApp,
+            attachments: envelope.attachments,
+            processingState: localState,
+            attemptCount: max(envelope.attemptCount ?? 0, 1),
+            lastAttemptAt: Date(),
+            lastError: nil,
+            updatedAt: Date()
+        )
     }
 
     private func makeRecipeImportAttachmentPayloads(from attachments: [SharedRecipeImportAttachment]) async throws -> [RecipeImportAttachmentPayload] {

@@ -401,7 +401,7 @@ struct RecipeDetailExperienceView: View {
     private var detailMetrics: [RecipeDetailMetric] {
         guard let detail else { return [] }
         return detail.detailsGrid.map { metric in
-            guard metric.title == "Servings" else { return metric }
+            guard metric.title == "Serving" else { return metric }
             return RecipeDetailMetric(title: metric.title, value: "\(max(1, servingsCount))")
         }
     }
@@ -675,7 +675,7 @@ struct RecipeDetailExperienceView: View {
                                         HStack(spacing: 8) {
                                             if showsRecipeSaveAction {
                                                 RecipeDetailCompactActionButton(
-                                                    title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Cookbook",
+                                                    title: savedStore.isSaved(presentedRecipe.recipeCard) ? "Saved" : "Save",
                                                     systemImage: savedStore.isSaved(presentedRecipe.recipeCard) ? "bookmark.fill" : "bookmark",
                                                     compact: true
                                                 ) {
@@ -3738,7 +3738,7 @@ struct RecipeAskInlineResultPanel: View {
                     HStack(spacing: 6) {
                         Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                             .font(.system(size: 12, weight: .semibold))
-                        Text(isSaved ? "Saved" : "Cookbook")
+                        Text(isSaved ? "Saved" : "Save")
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
@@ -4017,7 +4017,7 @@ struct RecipeAdaptationResultSheet: View {
                     HStack(spacing: 8) {
                         Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                             .font(.system(size: 15, weight: .semibold))
-                        Text(isSaved ? "Saved" : "Cookbook")
+                        Text(isSaved ? "Saved" : "Save")
                             .font(.system(size: 16, weight: .semibold))
                     }
                     .foregroundStyle(OunjePalette.primaryText.opacity(isSaved ? 0.72 : 1))
