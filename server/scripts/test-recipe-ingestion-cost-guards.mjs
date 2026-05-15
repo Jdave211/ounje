@@ -9,6 +9,10 @@ const {
   RECIPE_IMPORT_COMPLETION_MODEL,
   RECIPE_INGESTION_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
+  buildDedupeKey,
+  canonicalImportIdentityForURL,
+  guaranteeRecipeDisplayMacros,
+  hasCompleteDisplayMacros,
   isCanonicalCacheableSource,
   isOpenAITerminalModelError,
   isResumableIngestionJob,
@@ -34,6 +38,25 @@ assert.equal(shouldProcessImportInline({ source_url: "https://vt.tiktok.com/exam
 assert.equal(isCanonicalCacheableSource("tiktok", "https://vt.tiktok.com/example"), true);
 assert.equal(isCanonicalCacheableSource("instagram", "https://www.instagram.com/reel/example"), true);
 assert.equal(isCanonicalCacheableSource("web", "https://example.com/recipe"), true);
+assert.equal(hasCompleteDisplayMacros({
+  calories_kcal: null,
+  protein_g: null,
+  carbs_g: null,
+  fat_g: null,
+}), false);
+
+assert.equal(
+  canonicalImportIdentityForURL("https://www.tiktok.com/@xavierbigdd/video/7504813584021622059?_r=1&_t=8wZr"),
+  "tiktok:video:7504813584021622059"
+);
+assert.equal(
+  buildDedupeKey({
+    sourceUrl: "https://www.tiktok.com/@xavierbigdd/video/7504813584021622059?_r=1&_t=8wZr",
+  }),
+  buildDedupeKey({
+    sourceUrl: "https://www.tiktok.com/@xavierbigdd/video/7504813584021622059?_t=different",
+  })
+);
 
 assert.equal(isOpenAITerminalModelError({ status: 400, message: "The model does not exist" }), true);
 assert.equal(isOpenAITerminalModelError({ status: 429, message: "rate limit" }), false);
@@ -107,5 +130,24 @@ assert.equal(recipeNeedsCompletionPass({
     { text: "Finish with lemon butter." },
   ],
 }), true);
+
+const macroGuaranteed = await guaranteeRecipeDisplayMacros({
+  title: "High protein banana brownies",
+  description: "Chocolate protein brownies",
+  servings_text: "4 servings",
+  servings_count: 4,
+  ingredients: [
+    { display_name: "Ripe bananas", quantity_text: "300g" },
+    { display_name: "Whole eggs", quantity_text: "5" },
+    { display_name: "Greek yogurt", quantity_text: "200g" },
+    { display_name: "Cocoa powder", quantity_text: "25g" },
+  ],
+  steps: [
+    { text: "Blend the ingredients." },
+    { text: "Bake until set." },
+  ],
+});
+assert.equal(hasCompleteDisplayMacros(macroGuaranteed), true);
+assert.equal(Number.isFinite(macroGuaranteed.calories_kcal), true);
 
 console.log("recipe ingestion cost guard tests passed");

@@ -712,17 +712,15 @@ struct ProfileSettingsPage: View {
                     ProfileSettingsMenuRowModel(
                         icon: "bell.badge.fill",
                         iconTint: OunjePalette.accent,
-                        title: "Send test notification",
-                        detail: "Requests permission and sends a random local ping",
+                        title: "Send server notification",
+                        detail: "Checks backend APNs delivery for this device",
                         trailingValue: nil,
                         trailingTint: OunjePalette.secondaryText,
                         showsChevron: false,
                         action: {
                             Task {
-                                let scheduled = await notificationCenter.sendRandomTestNotification()
-                                notificationTestAlertMessage = scheduled
-                                    ? "A test notification was scheduled. It should appear in about a second."
-                                    : "Notifications are not allowed for Ounje on this device. Open iOS Settings and enable notifications."
+                                let session = await store.freshUserDataSession()
+                                notificationTestAlertMessage = await notificationCenter.sendServerTestNotification(session: session)
                             }
                         }
                     ),

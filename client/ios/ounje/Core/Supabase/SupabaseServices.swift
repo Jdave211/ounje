@@ -1264,7 +1264,7 @@ final class SupabaseMealPrepCycleService {
     func fetchMealPrepCycles(userID: String, accessToken: String?) async throws -> [MealPlan] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
-                string: "\(SupabaseConfig.url)/rest/v1/meal_prep_cycles?select=plan&user_id=eq.\(encodedUserID)&order=generated_at.desc&limit=12"
+                string: "\(SupabaseConfig.url)/rest/v1/meal_prep_cycles?select=plan&user_id=eq.\(encodedUserID)&order=updated_at.desc&limit=12"
               ) else {
             throw SupabaseMealPrepCyclesError.invalidRequest
         }

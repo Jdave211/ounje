@@ -387,6 +387,7 @@ final class AppNotificationCenterManager: ObservableObject {
             return
         }
         await registerForRemoteNotificationsIfAllowed()
+        OunjePushTokenRegistrar.shared.registerCurrentTokenIfPossible(session: session)
 
         do {
             if let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -567,25 +568,64 @@ final class AppNotificationCenterManager: ObservableObject {
     }
 
     @discardableResult
-    func sendRandomTestNotification() async -> Bool {
+    func sendServerTestNotification(session: AuthSession?) async -> String {
         await ensureLocalNotificationAuthorization()
-        guard canPresentLocalNotifications else { return false }
+        guard canPresentLocalNotifications else {
+            return "Notifications are not allowed for Ounje on this device. Open iOS Settings and enable notifications."
+        }
+        guard let session,
+              !session.userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let accessToken = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !accessToken.isEmpty
+        else {
+            return "Sign in again before testing server notifications."
+        }
 
-        let samples: [(String, String, String)] = [
-            ("Ounje test", "Notifications are allowed on this device.", "ounje://imports"),
-            ("Import check", "A queued-recipe notification can reach you.", "ounje://cookbook/imports"),
-            ("Prep ping", "Local notifications are working from Settings.", "ounje://prep"),
-        ]
-        let sample = samples.randomElement() ?? samples[0]
-        return await scheduleImmediateLocalNotification(
-            identifier: "ounje-test-notification-\(UUID().uuidString)",
-            title: sample.0,
-            body: sample.1,
-            categoryIdentifier: "",
-            threadIdentifier: "ounje-test",
-            deepLink: sample.2,
-            presentWhenForeground: true
-        )
+        let registeredToken = await OunjePushTokenRegistrar.shared.registerCurrentTokenIfPossibleNow(session: session, force: true)
+        guard registeredToken else {
+            return "Ounje could not register this device token with the server yet. Reopen the app after allowing notifications, then try again."
+        }
+
+        guard let url = URL(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/push-tokens/test") else {
+            return "Server notification test URL is invalid."
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(session.userID, forHTTPHeaderField: "x-user-id")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["user_id": session.userID])
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return "Server notification test returned an invalid response."
+            }
+
+            let payload = try? JSONDecoder().decode(ServerPushTestResponse.self, from: data)
+            if (200 ... 299).contains(httpResponse.statusCode), payload?.ok == true {
+                return "Server APNs accepted the test push. If you do not see it, check Focus mode or notification display settings."
+            }
+
+            if let message = payload?.message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
+                return message
+            }
+            let reasons = payload?.results?
+                .compactMap { $0.reason?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .reduce(into: [String]()) { result, reason in
+                    if !result.contains(reason) { result.append(reason) }
+                }
+                .joined(separator: ", ")
+            if let reasons, !reasons.isEmpty {
+                return "Server APNs test failed: \(reasons)."
+            }
+            return "Server notification test failed (\(httpResponse.statusCode))."
+        } catch {
+            return "Server notification test failed: \(error.localizedDescription)"
+        }
     }
 
     private var canPresentLocalNotifications: Bool {
@@ -784,6 +824,18 @@ final class AppNotificationCenterManager: ObservableObject {
             || message.contains("401")
             || message.contains("userauthenticationrequired")
     }
+
+    private struct ServerPushTestResponse: Decodable {
+        let ok: Bool
+        let message: String?
+        let results: [ServerPushTestResult]?
+    }
+
+    private struct ServerPushTestResult: Decodable {
+        let ok: Bool?
+        let status: Int?
+        let reason: String?
+    }
 }
 
 @MainActor
@@ -906,7 +958,10 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
                     canonicalSourceURLString: normalizedCanonicalURL,
                     sourceApp: envelope.sourceApp,
                     attachments: envelope.attachments,
-                    processingState: backendProcessingState.isEmpty ? envelope.normalizedProcessingState : backendProcessingState,
+                    processingState: nonRegressingImportState(
+                        current: envelope.normalizedProcessingState,
+                        incoming: backendProcessingState
+                    ),
                     attemptCount: envelope.attemptCount,
                     lastAttemptAt: envelope.lastAttemptAt,
                     lastError: response.job.errorMessage ?? envelope.lastError,
@@ -925,7 +980,9 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
 @MainActor
 private final class RecipeImportHistoryStore: ObservableObject {
     @Published private(set) var completedItems: [RecipeImportCompletedItem] = []
+    @Published private(set) var backendQueueEnvelopes: [SharedRecipeImportEnvelope] = []
     @Published private(set) var totalCompletedCount: Int = 0
+    @Published private(set) var totalBackendQueueCount: Int = 0
     private var lastRefreshUserID: String?
     private var lastRefreshAt: Date?
     private let passiveRefreshTTL: TimeInterval = 45
@@ -942,7 +999,9 @@ private final class RecipeImportHistoryStore: ObservableObject {
         let trimmedToken = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             completedItems = []
+            backendQueueEnvelopes = []
             totalCompletedCount = 0
+            totalBackendQueueCount = 0
             lastRefreshUserID = nil
             lastRefreshAt = nil
             return
@@ -960,9 +1019,69 @@ private final class RecipeImportHistoryStore: ObservableObject {
             completedItems = page.items
             totalCompletedCount = page.totalCount
         }
+        if let page = try? await RecipeImportAPIService.shared.fetchImportQueue(userID: userID, accessToken: accessToken) {
+            backendQueueEnvelopes = page.items.map(\.sharedImportEnvelope)
+            totalBackendQueueCount = page.totalCount
+        }
         lastRefreshUserID = userID
         lastRefreshAt = .now
     }
+}
+
+private func mergedSharedImportEnvelopes(
+    local: [SharedRecipeImportEnvelope],
+    backend: [SharedRecipeImportEnvelope]
+) -> [SharedRecipeImportEnvelope] {
+    var merged = local
+    var seenKeys = Set<String>()
+
+    func keys(for envelope: SharedRecipeImportEnvelope) -> [String] {
+        [
+            envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            envelope.id.trimmingCharacters(in: .whitespacesAndNewlines),
+            SharedRecipeImportEnvelope.normalizedImportKey(from: envelope.sourceURLString),
+            SharedRecipeImportEnvelope.normalizedImportKey(from: envelope.canonicalSourceURLString)
+        ]
+        .compactMap { raw -> String? in
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+    }
+
+    for envelope in local {
+        keys(for: envelope).forEach { seenKeys.insert($0) }
+    }
+
+    for envelope in backend {
+        let envelopeKeys = keys(for: envelope)
+        guard envelopeKeys.allSatisfy({ !seenKeys.contains($0) }) else { continue }
+        merged.append(envelope)
+        envelopeKeys.forEach { seenKeys.insert($0) }
+    }
+
+    return merged
+}
+
+private func nonRegressingImportState(current: String?, incoming: String?) -> String {
+    let currentState = (current ?? "queued").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let incomingState = (incoming ?? currentState).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !incomingState.isEmpty else { return currentState.isEmpty ? "queued" : currentState }
+    if ["failed", "saved", "draft", "needs_review", "completed_applied"].contains(incomingState) {
+        return incomingState
+    }
+
+    let ranks = [
+        "queued": 0,
+        "submitted": 0,
+        "retryable": 0,
+        "processing": 1,
+        "fetching": 2,
+        "parsing": 3,
+        "normalized": 4
+    ]
+    let currentRank = ranks[currentState] ?? 0
+    let incomingRank = ranks[incomingState] ?? 0
+    return incomingRank >= currentRank ? incomingState : currentState
 }
 
 private extension RecipeImportCompletedItem {
@@ -2915,9 +3034,24 @@ private struct MealPlannerShellView: View {
     }
 
     private var hasQueuedSharedImportWork: Bool {
-        sharedImportInbox.envelopes.contains { envelope in
+        combinedSharedImportEnvelopes.contains { envelope in
             envelope.shouldAutoProcess
         }
+    }
+
+    private var combinedSharedImportEnvelopes: [SharedRecipeImportEnvelope] {
+        mergedSharedImportEnvelopes(
+            local: sharedImportInbox.envelopes,
+            backend: recipeImportHistory.backendQueueEnvelopes
+        )
+    }
+
+    private var combinedSharedImportBadgeCount: Int {
+        combinedSharedImportEnvelopes.count
+    }
+
+    private var combinedQueuedSharedImportCount: Int {
+        combinedSharedImportEnvelopes.filter(\.isLiveQueueState).count
     }
 
     private var cartSupportWarmupKey: String {
@@ -2973,7 +3107,7 @@ private struct MealPlannerShellView: View {
     }
 
     private var hasLiveSharedImportWork: Bool {
-        sharedImportInbox.envelopes.contains { envelope in
+        combinedSharedImportEnvelopes.contains { envelope in
             switch envelope.normalizedProcessingState {
             case "queued", "submitted", "processing", "fetching", "parsing", "normalized":
                 return true
@@ -3178,7 +3312,10 @@ private struct MealPlannerShellView: View {
                             ?? envelope.canonicalSourceURLString,
                         sourceApp: envelope.sourceApp,
                         attachments: envelope.attachments,
-                        processingState: normalizedProcessingState,
+                        processingState: nonRegressingImportState(
+                            current: envelope.normalizedProcessingState,
+                            incoming: normalizedProcessingState
+                        ),
                         attemptCount: visibleAttemptCount,
                         lastAttemptAt: Date(),
                         lastError: nil,
@@ -3665,6 +3802,21 @@ private struct CookbookTabView: View {
         GridItem(.flexible(), spacing: 14, alignment: .top)
     ]
 
+    private var combinedSharedImportEnvelopes: [SharedRecipeImportEnvelope] {
+        mergedSharedImportEnvelopes(
+            local: sharedImportInbox.envelopes,
+            backend: recipeImportHistory.backendQueueEnvelopes
+        )
+    }
+
+    private var combinedSharedImportBadgeCount: Int {
+        combinedSharedImportEnvelopes.count
+    }
+
+    private var combinedQueuedSharedImportCount: Int {
+        combinedSharedImportEnvelopes.filter(\.isLiveQueueState).count
+    }
+
     private var filters: [String] {
         var values = ["All"]
         for value in savedStore.savedRecipes.compactMap(\.filterChipLabel) where !values.contains(value) {
@@ -3998,8 +4150,8 @@ private struct CookbookTabView: View {
                 openImportQueue()
             } label: {
                 PulsingTrayIcon(
-                    count: sharedImportInbox.badgeCount,
-                    isPulsing: sharedImportInbox.queuedCount > 0
+                    count: combinedSharedImportBadgeCount,
+                    isPulsing: combinedQueuedSharedImportCount > 0
                 )
             }
             .buttonStyle(.plain)
@@ -4819,11 +4971,18 @@ private struct SharedRecipeImportQueueSheet: View {
     @State private var hasInitializedCompletedReveal = false
 
     private var queuedItems: [SharedRecipeImportEnvelope] {
-        items.filter(\.isLiveQueueState)
+        allItems.filter(\.isLiveQueueState)
     }
 
     private var failedItems: [SharedRecipeImportEnvelope] {
-        items.filter(\.isRetryNeeded)
+        allItems.filter(\.isRetryNeeded)
+    }
+
+    private var allItems: [SharedRecipeImportEnvelope] {
+        mergedSharedImportEnvelopes(
+            local: items,
+            backend: historyStore.backendQueueEnvelopes
+        )
     }
 
     private var queuedTabCount: Int {
@@ -7636,41 +7795,37 @@ private enum RecipeImportProgressStage: Int, CaseIterable {
     case fetching
     case readingVideo
     case buildingRecipe
+    case finishing
     case saved
 
-    var title: String {
+    var statusWord: String {
         switch self {
-        case .fetching: return "Queued"
-        case .readingVideo: return "Reading"
-        case .buildingRecipe: return "Writing"
-        case .saved: return "Saved"
+        case .fetching: return "queuing"
+        case .readingVideo: return "scraping"
+        case .buildingRecipe: return "parsing"
+        case .finishing: return "finishing"
+        case .saved: return "done"
         }
     }
 
-    var displayTitle: String {
+    var emoji: String {
         switch self {
-        case .fetching: return "Queued for import"
-        case .readingVideo: return "Reading the source"
-        case .buildingRecipe: return "Writing the recipe"
-        case .saved: return "Saved to Cookbook"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .fetching: return "tray.and.arrow.down.fill"
-        case .readingVideo: return "text.viewfinder"
-        case .buildingRecipe: return "list.bullet.clipboard.fill"
-        case .saved: return "checkmark.seal.fill"
+        case .fetching: return "⏳"
+        case .readingVideo: return "🔎"
+        case .buildingRecipe: return "✨"
+        case .finishing: return "🍽️"
+        case .saved: return "✓"
         }
     }
 
     static func current(for item: SharedRecipeImportEnvelope) -> RecipeImportProgressStage {
         switch item.normalizedProcessingState {
-        case "parsing":
+        case "fetching", "processing":
             return .readingVideo
-        case "normalized":
+        case "parsing":
             return .buildingRecipe
+        case "normalized":
+            return .finishing
         case "saved":
             return .saved
         default:
@@ -7689,59 +7844,14 @@ private struct SharedRecipeImportProgressCard: View {
         RecipeImportProgressStage.current(for: item)
     }
 
-    private var isPhotoImport: Bool {
-        (item.sourceApp ?? "").lowercased().contains("photo")
-    }
-
-    private var subtitle: String {
-        if isPhotoImport {
-            switch currentStage {
-            case .fetching:
-                return "Checking photo."
-            case .readingVideo:
-                return "Finding recipe references."
-            case .buildingRecipe:
-                return "Writing the recipe."
-            case .saved:
-                return "Saved to Cookbook."
-            }
-        }
-        switch currentStage {
-        case .fetching:
-            return "Queued for the recipe worker."
-        case .readingVideo:
-            return "Reading the source."
-        case .buildingRecipe:
-            return "Building the recipe."
-        case .saved:
-            return "Ready to open."
-        }
-    }
-
-    private var sourceLabel: String {
-        if isPhotoImport {
-            let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return sourceText.isEmpty ? "food photo" : sourceText.components(separatedBy: .newlines).first ?? "food photo"
-        }
-        let sourceURL = item.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !sourceURL.isEmpty {
-            if let host = URL(string: sourceURL)?.host?.replacingOccurrences(of: "www.", with: ""), !host.isEmpty {
-                return host
-            }
-            return sourceURL
-        }
-
-        let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !sourceText.isEmpty {
-            return sourceText.components(separatedBy: .newlines).first ?? sourceText
-        }
-
-        return "shared recipe"
-    }
-
     private var progressFraction: CGFloat {
         let maxIndex = max(RecipeImportProgressStage.allCases.count - 1, 1)
-        return CGFloat(currentStage.rawValue) / CGFloat(maxIndex)
+        let fraction = CGFloat(currentStage.rawValue) / CGFloat(maxIndex)
+        return max(0.12, fraction)
+    }
+
+    private var progressGold: Color {
+        Color(hex: "D7A84C")
     }
 
     var body: some View {
@@ -7764,114 +7874,39 @@ private struct SharedRecipeImportProgressCard: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 11) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(OunjePalette.accent.opacity(currentStage == .saved ? 0.22 : 0.12))
-                        .frame(width: 32, height: 32)
-
-                    Image(systemName: currentStage.symbolName)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(currentStage == .saved ? OunjePalette.accent : OunjePalette.softCream)
-                        .scaleEffect(isPulsing && !reduceMotion && currentStage != .saved ? 1.08 : 1)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(isPhotoImport ? "Cloning dish" : "Pulling in recipe")
-                            .contentTransition(.opacity)
-                            .font(.system(size: 15, weight: .heavy, design: .rounded))
-                            .foregroundStyle(OunjePalette.primaryText)
-                            .lineLimit(1)
-
-                        Text(currentStage.displayTitle)
-                            .font(.system(size: 10, weight: .heavy, design: .rounded))
-                            .foregroundStyle(currentStage == .saved ? OunjePalette.background : OunjePalette.softCream.opacity(0.82))
-                            .lineLimit(1)
-                            .padding(.horizontal, 8)
-                            .frame(height: 20)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(currentStage == .saved ? OunjePalette.accent : OunjePalette.surface.opacity(0.9))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .stroke(OunjePalette.stroke, lineWidth: 1)
-                                    )
-                            )
-                    }
-
-                    Text(subtitle)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(2)
-                }
-
-                Spacer(minLength: 0)
-            }
-
+        VStack(spacing: 6) {
             progressBar
 
-            HStack(spacing: 6) {
-                Image(systemName: "link")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.85))
-                Text(sourceLabel)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(OunjePalette.secondaryText.opacity(0.86))
+            HStack(spacing: 5) {
+                Text(currentStage.emoji)
+                    .font(.system(size: 13, weight: .semibold))
+
+                Text(currentStage.statusWord)
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(OunjePalette.softCream.opacity(0.86))
                     .lineLimit(1)
-                Spacer(minLength: 0)
+                    .opacity(isPulsing && !reduceMotion && currentStage != .saved ? 0.42 : 1)
+                    .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: isPulsing)
             }
-            .padding(.horizontal, 2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.54))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(OunjePalette.stroke.opacity(0.86), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
     }
 
     private var progressBar: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 999, style: .continuous)
-                    .fill(OunjePalette.background.opacity(0.44))
+                    .fill(OunjePalette.surface.opacity(0.42))
 
                 RoundedRectangle(cornerRadius: 999, style: .continuous)
-                    .fill(OunjePalette.accent.opacity(0.9))
-                    .frame(width: max(18, proxy.size.width * progressFraction))
-                    .shadow(color: OunjePalette.accent.opacity(isPulsing && !reduceMotion ? 0.2 : 0.05), radius: 7, x: 0, y: 0)
+                    .fill(progressGold)
+                    .frame(width: max(22, proxy.size.width * progressFraction))
+                    .shadow(color: progressGold.opacity(isPulsing && !reduceMotion ? 0.34 : 0.12), radius: 7, x: 0, y: 0)
             }
         }
-        .frame(height: 4)
-    }
-
-    private func stageMarker(for stage: RecipeImportProgressStage) -> some View {
-        let isComplete = stage.rawValue < currentStage.rawValue || currentStage == .saved
-        let isCurrent = stage == currentStage && currentStage != .saved
-
-        return VStack(spacing: 5) {
-            Circle()
-                .fill(isComplete ? OunjePalette.accent : isCurrent ? OunjePalette.softCream : OunjePalette.surface)
-                .frame(width: isCurrent ? 8 : 6, height: isCurrent ? 8 : 6)
-                .overlay(
-                    Circle()
-                        .stroke(isCurrent ? OunjePalette.primaryText.opacity(0.34) : Color.clear, lineWidth: 1)
-                )
-                .scaleEffect(isCurrent && isPulsing && !reduceMotion ? 1.18 : 1)
-
-            Text(stage.title)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(stage.rawValue <= currentStage.rawValue ? OunjePalette.primaryText.opacity(0.76) : OunjePalette.secondaryText.opacity(0.58))
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-        }
-        .frame(maxWidth: .infinity)
+        .frame(height: 5)
     }
 }
 
@@ -10029,6 +10064,30 @@ private func parsedCookMinutes(from text: String?) -> Int? {
     }
 
     return firstNumber
+}
+
+func formattedRecipeCookTime(minutes: Int) -> String {
+    minutes == 1 ? "1 minute" : "\(minutes) minutes"
+}
+
+func recipeDisplayCookMinutes(
+    cookTimeText: String?,
+    cookTimeMinutes: Int?,
+    prepTimeMinutes: Int? = nil
+) -> Int {
+    if let cookTimeMinutes, cookTimeMinutes > 0 {
+        return cookTimeMinutes
+    }
+
+    if let parsedTextMinutes = parsedCookMinutes(from: cookTimeText), parsedTextMinutes > 0 {
+        return parsedTextMinutes
+    }
+
+    if let prepTimeMinutes, prepTimeMinutes > 0 {
+        return prepTimeMinutes
+    }
+
+    return 0
 }
 
 func resolvedRecipeDurationMinutes(from detail: RecipeDetailData) -> Int {

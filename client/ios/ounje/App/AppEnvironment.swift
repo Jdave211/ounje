@@ -1887,11 +1887,14 @@ final class MealPlanningAppStore: ObservableObject {
             ) else {
                 continue
             }
-            let finalPlan = generatedPlanByEnforcingRecurringAnchors(
+            let regeneratedActivePlan = generatedPlanByEnforcingRecurringAnchors(
                 in: generatedPlan,
                 targetRecipeCount: rerollOptions.targetRecipeCount ?? originalPlan?.recipes.count,
                 recurringRecipes: enabledRecurringRecipes
             )
+            let finalPlan = originalPlan.map {
+                planByReplacingActiveBatch(in: $0, with: regeneratedActivePlan)
+            } ?? regeneratedActivePlan
             if finalPlan != generatedPlan {
                 updateCurrentPlanCache(with: finalPlan, persistRemote: false)
                 scheduleGeneratedPlanArtifactRefresh(planID: finalPlan.id)
@@ -1938,6 +1941,28 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         return false
+    }
+
+    private func planByReplacingActiveBatch(in originalPlan: MealPlan, with activePlan: MealPlan) -> MealPlan {
+        guard var batches = originalPlan.batches, !batches.isEmpty,
+              let activeBatchID = resolvedPrimeBatchID(in: originalPlan),
+              let activeIndex = batches.firstIndex(where: { $0.id == activeBatchID })
+        else {
+            return activePlan
+        }
+
+        batches[activeIndex].recipes = activePlan.recipes
+        batches[activeIndex].groceryItems = activePlan.groceryItems
+        batches[activeIndex].recurringRecipeIDs = activePlan.recurringRecipeIDs
+
+        var plan = originalPlan
+        plan.activeBatchID = activeBatchID
+        plan.batches = batches
+        plan.providerQuotes = activePlan.providerQuotes
+        plan.mainShopSnapshot = activePlan.mainShopSnapshot
+        plan.pipeline = activePlan.pipeline
+        plan.generatedAt = Date()
+        return planMirroringPrimeBatch(plan, preferredBatchID: activeBatchID)
     }
 
     private func deleteRemotePrepOverridesAfterSuccessfulRegeneration(session: AuthSession?) {
@@ -2910,19 +2935,18 @@ final class MealPlanningAppStore: ObservableObject {
         updateCurrentPlanCache(with: plan, persistRemote: true)
     }
 
-    /// Deletes a batch. If there's only one batch left it collapses back to
-    /// a single-batch plan (sets `batches` to nil and moves recipes up).
+    /// Deletes a batch while keeping batch-mode canonical once it has been enabled.
     func deletePrepBatch(id: UUID) {
         guard var plan = latestPlan,
               var batches = plan.batches
         else { return }
         batches.removeAll { $0.id == id }
-        if batches.count <= 1 {
-            plan.recipes = batches.first?.recipes ?? plan.recipes
-            plan.groceryItems = batches.first?.groceryItems ?? plan.groceryItems
-            plan.batches = nil
+        if batches.isEmpty {
+            plan.recipes = []
+            plan.groceryItems = []
+            plan.recurringRecipeIDs = nil
+            plan.batches = []
             plan.activeBatchID = nil
-            activeBatchID = nil
         } else {
             plan.batches = batches
             if activeBatchID == id {
@@ -3004,6 +3028,83 @@ final class MealPlanningAppStore: ObservableObject {
         guard let profile, !prepRecipeOverrides.isEmpty else { return plan }
 
         let overrideLookup = prepRecipeOverrideLookup()
+        if var batches = plan.batches, !batches.isEmpty {
+            var seenRecipeIDs = Set<String>()
+            let activeBatchID = resolvedPrimeBatchID(in: plan) ?? batches.first?.id
+            var changed = false
+
+            for index in batches.indices {
+                var updatedRecipes: [PlannedRecipe] = []
+                for plannedRecipe in batches[index].recipes {
+                    let recipeID = plannedRecipe.recipe.id
+                    if let override = overrideLookup[recipeID] {
+                        guard override.isIncludedInPrep, !override.recipe.isLegacySeedRecipe else {
+                            changed = true
+                            continue
+                        }
+                        let updated = PlannedRecipe(
+                            recipe: override.recipe,
+                            servings: override.servings,
+                            carriedFromPreviousPlan: plannedRecipe.carriedFromPreviousPlan
+                        )
+                        updatedRecipes.append(updated)
+                        seenRecipeIDs.insert(updated.recipe.id)
+                        if updated != plannedRecipe {
+                            changed = true
+                        }
+                    } else {
+                        updatedRecipes.append(plannedRecipe)
+                        seenRecipeIDs.insert(recipeID)
+                    }
+                }
+                if updatedRecipes != batches[index].recipes {
+                    changed = true
+                }
+                batches[index].recipes = updatedRecipes
+            }
+
+            if let activeBatchID,
+               let activeIndex = batches.firstIndex(where: { $0.id == activeBatchID }) {
+                for override in prepRecipeOverrides
+                    where override.isIncludedInPrep
+                        && !override.recipe.isLegacySeedRecipe
+                        && !seenRecipeIDs.contains(override.recipe.id) {
+                    batches[activeIndex].recipes.append(
+                        PlannedRecipe(
+                            recipe: override.recipe,
+                            servings: override.servings,
+                            carriedFromPreviousPlan: false
+                        )
+                    )
+                    seenRecipeIDs.insert(override.recipe.id)
+                    changed = true
+                }
+            }
+
+            guard changed else { return plan }
+
+            var rebuiltBatches = batches
+            for index in rebuiltBatches.indices {
+                let hydratedRecipes = await hydratedPlannedRecipesForCart(rebuiltBatches[index].recipes)
+                let rebuiltPlan = planner.rebuildPlanCartOnly(
+                    profile: profile,
+                    basePlan: plan,
+                    recipes: hydratedRecipes,
+                    history: planHistory,
+                    recurringRecipeIDs: rebuiltBatches[index].recurringRecipeIDs ?? resolvedRecurringRecipeIDs(for: plan)
+                )
+                rebuiltBatches[index].recipes = rebuiltPlan.recipes
+                rebuiltBatches[index].groceryItems = rebuiltPlan.groceryItems
+                rebuiltBatches[index].recurringRecipeIDs = rebuiltPlan.recurringRecipeIDs
+            }
+
+            var nextPlan = plan
+            nextPlan.batches = rebuiltBatches
+            nextPlan.activeBatchID = activeBatchID
+            nextPlan.generatedAt = Date()
+            return planMirroringPrimeBatch(nextPlan, preferredBatchID: activeBatchID)
+        }
+
         var updatedRecipes: [PlannedRecipe] = []
         var seenRecipeIDs = Set<String>()
 
@@ -3172,7 +3273,7 @@ final class MealPlanningAppStore: ObservableObject {
                     localPlans: planHistory
                 )
                 if latestPlan != preferredLatestPlan {
-                    latestPlan = preferredLatestPlan
+                    updateCurrentPlanCache(with: preferredLatestPlan, persistRemote: false)
                 }
                 if planHistory != mergedHistory {
                     planHistory = mergedHistory

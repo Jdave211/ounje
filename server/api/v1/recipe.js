@@ -20,6 +20,7 @@ import {
   fetchRecipeIngestionJob,
   estimateRecipeMacrosLocally,
   listCompletedRecipeImportItems,
+  listRecipeImportQueueItems,
   maybeGenerateImportedRecipeImage,
   persistNormalizedRecipe,
   processRecipeIngestionJob,
@@ -1241,6 +1242,26 @@ recipe_router.post("/recipe/import-media/photo-pair", async (req, res) => {
   } catch (error) {
     console.error("[recipe/import-media/photo-pair] upload failed:", error.message);
     return res.status(400).json({ error: error.message });
+  }
+});
+
+recipe_router.get("/recipe/imports", async (req, res) => {
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const rawLimit = req.query.limit ?? null;
+    const limit = rawLimit == null ? null : Number.parseInt(String(rawLimit), 10);
+    const { items, totalCount } = await listRecipeImportQueueItems({ userID, limit });
+    return res.json({
+      items,
+      count: items.length,
+      total_count: totalCount,
+    });
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/imports");
+    }
+    console.error("[recipe/imports] queue list failed:", error.message);
+    return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
   }
 });
 

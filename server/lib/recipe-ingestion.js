@@ -586,6 +586,7 @@ Rules:
 - Replace vague or technically wrong cooking verbs with practical cooking actions.
 - Keep steps concise, sequential, and cookable.
 - Keep ingredient quantities practical for the stated servings.
+- Return compact repairs only: include full ingredients or steps arrays only when those arrays need changes, and omit unchanged fields.
 - Do not include commentary outside the JSON object.`;
 
 const RECIPE_GATE_SYSTEM_PROMPT = `You decide whether imported content is actually a recipe.
@@ -774,12 +775,46 @@ function cleanURL(raw) {
         return `https://www.tiktok.com/${videoMatch[1]}/video/${videoMatch[2]}`;
       }
     }
-    const removable = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "si", "feature"];
+    const removable = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "si", "feature", "_t", "_r"];
     removable.forEach((key) => url.searchParams.delete(key));
     return url.toString();
   } catch {
     return normalizeText(raw) || null;
   }
+}
+
+function canonicalImportIdentityForURL(raw) {
+  const cleaned = cleanURL(raw);
+  if (!cleaned || !isProbablyURL(cleaned)) return null;
+
+  try {
+    const url = new URL(cleaned);
+    const host = url.hostname.toLowerCase();
+    if (host.includes("tiktok.com")) {
+      const videoMatch = url.pathname.match(/^\/@[^/]+\/video\/(\d+)/i);
+      if (videoMatch?.[1]) return `tiktok:video:${videoMatch[1]}`;
+    }
+    if (host === "youtu.be") {
+      const id = url.pathname.split("/").filter(Boolean)[0];
+      if (id) return `youtube:video:${id}`;
+    }
+    if (host.includes("youtube.com")) {
+      const id = url.searchParams.get("v");
+      if (id) return `youtube:video:${id}`;
+    }
+    if (host.includes("instagram.com")) {
+      const match = url.pathname.match(/^\/(reel|p|tv)\/([^/?#]+)/i);
+      if (match?.[1] && match?.[2]) return `instagram:${match[1].toLowerCase()}:${match[2]}`;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function canonicalImportIdentityForRequest({ sourceUrl = null, canonicalUrl = null } = {}) {
+  return canonicalImportIdentityForURL(canonicalUrl) ?? canonicalImportIdentityForURL(sourceUrl);
 }
 
 function urlLookupVariants(...values) {
@@ -1060,7 +1095,10 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
 }
 
 function buildDedupeKey({ sourceUrl = null, canonicalUrl = null, sourceText = null }) {
-  const candidate = cleanURL(canonicalUrl) || cleanURL(sourceUrl) || normalizeText(sourceText).slice(0, 3000);
+  const candidate = canonicalImportIdentityForRequest({ sourceUrl, canonicalUrl })
+    || cleanURL(canonicalUrl)
+    || cleanURL(sourceUrl)
+    || normalizeText(sourceText).slice(0, 3000);
   if (!candidate) return null;
   return crypto.createHash("sha256").update(candidate).digest("hex");
 }
@@ -2757,7 +2795,7 @@ function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
     title,
     status: jobRow.status ?? "saved",
     review_state: jobRow.review_state ?? "approved",
-    source_type: jobRow.source_type ?? requestPayload?.source_type ?? null,
+    source_type: normalizeText(jobRow.source_type ?? requestPayload?.source_type ?? null) || "shared_import",
     source_url: rawSourceURL || null,
     canonical_url: normalizeText(jobRow?.canonical_url ?? requestPayload?.canonical_url ?? null) || null,
     source_text: normalizeText(jobRow?.input_text ?? requestPayload?.source_text ?? null) || null,
@@ -2797,6 +2835,68 @@ function summarizeCompletedImportedRecipe(row) {
     cook_time_text: row?.cook_time_text ?? null,
     completed_at: row?.updated_at ?? row?.created_at ?? null,
     created_at: row?.created_at ?? null,
+  };
+}
+
+function summarizeRecipeImportQueueJob(jobRow) {
+  const requestPayload = jobRow?.request_payload && typeof jobRow.request_payload === "object"
+    ? jobRow.request_payload
+    : {};
+  return {
+    id: jobRow.id,
+    user_id: jobRow.user_id ?? null,
+    target_state: jobRow.target_state ?? requestPayload?.target_state ?? "saved",
+    source_type: jobRow.source_type ?? requestPayload?.source_type ?? null,
+    source_url: normalizeText(jobRow.source_url ?? requestPayload?.source_url ?? null) || null,
+    canonical_url: normalizeText(jobRow.canonical_url ?? requestPayload?.canonical_url ?? null) || null,
+    source_text: normalizeText(jobRow.input_text ?? requestPayload?.source_text ?? null) || null,
+    recipe_id: jobRow.recipe_id ?? null,
+    status: jobRow.status ?? "queued",
+    review_state: jobRow.review_state ?? "pending",
+    confidence_score: jobRow.confidence_score ?? null,
+    quality_flags: Array.isArray(jobRow.quality_flags) ? jobRow.quality_flags : [],
+    review_reason: jobRow.review_reason ?? null,
+    error_message: jobRow.error_message ?? null,
+    attempts: Number.isFinite(Number(jobRow.attempts)) ? Number(jobRow.attempts) : null,
+    max_attempts: Number.isFinite(Number(jobRow.max_attempts)) ? Number(jobRow.max_attempts) : null,
+    created_at: jobRow.created_at ?? null,
+    updated_at: jobRow.updated_at ?? null,
+  };
+}
+
+export async function listRecipeImportQueueItems({ userID = null, limit = null } = {}) {
+  const filters = [
+    `status=in.${buildInClause(["queued", "retryable", "processing", "fetching", "parsing", "normalized", "failed"])}`,
+  ];
+  if (userID) {
+    filters.push(`user_id=eq.${encodeURIComponent(userID)}`);
+  }
+
+  const parsedLimit = Number.parseInt(String(limit ?? ""), 10);
+  const resolvedLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
+    ? Math.min(parsedLimit, 200)
+    : 100;
+
+  let totalCount = 0;
+  try {
+    totalCount = await countRows("recipe_ingestion_jobs", { filters });
+  } catch {
+    totalCount = 0;
+  }
+
+  const rows = await fetchRows(
+    "recipe_ingestion_jobs",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,created_at,updated_at",
+    {
+      filters,
+      order: ["updated_at.desc", "created_at.desc"],
+      limit: resolvedLimit,
+    }
+  );
+
+  return {
+    items: rows.map(summarizeRecipeImportQueueJob),
+    totalCount,
   };
 }
 
@@ -3347,6 +3447,26 @@ async function createCompletedJobRowFromExistingImportedRecipe(request, recipeRo
   return completed;
 }
 
+function isCompletedImportJobWithRecipe(job) {
+  const status = normalizeText(job?.status).toLowerCase();
+  return ["saved", "draft", "needs_review"].includes(status) && Boolean(normalizeText(job?.recipe_id ?? ""));
+}
+
+async function createCompletedJobRowFromExistingJob(request, job, { dedupeKey = null, canonicalURL = null } = {}) {
+  if (!isCompletedImportJobWithRecipe(job)) return null;
+  return createCompletedJobRowFromExistingImportedRecipe(
+    request,
+    {
+      id: job.recipe_id,
+      dedupe_key: job.dedupe_key ?? dedupeKey ?? null,
+    },
+    {
+      dedupeKey: dedupeKey ?? job.dedupe_key ?? null,
+      canonicalURL: canonicalURL ?? job.canonical_url ?? job.source_url ?? request.canonical_url ?? request.source_url ?? null,
+    }
+  );
+}
+
 async function createJobRow(request) {
   const jobID = `ri_${nanoid(14)}`;
   const photoAttachmentKey = request.source_type === "media_image"
@@ -3377,16 +3497,35 @@ async function createJobRow(request) {
   if (enqueueLockKey && !enqueueLockToken) {
     const lockedExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
-    if (lockedExisting) return lockedExisting;
+    if (lockedExisting) {
+      const completed = await createCompletedJobRowFromExistingJob(request, lockedExisting, {
+        dedupeKey: lockedExisting.dedupe_key ?? dedupeKey ?? null,
+        canonicalURL: lockedExisting.canonical_url ?? lockedExisting.source_url ?? request.canonical_url ?? request.source_url ?? null,
+      });
+      if (completed) return completed;
+      return lockedExisting;
+    }
     await delay(200);
     const settledExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
-    if (settledExisting) return settledExisting;
+    if (settledExisting) {
+      const completed = await createCompletedJobRowFromExistingJob(request, settledExisting, {
+        dedupeKey: settledExisting.dedupe_key ?? dedupeKey ?? null,
+        canonicalURL: settledExisting.canonical_url ?? settledExisting.source_url ?? request.canonical_url ?? request.source_url ?? null,
+      });
+      if (completed) return completed;
+      return settledExisting;
+    }
   }
 
   try {
   const existing = await findExistingJobForRequest(request, dedupeKey);
   if (existing) {
+    const completed = await createCompletedJobRowFromExistingJob(request, existing, {
+      dedupeKey,
+      canonicalURL: request.canonical_url ?? request.source_url ?? null,
+    });
+    if (completed) return completed;
     return existing;
   }
 
@@ -3398,6 +3537,11 @@ async function createJobRow(request) {
       existingForSource.dedupe_key ?? dedupeKey ?? null,
       existingForSource
     );
+    const completed = await createCompletedJobRowFromExistingJob(request, existingForSource, {
+      dedupeKey: existingForSource.dedupe_key ?? dedupeKey ?? null,
+      canonicalURL: existingForSource.canonical_url ?? existingForSource.source_url ?? request.canonical_url ?? request.source_url ?? null,
+    });
+    if (completed) return completed;
     return existingForSource;
   }
 
@@ -3406,6 +3550,11 @@ async function createJobRow(request) {
     dedupeKey,
   });
   if (completedCanonical) {
+    const completed = await createCompletedJobRowFromExistingJob(request, completedCanonical, {
+      dedupeKey: completedCanonical.dedupe_key ?? dedupeKey ?? null,
+      canonicalURL: completedCanonical.canonical_url ?? completedCanonical.source_url ?? request.canonical_url ?? request.source_url ?? null,
+    });
+    if (completed) return completed;
     return completedCanonical;
   }
 
@@ -4548,6 +4697,7 @@ async function persistNormalizedRecipe(
     qualityFlags = [],
   } = {}
 ) {
+  normalized = await guaranteeRecipeDisplayMacros(normalized);
   const existing = dedupeExisting && userID
     ? await findExistingUserImportedRecipe(userID, normalized, dedupeKey)
     : dedupeExisting
@@ -4595,7 +4745,25 @@ async function persistNormalizedRecipe(
   } else {
     const existingDetail = await fetchCanonicalRecipeDetailByID(recipeID);
     if (existingDetail) {
-      normalized = existingDetail;
+      const tableConfig = userID ? USER_IMPORTED_RECIPE_TABLE_CONFIG : tableConfigForRecipeID(recipeID);
+      const patch = missingDisplayMacroPatch(existingDetail, normalized);
+      if (userID && dedupeKey && !normalizeText(existing?.dedupe_key)) {
+        patch.dedupe_key = dedupeKey;
+      }
+      if (Object.keys(patch).length > 0) {
+        await patchRows(
+          tableConfig.recipeTable,
+          [`id=eq.${encodeURIComponent(recipeID)}`],
+          patch,
+          { prefer: "return=minimal" }
+        ).catch((error) => {
+          console.warn("[recipe-ingestion] failed to patch deduped recipe display macros:", error.message);
+        });
+      }
+      normalized = {
+        ...existingDetail,
+        ...patch,
+      };
     }
   }
 
@@ -7358,6 +7526,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       () => withRecipeAIStage("recipe_import.final_validator", () => openai.chat.completions.create({
         model: RECIPE_FINAL_VALIDATOR_MODEL,
         ...chatCompletionTemperatureParams(RECIPE_FINAL_VALIDATOR_MODEL, 0.02),
+        ...chatCompletionLatencyParams(RECIPE_FINAL_VALIDATOR_MODEL, 1800),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
@@ -7376,20 +7545,14 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
                 platform: source.platform ?? null,
                 title: source.title ?? null,
                 description: source.description ?? source.meta_description ?? null,
-                transcript_text: source.transcript_text ?? null,
+                transcript_text: source.transcript_text ? limitText(source.transcript_text, 1200) : null,
               }),
               "",
               "Return JSON like:",
               JSON.stringify({
                 recipe: {
-                  title: "string|null",
-                  description: "string|null",
-                  category: "string|null",
-                  recipe_type: "string|null",
-                  cook_time_text: "string|null",
-                  servings_text: "string|null",
-                  ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
-                  steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }],
+                  ingredients: "only include this full array if ingredients changed",
+                  steps: "only include this full array if steps changed",
                 },
                 validation_notes: ["string"],
                 quality_flags: ["string"],
@@ -7403,7 +7566,14 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
 
     const rawContent = response.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(rawContent);
-    const repaired = coerceStructuredRecipeCandidate(parsed.recipe ?? parsed, source);
+    const repairPatch = parsed.recipe && typeof parsed.recipe === "object" ? parsed.recipe : parsed;
+    const repairedInput = {
+      ...recipe,
+      ...repairPatch,
+      ingredients: Array.isArray(repairPatch.ingredients) ? repairPatch.ingredients : recipe.ingredients,
+      steps: Array.isArray(repairPatch.steps) ? repairPatch.steps : recipe.steps,
+    };
+    const repaired = coerceStructuredRecipeCandidate(repairedInput, source);
     const repairedMetrics = recipeCoreMetrics(repaired);
     const originalMetrics = recipeCoreMetrics(recipe);
     const repairedIssues = buildFinalRecipeValidationIssues(repaired);
@@ -8235,10 +8405,20 @@ async function maybeFillMissingMacros(normalizedRecipe) {
 }
 
 function hasCompleteDisplayMacros(recipe) {
-  return Number.isFinite(Number(recipe?.calories_kcal))
-    && Number.isFinite(Number(recipe?.protein_g))
-    && Number.isFinite(Number(recipe?.carbs_g))
-    && Number.isFinite(Number(recipe?.fat_g));
+  return ["calories_kcal", "protein_g", "carbs_g", "fat_g"].every((field) => {
+    const value = recipe?.[field];
+    return value !== null
+      && value !== undefined
+      && String(value).trim() !== ""
+      && Number.isFinite(Number(value));
+  });
+}
+
+function isFiniteMacroValue(value) {
+  return value !== null
+    && value !== undefined
+    && String(value).trim() !== ""
+    && Number.isFinite(Number(value));
 }
 
 function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
@@ -8268,17 +8448,38 @@ function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
     fallback = { calories_kcal: 450, protein_g: 36, carbs_g: 42, fat_g: 14 };
   }
 
-  const caloriesKcal = Number.isFinite(Number(normalizedRecipe?.calories_kcal))
+  const caloriesKcal = isFiniteMacroValue(normalizedRecipe?.calories_kcal)
     ? Number(normalizedRecipe.calories_kcal)
     : fallback.calories_kcal;
   return {
     ...normalizedRecipe,
     calories_kcal: caloriesKcal,
-    protein_g: Number.isFinite(Number(normalizedRecipe?.protein_g)) ? Number(normalizedRecipe.protein_g) : fallback.protein_g,
-    carbs_g: Number.isFinite(Number(normalizedRecipe?.carbs_g)) ? Number(normalizedRecipe.carbs_g) : fallback.carbs_g,
-    fat_g: Number.isFinite(Number(normalizedRecipe?.fat_g)) ? Number(normalizedRecipe.fat_g) : fallback.fat_g,
+    protein_g: isFiniteMacroValue(normalizedRecipe?.protein_g) ? Number(normalizedRecipe.protein_g) : fallback.protein_g,
+    carbs_g: isFiniteMacroValue(normalizedRecipe?.carbs_g) ? Number(normalizedRecipe.carbs_g) : fallback.carbs_g,
+    fat_g: isFiniteMacroValue(normalizedRecipe?.fat_g) ? Number(normalizedRecipe.fat_g) : fallback.fat_g,
     est_calories_text: normalizeText(normalizedRecipe?.est_calories_text) || `${caloriesKcal} kcal per serving (estimate)`,
   };
+}
+
+async function guaranteeRecipeDisplayMacros(normalizedRecipe) {
+  let nextRecipe = await maybeFillMissingMacros(normalizedRecipe ?? {});
+  if (!hasCompleteDisplayMacros(nextRecipe)) {
+    nextRecipe = fillRecipeMacrosWithDisplayFallback(nextRecipe);
+  }
+  return nextRecipe;
+}
+
+function missingDisplayMacroPatch(existingRecipe, candidateRecipe) {
+  const patch = {};
+  for (const field of ["calories_kcal", "protein_g", "carbs_g", "fat_g"]) {
+    if (!isFiniteMacroValue(existingRecipe?.[field]) && isFiniteMacroValue(candidateRecipe?.[field])) {
+      patch[field] = Number(candidateRecipe[field]);
+    }
+  }
+  if (!normalizeText(existingRecipe?.est_calories_text) && normalizeText(candidateRecipe?.est_calories_text)) {
+    patch.est_calories_text = normalizeText(candidateRecipe.est_calories_text);
+  }
+  return patch;
 }
 
 async function buildNormalizedRecipe(source, { accessToken = null, jobID = null } = {}) {
@@ -8417,9 +8618,8 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   }
 
   // Estimate macros if still missing after all enrichment passes.
-  normalized = await maybeFillMissingMacros(normalized);
-  if (!hasCompleteDisplayMacros(normalized)) {
-    normalized = fillRecipeMacrosWithDisplayFallback(normalized);
+  normalized = await guaranteeRecipeDisplayMacros(normalized);
+  if (!hasCompleteDisplayMacros(modelResult.recipe ?? {}) && hasCompleteDisplayMacros(normalized)) {
     modelResult.quality_flags = uniqueStrings([...(modelResult.quality_flags ?? []), "macro_display_fallback"]);
   }
 
@@ -9214,8 +9414,13 @@ export {
   PHOTO_MEAL_GATE_MODEL,
   maybeGenerateImportedRecipeImage,
   buildFinalRecipeValidationIssues,
+  buildDedupeKey,
+  canonicalImportIdentityForURL,
   estimateRecipeMacrosLocally,
   extractRecipeSearchSource,
+  fillRecipeMacrosWithDisplayFallback,
+  guaranteeRecipeDisplayMacros,
+  hasCompleteDisplayMacros,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
   recipeNeedsSecondaryFill,

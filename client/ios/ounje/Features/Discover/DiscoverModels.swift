@@ -308,11 +308,11 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable, Sendable {
     }
 
     var compactCookTime: String? {
-        if let cookTimeMinutes, cookTimeMinutes > 0 {
-            return cookTimeMinutes == 1 ? "1 min" : "\(cookTimeMinutes) mins"
-        }
-        guard let cookTimeText, !cookTimeText.isEmpty else { return nil }
-        return cookTimeText
+        let minutes = recipeDisplayCookMinutes(
+            cookTimeText: cookTimeText,
+            cookTimeMinutes: cookTimeMinutes
+        )
+        return minutes > 0 ? formattedRecipeCookTime(minutes: minutes) : nil
     }
 
     var displayTitle: String {

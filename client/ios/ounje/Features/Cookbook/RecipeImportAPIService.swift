@@ -6,6 +6,8 @@ struct RecipeImportJobPayload: Decodable {
     let targetState: String
     let sourceType: String
     let sourceURL: String?
+    let canonicalURL: String?
+    let sourceText: String?
     let recipeID: String?
     let status: String
     let reviewState: String
@@ -15,12 +17,16 @@ struct RecipeImportJobPayload: Decodable {
     let errorMessage: String?
     let attempts: Int?
     let maxAttempts: Int?
+    let createdAt: String?
+    let updatedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case targetState = "target_state"
         case sourceType = "source_type"
         case sourceURL = "source_url"
+        case canonicalURL = "canonical_url"
+        case sourceText = "source_text"
         case recipeID = "recipe_id"
         case status
         case reviewState = "review_state"
@@ -30,6 +36,8 @@ struct RecipeImportJobPayload: Decodable {
         case errorMessage = "error_message"
         case attempts
         case maxAttempts = "max_attempts"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
     }
 }
 
@@ -70,6 +78,46 @@ struct RecipeImportCompletedItem: Identifiable, Decodable {
 struct RecipeImportCompletedPage {
     let items: [RecipeImportCompletedItem]
     let totalCount: Int
+}
+
+struct RecipeImportQueuePage {
+    let items: [RecipeImportJobPayload]
+    let totalCount: Int
+}
+
+extension RecipeImportJobPayload {
+    var sharedImportEnvelope: SharedRecipeImportEnvelope {
+        SharedRecipeImportEnvelope(
+            id: id,
+            createdAt: Self.importDate(from: createdAt ?? updatedAt) ?? Date(),
+            jobID: id,
+            targetState: targetState,
+            sourceText: sourceText,
+            sourceURLString: sourceURL,
+            canonicalSourceURLString: canonicalURL,
+            sourceApp: sourceType,
+            attachments: [],
+            processingState: status,
+            attemptCount: attempts,
+            lastAttemptAt: Self.importDate(from: updatedAt),
+            lastError: errorMessage ?? reviewReason,
+            updatedAt: Self.importDate(from: updatedAt) ?? Date()
+        )
+    }
+
+    private static func importDate(from raw: String?) -> Date? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: raw) {
+            return date
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: raw)
+    }
 }
 
 extension SharedRecipeImportEnvelope {
@@ -350,6 +398,19 @@ final class RecipeImportAPIService {
         throw lastError ?? RecipeImportServiceError.invalidRequest
     }
 
+    func fetchImportQueue(userID: String, accessToken: String?) async throws -> RecipeImportQueuePage {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                return try await fetchImportQueue(baseURL: baseURL, userID: userID, accessToken: accessToken)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
     func fetchImportJob(jobID: String, accessToken: String?) async throws -> RecipeImportResponse {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
@@ -449,6 +510,52 @@ final class RecipeImportAPIService {
 
         let payload = try JSONDecoder().decode(Payload.self, from: data)
         return RecipeImportCompletedPage(
+            items: payload.items,
+            totalCount: payload.totalCount ?? payload.count ?? payload.items.count
+        )
+    }
+
+    private func fetchImportQueue(
+        baseURL: String,
+        userID: String,
+        accessToken: String?
+    ) async throws -> RecipeImportQueuePage {
+        var components = URLComponents(string: "\(baseURL)/v1/recipe/imports") ?? URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "user_id", value: userID)
+        ]
+        guard let url = components.url else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        applyAuthHeaders(to: &request, userID: userID, accessToken: accessToken)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Queued imports failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        struct Payload: Decodable {
+            let items: [RecipeImportJobPayload]
+            let count: Int?
+            let totalCount: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case items
+                case count
+                case totalCount = "total_count"
+            }
+        }
+
+        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        return RecipeImportQueuePage(
             items: payload.items,
             totalCount: payload.totalCount ?? payload.count ?? payload.items.count
         )

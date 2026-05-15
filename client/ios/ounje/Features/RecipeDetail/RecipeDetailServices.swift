@@ -648,18 +648,19 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
     }
 
     var combinedCookTimeText: String? {
-        let total = resolvedRecipeDurationMinutes(from: self)
-        return total > 0 ? "\(total) mins" : nil
+        let minutes = recipeDisplayCookMinutes(
+            cookTimeText: cookTimeText,
+            cookTimeMinutes: cookTimeMinutes,
+            prepTimeMinutes: prepTimeMinutes
+        )
+        return minutes > 0 ? formattedRecipeCookTime(minutes: minutes) : nil
     }
 
     var compactCookTime: String {
         if let combinedCookTimeText {
             return combinedCookTimeText
         }
-        if let cookTimeMinutes, cookTimeMinutes > 0 {
-            return "\(cookTimeMinutes) mins"
-        }
-        return cookTimeText ?? combinedCookTimeText ?? "—"
+        return "—"
     }
 
     static func lightweightPreview(from card: DiscoverRecipeCardData) -> RecipeDetailData {

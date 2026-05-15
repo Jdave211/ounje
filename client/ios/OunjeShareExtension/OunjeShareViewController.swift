@@ -37,7 +37,7 @@ final class OunjeShareViewController: UIViewController {
         titleLabel.textColor = UIColor(white: 0.97, alpha: 1)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "We’ll pull the recipe in, normalize it, and drop it into your cookbook or next prep."
+        subtitleLabel.text = "We’ll pull the recipe in, normalize it, and drop it into your cookbook or prime prep."
         subtitleLabel.font = .systemFont(ofSize: 14, weight: .medium)
         subtitleLabel.textColor = UIColor(white: 0.7, alpha: 1)
         subtitleLabel.numberOfLines = 0
@@ -64,7 +64,7 @@ final class OunjeShareViewController: UIViewController {
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
 
         configurePrimaryButton(saveButton, title: "Save to Cookbook", tint: UIColor(red: 0.94, green: 0.9, blue: 0.82, alpha: 1), background: UIColor(red: 0.18, green: 0.18, blue: 0.2, alpha: 1))
-        configurePrimaryButton(prepButton, title: "Add to Next Prep", tint: .white, background: UIColor(red: 0.15, green: 0.46, blue: 0.31, alpha: 1))
+        configurePrimaryButton(prepButton, title: "Add to Prime Prep", tint: .white, background: UIColor(red: 0.15, green: 0.46, blue: 0.31, alpha: 1))
 
         cancelButton.setTitle("Cancel", for: .normal)
         cancelButton.setTitleColor(UIColor(white: 0.7, alpha: 1), for: .normal)
@@ -286,7 +286,7 @@ final class OunjeShareViewController: UIViewController {
         let destination = envelope.targetState
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .localizedCaseInsensitiveCompare("prepped") == .orderedSame
-            ? "next prep"
+            ? "prime prep"
             : "cookbook"
         let content = UNMutableNotificationContent()
         content.title = "Added to queue"

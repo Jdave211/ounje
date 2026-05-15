@@ -98,8 +98,8 @@ private final class OunjeShareImportBackgroundSessionDelegate: NSObject, URLSess
 }
 
 /// Foreground notification presentation: suppress normal system banners while
-/// the user is already in the app. The Settings test notification is allowed
-/// through so users can verify device delivery without leaving Ounje.
+/// the user is already in the app. The server APNs test is allowed through so
+/// users can verify backend delivery without leaving Ounje.
 final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     static let shared = OunjeNotificationDelegate()
 
@@ -112,7 +112,7 @@ final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
     ) {
         let userInfo = notification.request.content.userInfo
         let kind = (userInfo["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if kind == "ounje-test" {
+        if kind == "apns_test" {
             completionHandler([.banner, .sound, .badge, .list])
         } else {
             completionHandler([])

@@ -42,13 +42,14 @@ final class OunjePushTokenRegistrar {
 
     /// Called after sign-in / sign-back-in. Replays the last cached token so
     /// the server's `device_tokens` row is associated with the new user_id.
-    func registerCurrentTokenIfPossible(session: AuthSession?) {
+    func registerCurrentTokenIfPossible(session: AuthSession?, force: Bool = false) {
         guard let session else { return }
         let cached = pendingTokenString ?? UserDefaults.standard.string(forKey: tokenStorageKey)
         guard let token = cached, !token.isEmpty else { return }
         let lastUserID = UserDefaults.standard.string(forKey: lastRegisteredSessionKey)
         let lastRegisteredAt = UserDefaults.standard.object(forKey: lastRegisteredAtKey) as? Date
-        if lastUserID == session.userID,
+        if !force,
+           lastUserID == session.userID,
            let lastRegisteredAt,
            Date().timeIntervalSince(lastRegisteredAt) < registrationRefreshInterval {
             // Recently registered for this user; avoid a redundant POST while
@@ -56,6 +57,22 @@ final class OunjePushTokenRegistrar {
             return
         }
         Task { await post(token: token, session: session) }
+    }
+
+    @discardableResult
+    func registerCurrentTokenIfPossibleNow(session: AuthSession?, force: Bool = false) async -> Bool {
+        guard let session else { return false }
+        let cached = pendingTokenString ?? UserDefaults.standard.string(forKey: tokenStorageKey)
+        guard let token = cached, !token.isEmpty else { return false }
+        let lastUserID = UserDefaults.standard.string(forKey: lastRegisteredSessionKey)
+        let lastRegisteredAt = UserDefaults.standard.object(forKey: lastRegisteredAtKey) as? Date
+        if !force,
+           lastUserID == session.userID,
+           let lastRegisteredAt,
+           Date().timeIntervalSince(lastRegisteredAt) < registrationRefreshInterval {
+            return true
+        }
+        return await post(token: token, session: session)
     }
 
     private func persistAndPostIfReady(tokenString: String) async {
@@ -66,10 +83,11 @@ final class OunjePushTokenRegistrar {
               !session.userID.isEmpty,
               !(session.accessToken ?? "").isEmpty
         else { return }
-        await post(token: tokenString, session: session)
+        _ = await post(token: tokenString, session: session)
     }
 
-    private func post(token: String, session: AuthSession) async {
+    @discardableResult
+    private func post(token: String, session: AuthSession) async -> Bool {
         let environment: String
         #if DEBUG
         environment = "sandbox"
@@ -87,7 +105,7 @@ final class OunjePushTokenRegistrar {
             "os_version": UIDevice.current.systemVersion
         ]
 
-        guard let url = URL(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/push-tokens/register") else { return }
+        guard let url = URL(string: "\(OunjeDevelopmentServer.primaryBaseURL)/v1/push-tokens/register") else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 15
@@ -102,6 +120,7 @@ final class OunjePushTokenRegistrar {
             if let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) {
                 UserDefaults.standard.set(session.userID, forKey: lastRegisteredSessionKey)
                 UserDefaults.standard.set(Date(), forKey: lastRegisteredAtKey)
+                return true
             } else if let http = response as? HTTPURLResponse {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 print("[APNs] /v1/push-tokens/register returned \(http.statusCode):", body)
@@ -109,6 +128,7 @@ final class OunjePushTokenRegistrar {
         } catch {
             print("[APNs] /v1/push-tokens/register failed:", error.localizedDescription)
         }
+        return false
     }
 
     /// Called on sign-out so we don't leave a stale (user_id, token) row

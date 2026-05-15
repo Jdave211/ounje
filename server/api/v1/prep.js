@@ -107,9 +107,9 @@ function mirrorPlanToPrimeBatch(plan, batches, preferredBatchID = null) {
 async function fetchLatestMealPrepCycle(supabase, userID) {
   const { data, error } = await supabase
     .from("meal_prep_cycles")
-    .select("id,plan,plan_id,generated_at")
+    .select("id,plan,plan_id,generated_at,updated_at")
     .eq("user_id", userID)
-    .order("generated_at", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -148,11 +148,17 @@ prepRouter.post("/prep/batches", async (req, res) => {
       name: normalizedBatchName(req.body?.name, `New Prep ${batches.length + 1}`),
     });
     const nextBatches = existingRequestedBatch ? batches : [...batches, newBatch];
-    const nextPlan = mirrorPlanToPrimeBatch(plan, nextBatches, newBatch.id);
+    const nextPlan = {
+      ...mirrorPlanToPrimeBatch(plan, nextBatches, newBatch.id),
+      generatedAt: swiftDateNow(),
+    };
 
     const { error } = await supabase
       .from("meal_prep_cycles")
-      .update({ plan: nextPlan })
+      .update({
+        plan: nextPlan,
+        generated_at: new Date().toISOString(),
+      })
       .eq("id", latest.id)
       .eq("user_id", auth.userID);
 

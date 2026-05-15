@@ -16,6 +16,23 @@ function normalize(value) {
   return String(value ?? "").trim();
 }
 
+function normalizedPushEnvironment(value) {
+  return ["sandbox", "production"].includes(value) ? value : "production";
+}
+
+function alternatePushEnvironment(value) {
+  return normalizedPushEnvironment(value) === "sandbox" ? "production" : "sandbox";
+}
+
+function isApnsEnvironmentMismatch(reason) {
+  return [
+    "BadDeviceToken",
+    "BadCertificateEnvironment",
+    "BadEnvironmentKeyInToken",
+    "DeviceTokenNotForTopic",
+  ].includes(normalize(reason));
+}
+
 /** Upserts a device token for a user. Returns the inserted/updated row. */
 export async function registerDeviceToken({
   userId,
@@ -47,7 +64,7 @@ export async function registerDeviceToken({
     .upsert({
       user_id: normalizedUserId,
       token: normalizedToken,
-      environment: ["sandbox", "production"].includes(environment) ? environment : "production",
+      environment: normalizedPushEnvironment(environment),
       platform: ["ios", "ipad", "macos"].includes(platform) ? platform : "ios",
       app_version: normalize(appVersion) || null,
       device_model: normalize(deviceModel) || null,
@@ -119,9 +136,10 @@ export async function pushToUser({
   const notificationKind = normalize(userInfo?.kind) || "unknown";
   const results = await Promise.all(
     tokens.map(async (row) => {
-      const result = await sendApnsNotification({
+      const firstEnvironment = normalizedPushEnvironment(row.environment);
+      let result = await sendApnsNotification({
         token: row.token,
-        environment: row.environment,
+        environment: firstEnvironment,
         title,
         body,
         subtitle,
@@ -129,15 +147,60 @@ export async function pushToUser({
         threadId,
         userInfo,
       });
+      let finalEnvironment = firstEnvironment;
+      if (!result.ok && isApnsEnvironmentMismatch(result.reason)) {
+        const retryEnvironment = alternatePushEnvironment(firstEnvironment);
+        const retryResult = await sendApnsNotification({
+          token: row.token,
+          environment: retryEnvironment,
+          title,
+          body,
+          subtitle,
+          category,
+          threadId,
+          userInfo,
+        });
+        if (retryResult.ok) {
+          finalEnvironment = retryEnvironment;
+          result = {
+            ...retryResult,
+            retried_environment: retryEnvironment,
+            original_environment: firstEnvironment,
+            original_reason: result.reason ?? null,
+          };
+          try {
+            const supabase = getSupabase();
+            await supabase
+              .from("device_tokens")
+              .update({
+                environment: retryEnvironment,
+                last_seen_at: new Date().toISOString(),
+              })
+              .eq("user_id", normalizedUserId)
+              .eq("token", row.token);
+          } catch (cause) {
+            console.warn("[push] failed to repair APNs token environment:", cause.message);
+          }
+        } else {
+          result = {
+            ...retryResult,
+            retried_environment: retryEnvironment,
+            original_environment: firstEnvironment,
+            original_reason: result.reason ?? null,
+          };
+        }
+      }
       console.info("[push] APNs attempt", {
         userId: normalizedUserId,
         kind: notificationKind,
-        environment: row.environment,
+        environment: finalEnvironment,
         platform: row.platform,
         topic: result.topic,
         ok: result.ok,
         status: result.status ?? null,
         reason: result.reason ?? null,
+        originalReason: result.original_reason ?? null,
+        retriedEnvironment: result.retried_environment ?? null,
         token: maskToken(row.token),
         lastSeenAt: row.last_seen_at ?? null,
       });
