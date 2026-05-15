@@ -205,6 +205,37 @@ function trimString(value) {
   return String(value ?? "").trim();
 }
 
+function displayMacroFallbackForRecipe(recipe = {}) {
+  const text = [
+    recipe.title,
+    recipe.description,
+    recipe.category,
+    recipe.recipe_type,
+    recipe.main_protein,
+    recipe.cook_method,
+  ].map((value) => trimString(value).toLowerCase()).filter(Boolean).join(" ");
+
+  let fallback = { calories_kcal: 420, protein_g: 22, carbs_g: 44, fat_g: 16 };
+  if (/smoothie|shake|juice|drink/.test(text)) {
+    fallback = { calories_kcal: 280, protein_g: /protein/.test(text) ? 28 : 12, carbs_g: 38, fat_g: 7 };
+  } else if (/salad|greens|slaw/.test(text)) {
+    fallback = { calories_kcal: 360, protein_g: /chicken|salmon|tuna|beef|tofu|egg/.test(text) ? 28 : 14, carbs_g: 26, fat_g: 18 };
+  } else if (/brownie|cookie|cake|dessert|sweet|pancake|waffle/.test(text)) {
+    fallback = { calories_kcal: 330, protein_g: /protein|yogurt|egg/.test(text) ? 14 : 7, carbs_g: 42, fat_g: 13 };
+  } else if (/bowl|rice|pasta|noodle|wrap|sandwich|burger|taco|burrito/.test(text)) {
+    fallback = { calories_kcal: 520, protein_g: 30, carbs_g: 58, fat_g: 18 };
+  } else if (/soup|stew|chili/.test(text)) {
+    fallback = { calories_kcal: 380, protein_g: 24, carbs_g: 34, fat_g: 14 };
+  } else if (/high protein|protein/.test(text)) {
+    fallback = { calories_kcal: 450, protein_g: 36, carbs_g: 42, fat_g: 14 };
+  }
+
+  return {
+    ...fallback,
+    est_calories_text: `${fallback.calories_kcal} kcal per serving (estimate)`,
+  };
+}
+
 function hasStructuredRecipeJSON(recipe = {}) {
   return (Array.isArray(recipe.ingredients_json) && recipe.ingredients_json.length > 0)
     || (Array.isArray(recipe.steps_json) && recipe.steps_json.length > 0);
