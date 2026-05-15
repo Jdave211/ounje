@@ -53,9 +53,9 @@ final class OunjeAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Foreground notification presentation: show the banner + play the sound so
-/// the user sees important pushes (recipe-import-complete, autoshop-finished)
-/// even while inside the app.
+/// Foreground notification presentation: suppress normal system banners while
+/// the user is already in the app. The Settings test notification is allowed
+/// through so users can verify device delivery without leaving Ounje.
 final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     static let shared = OunjeNotificationDelegate()
 
@@ -66,7 +66,13 @@ final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound, .badge, .list])
+        let userInfo = notification.request.content.userInfo
+        let kind = (userInfo["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if kind == "ounje-test" {
+            completionHandler([.banner, .sound, .badge, .list])
+        } else {
+            completionHandler([])
+        }
     }
 
     func userNotificationCenter(

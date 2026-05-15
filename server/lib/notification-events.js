@@ -17,7 +17,6 @@ const PUSH_DELIVERABLE_KINDS = new Set([
   "grocery_issue",
   "recipe_nudge",
   "trending_recipe_nudge",
-  "recipe_import_queued",
   "recipe_import_completed",
   "recipe_import_failed",
   "autoshop_started",

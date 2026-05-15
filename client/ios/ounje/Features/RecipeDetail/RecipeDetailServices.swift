@@ -591,6 +591,71 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
             .map { $0 }
     }
 
+    var hasCompleteDisplayMacros: Bool {
+        caloriesKcal != nil
+            && proteinG != nil
+            && carbsG != nil
+            && fatG != nil
+    }
+
+    var shouldRefreshImportedMacros: Bool {
+        id.hasPrefix("uir_") && !hasCompleteDisplayMacros
+    }
+
+    func replacingMacros(
+        caloriesKcal: Double?,
+        proteinG: Double?,
+        carbsG: Double?,
+        fatG: Double?,
+        estCaloriesText: String?
+    ) -> RecipeDetailData {
+        RecipeDetailData(
+            id: id,
+            title: title,
+            description: description,
+            authorName: authorName,
+            authorHandle: authorHandle,
+            authorURLString: authorURLString,
+            source: source,
+            sourcePlatform: sourcePlatform,
+            category: category,
+            subcategory: subcategory,
+            recipeType: recipeType,
+            skillLevel: skillLevel,
+            cookTimeText: cookTimeText,
+            servingsText: servingsText,
+            servingSizeText: servingSizeText,
+            dailyDietText: dailyDietText,
+            estCostText: estCostText,
+            estCaloriesText: estCaloriesText ?? self.estCaloriesText,
+            carbsText: carbsText,
+            proteinText: proteinText,
+            fatsText: fatsText,
+            caloriesKcal: caloriesKcal ?? self.caloriesKcal,
+            proteinG: proteinG ?? self.proteinG,
+            carbsG: carbsG ?? self.carbsG,
+            fatG: fatG ?? self.fatG,
+            prepTimeMinutes: prepTimeMinutes,
+            cookTimeMinutes: cookTimeMinutes,
+            heroImageURLString: heroImageURLString,
+            discoverCardImageURLString: discoverCardImageURLString,
+            recipeURLString: recipeURLString,
+            originalRecipeURLString: originalRecipeURLString,
+            attachedVideoURLString: attachedVideoURLString,
+            detailFootnote: detailFootnote,
+            imageCaption: imageCaption,
+            dietaryTags: dietaryTags,
+            flavorTags: flavorTags,
+            cuisineTags: cuisineTags,
+            occasionTags: occasionTags,
+            mainProtein: mainProtein,
+            cookMethod: cookMethod,
+            ingredients: ingredients,
+            steps: steps,
+            servingsCount: servingsCount
+        )
+    }
+
     var compactTagSummary: String {
         let values = (dietaryTags + cuisineTags).prefix(2)
         return values.isEmpty ? "—" : values.joined(separator: " • ")
@@ -1038,51 +1103,15 @@ final class RecipeDetailViewModel: ObservableObject {
             guard let enriched = await RecipeDetailService.shared.enrichMacros(for: fetchedDetail.id, accessToken: accessToken),
                   enriched.caloriesKcal != nil || enriched.proteinG != nil || enriched.carbsG != nil || enriched.fatG != nil else { return }
             guard let current = self.detail, current.id == fetchedDetail.id else { return }
-            self.detail = RecipeDetailData(
-                id: current.id,
-                title: current.title,
-                description: current.description,
-                authorName: current.authorName,
-                authorHandle: current.authorHandle,
-                authorURLString: current.authorURLString,
-                source: current.source,
-                sourcePlatform: current.sourcePlatform,
-                category: current.category,
-                subcategory: current.subcategory,
-                recipeType: current.recipeType,
-                skillLevel: current.skillLevel,
-                cookTimeText: current.cookTimeText,
-                servingsText: current.servingsText,
-                servingSizeText: current.servingSizeText,
-                dailyDietText: current.dailyDietText,
-                estCostText: current.estCostText,
-                estCaloriesText: enriched.estCaloriesText ?? current.estCaloriesText,
-                carbsText: current.carbsText,
-                proteinText: current.proteinText,
-                fatsText: current.fatsText,
-                caloriesKcal: enriched.caloriesKcal ?? current.caloriesKcal,
-                proteinG: enriched.proteinG ?? current.proteinG,
-                carbsG: enriched.carbsG ?? current.carbsG,
-                fatG: enriched.fatG ?? current.fatG,
-                prepTimeMinutes: current.prepTimeMinutes,
-                cookTimeMinutes: current.cookTimeMinutes,
-                heroImageURLString: current.heroImageURLString,
-                discoverCardImageURLString: current.discoverCardImageURLString,
-                recipeURLString: current.recipeURLString,
-                originalRecipeURLString: current.originalRecipeURLString,
-                attachedVideoURLString: current.attachedVideoURLString,
-                detailFootnote: current.detailFootnote,
-                imageCaption: current.imageCaption,
-                dietaryTags: current.dietaryTags,
-                flavorTags: current.flavorTags,
-                cuisineTags: current.cuisineTags,
-                occasionTags: current.occasionTags,
-                mainProtein: current.mainProtein,
-                cookMethod: current.cookMethod,
-                ingredients: current.ingredients,
-                steps: current.steps,
-                servingsCount: current.servingsCount
+            let updatedDetail = current.replacingMacros(
+                caloriesKcal: enriched.caloriesKcal,
+                proteinG: enriched.proteinG,
+                carbsG: enriched.carbsG,
+                fatG: enriched.fatG,
+                estCaloriesText: enriched.estCaloriesText
             )
+            self.detail = updatedDetail
+            await RecipeDetailService.shared.cacheDetail(updatedDetail)
         }
     }
 
@@ -1260,11 +1289,13 @@ actor RecipeDetailService {
     }
 
     func fetchRecipeDetail(id: String, forceRefresh: Bool = false, accessToken: String? = nil) async throws -> RecipeDetailData {
-        if !forceRefresh, let cached = cache[id] {
+        if !forceRefresh, let cached = cache[id], shouldUseCachedDetail(cached, accessToken: accessToken) {
             return cached
         }
 
-        if !forceRefresh, let persisted = await RecipeDetailDiskCache.shared.detail(for: id) {
+        if !forceRefresh,
+           let persisted = await RecipeDetailDiskCache.shared.detail(for: id),
+           shouldUseCachedDetail(persisted, accessToken: accessToken) {
             cache[id] = persisted
             return persisted
         }
@@ -1291,6 +1322,12 @@ actor RecipeDetailService {
             inFlightDetailLoads[id] = nil
             throw error
         }
+    }
+
+    private func shouldUseCachedDetail(_ detail: RecipeDetailData, accessToken: String?) -> Bool {
+        guard detail.shouldRefreshImportedMacros else { return true }
+        let token = accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return token.isEmpty
     }
 
     private func fetchRecipeDetailUncached(id: String, accessToken: String? = nil) async throws -> RecipeDetailData {

@@ -23,6 +23,8 @@ final class OunjePushTokenRegistrar {
 
     private let tokenStorageKey = "ounje.apns.deviceToken"
     private let lastRegisteredSessionKey = "ounje.apns.lastRegisteredSessionUserID"
+    private let lastRegisteredAtKey = "ounje.apns.lastRegisteredAt"
+    private let registrationRefreshInterval: TimeInterval = 6 * 60 * 60
 
     /// Provides the current AuthSession when the registrar needs to ship a
     /// token. Wired by `OunjeAppScene` so we don't have to import the full
@@ -45,8 +47,12 @@ final class OunjePushTokenRegistrar {
         let cached = pendingTokenString ?? UserDefaults.standard.string(forKey: tokenStorageKey)
         guard let token = cached, !token.isEmpty else { return }
         let lastUserID = UserDefaults.standard.string(forKey: lastRegisteredSessionKey)
-        if lastUserID == session.userID {
-            // Already registered for this user; skip the redundant POST.
+        let lastRegisteredAt = UserDefaults.standard.object(forKey: lastRegisteredAtKey) as? Date
+        if lastUserID == session.userID,
+           let lastRegisteredAt,
+           Date().timeIntervalSince(lastRegisteredAt) < registrationRefreshInterval {
+            // Recently registered for this user; avoid a redundant POST while
+            // still periodically reasserting the token if the backend row drifts.
             return
         }
         Task { await post(token: token, session: session) }
@@ -92,9 +98,13 @@ final class OunjePushTokenRegistrar {
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) {
                 UserDefaults.standard.set(session.userID, forKey: lastRegisteredSessionKey)
+                UserDefaults.standard.set(Date(), forKey: lastRegisteredAtKey)
+            } else if let http = response as? HTTPURLResponse {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                print("[APNs] /v1/push-tokens/register returned \(http.statusCode):", body)
             }
         } catch {
             print("[APNs] /v1/push-tokens/register failed:", error.localizedDescription)
@@ -111,6 +121,7 @@ final class OunjePushTokenRegistrar {
               !(session.accessToken ?? "").isEmpty else { return }
         Task { await postUnregister(token: token, session: session) }
         UserDefaults.standard.removeObject(forKey: lastRegisteredSessionKey)
+        UserDefaults.standard.removeObject(forKey: lastRegisteredAtKey)
     }
 
     private func postUnregister(token: String, session: AuthSession) async {

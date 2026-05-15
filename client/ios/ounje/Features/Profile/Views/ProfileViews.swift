@@ -609,6 +609,7 @@ struct ProfileSettingsPage: View {
     @State private var isSignOutDialogPresented = false
     @State private var isDeleteAccountDialogPresented = false
     @State private var deleteAccountErrorMessage: String?
+    @State private var notificationTestAlertMessage: String?
 
     private var currentTier: OunjePricingTier {
         store.effectivePricingTier
@@ -707,6 +708,23 @@ struct ProfileSettingsPage: View {
                         trailingValue: notificationStatusTitle,
                         trailingTint: notificationStatusTint,
                         action: { isNotificationPreferencesPresented = true }
+                    ),
+                    ProfileSettingsMenuRowModel(
+                        icon: "bell.badge.fill",
+                        iconTint: OunjePalette.accent,
+                        title: "Send test notification",
+                        detail: "Requests permission and sends a random local ping",
+                        trailingValue: nil,
+                        trailingTint: OunjePalette.secondaryText,
+                        showsChevron: false,
+                        action: {
+                            Task {
+                                let scheduled = await notificationCenter.sendRandomTestNotification()
+                                notificationTestAlertMessage = scheduled
+                                    ? "A test notification was scheduled. It should appear in about a second."
+                                    : "Notifications are not allowed for Ounje on this device. Open iOS Settings and enable notifications."
+                            }
+                        }
                     ),
                     ProfileSettingsMenuRowModel(
                         icon: "star.bubble.fill",
@@ -941,6 +959,14 @@ struct ProfileSettingsPage: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(deleteAccountErrorMessage ?? "Please try again.")
+        }
+        .alert("Notification test", isPresented: Binding(
+            get: { notificationTestAlertMessage != nil },
+            set: { if !$0 { notificationTestAlertMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(notificationTestAlertMessage ?? "")
         }
     }
 

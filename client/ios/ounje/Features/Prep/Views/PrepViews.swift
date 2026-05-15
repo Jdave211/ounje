@@ -122,6 +122,7 @@ struct PrepTabView: View {
                                 recipeTransitionNamespace: recipeTransitionNamespace,
                                 onSelectRecipe: onSelectRecipe
                             )
+                            .id(prepRecipeStabilityKey)
                             .padding(.horizontal, -OunjeLayout.screenHorizontalPadding)
                         }
                         .padding(.top, 4)
@@ -1177,7 +1178,55 @@ struct CookbookPreppedCycle: Identifiable, Hashable {
     let detail: String
     var prepDateLabel: String? = nil
     var prepDateRangeLabel: String? = nil
+    var themeIndex: Int = 0
     let recipes: [DiscoverRecipeCardData]
+}
+
+struct CookbookPrepBracketTheme {
+    let bubbleFill: Color
+    let bubbleMutedFill: Color
+    let bubbleStroke: Color
+    let tableOverlay: Color
+    let tableStroke: Color
+    let tableShadow: Color
+
+    static func theme(for index: Int) -> CookbookPrepBracketTheme {
+        let themes: [CookbookPrepBracketTheme] = [
+            CookbookPrepBracketTheme(
+                bubbleFill: Color(hex: "8A5A34"),
+                bubbleMutedFill: Color(hex: "3A2A21"),
+                bubbleStroke: Color(hex: "B8875A"),
+                tableOverlay: Color(hex: "6C452A"),
+                tableStroke: Color(hex: "9B6B45"),
+                tableShadow: Color(hex: "8A5A34")
+            ),
+            CookbookPrepBracketTheme(
+                bubbleFill: Color(hex: "2E6F50"),
+                bubbleMutedFill: Color(hex: "1D372B"),
+                bubbleStroke: Color(hex: "6AA77F"),
+                tableOverlay: Color(hex: "1E5A3E"),
+                tableStroke: Color(hex: "4F8B68"),
+                tableShadow: Color(hex: "2E6F50")
+            ),
+            CookbookPrepBracketTheme(
+                bubbleFill: Color(hex: "2F6570"),
+                bubbleMutedFill: Color(hex: "1D3439"),
+                bubbleStroke: Color(hex: "6F9FAA"),
+                tableOverlay: Color(hex: "245560"),
+                tableStroke: Color(hex: "5F909B"),
+                tableShadow: Color(hex: "2F6570")
+            ),
+            CookbookPrepBracketTheme(
+                bubbleFill: Color(hex: "654C73"),
+                bubbleMutedFill: Color(hex: "342B3A"),
+                bubbleStroke: Color(hex: "9B7CAF"),
+                tableOverlay: Color(hex: "50385E"),
+                tableStroke: Color(hex: "84659A"),
+                tableShadow: Color(hex: "654C73")
+            )
+        ]
+        return themes[min(max(index, 0), themes.count - 1)]
+    }
 }
 
 struct CookbookCycleGroup: View {
@@ -1238,6 +1287,7 @@ struct CookbookCycleRow: View {
                 CookbookCycleTablePreview(
                     recipes: Array(cycle.recipes.prefix(6)),
                     dateLabel: cycle.prepDateLabel,
+                    themeIndex: cycle.themeIndex,
                     showsArrow: !showsMetadata
                 )
             }
@@ -1350,6 +1400,7 @@ struct CookbookCyclePlateImage: View {
 struct CookbookCycleTablePreview: View {
     let recipes: [DiscoverRecipeCardData]
     var dateLabel: String? = nil
+    var themeIndex: Int = 0
     let showsArrow: Bool
 
     var body: some View {
@@ -1358,6 +1409,7 @@ struct CookbookCycleTablePreview: View {
             let height = proxy.size.height
             let basePlateSize = min(max(width * 0.20, 64), 88)
             let activePlacements = placements(for: recipes.count)
+            let theme = CookbookPrepBracketTheme.theme(for: themeIndex)
 
             ZStack(alignment: .topTrailing) {
                 Image("OunjeTable")
@@ -1368,6 +1420,19 @@ struct CookbookCycleTablePreview: View {
                     .brightness(-0.24)
                     .saturation(0.86)
                     .overlay(Color.black.opacity(0.30))
+                    .overlay(theme.tableOverlay.opacity(0.26).blendMode(.overlay))
+                    .overlay(
+                        LinearGradient(
+                            colors: [
+                                theme.tableOverlay.opacity(0.28),
+                                Color.black.opacity(0.06),
+                                theme.tableOverlay.opacity(0.18)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        .blendMode(.softLight)
+                    )
                     .clipped()
 
                 ForEach(Array(recipes.prefix(activePlacements.count).enumerated()), id: \.element.id) { index, recipe in
@@ -1416,6 +1481,16 @@ struct CookbookCycleTablePreview: View {
         }
         .frame(height: 168)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(CookbookPrepBracketTheme.theme(for: themeIndex).tableStroke.opacity(0.28), lineWidth: 1)
+        )
+        .shadow(
+            color: CookbookPrepBracketTheme.theme(for: themeIndex).tableShadow.opacity(0.12),
+            radius: 14,
+            x: 0,
+            y: 8
+        )
         .accessibilityElement(children: .combine)
     }
 

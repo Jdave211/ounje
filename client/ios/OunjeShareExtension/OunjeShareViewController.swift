@@ -1,6 +1,7 @@
 import AVFoundation
 import UIKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 final class OunjeShareViewController: UIViewController {
     private let titleLabel = UILabel()
@@ -151,11 +152,18 @@ final class OunjeShareViewController: UIViewController {
             do {
                 let envelope = try await self.captureEnvelope(targetState: targetState)
                 try SharedRecipeImportInbox.write(envelope)
+                await Self.sendQueuedNotificationIfAllowed(for: envelope)
 
                 if let authSession = self.sharedAuthSession() {
                     let response: RecipeImportResponse
                     do {
-                        response = try await self.submitEnvelopeToBackend(envelope, authSession: authSession)
+                        response = try await self.submitEnvelopeToBackendWithShortDeadline(envelope, authSession: authSession)
+                    } catch is ShareExtensionBackendQueueTimeout {
+                        await MainActor.run {
+                            self.toggleBusy(false)
+                            self.extensionContext?.completeRequest(returningItems: nil)
+                        }
+                        return
                     } catch {
                         await MainActor.run {
                             self.openContainingApp(for: envelope.id)
@@ -209,6 +217,26 @@ final class OunjeShareViewController: UIViewController {
         }
     }
 
+    private func submitEnvelopeToBackendWithShortDeadline(
+        _ envelope: SharedRecipeImportEnvelope,
+        authSession: SharedAuthSession
+    ) async throws -> RecipeImportResponse {
+        let submissionTask = Task {
+            try await submitEnvelopeToBackend(envelope, authSession: authSession)
+        }
+        let timeoutTask = Task {
+            try await Task.sleep(nanoseconds: 1_600_000_000)
+            submissionTask.cancel()
+        }
+        defer { timeoutTask.cancel() }
+
+        do {
+            return try await submissionTask.value
+        } catch is CancellationError {
+            throw ShareExtensionBackendQueueTimeout()
+        }
+    }
+
     private func toggleBusy(_ busy: Bool) {
         saveButton.isEnabled = !busy
         prepButton.isEnabled = !busy
@@ -218,6 +246,42 @@ final class OunjeShareViewController: UIViewController {
         } else {
             activityIndicator.stopAnimating()
         }
+    }
+
+    private static func sendQueuedNotificationIfAllowed(for envelope: SharedRecipeImportEnvelope) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized
+                || settings.authorizationStatus == .provisional
+                || settings.authorizationStatus == .ephemeral
+        else {
+            return
+        }
+
+        let destination = envelope.targetState
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .localizedCaseInsensitiveCompare("prepped") == .orderedSame
+            ? "next prep"
+            : "cookbook"
+        let content = UNMutableNotificationContent()
+        content.title = "Added to queue"
+        content.body = "Ounje is importing this recipe into your \(destination)."
+        content.sound = .default
+        content.categoryIdentifier = "OUNJE_RECIPE_IMPORT"
+        content.threadIdentifier = "recipe-import"
+        content.userInfo = [
+            "kind": "recipe_import_queued",
+            "actionURL": "ounje://imports",
+            "action_url": "ounje://imports",
+            "deep_link": "ounje://imports",
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: "recipe-import-queued-\(envelope.id)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        try? await center.add(request)
     }
 
     private func buildSummary() async -> (summary: String, providerCount: Int) {
@@ -666,6 +730,8 @@ private enum ImportSubmissionServer {
         return uniqueBaseURLs
     }
 }
+
+private struct ShareExtensionBackendQueueTimeout: Error {}
 
 private func makeRecipeImportImageAttachment(
     from data: Data,

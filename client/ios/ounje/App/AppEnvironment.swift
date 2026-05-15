@@ -458,6 +458,16 @@ final class MealPlanningAppStore: ObservableObject {
     func persistAuthSession(_ session: AuthSession) {
         authStateRevision += 1
         authSessionNeedsReauthentication = false
+        let previousUserID = authSession?.userID ?? cachedLiveUserID
+        if previousUserID != session.userID {
+            loadHistory(for: session.userID)
+            loadCompletedMealPrepCycleCache(for: session.userID)
+            loadAutomationStateCache(for: session.userID)
+            loadPendingCartSyncIntentCache(for: session.userID)
+            loadPrepRecipeOverridesCache(for: session.userID)
+            loadRecurringPrepRecipesCache(for: session.userID)
+            remoteMealPrepCycleLoadState = .notRequested
+        }
         authSession = session
         cachedLiveUserID = session.userID
         // Reset the resolved-state flag so the bootstrap loading splash is shown while we
@@ -559,13 +569,26 @@ final class MealPlanningAppStore: ObservableObject {
             billingStatusMessage = nil
         }
 
-        if let latestPlan = snapshot.latestPlan,
-           hasPersistablePrepContent(latestPlan) {
+        if let snapshotLatestPlan = snapshot.latestPlan,
+           hasPersistablePrepContent(snapshotLatestPlan) {
             let shouldSkipStaleRemotePlan = lastLocalPrepMutationAt.map {
                 source == .remote && Date().timeIntervalSince($0) < 45
             } ?? false
             if !shouldSkipStaleRemotePlan {
-                updateCurrentPlanCache(with: latestPlan, persistRemote: false)
+                let localLatestPlan = latestPlan
+                let preferredLatestPlan = localLatestPlan.map {
+                    shouldKeepLocalLatestPlan($0, overRemote: snapshotLatestPlan) ? $0 : snapshotLatestPlan
+                } ?? snapshotLatestPlan
+                let shouldRepairRemoteLatestPlan = source == .remote
+                    && localLatestPlan != nil
+                    && preferredLatestPlan == localLatestPlan
+                    && preferredLatestPlan != snapshotLatestPlan
+                updateCurrentPlanCache(with: preferredLatestPlan, persistRemote: false)
+                if shouldRepairRemoteLatestPlan {
+                    Task(priority: .utility) { [weak self] in
+                        _ = await self?.persistLatestPlanRemotelyIfPossible(preferredLatestPlan)
+                    }
+                }
                 let count = max(1, snapshot.prepSummary.historyCount ?? 1)
                 remoteMealPrepCycleLoadState = .loaded(count)
                 isRefreshingPrepRecipes = false
@@ -2374,8 +2397,16 @@ final class MealPlanningAppStore: ObservableObject {
         deleteAuthSessionFromKeychain()
     }
 
-    private func updateCurrentPlanCache(with inputPlan: MealPlan, persistRemote: Bool = true) {
-        let plan = planMirroringPrimeBatch(inputPlan)
+    private func updateCurrentPlanCache(
+        with inputPlan: MealPlan,
+        persistRemote: Bool = true,
+        allowBatchContraction: Bool = false
+    ) {
+        let batchSafePlan = planPreservingLocalBatchesIfNeeded(
+            inputPlan,
+            allowBatchContraction: allowBatchContraction
+        )
+        let plan = planMirroringPrimeBatch(batchSafePlan)
         let previousPlanID = latestPlan?.id
         let previousRecipeSignature = latestPlan?.recipes.map(\.recipe.id).joined(separator: "|") ?? ""
         let nextRecipeSignature = plan.recipes.map(\.recipe.id).joined(separator: "|")
@@ -2399,6 +2430,38 @@ final class MealPlanningAppStore: ObservableObject {
 
         guard persistRemote else { return }
         persistMealPrepCycleIfPossible(plan)
+    }
+
+    private func planPreservingLocalBatchesIfNeeded(
+        _ inputPlan: MealPlan,
+        allowBatchContraction: Bool
+    ) -> MealPlan {
+        guard !allowBatchContraction,
+              let localPlan = latestPlan,
+              localPlan.id == inputPlan.id,
+              let localBatches = localPlan.batches,
+              !localBatches.isEmpty
+        else {
+            return inputPlan
+        }
+
+        let incomingBatches = inputPlan.batches ?? []
+        guard incomingBatches.count < localBatches.count else {
+            return inputPlan
+        }
+
+        var plan = inputPlan
+        plan.batches = localBatches
+        if let incomingActiveBatchID = inputPlan.activeBatchID,
+           localBatches.contains(where: { $0.id == incomingActiveBatchID }) {
+            plan.activeBatchID = incomingActiveBatchID
+        } else if let localActiveBatchID = localPlan.activeBatchID,
+                  localBatches.contains(where: { $0.id == localActiveBatchID }) {
+            plan.activeBatchID = localActiveBatchID
+        } else {
+            plan.activeBatchID = localBatches.first?.id
+        }
+        return plan
     }
 
     private func planMirroringPrimeBatch(_ inputPlan: MealPlan, preferredBatchID: UUID? = nil) -> MealPlan {
@@ -2695,6 +2758,7 @@ final class MealPlanningAppStore: ObservableObject {
         currentBatches.append(newBatch)
         plan.batches = currentBatches
         plan.activeBatchID = newBatch.id
+        plan.generatedAt = Date()
         let submittedPlan = planMirroringPrimeBatch(plan, preferredBatchID: newBatch.id)
         lastLocalPrepMutationAt = .now
         updateCurrentPlanCache(with: submittedPlan, persistRemote: false)
@@ -2725,8 +2789,20 @@ final class MealPlanningAppStore: ObservableObject {
                         _ = self.setPrimePrepBatch(batchID: response.activeBatchID ?? newBatch.id, persistRemote: false)
                         return
                     }
+                    guard self.prepBatchMutationResponsePreservesLocalBatches(
+                        response.plan,
+                        submittedPlan: submittedPlan,
+                        requiredBatchID: newBatch.id
+                    ) else {
+                        _ = self.setPrimePrepBatch(batchID: response.activeBatchID ?? newBatch.id, persistRemote: false)
+                        Task(priority: .utility) { [weak self] in
+                            guard let self, let latestPlan = self.latestPlan else { return }
+                            _ = await self.persistLatestPlanRemotelyIfPossible(latestPlan)
+                        }
+                        return
+                    }
                     self.updateCurrentPlanCache(with: response.plan, persistRemote: false)
-                    self.setPrimePrepBatch(batchID: response.activeBatchID ?? newBatch.id, persistRemote: false)
+                    _ = self.setPrimePrepBatch(batchID: response.activeBatchID ?? newBatch.id, persistRemote: false)
                 }
             } catch {
                 print("[MealPlanningAppStore] Remote prep batch creation failed; falling back to meal_prep_cycles upsert: \(error.localizedDescription)")
@@ -2735,6 +2811,20 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         return newBatch.id
+    }
+
+    private func prepBatchMutationResponsePreservesLocalBatches(
+        _ responsePlan: MealPlan,
+        submittedPlan: MealPlan,
+        requiredBatchID: UUID
+    ) -> Bool {
+        let submittedBatches = submittedPlan.batches ?? []
+        guard !submittedBatches.isEmpty else { return true }
+        let responseBatches = responsePlan.batches ?? []
+        guard responseBatches.count >= submittedBatches.count else { return false }
+        let responseBatchIDs = Set(responseBatches.map(\.id))
+        guard responseBatchIDs.contains(requiredBatchID) else { return false }
+        return submittedBatches.allSatisfy { responseBatchIDs.contains($0.id) }
     }
 
     @discardableResult
@@ -2746,7 +2836,9 @@ final class MealPlanningAppStore: ObservableObject {
         let previousBatchID = activeBatchID
         let previousCartSignature = automationCartSignature(for: latestPlan.groceryItems)
         lastLocalPrepMutationAt = .now
-        let plan = planMirroringPrimeBatch(latestPlan, preferredBatchID: batchID)
+        var sourcePlan = latestPlan
+        sourcePlan.generatedAt = Date()
+        let plan = planMirroringPrimeBatch(sourcePlan, preferredBatchID: batchID)
         updateCurrentPlanCache(with: plan, persistRemote: persistRemote)
         clearPendingCartSyncIntentIfCurrentPlanChanged()
         if persistRemote,
@@ -2798,8 +2890,9 @@ final class MealPlanningAppStore: ObservableObject {
         plan.providerQuotes = rebuiltTargetPlan.providerQuotes
         plan.mainShopSnapshot = rebuiltTargetPlan.mainShopSnapshot
         plan.pipeline = rebuiltTargetPlan.pipeline
+        plan.generatedAt = Date()
         lastLocalPrepMutationAt = .now
-        updateCurrentPlanCache(with: plan, persistRemote: true)
+        updateCurrentPlanCache(with: plan, persistRemote: true, allowBatchContraction: true)
     }
 
     /// Renames a batch. No-op if no batch with that id exists.
@@ -2812,6 +2905,7 @@ final class MealPlanningAppStore: ObservableObject {
             ? "Batch \(idx + 1)"
             : name.trimmingCharacters(in: .whitespacesAndNewlines)
         plan.batches = batches
+        plan.generatedAt = Date()
         lastLocalPrepMutationAt = .now
         updateCurrentPlanCache(with: plan, persistRemote: true)
     }
@@ -2837,6 +2931,7 @@ final class MealPlanningAppStore: ObservableObject {
                 plan.activeBatchID = activeBatchID
             }
         }
+        plan.generatedAt = Date()
         lastLocalPrepMutationAt = .now
         updateCurrentPlanCache(with: plan, persistRemote: true)
     }
@@ -3065,6 +3160,10 @@ final class MealPlanningAppStore: ObservableObject {
                     ? localLatestPlan
                     : remoteLatestPlan
             }()
+            let shouldRepairRemoteLatestPlan = localLatestPlan != nil
+                && remoteLatestPlan != nil
+                && preferredLatestPlan == localLatestPlan
+                && preferredLatestPlan != remoteLatestPlan
 
             if let preferredLatestPlan {
                 let mergedHistory = mergedMealPrepHistory(
@@ -3087,6 +3186,11 @@ final class MealPlanningAppStore: ObservableObject {
                 }
             }
             saveHistory()
+            if shouldRepairRemoteLatestPlan, let preferredLatestPlan {
+                Task(priority: .utility) { [weak self] in
+                    _ = await self?.persistLatestPlanRemotelyIfPossible(preferredLatestPlan)
+                }
+            }
             let loadedState: RemoteMealPrepCycleLoadState = .loaded(usableFetched.count)
             remoteMealPrepCycleLoadState = loadedState
             return loadedState
@@ -3097,9 +3201,26 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
+    private func hasRecentLocalPrepMutation(within interval: TimeInterval = 90) -> Bool {
+        guard let lastLocalPrepMutationAt else { return false }
+        return Date().timeIntervalSince(lastLocalPrepMutationAt) < interval
+    }
+
     private func shouldKeepLocalLatestPlan(_ localPlan: MealPlan, overRemote remotePlan: MealPlan) -> Bool {
-        guard localPlan.id != remotePlan.id else { return false }
-        return localPlan.generatedAt >= remotePlan.generatedAt
+        let localMutationIsFresh = hasRecentLocalPrepMutation()
+        guard localPlan.id != remotePlan.id else {
+            let localBatches = localPlan.batches ?? []
+            let remoteBatches = remotePlan.batches ?? []
+            guard !localBatches.isEmpty else { return false }
+            guard localMutationIsFresh else { return false }
+            if remoteBatches.isEmpty || localBatches.count > remoteBatches.count {
+                return true
+            }
+            return localBatches.count == remoteBatches.count
+                && prepBatchSignature(for: localPlan) != prepBatchSignature(for: remotePlan)
+                && localPlan.generatedAt >= remotePlan.generatedAt
+        }
+        return localMutationIsFresh && localPlan.generatedAt >= remotePlan.generatedAt
     }
 
     private func mergedMealPrepHistory(
@@ -5006,7 +5127,9 @@ final class MealPlanningAppStore: ObservableObject {
     private func loadHistory(for userID: String?) {
         let defaults = UserDefaults.standard
         let primaryKey = historyStorageKey(for: userID)
-        let fallbackKeys = [legacyHistoryKey, historyStorageKey(for: nil)].filter { $0 != primaryKey }
+        let fallbackKeys = userID == nil
+            ? [legacyHistoryKey].filter { $0 != primaryKey }
+            : []
         let data = defaults.data(forKey: primaryKey)
             ?? fallbackKeys.compactMap { defaults.data(forKey: $0) }.first
 
@@ -5017,11 +5140,13 @@ final class MealPlanningAppStore: ObservableObject {
         else {
             planHistory = []
             latestPlan = nil
+            activeBatchID = nil
             return
         }
 
         planHistory = decodedHistory
         latestPlan = decodedHistory.first
+        activeBatchID = decodedHistory.first?.activeBatchID
 
         if defaults.data(forKey: primaryKey) == nil {
             defaults.set(data, forKey: primaryKey)

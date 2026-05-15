@@ -1702,6 +1702,24 @@ async function assessRecipeLikelihood(source) {
   };
 }
 
+function shouldContinueRecipeImportDespiteGate(recipeGate, source) {
+  const sourceType = normalizeText(source?.source_type ?? source?.platform ?? "").toLowerCase();
+  const isSocialSource = ["tiktok", "instagram", "youtube", "shorts", "reel", "social"].some((token) => sourceType.includes(token));
+  if (!isSocialSource) return false;
+
+  const reason = normalizeText(recipeGate?.reason ?? "").toLowerCase();
+  const text = [
+    source?.title,
+    source?.description,
+    source?.meta_description,
+    source?.transcript_text,
+  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join("\n");
+
+  const looksLikeRecipeLead = /\b(recipe|ingredients?|method|cook|bake|meal prep|protein|calories|macros?)\b/i.test(text);
+  const gateRejectedForMissingDetails = /\b(no actual recipe content|no ingredients?|no steps?|promotion|promotional|full recipe|recipe link|link in bio)\b/i.test(reason);
+  return looksLikeRecipeLead && gateRejectedForMissingDetails;
+}
+
 function looksLikeRecipeSearchRequest(text) {
   const normalized = normalizeText(text);
   if (!normalized || isProbablyURL(normalized)) return false;
@@ -2872,8 +2890,9 @@ async function broadcastRecipeImportInvalidation(job, eventName) {
   });
 
   // Also drop a row into app_notification_events so the user gets a banner
-  // / APNs push for queue → completed / failed transitions. We only emit for
-  // status transitions, not every event tick.
+  // / APNs push for completed / failed transitions. The client/share
+  // extension owns the immediate queued notification to avoid duplicate
+  // "Added to queue" alerts from local + backend delivery paths.
   try {
     await maybeEmitRecipeImportNotification(job, eventName);
   } catch (cause) {
@@ -2895,17 +2914,7 @@ async function maybeEmitRecipeImportNotification(job, eventName) {
   const title = pickRecipeTitle(job);
 
   if (status === "queued" && eventName === "queued") {
-    await createNotificationEvent({
-      userId: userID,
-      kind: "recipe_import_queued",
-      dedupeKey: `recipe-import-queued:${jobID}`,
-      title: "Got it — building your recipe",
-      body: title ? `We'll let you know when "${title}" is ready.` : "We'll let you know when your recipe is ready.",
-      recipeId: normalizeText(job?.recipe_id) || null,
-      actionUrl: "ounje://cookbook/import",
-      actionLabel: "View imports",
-      metadata: { job_id: jobID, status },
-    });
+    return;
   } else if (["saved", "draft"].includes(status)) {
     await createNotificationEvent({
       userId: userID,
@@ -8799,23 +8808,34 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
         },
       }).catch(() => {});
       if (!recipeGate.is_recipe) {
-        const completedAt = nowIso();
-        job = await appendJobEvent(existingJob.id, "failed_not_recipe", {
-          worker_id: workerID,
-          reason: recipeGate.reason,
-          confidence: recipeGate.confidence,
-          method: recipeGate.method,
-        }, {
-          status: "failed",
-          canonical_url: source.canonical_url ?? requestPayload.source_url,
-          fetched_at: nowIso(),
-          completed_at: completedAt,
-          error_message: "Source does not appear to be a recipe.",
-          review_state: "needs_review",
-          review_reason: recipeGate.reason,
-          quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "not_recipe"]),
-        });
-        return formatJobResponse(job);
+        if (shouldContinueRecipeImportDespiteGate(recipeGate, source)) {
+          job = await appendJobEvent(existingJob.id, "not_recipe_gate_overridden", {
+            worker_id: workerID,
+            reason: recipeGate.reason,
+            confidence: recipeGate.confidence,
+            method: recipeGate.method,
+          }, {
+            quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "recipe_lead_gate_override"]),
+          });
+        } else {
+          const completedAt = nowIso();
+          job = await appendJobEvent(existingJob.id, "failed_not_recipe", {
+            worker_id: workerID,
+            reason: recipeGate.reason,
+            confidence: recipeGate.confidence,
+            method: recipeGate.method,
+          }, {
+            status: "failed",
+            canonical_url: source.canonical_url ?? requestPayload.source_url,
+            fetched_at: nowIso(),
+            completed_at: completedAt,
+            error_message: "Source does not appear to be a recipe.",
+            review_state: "needs_review",
+            review_reason: recipeGate.reason,
+            quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "not_recipe"]),
+          });
+          return formatJobResponse(job);
+        }
       }
     }
 

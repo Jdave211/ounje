@@ -344,10 +344,12 @@ final class AppNotificationCenterManager: ObservableObject {
     private var lastSyncedAt: Date?
     private var lastSyncFailureUserID: String?
     private var lastSyncFailureAt: Date?
+    private var notificationSyncFailureCount: Int = 0
     private var lastTrackingAuthFailureAt: Date?
     private var lastTrackingAuthFailureUserID: String?
     private let passiveSyncInterval: TimeInterval = 5 * 60
     private let failureRetryInterval: TimeInterval = 2 * 60
+    private let escalatedFailureRetryInterval: TimeInterval = 30 * 60
 
     init() {
         configureNotificationCategories()
@@ -366,10 +368,9 @@ final class AppNotificationCenterManager: ObservableObject {
            Date().timeIntervalSince(lastSyncedAt) < passiveSyncInterval {
             return
         }
-        if !force,
-           lastSyncFailureUserID == session.userID,
+        if lastSyncFailureUserID == session.userID,
            let lastSyncFailureAt,
-           Date().timeIntervalSince(lastSyncFailureAt) < failureRetryInterval {
+           Date().timeIntervalSince(lastSyncFailureAt) < currentNotificationFailureRetryInterval {
             return
         }
 
@@ -436,11 +437,20 @@ final class AppNotificationCenterManager: ObservableObject {
             lastSyncedAt = Date()
             lastSyncFailureUserID = nil
             lastSyncFailureAt = nil
+            notificationSyncFailureCount = 0
         } catch {
+            notificationSyncFailureCount = lastSyncFailureUserID == session.userID
+                ? min(notificationSyncFailureCount + 1, 3)
+                : 1
             lastSyncFailureUserID = session.userID
             lastSyncFailureAt = Date()
-            // Keep retrying on the next active/scene sync instead of treating a failed sync as fresh.
+            // Back off hard after repeated failures so notification delivery
+            // problems don't create unbounded pending-event request churn.
         }
+    }
+
+    private var currentNotificationFailureRetryInterval: TimeInterval {
+        notificationSyncFailureCount >= 3 ? escalatedFailureRetryInterval : failureRetryInterval
     }
 
     func refreshInbox(for session: AuthSession?) async {
@@ -488,6 +498,150 @@ final class AppNotificationCenterManager: ObservableObject {
         }
     }
 
+    @discardableResult
+    func sendRecipeImportQueuedNotification(
+        sourceTitle: String? = nil,
+        targetState: String? = nil,
+        identifierSuffix: String? = nil
+    ) async -> Bool {
+        await ensureLocalNotificationAuthorization()
+        guard canPresentLocalNotifications else { return false }
+
+        let normalizedTarget = targetState?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let destination = normalizedTarget == "prepped" ? "next prep" : "cookbook"
+        let source = sourceTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = identifierSuffix?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifierToken = (suffix?.isEmpty == false ? suffix : nil) ?? UUID().uuidString
+        let identifier = "recipe-import-queued-\(identifierToken)"
+        let body: String
+        if let source, !source.isEmpty {
+            body = "Ounje is importing from \(source) into your \(destination)."
+        } else {
+            body = "Ounje is importing this recipe into your \(destination)."
+        }
+
+        return await scheduleImmediateLocalNotification(
+            identifier: identifier,
+            title: "Added to queue",
+            body: body,
+            categoryIdentifier: "OUNJE_RECIPE_IMPORT",
+            threadIdentifier: "recipe-import",
+            deepLink: "ounje://imports"
+        )
+    }
+
+    @discardableResult
+    func sendRecipeImportFailedNotification(
+        sourceTitle: String? = nil,
+        targetState: String? = nil,
+        errorMessage: String? = nil,
+        identifierSuffix: String? = nil
+    ) async -> Bool {
+        await ensureLocalNotificationAuthorization()
+        guard canPresentLocalNotifications else { return false }
+
+        let normalizedTarget = targetState?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let destination = normalizedTarget == "prepped" ? "next prep" : "cookbook"
+        let source = sourceTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = identifierSuffix?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifierToken = (suffix?.isEmpty == false ? suffix : nil) ?? UUID().uuidString
+        let identifier = "recipe-import-failed-\(identifierToken)"
+        let resolvedError = errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body: String
+        if let resolvedError, !resolvedError.isEmpty {
+            body = resolvedError
+        } else if let source, !source.isEmpty {
+            body = "Ounje couldn't import from \(source) into your \(destination)."
+        } else {
+            body = "Ounje couldn't import this recipe into your \(destination)."
+        }
+
+        return await scheduleImmediateLocalNotification(
+            identifier: identifier,
+            title: "Recipe import failed",
+            body: body,
+            categoryIdentifier: "OUNJE_RECIPE_IMPORT",
+            threadIdentifier: "recipe-import",
+            deepLink: "ounje://cookbook/imports"
+        )
+    }
+
+    @discardableResult
+    func sendRandomTestNotification() async -> Bool {
+        await ensureLocalNotificationAuthorization()
+        guard canPresentLocalNotifications else { return false }
+
+        let samples: [(String, String, String)] = [
+            ("Ounje test", "Notifications are allowed on this device.", "ounje://imports"),
+            ("Import check", "A queued-recipe notification can reach you.", "ounje://cookbook/imports"),
+            ("Prep ping", "Local notifications are working from Settings.", "ounje://prep"),
+        ]
+        let sample = samples.randomElement() ?? samples[0]
+        return await scheduleImmediateLocalNotification(
+            identifier: "ounje-test-notification-\(UUID().uuidString)",
+            title: sample.0,
+            body: sample.1,
+            categoryIdentifier: "",
+            threadIdentifier: "ounje-test",
+            deepLink: sample.2,
+            presentWhenForeground: true
+        )
+    }
+
+    private var canPresentLocalNotifications: Bool {
+        authorizationStatus == .authorized
+            || authorizationStatus == .provisional
+            || authorizationStatus == .ephemeral
+    }
+
+    private func ensureLocalNotificationAuthorization() async {
+        await refreshAuthorizationStatus()
+        if authorizationStatus == .notDetermined {
+            await requestAuthorizationIfNeeded()
+        }
+        if canPresentLocalNotifications {
+            await registerForRemoteNotificationsIfAllowed()
+        }
+    }
+
+    @discardableResult
+    private func scheduleImmediateLocalNotification(
+        identifier: String,
+        title: String,
+        body: String,
+        categoryIdentifier: String,
+        threadIdentifier: String,
+        deepLink: String,
+        presentWhenForeground: Bool = false
+    ) async -> Bool {
+        if !presentWhenForeground {
+            let appIsActive = await MainActor.run { UIApplication.shared.applicationState == .active }
+            guard !appIsActive else { return false }
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.categoryIdentifier = categoryIdentifier
+        content.threadIdentifier = threadIdentifier
+        content.userInfo = [
+            "kind": threadIdentifier,
+            "actionURL": deepLink,
+            "action_url": deepLink,
+            "deep_link": deepLink,
+        ]
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        do {
+            try await notificationCenter.add(request)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     private func requestAuthorizationIfNeeded() async {
         do {
             let granted = try await notificationCenter.requestAuthorization(options: [.alert, .sound, .badge])
@@ -516,6 +670,8 @@ final class AppNotificationCenterManager: ObservableObject {
         guard OunjeNotificationPreferenceStore.load().allows(kind: event.kind, metadata: event.metadata) else {
             return
         }
+        let appIsActive = await MainActor.run { UIApplication.shared.applicationState == .active }
+        guard !appIsActive else { return }
 
         let identifier = "app-notification-\(event.id.uuidString)"
         let pending = await notificationCenter.pendingNotificationRequests()
@@ -1865,6 +2021,7 @@ private struct MealPlannerShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
     @EnvironmentObject private var runtimeStore: UserRuntimeStore
     @EnvironmentObject private var realtimeCoordinator: AppRealtimeInvalidationCoordinator
     @ObservedObject private var toastCenter: AppToastCenter
@@ -2386,6 +2543,11 @@ private struct MealPlannerShellView: View {
             )
             try? SharedRecipeImportInbox.write(localEnvelope)
             await sharedImportInbox.refresh()
+            await notificationCenter.sendRecipeImportQueuedNotification(
+                sourceTitle: sourceApp,
+                targetState: localEnvelope.targetState,
+                identifierSuffix: localEnvelope.id
+            )
 
             // Cycle through human-readable pipeline stages so the user sees progress
             // instead of a stale "Checking photo" banner for 15–30 seconds.
@@ -2466,6 +2628,12 @@ private struct MealPlannerShellView: View {
                     systemImage: "exclamationmark.circle.fill",
                     destination: .recipeImportQueue(.failed)
                 )
+                await notificationCenter.sendRecipeImportFailedNotification(
+                    sourceTitle: sourceApp,
+                    targetState: localEnvelope.targetState,
+                    errorMessage: failureReason,
+                    identifierSuffix: response.job.id
+                )
                 return
             }
 
@@ -2515,6 +2683,12 @@ private struct MealPlannerShellView: View {
                 subtitle: error.localizedDescription,
                 systemImage: "exclamationmark.circle.fill",
                 destination: nil
+            )
+            await notificationCenter.sendRecipeImportFailedNotification(
+                sourceTitle: sourceApp,
+                targetState: "prepped",
+                errorMessage: error.localizedDescription,
+                identifierSuffix: UUID().uuidString
             )
         }
     }
@@ -2958,6 +3132,12 @@ private struct MealPlannerShellView: View {
                         systemImage: "exclamationmark.circle.fill",
                         destination: .recipeImportQueue(.failed)
                     )
+                    await notificationCenter.sendRecipeImportFailedNotification(
+                        sourceTitle: envelope.sourceApp,
+                        targetState: envelope.targetState,
+                        errorMessage: importFailureReason,
+                        identifierSuffix: response.job.id
+                    )
                 } else if let detail = response.recipeDetail, envelope.targetState == "prepped" {
                     await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
                     selectedTab = .prep
@@ -3066,6 +3246,12 @@ private struct MealPlannerShellView: View {
                         subtitle: errorMessage,
                         systemImage: "exclamationmark.circle.fill",
                         destination: .recipeImportQueue(.failed)
+                    )
+                    await notificationCenter.sendRecipeImportFailedNotification(
+                        sourceTitle: envelope.sourceApp,
+                        targetState: envelope.targetState,
+                        errorMessage: errorMessage,
+                        identifierSuffix: envelope.jobID ?? envelope.id
                     )
                 }
             }
@@ -3463,6 +3649,8 @@ private struct CookbookTabView: View {
     @State private var sectionTransitionDirection: CGFloat = 1
     @State private var isNewCookbookPrepPromptPresented = false
     @State private var newCookbookPrepName = ""
+    @State private var pendingPrepTableScrollID: String?
+    @State private var cookbookPrepSuggestionStates: [UUID: CookbookPrepSuggestionState] = [:]
     @Namespace private var savedSearchTransitionNamespace
 
     // Coachmark: first time a freshly-onboarded user lands in the cookbook,
@@ -3497,18 +3685,35 @@ private struct CookbookTabView: View {
         }
     }
 
-    private var upcomingCycle: CookbookPreppedCycle? {
-        guard let latestPlan = store.latestPlan else { return nil }
-        let displayRecipes = store.prepDisplayRecipes
-        guard !displayRecipes.isEmpty else { return nil }
-        return CookbookPreppedCycle(
-            id: latestPlan.id.uuidString,
-            title: cookbookActivePrepName,
-            detail: "\(displayRecipes.count) recipes",
-            prepDateLabel: nil,
-            prepDateRangeLabel: prepDateRangeLabel(for: latestPlan),
-            recipes: displayRecipes.map(DiscoverRecipeCardData.init(preppedRecipe:))
-        )
+    private var upcomingBatchCycles: [CookbookPreppedCycle] {
+        guard let latestPlan = store.latestPlan else { return [] }
+        let batches = cookbookPrepBatches
+        if batches.isEmpty {
+            guard !latestPlan.recipes.isEmpty else { return [] }
+            return [
+                CookbookPreppedCycle(
+                    id: latestPlan.id.uuidString,
+                    title: "Usual",
+                    detail: "\(latestPlan.recipes.count) recipes",
+                    prepDateLabel: nil,
+                    prepDateRangeLabel: prepDateRangeLabel(for: latestPlan),
+                    themeIndex: 0,
+                    recipes: latestPlan.recipes.map(DiscoverRecipeCardData.init(preppedRecipe:))
+                )
+            ]
+        }
+
+        return batches.enumerated().map { index, batch in
+            CookbookPreppedCycle(
+                id: batch.id.uuidString,
+                title: batch.name,
+                detail: "\(batch.recipes.count) recipes",
+                prepDateLabel: nil,
+                prepDateRangeLabel: prepDateRangeLabel(for: latestPlan),
+                themeIndex: index,
+                recipes: batch.recipes.map(DiscoverRecipeCardData.init(preppedRecipe:))
+            )
+        }
     }
 
     private var cookbookPrepBatches: [PrepBatch] {
@@ -3535,6 +3740,7 @@ private struct CookbookTabView: View {
                 detail: prepDateLabel(for: plan),
                 prepDateLabel: prepShortDateLabel(for: plan),
                 prepDateRangeLabel: prepDateRangeLabel(for: plan),
+                themeIndex: 0,
                 recipes: plan.recipes.map(DiscoverRecipeCardData.init(preppedRecipe:))
             )
         }
@@ -3603,8 +3809,11 @@ private struct CookbookTabView: View {
                 .autocorrectionDisabled()
             Button("Create") {
                 let name = newCookbookPrepName.trimmingCharacters(in: .whitespacesAndNewlines)
+                var createdBatchID: UUID?
                 if let batchID = store.addPrepBatch(name: name.isEmpty ? nil : name) {
+                    createdBatchID = batchID
                     _ = store.setPrimePrepBatch(batchID: batchID)
+                    startCookbookPrepSuggestions(for: batchID, name: name)
                     toastCenter.show(
                         title: "Prime prep changed",
                         subtitle: name.isEmpty ? "New prep is now driving Prep and Cart." : "\(name) is now driving Prep and Cart.",
@@ -3619,6 +3828,7 @@ private struct CookbookTabView: View {
                 }
                 newCookbookPrepName = ""
                 selectedSection = .prepped
+                pendingPrepTableScrollID = prepTableScrollID(for: createdBatchID?.uuidString)
             }
             Button("Cancel", role: .cancel) {
                 newCookbookPrepName = ""
@@ -3725,19 +3935,32 @@ private struct CookbookTabView: View {
 
     @ViewBuilder
     private var cookbookFeedScroll: some View {
-        if selectedSection == .saved {
-            ScrollView {
-                cookbookFeedContent
+        ScrollViewReader { proxy in
+            Group {
+                if selectedSection == .saved {
+                    ScrollView {
+                        cookbookFeedContent
+                    }
+                    .scrollIndicators(.hidden)
+                    .refreshable {
+                        await refreshSavedCookbookFeed()
+                    }
+                } else {
+                    ScrollView {
+                        cookbookFeedContent
+                    }
+                    .scrollIndicators(.hidden)
+                }
             }
-            .scrollIndicators(.hidden)
-            .refreshable {
-                await refreshSavedCookbookFeed()
+            .onChange(of: pendingPrepTableScrollID) { scrollID in
+                guard let scrollID else { return }
+                DispatchQueue.main.async {
+                    withAnimation(OunjeMotion.screenSpring) {
+                        proxy.scrollTo(scrollID, anchor: .top)
+                    }
+                    pendingPrepTableScrollID = nil
+                }
             }
-        } else {
-            ScrollView {
-                cookbookFeedContent
-            }
-            .scrollIndicators(.hidden)
         }
     }
 
@@ -4004,21 +4227,41 @@ private struct CookbookTabView: View {
                 cookbookPrepControls
             }
 
-            if upcomingCycle == nil && previousCycles.isEmpty {
+            if upcomingBatchCycles.isEmpty && previousCycles.isEmpty {
                 CookbookPreppedEmptyState(
                     title: "No prep meals yet",
                     detail: "Once Ounje builds a cycle, the meals you’re cooking next and the ones you’ve already run will live here.",
                     symbolName: "fork.knife.circle"
                 )
             } else {
-                if let upcomingCycle {
-                    CookbookCycleGroup(
-                        title: nil,
-                        subtitle: upcomingCycle.title,
-                        cycles: [upcomingCycle],
-                        showsRowMetadata: false,
-                        onSelectCycle: { selectedCycle = $0 }
-                    )
+                ForEach(upcomingBatchCycles) { cycle in
+                    VStack(spacing: 0) {
+                        CookbookCycleGroup(
+                            title: nil,
+                            subtitle: cycle.title,
+                            cycles: [cycle],
+                            showsRowMetadata: false,
+                            onSelectCycle: { selectedCycle = $0 }
+                        )
+
+                        if let batchID = UUID(uuidString: cycle.id),
+                           let suggestionState = cookbookPrepSuggestionStates[batchID],
+                           suggestionState.shouldRender {
+                            CookbookPrepSuggestionStrip(
+                                state: suggestionState,
+                                onSelectRecipe: { recipe in
+                                    addCookbookPrepSuggestion(recipe, to: batchID)
+                                },
+                                onDismiss: {
+                                    withAnimation(OunjeMotion.screenSpring) {
+                                        cookbookPrepSuggestionStates[batchID] = nil
+                                    }
+                                }
+                            )
+                            .padding(.top, 14)
+                        }
+                    }
+                    .id(prepTableScrollID(for: cycle.id))
                 }
 
                 if !previousCycles.isEmpty {
@@ -4040,17 +4283,19 @@ private struct CookbookTabView: View {
                         cookbookPrepPill(
                             title: "Usual",
                             isSelected: true,
+                            themeIndex: 0,
                             action: {
-                                selectedTab = .prep
+                                scrollToCookbookPrepTable(id: store.latestPlan?.id.uuidString)
                             }
                         )
                     } else {
-                        ForEach(cookbookPrepBatches) { batch in
+                        ForEach(Array(cookbookPrepBatches.enumerated()), id: \.element.id) { index, batch in
                             let isSelected = store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id)
                             cookbookPrepPill(
                                 title: batch.name,
                                 isSelected: isSelected,
-                                action: { selectCookbookPrepBatch(batch) }
+                                themeIndex: index,
+                                action: { scrollToCookbookPrepTable(id: batch.id.uuidString) }
                             )
                         }
                     }
@@ -4092,42 +4337,231 @@ private struct CookbookTabView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    private func cookbookPrepPill(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func cookbookPrepPill(title: String, isSelected: Bool, themeIndex: Int, action: @escaping () -> Void) -> some View {
+        let theme = CookbookPrepBracketTheme.theme(for: themeIndex)
+        return Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
-                .foregroundStyle(isSelected ? OunjePalette.background : OunjePalette.primaryText.opacity(0.72))
+                .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.primaryText.opacity(0.78))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(isSelected ? OunjePalette.softCream : OunjePalette.surface)
+                        .fill(isSelected ? theme.bubbleFill : theme.bubbleMutedFill.opacity(0.82))
                         .overlay(
                             Capsule(style: .continuous)
-                                .stroke(isSelected ? Color.clear : OunjePalette.stroke, lineWidth: 1)
+                                .stroke(theme.bubbleStroke.opacity(isSelected ? 0.58 : 0.34), lineWidth: 1)
                         )
                 )
+                .shadow(color: theme.bubbleFill.opacity(isSelected ? 0.18 : 0), radius: 10, x: 0, y: 5)
         }
         .buttonStyle(.plain)
     }
 
-    private func selectCookbookPrepBatch(_ batch: PrepBatch) {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-            _ = store.setPrimePrepBatch(batchID: batch.id)
-            selectedTab = .prep
+    private func prepTableScrollID(for id: String?) -> String {
+        "cookbook-prep-table-\(id ?? "current")"
+    }
+
+    private func scrollToCookbookPrepTable(id: String?) {
+        guard selectedSection == .prepped else {
+            selectedSection = .prepped
+            pendingPrepTableScrollID = prepTableScrollID(for: id)
+            return
         }
-        toastCenter.show(
-            title: "Prime prep changed",
-            subtitle: "\(batch.name) now drives Prep and Cart.",
-            systemImage: "checkmark.circle.fill"
-        )
+        pendingPrepTableScrollID = prepTableScrollID(for: id)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func startCookbookPrepSuggestions(for batchID: UUID, name: String) {
+        let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "meal prep"
+            : name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        cookbookPrepSuggestionStates[batchID] = CookbookPrepSuggestionState(
+            batchID: batchID,
+            batchName: resolvedName,
+            recipes: [],
+            addedRecipeIDs: [],
+            isLoading: true,
+            errorMessage: nil
+        )
+
+        Task {
+            await loadCookbookPrepSuggestions(for: batchID, name: resolvedName)
+        }
+    }
+
+    @MainActor
+    private func loadCookbookPrepSuggestions(for batchID: UUID, name: String) async {
+        await savedStore.bootstrap(authSession: await savedRecipesSession())
+
+        let existingIDs = cookbookExistingPrepRecipeIDs()
+        let savedPicks = savedStore.savedRecipes
+            .filter { !existingIDs.contains($0.id) }
+            .shuffled()
+            .prefix(2)
+            .map { $0 }
+        let neededDiscoverCount = max(0, 4 - savedPicks.count)
+        var suggestions = savedPicks
+
+        if neededDiscoverCount > 0 {
+            let query = cookbookPrepSuggestionQuery(name: name, savedPicks: savedPicks)
+            do {
+                let response = try await SupabaseDiscoverRecipeService.shared.fetchRankedRecipes(
+                    profile: store.profile,
+                    filter: "All",
+                    query: query,
+                    sessionSeed: "cookbook-prep-\(batchID.uuidString)",
+                    feedContext: DiscoverFeedContext.current.withSessionSeed("cookbook-prep-\(batchID.uuidString)"),
+                    limit: max(8, neededDiscoverCount * 4),
+                    offset: 0,
+                    forceRefresh: false
+                )
+                suggestions.append(
+                    contentsOf: cookbookUniqueSuggestionRecipes(
+                        response.recipes,
+                        excluding: existingIDs.union(Set(suggestions.map(\.id))),
+                        limit: neededDiscoverCount
+                    )
+                )
+            } catch {
+                do {
+                    let fallback = try await SupabaseDiscoverRecipeService.shared.fetchRecipes(limit: 12, offset: 0)
+                    suggestions.append(
+                        contentsOf: cookbookUniqueSuggestionRecipes(
+                            cookbookRankedFallbackSuggestions(fallback, query: query),
+                            excluding: existingIDs.union(Set(suggestions.map(\.id))),
+                            limit: neededDiscoverCount
+                        )
+                    )
+                } catch {
+                    var state = cookbookPrepSuggestionStates[batchID] ?? CookbookPrepSuggestionState(batchID: batchID, batchName: name)
+                    state.recipes = Array(suggestions.prefix(4))
+                    state.isLoading = false
+                    state.errorMessage = state.recipes.isEmpty ? "Couldn’t load suggestions right now." : nil
+                    cookbookPrepSuggestionStates[batchID] = state
+                    return
+                }
+            }
+        }
+
+        var state = cookbookPrepSuggestionStates[batchID] ?? CookbookPrepSuggestionState(batchID: batchID, batchName: name)
+        state.recipes = Array(suggestions.prefix(4))
+        state.isLoading = false
+        state.errorMessage = state.recipes.isEmpty ? "No matching suggestions yet." : nil
+        cookbookPrepSuggestionStates[batchID] = state
+    }
+
+    private func cookbookPrepSuggestionQuery(name: String, savedPicks: [DiscoverRecipeCardData]) -> String {
+        var tokens = [name]
+        tokens.append(contentsOf: savedPicks.flatMap { [$0.title, $0.filterLabel] })
+        let query = tokens
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(5)
+            .joined(separator: " ")
+        return query.isEmpty ? "meal prep" : query
+    }
+
+    private func cookbookExistingPrepRecipeIDs() -> Set<String> {
+        Set(store.latestPlan?.allBatchRecipes.map { $0.recipe.id } ?? [])
+    }
+
+    private func cookbookUniqueSuggestionRecipes(
+        _ recipes: [DiscoverRecipeCardData],
+        excluding excludedIDs: Set<String>,
+        limit: Int
+    ) -> [DiscoverRecipeCardData] {
+        var seen = excludedIDs
+        var values: [DiscoverRecipeCardData] = []
+        for recipe in recipes where !seen.contains(recipe.id) {
+            seen.insert(recipe.id)
+            values.append(recipe)
+            if values.count >= limit { break }
+        }
+        return values
+    }
+
+    private func cookbookRankedFallbackSuggestions(
+        _ recipes: [DiscoverRecipeCardData],
+        query: String
+    ) -> [DiscoverRecipeCardData] {
+        let queryTokens = Set(query
+            .lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { $0.count > 2 })
+
+        guard !queryTokens.isEmpty else { return recipes.shuffled() }
+
+        return recipes.sorted { lhs, rhs in
+            cookbookSuggestionScore(lhs, queryTokens: queryTokens) > cookbookSuggestionScore(rhs, queryTokens: queryTokens)
+        }
+    }
+
+    private func cookbookSuggestionScore(_ recipe: DiscoverRecipeCardData, queryTokens: Set<String>) -> Int {
+        let haystack = [
+            recipe.title,
+            recipe.description,
+            recipe.category,
+            recipe.recipeType,
+            recipe.filterLabel
+        ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        return queryTokens.reduce(0) { score, token in
+            haystack.contains(token) ? score + 1 : score
+        }
+    }
+
+    private func addCookbookPrepSuggestion(_ recipe: DiscoverRecipeCardData, to batchID: UUID) {
+        guard cookbookPrepSuggestionStates[batchID]?.isAdding(recipe.id) != true else { return }
+        cookbookPrepSuggestionStates[batchID]?.addingRecipeIDs.insert(recipe.id)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+
+        Task {
+            do {
+                let accessToken = await store.freshUserDataSession()?.accessToken
+                let detail = try await RecipeDetailService.shared.fetchRecipeDetail(
+                    id: recipe.id,
+                    accessToken: accessToken
+                )
+                let plannedRecipe = recipePlanModel(
+                    from: detail,
+                    targetServings: detail.displayServings,
+                    fallbackRecipe: nil
+                )
+                await store.updateLatestPlan(
+                    with: plannedRecipe,
+                    servings: plannedRecipe.servings,
+                    targetBatchID: batchID
+                )
+                await MainActor.run {
+                    cookbookPrepSuggestionStates[batchID]?.addingRecipeIDs.remove(recipe.id)
+                    cookbookPrepSuggestionStates[batchID]?.addedRecipeIDs.insert(recipe.id)
+                    toastCenter.show(
+                        title: "Added to prep",
+                        subtitle: "\(recipe.displayTitle) is now in this bracket.",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    cookbookPrepSuggestionStates[batchID]?.addingRecipeIDs.remove(recipe.id)
+                    toastCenter.show(
+                        title: "Couldn’t add recipe",
+                        subtitle: "Recipe details were not available yet.",
+                        systemImage: "exclamationmark.circle.fill"
+                    )
+                }
+            }
+        }
     }
 
     private func openRequestedCycleIfNeeded() {
         guard let requestedCycleID, !requestedCycleID.isEmpty else { return }
 
-        if let upcomingCycle, upcomingCycle.id == requestedCycleID {
+        if let upcomingCycle = upcomingBatchCycles.first(where: { $0.id == requestedCycleID }) {
             selectedSection = .prepped
             selectedCycle = upcomingCycle
             self.requestedCycleID = nil
@@ -4168,6 +4602,198 @@ private struct CookbookTabView: View {
         selectedSection = .saved
         openComposer(context: .saved, initialText: text)
         requestedImportText = nil
+    }
+}
+
+private struct CookbookPrepSuggestionState: Equatable {
+    let batchID: UUID
+    var batchName: String
+    var recipes: [DiscoverRecipeCardData] = []
+    var addedRecipeIDs: Set<String> = []
+    var addingRecipeIDs: Set<String> = []
+    var isLoading = false
+    var errorMessage: String?
+
+    var shouldRender: Bool {
+        isLoading || !recipes.isEmpty || errorMessage != nil
+    }
+
+    func isAdded(_ recipeID: String) -> Bool {
+        addedRecipeIDs.contains(recipeID)
+    }
+
+    func isAdding(_ recipeID: String) -> Bool {
+        addingRecipeIDs.contains(recipeID)
+    }
+}
+
+private struct CookbookPrepSuggestionStrip: View {
+    let state: CookbookPrepSuggestionState
+    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Suggested for \(state.batchName)")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+
+                    Text("Tap a card to add it to this prep.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+
+                Spacer(minLength: 0)
+
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Circle()
+                                .fill(OunjePalette.surface.opacity(0.94))
+                                .overlay(Circle().stroke(OunjePalette.stroke, lineWidth: 1))
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Hide prep suggestions")
+            }
+
+            content
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(OunjePalette.panel.opacity(0.7))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
+                )
+        )
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if state.isLoading {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        CookbookPrepSuggestionSkeleton()
+                            .frame(width: 146)
+                    }
+                }
+                .padding(.horizontal, 1)
+                .padding(.bottom, 2)
+            }
+        } else if let errorMessage = state.errorMessage, state.recipes.isEmpty {
+            Text(errorMessage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(state.recipes) { recipe in
+                        suggestionCard(recipe)
+                            .frame(width: 146)
+                    }
+                }
+                .padding(.horizontal, 1)
+                .padding(.bottom, 2)
+            }
+        }
+    }
+
+    private func suggestionCard(_ recipe: DiscoverRecipeCardData) -> some View {
+        let isAdded = state.isAdded(recipe.id)
+        let isAdding = state.isAdding(recipe.id)
+
+        return DiscoverRemoteRecipeCard(
+            recipe: recipe,
+            showsSaveAction: false,
+            secondaryTopAction: DiscoverRemoteRecipeCardTopAction(
+                systemName: isAdded ? "checkmark" : "plus",
+                accessibilityLabel: isAdded ? "Added to prep" : "Add to prep",
+                showsBackground: true,
+                symbolSize: 13,
+                frameSize: 30,
+                action: {
+                    guard !isAdded, !isAdding else { return }
+                    onSelectRecipe(recipe)
+                }
+            ),
+            isInteractive: true,
+            showsTopActions: true,
+            layout: .compact,
+            onSelect: {
+                guard !isAdded, !isAdding else { return }
+                onSelectRecipe(recipe)
+            }
+        )
+        .opacity(isAdded ? 0.62 : (isAdding ? 0.72 : 1))
+        .overlay(alignment: .center) {
+            if isAdding {
+                ProgressView()
+                    .tint(OunjePalette.softCream)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        Circle()
+                            .fill(OunjePalette.background.opacity(0.78))
+                    )
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if isAdded {
+                Text("Added")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.background)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule(style: .continuous).fill(OunjePalette.softCream))
+                    .padding(8)
+            }
+        }
+    }
+}
+
+private struct CookbookPrepSuggestionSkeleton: View {
+    @State private var shimmerOffset: CGFloat = -1.2
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.9))
+                .frame(height: 116)
+                .modifier(LoadingSheen(offset: shimmerOffset))
+
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.86))
+                .frame(height: 12)
+                .modifier(LoadingSheen(offset: shimmerOffset))
+
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.72))
+                .frame(width: 92, height: 10)
+                .modifier(LoadingSheen(offset: shimmerOffset))
+        }
+        .padding(11)
+        .frame(height: DiscoverRemoteRecipeCardLayout.compact.cardHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.72))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onAppear {
+            withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
+                shimmerOffset = 1.2
+            }
+        }
     }
 }
 
