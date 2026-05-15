@@ -29,6 +29,7 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     let processingState: String?
     let attemptCount: Int?
     let lastAttemptAt: Date?
+    let serverSubmittedAt: Date?
     let lastError: String?
     let updatedAt: Date?
 
@@ -46,8 +47,10 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
         switch normalizedProcessingState {
         case "failed":
             return "Retry needed"
+        case "retryable":
+            return "Retrying on server"
         case "queued":
-            return (jobID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? "Queued on server" : "Queued"
+            return (jobID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? "Waiting for worker" : "Queued"
         case "submitted":
             return "Sending to server"
         case "processing":
@@ -75,17 +78,19 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
             return false
         }
 
-        if state == "queued" && (attemptCount ?? 0) == 0 && lastAttemptAt == nil {
+        if jobID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return isLiveQueueState
+        }
+
+        if serverSubmittedAt != nil {
+            return false
+        }
+
+        if state == "queued" {
             return true
         }
 
-        if state == "submitted" {
-            let referenceDate = lastAttemptAt ?? updatedAt ?? createdAt
-            return Date().timeIntervalSince(referenceDate) >= 15
-        }
-
-        let referenceDate = lastAttemptAt ?? updatedAt ?? createdAt
-        return Date().timeIntervalSince(referenceDate) >= 3
+        return false
     }
 
     var isTerminalLocalState: Bool {

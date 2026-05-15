@@ -37,7 +37,7 @@ import {
 } from "../../lib/discover-brackets.js";
 import { createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
 import { createOrReuseRecipeShareLink, resolveRecipeShareLink } from "../../lib/recipe-share-links.js";
-import { acquireRedisLock, readRedisJSON, releaseRedisLock, writeRedisJSON } from "../../lib/redis-cache.js";
+import { acquireRedisLock, deleteRedisKey, readRedisJSON, releaseRedisLock, writeRedisJSON } from "../../lib/redis-cache.js";
 import { createRateLimit } from "../../lib/rate-limit.js";
 import { extractBearerToken, resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import {
@@ -236,6 +236,52 @@ function displayMacroFallbackForRecipe(recipe = {}) {
     ...fallback,
     est_calories_text: `${fallback.calories_kcal} kcal per serving (estimate)`,
   };
+}
+
+function hasCompleteDisplayMacros(recipe = {}) {
+  return ["calories_kcal", "protein_g", "carbs_g", "fat_g"].every((field) => {
+    const value = recipe?.[field];
+    return value !== null
+      && value !== undefined
+      && String(value).trim() !== ""
+      && Number.isFinite(Number(value));
+  });
+}
+
+function recipeDetailPayloadHasCompleteMacros(payload = {}) {
+  return hasCompleteDisplayMacros(payload?.recipe ?? payload);
+}
+
+function missingDisplayMacroPatch(existingRecipe = {}, candidateRecipe = {}) {
+  const patch = {};
+  for (const field of ["calories_kcal", "protein_g", "carbs_g", "fat_g"]) {
+    if (!Number.isFinite(Number(existingRecipe?.[field])) && Number.isFinite(Number(candidateRecipe?.[field]))) {
+      patch[field] = Number(candidateRecipe[field]);
+    }
+  }
+  if (!trimString(existingRecipe?.est_calories_text) && trimString(candidateRecipe?.est_calories_text)) {
+    patch.est_calories_text = trimString(candidateRecipe.est_calories_text);
+  }
+  return patch;
+}
+
+async function ensureRecipeDetailDisplayMacros(recipeID, detail = {}) {
+  if (hasCompleteDisplayMacros(detail)) return detail;
+
+  const estimate = estimateRecipeMacrosLocally(detail) ?? displayMacroFallbackForRecipe(detail);
+  const patchedValues = missingDisplayMacroPatch(detail, estimate);
+  if (Object.keys(patchedValues).length === 0) return detail;
+
+  const nextDetail = {
+    ...detail,
+    ...patchedValues,
+  };
+
+  await patchRecipeRow(recipeID, patchedValues).catch((error) => {
+    console.warn("[recipe/detail] macro patch failed:", error.message);
+  });
+
+  return nextDetail;
 }
 
 function hasStructuredRecipeJSON(recipe = {}) {
@@ -802,7 +848,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       RECIPE_DETAIL_CACHE_TTL_MS,
       "recipe-detail"
     );
-    if (cached) return res.json(cached);
+    if (cached && recipeDetailPayloadHasCompleteMacros(cached)) return res.json(cached);
 
     const recipe = recipeId.startsWith("uir_")
       ? await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID)
@@ -812,8 +858,9 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     }
 
     if (recipeId.startsWith("uir_") && hasStructuredRecipeJSON(recipe)) {
+      const recipeDetail = await ensureRecipeDetailDisplayMacros(recipeId, normalizeRecipeDetail(recipe));
       const payload = {
-        recipe: normalizeRecipeDetail(recipe),
+        recipe: recipeDetail,
       };
 
       await writeSharedTimedCache(
@@ -839,12 +886,14 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
         )
       : [];
 
-    const payload = {
-      recipe: normalizeRecipeDetail(recipe, {
+    const recipeDetail = await ensureRecipeDetailDisplayMacros(recipeId, normalizeRecipeDetail(recipe, {
         recipeIngredients,
         recipeSteps,
         stepIngredients,
-      }),
+      }));
+
+    const payload = {
+      recipe: recipeDetail,
     };
 
     await writeSharedTimedCache(
@@ -6120,6 +6169,23 @@ function writeSharedTimedCache(cache, key, value, ttlMs, namespace) {
   void writeRedisJSON(redisCacheKey(namespace, key), value, Math.ceil(ttlMs / 1000));
 }
 
+function recipeDetailCacheKeyForRecipe(recipeID, userID = null) {
+  const normalizedRecipeID = String(recipeID ?? "").trim();
+  if (!normalizedRecipeID) return null;
+  if (!normalizedRecipeID.startsWith("uir_")) return `public:${normalizedRecipeID}`;
+
+  const normalizedUserID = String(userID ?? "").trim();
+  if (!normalizedUserID) return null;
+  return `user:${normalizedUserID}:${normalizedRecipeID}`;
+}
+
+function invalidateRecipeDetailCache(recipeID, userID = null) {
+  const cacheKey = recipeDetailCacheKeyForRecipe(recipeID, userID);
+  if (!cacheKey) return;
+  recipeDetailCache.delete(cacheKey);
+  void deleteRedisKey(redisCacheKey("recipe-detail", cacheKey));
+}
+
 /**
  * Single-flight + per-process + per-cluster wrapper for the shared timed cache.
  * Use for expensive miss paths (discover feed, embedding fan-out, pool builds)
@@ -8159,10 +8225,11 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
 
   try {
     let accessToken = null;
+    let authorizedUserID = null;
     const isUserImport = recipeId.startsWith("uir_");
     if (isUserImport) {
       try {
-        ({ accessToken } = await resolveAuthorizedUserID(req));
+        ({ userID: authorizedUserID, accessToken } = await resolveAuthorizedUserID(req));
       } catch (error) {
         return sendAuthError(res, error, "recipe/enrich-macros");
       }
@@ -8172,7 +8239,9 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
       } catch {}
     }
 
-    const recipe = await fetchRecipeById(recipeId, accessToken);
+    const recipe = isUserImport
+      ? await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID)
+      : await fetchRecipeById(recipeId, accessToken);
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found." });
     }
@@ -8184,6 +8253,7 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
       && recipe.carbs_g != null
       && recipe.fat_g != null;
     if (hasAllMacros) {
+      invalidateRecipeDetailCache(recipeId, authorizedUserID);
       return res.json({
         calories_kcal: recipe.calories_kcal,
         protein_g: recipe.protein_g,
@@ -8194,12 +8264,13 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
       });
     }
 
+    const detailAccessToken = isUserImport ? SUPABASE_SERVICE_ROLE_KEY : accessToken;
     const [recipeIngredients, recipeSteps] = await Promise.all([
-      fetchRecipeIngredientRows(recipeId, accessToken),
-      fetchRecipeStepRows(recipeId, accessToken),
+      fetchRecipeIngredientRows(recipeId, detailAccessToken),
+      fetchRecipeStepRows(recipeId, detailAccessToken),
     ]);
     const stepIngredients = recipeSteps.length
-      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), accessToken)
+      ? await fetchRecipeStepIngredientRows(recipeSteps.map((step) => step.id), detailAccessToken)
       : [];
     const normalizedDetail = normalizeRecipeDetail(recipe, {
       recipeIngredients,
@@ -8306,6 +8377,7 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
       await patchRecipeRow(recipeId, patch).catch((err) => {
         console.warn("[recipe/enrich-macros] DB patch failed:", err.message);
       });
+      invalidateRecipeDetailCache(recipeId, authorizedUserID);
     }
 
     return res.json({

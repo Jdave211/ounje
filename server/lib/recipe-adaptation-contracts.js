@@ -489,6 +489,49 @@ const INTENT_CONTRACTS = {
       },
     ],
   },
+  low_calories: {
+    key: "low_calories",
+    label: "Lower calories",
+    requiredActions: [
+      "Reduce calories with concrete ingredient swaps, quantity changes, or cooking technique changes.",
+      "Preserve the dish's core identity, main flavor profile, and satisfying texture.",
+      "Update ingredients, quantities, steps, serving size, and nutrition estimates where available.",
+      "Prefer leaner proteins, more vegetables, broth, yogurt, herbs, acid, spices, roasting, baking, or air-frying when they fit the recipe.",
+    ],
+    validationHints: [
+      "The adapted recipe should visibly reduce calorie-dense ingredients or techniques.",
+      "The rewrite should remain recognizable as the same dish, not a generic diet meal.",
+      "Nutrition estimates should be recalculated or directionally reduced when present.",
+    ],
+    doNot: [
+      "Do not make portion shrinkage the main calorie-reduction strategy.",
+      "Do not turn the dish into a generic salad, bowl, or plain grilled protein unless that is already close to the original.",
+      "Do not remove the ingredient or technique that makes the dish recognizable without a fitting replacement.",
+      "Do not only change nutrition labels, title, tags, or summary.",
+    ],
+    editExamples: [
+      {
+        base: {
+          ingredient_changes: ["1 cup heavy cream", "3 tbsp butter", "1 cup full-fat cheese"],
+          step_change: "Simmer the sauce with cream and butter, then melt in cheese before serving.",
+        },
+        adapted: {
+          ingredient_changes: ["1/2 cup low-sodium broth", "1/3 cup Greek yogurt", "1 tbsp olive oil", "1/2 cup sharp cheese"],
+          step_change: "Reduce broth for body, stir in Greek yogurt off heat, finish with a measured amount of sharp cheese, and skip the butter-heavy finish.",
+        },
+      },
+      {
+        base: {
+          ingredient_changes: ["fried chicken cutlets", "1/2 cup mayo dressing", "buttered buns"],
+          step_change: "Fry the chicken, coat it in mayo dressing, and serve on buttered buns.",
+        },
+        adapted: {
+          ingredient_changes: ["oven-baked chicken cutlets", "1/4 cup Greek yogurt", "1 tbsp mayo", "2 tbsp lemon juice", "toasted buns"],
+          step_change: "Bake the chicken cutlets until crisp, whisk yogurt with a little mayo and lemon, then spread lightly on toasted buns.",
+        },
+      },
+    ],
+  },
   sweeter: {
     key: "sweeter",
     label: "Make it sweet",
@@ -761,6 +804,7 @@ function inferIntentKeyFromPrompt(prompt) {
   if (/spicy|spicier|heat/.test(text)) return "spicy";
   if (/quick|faster|busy weeknight/.test(text)) return "quick";
   if (/vegetable|veggies/.test(text)) return "extra_veggies";
+  if (/low calorie|lower calorie|less calorie|reduce calorie|calorie reduction/.test(text)) return "low_calories";
   if (/low carb|lower carb/.test(text)) return "low_carb";
   if (/crisp|crunch/.test(text)) return "crispy";
   if (/healthy|healthier/.test(text)) return "healthier";

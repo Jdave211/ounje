@@ -2572,6 +2572,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
     case budgetFriendly
     case mealPrep
     case lighter
+    case lowCalories
     case dairyFree
     case vegetarian
     case keto
@@ -2595,6 +2596,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .budgetFriendly: return "budget_friendly"
         case .mealPrep: return "meal_prep"
         case .lighter: return "lighter"
+        case .lowCalories: return "low_calories"
         case .dairyFree: return "dairy_free"
         case .vegetarian: return "vegetarian"
         case .keto: return "keto"
@@ -2618,6 +2620,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .budgetFriendly: return "Budget friendly"
         case .mealPrep: return "Meal prep"
         case .lighter: return "Lighter"
+        case .lowCalories: return "Low calories"
         case .dairyFree: return "Dairy-free"
         case .vegetarian: return "Vegetarian"
         case .keto: return "Keto"
@@ -2641,6 +2644,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .budgetFriendly: return "Budget-friendly"
         case .mealPrep: return "Make it reheat well"
         case .lighter: return "Make it lighter"
+        case .lowCalories: return "Lower calories"
         case .dairyFree: return "Make it dairy-free"
         case .vegetarian: return "Make it vegetarian"
         case .keto: return "Make it keto"
@@ -2661,6 +2665,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return 160
         case .kidFriendly, .moreProtein, .extraVeggies, .lessSugar, .lowCarb:
             return 146
+        case .lowCalories:
+            return 152
         case .healthier, .spicy, .quick, .sweeter, .lighter, .saucy, .crispy:
             return 140
         }
@@ -2679,6 +2685,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .budgetFriendly: return "Keep it smart on groceries."
         case .mealPrep: return "Make it hold up for later."
         case .lighter: return "Less heavy, same comfort."
+        case .lowCalories: return "Cut calories without losing the dish."
         case .dairyFree: return "Skip dairy without losing body."
         case .vegetarian: return "Plant-forward, not boring."
         case .keto: return "Lower carb, still full."
@@ -2713,6 +2720,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return "Make this reheat well for meal prep. Adjust ingredients, sauces, and steps so the dish stores cleanly and stays good later. Do not leave delicate greens, crisp toppings, or fragile sauces mixed in if they will get soggy."
         case .lighter:
             return "Make this lighter and less heavy while preserving the dish's comfort and flavor. Reduce excess cream, butter, oil, cheese, fried components, or heavy starch where appropriate, then add freshness, acid, herbs, broth, yogurt, vegetables, or a lighter cooking technique. Update quantities and steps so the lighter version still feels complete. Do not make it bland or watery."
+        case .lowCalories:
+            return "Create a lower-calorie version of this recipe while preserving its core identity, flavor profile, cooking method, and satisfying parts. Reduce calories through concrete swaps and quantity changes: trim excess oil, butter, cream, cheese, sugar, fatty cuts, fried coatings, oversized starch, and calorie-heavy toppings only where appropriate. Replace body and flavor with leaner proteins, broth, Greek yogurt, more vegetables, herbs, acid, spices, roasting, baking, or air-frying where they fit. Update ingredients, quantities, steps, serving size, and nutrition estimates if available. Do not make portion shrinkage the main strategy, do not turn it into a generic salad or bowl, and do not strip out the ingredient that makes the dish recognizable."
         case .dairyFree:
             return "Make this dairy-free. Remove milk, cream, butter, cheese, yogurt, sour cream, and dairy-based sauces where present. Replace texture, fat, creaminess, or saltiness with realistic dairy-free ingredients, then update quantities and steps so the recipe still cooks properly. Do not leave dairy in ingredients or steps, and do not use unnamed substitutes."
         case .vegetarian:
@@ -2743,6 +2752,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
         case .budgetFriendly: return "dollarsign.circle.fill"
         case .mealPrep: return "takeoutbag.and.cup.and.straw.fill"
         case .lighter: return "wind"
+        case .lowCalories: return "arrow.down.circle.fill"
         case .dairyFree: return "drop.fill"
         case .vegetarian: return "leaf.circle.fill"
         case .keto: return "chart.pie.fill"
@@ -2769,6 +2779,8 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             return Color(hex: "FFB86B")
         case .lighter:
             return Color(hex: "8FD6FF")
+        case .lowCalories:
+            return Color(hex: "9BE05B")
         case .kidFriendly:
             return Color(hex: "FF8BCB")
         case .sweeter:
@@ -2815,6 +2827,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             || descriptor.contains("sweet") {
             primary = [
                 .lessSugar,
+                .lowCalories,
                 .healthier,
                 .crispy,
                 .sweeter,
@@ -2840,6 +2853,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                     || descriptor.contains("toast") {
             primary = [
                 .quick,
+                .lowCalories,
                 .moreProtein,
                 .healthier,
                 .keto,
@@ -2864,6 +2878,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
                     || descriptor.contains("salad")
                     || descriptor.contains("bowl") {
             primary = [
+                .lowCalories,
                 .moreProtein,
                 .spicy,
                 .extraVeggies,
@@ -2885,6 +2900,7 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
             ]
         } else {
             primary = [
+                .lowCalories,
                 .moreProtein,
                 .spicy,
                 .extraVeggies,

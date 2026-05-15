@@ -332,6 +332,9 @@ const ENABLE_RECIPE_INGESTION_POLLING = ["1", "true", "yes", "on"].includes(
 const CAN_CLAIM_RECIPE_INGESTION_JOBS = RECIPE_INGESTION_WORKER_ID
   .toLowerCase()
   .startsWith("vm_recipe_ingest");
+const RECIPE_INGESTION_ROLE = CAN_CLAIM_RECIPE_INGESTION_JOBS
+  ? "worker_claims_enabled"
+  : "enqueue_only";
 
 let recipeIngestionPollInFlight = false;
 let recipeIngestionRunBatch = null;
@@ -382,6 +385,7 @@ if (ENABLE_RECIPE_FINE_TUNE_POLLING) {
 } else {
   console.log("[recipe-model-registry] fine-tune polling disabled");
 }
+console.log(`[recipe-ingestion] recipe_ingestion_role=${RECIPE_INGESTION_ROLE} worker=${RECIPE_INGESTION_WORKER_ID} polling=${ENABLE_RECIPE_INGESTION_POLLING ? "enabled" : "disabled"}`);
 if (ENABLE_RECIPE_INGESTION_POLLING && CAN_CLAIM_RECIPE_INGESTION_JOBS) {
   console.log(`[recipe-ingestion] polling enabled worker=${RECIPE_INGESTION_WORKER_ID}`);
   startRecipeIngestionPolling();

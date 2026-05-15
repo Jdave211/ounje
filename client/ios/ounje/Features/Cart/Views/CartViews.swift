@@ -3555,6 +3555,60 @@ struct InlineSearchBar: View {
     }
 }
 
+struct CookbookSavedSearchField: View {
+    @Binding var text: String
+    let placeholder: String
+    @FocusState private var isFocused: Bool
+
+    private var hasQuery: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(isFocused ? OunjePalette.primaryText : OunjePalette.secondaryText)
+
+            TextField("", text: $text, prompt: Text(placeholder).foregroundColor(OunjePalette.secondaryText))
+                .textFieldStyle(.plain)
+                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .foregroundStyle(OunjePalette.primaryText)
+                .lineLimit(1)
+                .submitLabel(.search)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .focused($isFocused)
+
+            if hasQuery {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText.opacity(0.85))
+                        .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear saved recipe search")
+            }
+        }
+        .padding(.leading, 15)
+        .padding(.trailing, hasQuery ? 8 : 15)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(isFocused ? OunjePalette.primaryText.opacity(0.20) : OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+        .animation(.easeInOut(duration: 0.16), value: hasQuery)
+        .animation(.easeInOut(duration: 0.16), value: isFocused)
+    }
+}
+
 struct CollapsibleSavedSearchBar: View {
     @Binding var text: String
     let placeholder: String

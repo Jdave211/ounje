@@ -392,11 +392,13 @@ final class OunjeShareViewController: UIViewController {
             targetState: targetState,
             sourceText: sourceText,
             sourceURLString: sourceURLString,
+            canonicalSourceURLString: nil,
             sourceApp: nil,
             attachments: attachments,
             processingState: "queued",
             attemptCount: 0,
             lastAttemptAt: nil,
+            serverSubmittedAt: nil,
             lastError: nil,
             updatedAt: Date()
         )
@@ -550,6 +552,7 @@ final class OunjeShareViewController: UIViewController {
             processingState: "submitted",
             attemptCount: max(envelope.attemptCount ?? 0, 1),
             lastAttemptAt: Date(),
+            serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
             lastError: nil,
             updatedAt: Date()
         )
@@ -562,7 +565,7 @@ final class OunjeShareViewController: UIViewController {
         let backendState = response.job.status
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let liveBackendStates = ["queued", "processing", "fetching", "parsing", "normalized"]
+        let liveBackendStates = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"]
         let localState = liveBackendStates.contains(backendState) ? backendState : "queued"
         return SharedRecipeImportEnvelope(
             id: envelope.id,
@@ -577,6 +580,7 @@ final class OunjeShareViewController: UIViewController {
             processingState: localState,
             attemptCount: max(envelope.attemptCount ?? 0, 1),
             lastAttemptAt: Date(),
+            serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
             lastError: nil,
             updatedAt: Date()
         )

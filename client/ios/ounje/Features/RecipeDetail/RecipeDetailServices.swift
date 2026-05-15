@@ -1068,7 +1068,8 @@ final class RecipeDetailViewModel: ObservableObject {
         deferAuthorizationError: Bool = false
     ) async -> String? {
         if let detail,
-           detail.id == recipeID || detail.id == initialDetailID {
+           (detail.id == recipeID || detail.id == initialDetailID),
+           !detail.shouldRefreshDisplayMacros {
             let fallbackID = similarFallbackRecipeID ?? (detail.id == recipeID ? nil : recipeID)
             scheduleSimilarRecipesLoad(for: detail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
             scheduleMacroEnrichmentIfNeeded(for: detail, accessToken: accessToken)

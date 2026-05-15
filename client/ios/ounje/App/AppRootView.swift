@@ -866,6 +866,7 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
                             processingState: "completed_applied",
                             attemptCount: envelope.attemptCount,
                             lastAttemptAt: envelope.lastAttemptAt,
+                            serverSubmittedAt: envelope.serverSubmittedAt,
                             lastError: response.job.errorMessage ?? envelope.lastError,
                             updatedAt: Date()
                         )
@@ -892,6 +893,7 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
                     ),
                     attemptCount: envelope.attemptCount,
                     lastAttemptAt: envelope.lastAttemptAt,
+                    serverSubmittedAt: envelope.serverSubmittedAt ?? response.job.sharedImportEnvelope.serverSubmittedAt,
                     lastError: response.job.errorMessage ?? envelope.lastError,
                     updatedAt: Date()
                 )
@@ -899,6 +901,51 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
             } catch {
                 continue
             }
+        }
+
+        await refresh()
+    }
+
+    func reconcileBackendQueue(_ backendItems: [SharedRecipeImportEnvelope]) async {
+        let currentEnvelopes = (try? SharedRecipeImportInbox.readAll()) ?? []
+        guard !currentEnvelopes.isEmpty, !backendItems.isEmpty else {
+            envelopes = currentEnvelopes
+            return
+        }
+
+        let backendByKey = backendItems.reduce(into: [String: SharedRecipeImportEnvelope]()) { partialResult, backendEnvelope in
+            backendEnvelope.reconciliationKeys.forEach { key in
+                partialResult[key] = backendEnvelope
+            }
+        }
+
+        for localEnvelope in currentEnvelopes where localEnvelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            guard !localEnvelope.isPinnedTypedImport,
+                  let match = localEnvelope.reconciliationKeys.compactMap({ backendByKey[$0] }).first else {
+                continue
+            }
+
+            let reconciled = SharedRecipeImportEnvelope(
+                id: localEnvelope.id,
+                createdAt: localEnvelope.createdAt,
+                jobID: match.jobID,
+                targetState: localEnvelope.targetState,
+                sourceText: localEnvelope.sourceText?.isEmpty == false ? localEnvelope.sourceText : match.sourceText,
+                sourceURLString: localEnvelope.sourceURLString ?? match.sourceURLString,
+                canonicalSourceURLString: match.canonicalSourceURLString ?? localEnvelope.canonicalSourceURLString,
+                sourceApp: localEnvelope.sourceApp ?? match.sourceApp,
+                attachments: localEnvelope.attachments,
+                processingState: nonRegressingImportState(
+                    current: localEnvelope.normalizedProcessingState,
+                    incoming: match.normalizedProcessingState
+                ),
+                attemptCount: match.attemptCount ?? localEnvelope.attemptCount,
+                lastAttemptAt: match.lastAttemptAt ?? localEnvelope.lastAttemptAt,
+                serverSubmittedAt: localEnvelope.serverSubmittedAt ?? match.serverSubmittedAt ?? match.createdAt,
+                lastError: match.lastError ?? localEnvelope.lastError,
+                updatedAt: Date()
+            )
+            try? SharedRecipeImportInbox.update(reconciled)
         }
 
         await refresh()
@@ -968,7 +1015,8 @@ private func mergedSharedImportEnvelopes(
             envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines),
             envelope.id.trimmingCharacters(in: .whitespacesAndNewlines),
             SharedRecipeImportEnvelope.normalizedImportKey(from: envelope.sourceURLString),
-            SharedRecipeImportEnvelope.normalizedImportKey(from: envelope.canonicalSourceURLString)
+            SharedRecipeImportEnvelope.normalizedImportKey(from: envelope.canonicalSourceURLString),
+            SharedRecipeImportEnvelope.normalizedImportKey(from: envelope.sourceText)
         ]
         .compactMap { raw -> String? in
             let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -997,11 +1045,14 @@ private func nonRegressingImportState(current: String?, incoming: String?) -> St
     if ["failed", "saved", "draft", "needs_review", "completed_applied"].contains(incomingState) {
         return incomingState
     }
+    if incomingState == "retryable" {
+        return incomingState
+    }
 
     let ranks = [
         "queued": 0,
-        "submitted": 0,
-        "retryable": 0,
+        "submitted": 1,
+        "retryable": 1,
         "processing": 1,
         "fetching": 2,
         "parsing": 3,
@@ -2251,6 +2302,7 @@ private struct MealPlannerShellView: View {
             await CartSupportWarmupService.prewarmLatestPlanCartSupport(for: store)
         }
         .task(id: "shared-import::\(store.authSession?.userID ?? "signed-out")") {
+            await refreshSharedImportState(force: true)
             await processPendingSharedImports(scope: .queued)
         }
         .task(id: "shared-import-inbox::\(store.authSession?.userID ?? "signed-out")") {
@@ -2474,6 +2526,7 @@ private struct MealPlannerShellView: View {
         await sharedImportInbox.refresh()
         let session = await store.freshUserDataSession()
         await recipeImportHistory.refresh(userID: session?.userID, accessToken: session?.accessToken, force: force)
+        await sharedImportInbox.reconcileBackendQueue(recipeImportHistory.backendQueueEnvelopes)
         await sharedImportInbox.reconcileCompletedImports(
             recipeImportHistory.completedItems,
             accessToken: session?.accessToken,
@@ -2592,6 +2645,7 @@ private struct MealPlannerShellView: View {
                 processingState: "queued",
                 attemptCount: 1,
                 lastAttemptAt: Date(),
+                serverSubmittedAt: nil,
                 lastError: nil,
                 updatedAt: Date()
             )
@@ -2655,7 +2709,7 @@ private struct MealPlannerShellView: View {
             .first
             let shouldFail = backendState == "failed"
                 || (["draft", "needs_review"].contains(reviewState) && !canDisplayRecipe)
-            let isLiveState = ["queued", "processing", "fetching", "parsing", "normalized"].contains(backendState)
+            let isLiveState = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"].contains(backendState)
 
             if shouldFail {
                 let failedEnvelope = SharedRecipeImportEnvelope(
@@ -2671,6 +2725,7 @@ private struct MealPlannerShellView: View {
                     processingState: "failed",
                     attemptCount: localEnvelope.attemptCount,
                     lastAttemptAt: Date(),
+                    serverSubmittedAt: localEnvelope.serverSubmittedAt ?? Date(),
                     lastError: failureReason,
                     updatedAt: Date()
                 )
@@ -2705,6 +2760,7 @@ private struct MealPlannerShellView: View {
                     processingState: backendState,
                     attemptCount: localEnvelope.attemptCount,
                     lastAttemptAt: Date(),
+                    serverSubmittedAt: localEnvelope.serverSubmittedAt ?? Date(),
                     lastError: nil,
                     updatedAt: Date()
                 )
@@ -3044,7 +3100,7 @@ private struct MealPlannerShellView: View {
     private var hasLiveSharedImportWork: Bool {
         combinedSharedImportEnvelopes.contains { envelope in
             switch envelope.normalizedProcessingState {
-            case "queued", "submitted", "processing", "fetching", "parsing", "normalized":
+            case "queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized":
                 return true
             default:
                 return false
@@ -3093,31 +3149,31 @@ private struct MealPlannerShellView: View {
             var activeAttemptCount = envelope.attemptCount ?? 0
             let previousJobID = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             do {
-                var processingEnvelope = envelope
                 let shouldPollExistingJob = !previousJobID.isEmpty
                     && !envelope.isRetryNeeded
-                let nextAttemptCount = shouldPollExistingJob
-                    ? (processingEnvelope.attemptCount ?? 0)
-                    : (processingEnvelope.attemptCount ?? 0) + 1
-                activeAttemptCount = nextAttemptCount
-                processingEnvelope = SharedRecipeImportEnvelope(
-                    id: processingEnvelope.id,
-                    createdAt: processingEnvelope.createdAt,
-                    jobID: processingEnvelope.jobID,
-                    targetState: processingEnvelope.targetState,
-                    sourceText: processingEnvelope.sourceText,
-                    sourceURLString: processingEnvelope.sourceURLString,
-                    canonicalSourceURLString: processingEnvelope.canonicalSourceURLString,
-                    sourceApp: processingEnvelope.sourceApp,
-                    attachments: processingEnvelope.attachments,
-                    processingState: "processing",
-                    attemptCount: nextAttemptCount,
-                    lastAttemptAt: Date(),
-                    lastError: nil,
-                    updatedAt: Date()
-                )
-                try? SharedRecipeImportInbox.update(processingEnvelope)
-                await sharedImportInbox.refresh()
+                var trackedEnvelope = envelope
+                if !shouldPollExistingJob {
+                    trackedEnvelope = SharedRecipeImportEnvelope(
+                        id: envelope.id,
+                        createdAt: envelope.createdAt,
+                        jobID: envelope.jobID,
+                        targetState: envelope.targetState,
+                        sourceText: envelope.sourceText,
+                        sourceURLString: envelope.sourceURLString,
+                        canonicalSourceURLString: envelope.canonicalSourceURLString,
+                        sourceApp: envelope.sourceApp,
+                        attachments: envelope.attachments,
+                        processingState: "submitted",
+                        attemptCount: envelope.attemptCount,
+                        lastAttemptAt: Date(),
+                        serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
+                        lastError: nil,
+                        updatedAt: Date()
+                    )
+                    try? SharedRecipeImportInbox.update(trackedEnvelope)
+                    await sharedImportInbox.refresh()
+                }
+                activeAttemptCount = trackedEnvelope.attemptCount ?? envelope.attemptCount ?? 0
 
                 let response: RecipeImportResponse
                 if shouldPollExistingJob {
@@ -3150,8 +3206,8 @@ private struct MealPlannerShellView: View {
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
                 let backendProcessingState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                let isLiveBackendState = ["queued", "processing", "fetching", "parsing", "normalized"].contains(backendProcessingState)
-                let visibleAttemptCount = max(processingEnvelope.attemptCount ?? 0, response.job.attempts ?? 0)
+                let isLiveBackendState = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"].contains(backendProcessingState)
+                let visibleAttemptCount = response.job.attempts ?? trackedEnvelope.attemptCount ?? envelope.attemptCount
                 let reviewState = response.job.reviewState.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 let canDisplayImportedRecipe = response.recipe != nil || response.recipeDetail != nil
                 let importFailureReason = [
@@ -3191,6 +3247,7 @@ private struct MealPlannerShellView: View {
                         processingState: "failed",
                         attemptCount: visibleAttemptCount,
                         lastAttemptAt: Date(),
+                        serverSubmittedAt: trackedEnvelope.serverSubmittedAt ?? response.job.sharedImportEnvelope.serverSubmittedAt ?? Date(),
                         lastError: importFailureReason,
                         updatedAt: Date()
                     )
@@ -3221,7 +3278,7 @@ private struct MealPlannerShellView: View {
                 } else if isLiveBackendState {
                     let normalizedProcessingState: String = {
                         switch backendProcessingState {
-                        case "queued", "processing", "fetching", "parsing", "normalized", "saved":
+                        case "queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized", "saved":
                             return backendProcessingState
                         default:
                             return "queued"
@@ -3253,6 +3310,7 @@ private struct MealPlannerShellView: View {
                         ),
                         attemptCount: visibleAttemptCount,
                         lastAttemptAt: Date(),
+                        serverSubmittedAt: trackedEnvelope.serverSubmittedAt ?? response.job.sharedImportEnvelope.serverSubmittedAt ?? Date(),
                         lastError: nil,
                         updatedAt: Date()
                     )
@@ -3304,8 +3362,9 @@ private struct MealPlannerShellView: View {
                     sourceApp: envelope.sourceApp,
                     attachments: envelope.attachments,
                     processingState: shouldKeepServerJobLive ? envelope.normalizedProcessingState : "failed",
-                    attemptCount: max(activeAttemptCount, (envelope.attemptCount ?? 0) + 1),
+                    attemptCount: activeAttemptCount,
                     lastAttemptAt: Date(),
+                    serverSubmittedAt: envelope.serverSubmittedAt,
                     lastError: errorMessage,
                     updatedAt: Date()
                 )
@@ -3715,15 +3774,12 @@ private struct CookbookTabView: View {
     @State private var selectedCycle: CookbookPreppedCycle?
     @State private var isImportQueuePresented = false
     @State private var importQueueInitialTab: SharedRecipeImportQueueTab?
-    @State private var isSavedSearchExpanded = false
-    @State private var savedSearchKeyboardHeight: CGFloat = 0
     @State private var previousSelectedSection: CookbookSection = .prepped
     @State private var sectionTransitionDirection: CGFloat = 1
     @State private var isNewCookbookPrepPromptPresented = false
     @State private var newCookbookPrepName = ""
     @State private var pendingPrepTableScrollID: String?
     @State private var cookbookPrepSuggestionStates: [UUID: CookbookPrepSuggestionState] = [:]
-    @Namespace private var savedSearchTransitionNamespace
 
     // Coachmark: first time a freshly-onboarded user lands in the cookbook,
     // call out the Import button so they remember the share flow they just
@@ -3880,17 +3936,6 @@ private struct CookbookTabView: View {
             cookbookFeedScroll
         }
         .background(OunjePalette.background.ignoresSafeArea())
-        .overlay(alignment: .bottom) {
-            if selectedSection == .saved {
-                savedSearchDock
-                    .frame(maxWidth: 360, alignment: .center)
-                    .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                    .padding(.bottom, max(12, savedSearchKeyboardHeight > 0 ? savedSearchKeyboardHeight + 16 : 12))
-                    .offset(y: savedSearchKeyboardOffset)
-                    .zIndex(30)
-            }
-        }
-        .animation(OunjeMotion.screenSpring, value: isSavedSearchExpanded)
         .alert("Name this prep by intent", isPresented: $isNewCookbookPrepPromptPresented) {
             TextField("Experimental, low calo...", text: $newCookbookPrepName)
                 .autocorrectionDisabled()
@@ -3919,14 +3964,6 @@ private struct CookbookTabView: View {
             }
             Button("Cancel", role: .cancel) {
                 newCookbookPrepName = ""
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            updateSavedSearchKeyboardHeight(from: notification)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            withAnimation(OunjeMotion.screenSpring) {
-                savedSearchKeyboardHeight = 0
             }
         }
         .task(id: selectedSection == .saved ? (store.authSession?.userID ?? "guest") : "cookbook-idle") {
@@ -3999,21 +4036,6 @@ private struct CookbookTabView: View {
             let previousSection = previousSelectedSection
             sectionTransitionDirection = newValue.motionIndex >= previousSection.motionIndex ? 1 : -1
             previousSelectedSection = newValue
-            guard newValue != .saved,
-                  searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            else {
-                return
-            }
-            withAnimation(OunjeMotion.screenSpring) {
-                isSavedSearchExpanded = false
-            }
-        }
-        .onChange(of: searchText) { newValue in
-            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                withAnimation(OunjeMotion.screenSpring) {
-                    isSavedSearchExpanded = false
-                }
-            }
         }
     }
 
@@ -4199,6 +4221,11 @@ private struct CookbookTabView: View {
     @ViewBuilder
     private var savedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
+            CookbookSavedSearchField(
+                text: $searchText,
+                placeholder: "Search saved recipes"
+            )
+
             if filters.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 22) {
@@ -4242,55 +4269,6 @@ private struct CookbookTabView: View {
                     }
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var savedSearchDock: some View {
-        if isSavedSearchExpanded || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                SavedRecipesSearchField(
-                    text: $searchText,
-                    placeholder: "Search saved recipes",
-                    isExpanded: $isSavedSearchExpanded,
-                    transitionNamespace: savedSearchTransitionNamespace
-                )
-                .frame(maxWidth: 360)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                Spacer(minLength: 0)
-            }
-        } else {
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                FloatingSavedSearchButton(
-                    isActive: false,
-                    transitionNamespace: savedSearchTransitionNamespace
-                ) {
-                    withAnimation(OunjeMotion.screenSpring) {
-                        isSavedSearchExpanded = true
-                    }
-                }
-                .transition(.scale.combined(with: .opacity))
-            }
-        }
-    }
-
-    private var savedSearchKeyboardOffset: CGFloat {
-        guard savedSearchKeyboardHeight > 0 else { return 0 }
-        return -(savedSearchKeyboardHeight - 16)
-    }
-
-    private func updateSavedSearchKeyboardHeight(from notification: Notification) {
-        guard let userInfo = notification.userInfo else { return }
-
-        let endFrame = (userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
-        guard endFrame.height > 0 else { return }
-
-        let screenHeight = UIScreen.main.bounds.height
-        let keyboardHeight = max(0, screenHeight - endFrame.minY)
-        withAnimation(OunjeMotion.screenSpring) {
-            savedSearchKeyboardHeight = keyboardHeight
         }
     }
 
@@ -8931,6 +8909,7 @@ private struct DiscoverComposerSheet: View {
                     processingState: "queued",
                     attemptCount: 1,
                     lastAttemptAt: Date(),
+                    serverSubmittedAt: nil,
                     lastError: nil,
                     updatedAt: Date()
                 )
@@ -8968,7 +8947,7 @@ private struct DiscoverComposerSheet: View {
                 }
 
                 let backendProcessingState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                let isLiveBackendState = ["queued", "processing", "fetching", "parsing", "normalized"].contains(backendProcessingState)
+                let isLiveBackendState = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"].contains(backendProcessingState)
                 let reviewState = response.job.reviewState.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 let canDisplayImportedRecipe = response.recipe != nil || response.recipeDetail != nil
                 let importFailureReason = [
@@ -8985,7 +8964,7 @@ private struct DiscoverComposerSheet: View {
                     || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe)
                 let normalizedProcessingState: String = {
                     switch backendProcessingState {
-                    case "queued", "processing", "fetching", "parsing", "normalized", "saved":
+                    case "queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized", "saved":
                         return backendProcessingState
                     default:
                         return "queued"
@@ -9017,6 +8996,7 @@ private struct DiscoverComposerSheet: View {
                         processingState: "failed",
                         attemptCount: localEnvelope.attemptCount,
                         lastAttemptAt: Date(),
+                        serverSubmittedAt: localEnvelope.serverSubmittedAt ?? Date(),
                         lastError: importFailureReason,
                         updatedAt: Date()
                     )
@@ -9045,6 +9025,7 @@ private struct DiscoverComposerSheet: View {
                         processingState: normalizedProcessingState,
                         attemptCount: localEnvelope.attemptCount,
                         lastAttemptAt: Date(),
+                        serverSubmittedAt: localEnvelope.serverSubmittedAt ?? Date(),
                         lastError: nil,
                         updatedAt: Date()
                     )

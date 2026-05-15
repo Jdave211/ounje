@@ -100,6 +100,7 @@ extension RecipeImportJobPayload {
             processingState: status,
             attemptCount: attempts,
             lastAttemptAt: Self.importDate(from: updatedAt),
+            serverSubmittedAt: Self.importDate(from: createdAt ?? updatedAt),
             lastError: errorMessage ?? reviewReason,
             updatedAt: Self.importDate(from: updatedAt) ?? Date()
         )

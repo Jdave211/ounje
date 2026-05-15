@@ -50,7 +50,7 @@ enum SharedRecipeImportInbox {
     static func reconcileStaleProcessingEnvelopes(staleAfter seconds: TimeInterval = 15 * 60) throws {
         let all = try readAll()
         let now = Date()
-        let staleStates: Set<String> = ["processing", "fetching", "parsing", "normalized"]
+        let staleStates: Set<String> = ["submitted", "processing", "fetching", "parsing", "normalized"]
         for envelope in all where staleStates.contains(envelope.normalizedProcessingState) {
             let ref = envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
             guard now.timeIntervalSince(ref) >= seconds else { continue }
@@ -67,7 +67,10 @@ enum SharedRecipeImportInbox {
                 processingState: "failed",
                 attemptCount: envelope.attemptCount,
                 lastAttemptAt: envelope.lastAttemptAt,
-                lastError: "Import timed out. Tap Retry imports.",
+                serverSubmittedAt: envelope.serverSubmittedAt,
+                lastError: envelope.jobID == nil
+                    ? "Import handoff was interrupted. Tap Retry imports."
+                    : "Import timed out on the server. Tap Retry imports.",
                 updatedAt: Date()
             )
             try update(failed)
@@ -128,9 +131,9 @@ enum SharedRecipeImportInbox {
         switch envelope.normalizedProcessingState {
         case "failed":
             return 0
-        case "processing":
+        case "submitted", "processing", "fetching", "parsing", "normalized":
             return 1
-        case "queued":
+        case "queued", "retryable":
             return (envelope.attemptCount ?? 0) > 0 ? 2 : 1
         default:
             return 2

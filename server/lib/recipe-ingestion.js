@@ -1316,6 +1316,87 @@ export async function heartbeatRecipeIngestionJob({ jobID, workerID } = {}) {
   return true;
 }
 
+const LIVE_RECIPE_IMPORT_STATUSES = ["processing", "fetching", "parsing", "normalized"];
+
+export async function repairStaleRecipeIngestionJobs({
+  staleAfterMinutes = 15,
+  limit = 50,
+  dryRun = false,
+  workerID = "recipe_ingestion_maintenance",
+} = {}) {
+  const staleMinutes = Math.max(1, Number.parseInt(String(staleAfterMinutes), 10) || 15);
+  const resolvedLimit = Math.max(1, Math.min(Number.parseInt(String(limit), 10) || 50, 250));
+  const cutoff = new Date(Date.now() - staleMinutes * 60_000).toISOString();
+  const rows = await fetchRows(
+    "recipe_ingestion_jobs",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    {
+      filters: [
+        `status=in.${buildInClause(LIVE_RECIPE_IMPORT_STATUSES)}`,
+        "leased_at=not.is.null",
+        `leased_at=lt.${encodeURIComponent(cutoff)}`,
+      ],
+      order: ["leased_at.asc", "updated_at.asc"],
+      limit: resolvedLimit,
+    }
+  );
+
+  const actions = [];
+  for (const job of rows) {
+    const attempts = Number(job.attempts ?? 0);
+    const maxAttempts = Number(job.max_attempts ?? 3);
+    const terminal = Number.isFinite(attempts)
+      && Number.isFinite(maxAttempts)
+      && maxAttempts > 0
+      && attempts >= maxAttempts;
+    const action = {
+      id: job.id,
+      previous_status: job.status,
+      attempts,
+      max_attempts: maxAttempts,
+      leased_at: job.leased_at ?? null,
+      next_status: terminal ? "failed" : "retryable",
+    };
+    actions.push(action);
+    if (dryRun) continue;
+
+    if (terminal) {
+      await appendJobEvent(job.id, "failed", {
+        worker_id: workerID,
+        reason: "stale_worker_exhausted_attempts",
+        previous_status: job.status,
+      }, {
+        status: "failed",
+        worker_id: null,
+        leased_at: null,
+        completed_at: nowIso(),
+        error_message: "Recipe import stopped before finishing. Please try importing it again.",
+        review_state: job.review_state ?? "needs_review",
+        review_reason: job.review_reason ?? "Worker lease expired after the maximum retry attempts.",
+      });
+    } else {
+      await appendJobEvent(job.id, "retry_scheduled", {
+        worker_id: workerID,
+        reason: "stale_worker_lease",
+        previous_status: job.status,
+      }, {
+        status: "retryable",
+        worker_id: null,
+        leased_at: null,
+        error_message: null,
+      });
+    }
+  }
+
+  return {
+    stale_after_minutes: staleMinutes,
+    cutoff,
+    dry_run: Boolean(dryRun),
+    checked: rows.length,
+    actions,
+  };
+}
+
 function startRecipeIngestionHeartbeat(jobID, workerID) {
   const normalizedJobID = normalizeText(jobID);
   const normalizedWorkerID = normalizeText(workerID);
@@ -3498,22 +3579,12 @@ async function createJobRow(request) {
     const lockedExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
     if (lockedExisting) {
-      const completed = await createCompletedJobRowFromExistingJob(request, lockedExisting, {
-        dedupeKey: lockedExisting.dedupe_key ?? dedupeKey ?? null,
-        canonicalURL: lockedExisting.canonical_url ?? lockedExisting.source_url ?? request.canonical_url ?? request.source_url ?? null,
-      });
-      if (completed) return completed;
       return lockedExisting;
     }
     await delay(200);
     const settledExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
     if (settledExisting) {
-      const completed = await createCompletedJobRowFromExistingJob(request, settledExisting, {
-        dedupeKey: settledExisting.dedupe_key ?? dedupeKey ?? null,
-        canonicalURL: settledExisting.canonical_url ?? settledExisting.source_url ?? request.canonical_url ?? request.source_url ?? null,
-      });
-      if (completed) return completed;
       return settledExisting;
     }
   }
@@ -3521,11 +3592,6 @@ async function createJobRow(request) {
   try {
   const existing = await findExistingJobForRequest(request, dedupeKey);
   if (existing) {
-    const completed = await createCompletedJobRowFromExistingJob(request, existing, {
-      dedupeKey,
-      canonicalURL: request.canonical_url ?? request.source_url ?? null,
-    });
-    if (completed) return completed;
     return existing;
   }
 
@@ -3537,11 +3603,6 @@ async function createJobRow(request) {
       existingForSource.dedupe_key ?? dedupeKey ?? null,
       existingForSource
     );
-    const completed = await createCompletedJobRowFromExistingJob(request, existingForSource, {
-      dedupeKey: existingForSource.dedupe_key ?? dedupeKey ?? null,
-      canonicalURL: existingForSource.canonical_url ?? existingForSource.source_url ?? request.canonical_url ?? request.source_url ?? null,
-    });
-    if (completed) return completed;
     return existingForSource;
   }
 
@@ -3550,11 +3611,6 @@ async function createJobRow(request) {
     dedupeKey,
   });
   if (completedCanonical) {
-    const completed = await createCompletedJobRowFromExistingJob(request, completedCanonical, {
-      dedupeKey: completedCanonical.dedupe_key ?? dedupeKey ?? null,
-      canonicalURL: completedCanonical.canonical_url ?? completedCanonical.source_url ?? request.canonical_url ?? request.source_url ?? null,
-    });
-    if (completed) return completed;
     return completedCanonical;
   }
 
@@ -3592,7 +3648,7 @@ async function createJobRow(request) {
     review_state: "pending",
     event_log: [
       {
-        event: "queued",
+        event: "enqueued",
         at: nowIso(),
         source_type: request.source_type,
         target_state: request.target_state,
@@ -9323,12 +9379,13 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       qualityFlags: extraction.quality_flags,
     });
 
-    const finalStatus = "saved";
-    job = await appendJobEvent(existingJob.id, finalStatus, {
-      recipe_id: persisted.recipe_id,
-      deduped: persisted.saved_state === "deduped",
-      review_state: extraction.review_state,
-    }, {
+	    const finalStatus = "saved";
+	    job = await appendJobEvent(existingJob.id, "completed", {
+	      recipe_id: persisted.recipe_id,
+	      deduped: persisted.saved_state === "deduped",
+	      review_state: extraction.review_state,
+	      final_status: finalStatus,
+	    }, {
       status: finalStatus,
       recipe_id: persisted.recipe_id,
       dedupe_recipe_id: persisted.saved_state === "deduped" ? persisted.recipe_id : null,
@@ -9369,9 +9426,9 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     const quotaError = isOpenAIQuotaError(error);
     const modelError = isOpenAITerminalModelError(error);
     const terminal = quotaError || modelError || nextAttempt >= Number(existingJob.max_attempts ?? 3);
-    job = await appendJobEvent(existingJob.id, terminal ? "failed" : "retryable", {
-      worker_id: workerID,
-      error_message: error.message,
+	    job = await appendJobEvent(existingJob.id, terminal ? "failed" : "retry_scheduled", {
+	      worker_id: workerID,
+	      error_message: error.message,
       terminal_reason: quotaError
         ? "openai_quota_or_rate_limit"
         : modelError
