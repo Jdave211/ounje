@@ -818,6 +818,13 @@ struct ProfileSettingsPage: View {
                                 onOpenRecipeStyle: { isRecipeStylePresented = true }
                             )
 
+#if DEBUG
+                            ProfileSettingsDebugSectionView {
+                                store.resetOnboardingForTesting()
+                                dismiss()
+                            }
+#endif
+
                             ForEach(sections) { section in
                                 ProfileSettingsSectionView(section: section)
                             }
@@ -1119,6 +1126,60 @@ struct ProfileSettingsAutoshopToggleRow: View {
         .contentShape(Rectangle())
     }
 }
+
+#if DEBUG
+struct ProfileSettingsDebugSectionView: View {
+    let onResetOnboarding: () -> Void
+    @State private var resetSwitchIsOn = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Developer")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .padding(.leading, 2)
+
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(OunjePalette.accent)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Reset onboarding")
+                        .font(.system(size: 15.5, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1)
+
+                    Text("Test setup again. Keeps recipes, prep, cart, and account data.")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 10)
+
+                Toggle("", isOn: Binding(
+                    get: { resetSwitchIsOn },
+                    set: { newValue in
+                        guard newValue else {
+                            resetSwitchIsOn = false
+                            return
+                        }
+                        resetSwitchIsOn = true
+                        onResetOnboarding()
+                    }
+                ))
+                .labelsHidden()
+                .tint(OunjePalette.accent)
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+    }
+}
+#endif
 
 struct ProfileSettingsSectionView: View {
     let section: ProfileSettingsSectionModel

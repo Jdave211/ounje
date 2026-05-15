@@ -1,0 +1,13 @@
+{
+  "images": [
+    {
+      "filename": "onboarding-share-import-video.jpg",
+      "idiom": "universal",
+      "scale": "1x"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

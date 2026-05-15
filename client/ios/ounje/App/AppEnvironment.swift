@@ -1110,6 +1110,41 @@ final class MealPlanningAppStore: ObservableObject {
         saveOnboardingStep()
     }
 
+#if DEBUG
+    func resetOnboardingForTesting() {
+        guard isAuthenticated else { return }
+        let currentSession = authSession
+        let currentProfile = profile ?? .starter
+
+        profile = currentProfile
+        isOnboarded = false
+        lastOnboardingStep = 0
+        hasResolvedInitialState = true
+        isHydratingRemoteState = false
+        bootstrapDidConfirmOnboardingState = true
+        hasPersistedOnboardingState = true
+        cacheAuthenticatedEntryRoute(.onboarding)
+        saveProfile()
+        saveOnboardingState()
+        saveOnboardingStep()
+        onRuntimeProfileStateChanged?(resolvedLiveUserID ?? currentSession?.userID, currentProfile, false, 0, membershipEntitlement)
+
+        guard let currentSession else { return }
+        Task {
+            try? await SupabaseProfileStateService.shared.upsertProfile(
+                userID: currentSession.userID,
+                email: currentSession.email,
+                displayName: currentProfile.trimmedPreferredName ?? currentSession.displayName,
+                authProvider: currentSession.provider,
+                onboarded: false,
+                lastOnboardingStep: 0,
+                profile: currentProfile,
+                accessToken: currentSession.accessToken
+            )
+        }
+    }
+#endif
+
     func bootstrapFromSupabaseIfNeeded() async {
         let bootstrapRevision = authStateRevision
         if let authSession, shouldDiscardLocalOnlyAuthSession(authSession) {
