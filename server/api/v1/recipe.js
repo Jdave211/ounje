@@ -8229,21 +8229,22 @@ recipe_router.post("/recipe/:id/enrich-macros", enrichRateLimit, async (req, res
     }
 
     const localEstimate = estimateRecipeMacrosLocally(normalizedDetail);
+    const displayFallback = displayMacroFallbackForRecipe(normalizedDetail);
     const caloriesKcal = Number.isFinite(Number(parsed?.calories_kcal))
       ? Number(parsed.calories_kcal)
-      : localEstimate?.calories_kcal ?? null;
+      : localEstimate?.calories_kcal ?? displayFallback.calories_kcal;
     const proteinG = Number.isFinite(Number(parsed?.protein_g))
       ? Number(parsed.protein_g)
-      : localEstimate?.protein_g ?? null;
+      : localEstimate?.protein_g ?? displayFallback.protein_g;
     const carbsG = Number.isFinite(Number(parsed?.carbs_g))
       ? Number(parsed.carbs_g)
-      : localEstimate?.carbs_g ?? null;
+      : localEstimate?.carbs_g ?? displayFallback.carbs_g;
     const fatG = Number.isFinite(Number(parsed?.fat_g))
       ? Number(parsed.fat_g)
-      : localEstimate?.fat_g ?? null;
+      : localEstimate?.fat_g ?? displayFallback.fat_g;
     const estCaloriesText = typeof parsed?.est_calories_text === "string" && parsed.est_calories_text.trim()
       ? parsed.est_calories_text.trim()
-      : localEstimate?.est_calories_text ?? null;
+      : localEstimate?.est_calories_text ?? displayFallback.est_calories_text;
 
     const existingCaloriesKcal = Number.isFinite(Number(recipe.calories_kcal)) ? Number(recipe.calories_kcal) : null;
     const existingProteinG = Number.isFinite(Number(recipe.protein_g)) ? Number(recipe.protein_g) : null;

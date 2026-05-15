@@ -610,6 +610,11 @@ function normalizeText(value) {
     .trim();
 }
 
+function finiteNumberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function normalizeKey(value) {
   return normalizeText(value)
     .toLowerCase()
@@ -4062,10 +4067,10 @@ function coerceStructuredRecipeCandidate(candidate, source) {
     servings_text: normalizeText(candidate.servings_text ?? candidate.recipeYield ?? candidate.servings ?? "") || (servingsCount ? `${servingsCount}` : null),
     serving_size_text: normalizeText(candidate.serving_size_text ?? candidate.servingSizeText ?? "") || null,
     est_calories_text: normalizeText(candidate.est_calories_text ?? candidate.calories_text ?? "") || null,
-    calories_kcal: Number.isFinite(candidate.calories_kcal) ? Number(candidate.calories_kcal) : null,
-    protein_g: Number.isFinite(candidate.protein_g) ? Number(candidate.protein_g) : null,
-    carbs_g: Number.isFinite(candidate.carbs_g) ? Number(candidate.carbs_g) : null,
-    fat_g: Number.isFinite(candidate.fat_g) ? Number(candidate.fat_g) : null,
+    calories_kcal: finiteNumberOrNull(candidate.calories_kcal),
+    protein_g: finiteNumberOrNull(candidate.protein_g),
+    carbs_g: finiteNumberOrNull(candidate.carbs_g),
+    fat_g: finiteNumberOrNull(candidate.fat_g),
     prep_time_minutes: prepMinutes ?? null,
     cook_time_minutes: cookMinutes ?? totalMinutes ?? null,
     hero_image_url: heroImageURL,
@@ -6605,10 +6610,10 @@ function mergeLowRiskRecipeFill(baseRecipe, fillRecipe) {
     cook_time_text: baseRecipe.cook_time_text ?? normalizedCookTimeText,
     skill_level: baseRecipe.skill_level ?? normalizedSkillLevel,
     est_calories_text: baseRecipe.est_calories_text ?? normalizedCaloriesText,
-    calories_kcal: baseRecipe.calories_kcal ?? (Number.isFinite(fillRecipe.calories_kcal) ? Number(fillRecipe.calories_kcal) : null),
-    protein_g: baseRecipe.protein_g ?? (Number.isFinite(fillRecipe.protein_g) ? Number(fillRecipe.protein_g) : null),
-    carbs_g: baseRecipe.carbs_g ?? (Number.isFinite(fillRecipe.carbs_g) ? Number(fillRecipe.carbs_g) : null),
-    fat_g: baseRecipe.fat_g ?? (Number.isFinite(fillRecipe.fat_g) ? Number(fillRecipe.fat_g) : null),
+    calories_kcal: baseRecipe.calories_kcal ?? finiteNumberOrNull(fillRecipe.calories_kcal),
+    protein_g: baseRecipe.protein_g ?? finiteNumberOrNull(fillRecipe.protein_g),
+    carbs_g: baseRecipe.carbs_g ?? finiteNumberOrNull(fillRecipe.carbs_g),
+    fat_g: baseRecipe.fat_g ?? finiteNumberOrNull(fillRecipe.fat_g),
     ingredients: mergedIngredients,
   };
 }
@@ -6793,10 +6798,10 @@ function mergeCompletedRecipe(baseRecipe, completedRecipe) {
     cook_time_minutes: lowRiskMerged.cook_time_minutes ?? (Number.isFinite(completedRecipe.cook_time_minutes) ? Number(completedRecipe.cook_time_minutes) : null),
     cook_time_text: lowRiskMerged.cook_time_text ?? (normalizeText(completedRecipe.cook_time_text) || null),
     est_calories_text: lowRiskMerged.est_calories_text ?? completedCaloriesText,
-    calories_kcal: lowRiskMerged.calories_kcal ?? (Number.isFinite(completedRecipe.calories_kcal) ? Number(completedRecipe.calories_kcal) : null),
-    protein_g: lowRiskMerged.protein_g ?? (Number.isFinite(completedRecipe.protein_g) ? Number(completedRecipe.protein_g) : null),
-    carbs_g: lowRiskMerged.carbs_g ?? (Number.isFinite(completedRecipe.carbs_g) ? Number(completedRecipe.carbs_g) : null),
-    fat_g: lowRiskMerged.fat_g ?? (Number.isFinite(completedRecipe.fat_g) ? Number(completedRecipe.fat_g) : null),
+    calories_kcal: lowRiskMerged.calories_kcal ?? finiteNumberOrNull(completedRecipe.calories_kcal),
+    protein_g: lowRiskMerged.protein_g ?? finiteNumberOrNull(completedRecipe.protein_g),
+    carbs_g: lowRiskMerged.carbs_g ?? finiteNumberOrNull(completedRecipe.carbs_g),
+    fat_g: lowRiskMerged.fat_g ?? finiteNumberOrNull(completedRecipe.fat_g),
     main_protein: baseRecipe.main_protein ?? completedMainProtein,
     cook_method: baseRecipe.cook_method ?? completedCookMethod,
     cuisine_tags: uniqueStrings([...(baseRecipe.cuisine_tags ?? []), ...(completedRecipe.cuisine_tags ?? [])]).slice(0, 8),
