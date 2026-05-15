@@ -4433,6 +4433,111 @@ function durationText(minutes) {
   return `${minutes} mins`;
 }
 
+function parseLooseDurationNumber(value) {
+  const raw = normalizeText(value);
+  if (!raw) return null;
+  const vulgarFractions = {
+    "¼": 0.25,
+    "½": 0.5,
+    "¾": 0.75,
+    "⅓": 1 / 3,
+    "⅔": 2 / 3,
+    "⅛": 0.125,
+    "⅜": 0.375,
+    "⅝": 0.625,
+    "⅞": 0.875,
+  };
+  const compact = raw.match(/^(\d+)([¼½¾⅓⅔⅛⅜⅝⅞])$/u);
+  if (compact) return Number(compact[1]) + vulgarFractions[compact[2]];
+  const parsed = parseQuantityAmount(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function durationMentionsFromText(text) {
+  const raw = normalizeText(text).replace(/[–—]/g, "-");
+  if (!raw) return [];
+  const mentions = [];
+  const pattern = /(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?[¼½¾⅓⅔⅛⅜⅝⅞]?|[¼½¾⅓⅔⅛⅜⅝⅞])(?:\s*(?:-|to)\s*(\d+\s+\d\/\d|\d+\/\d|\d+(?:\.\d+)?[¼½¾⅓⅔⅛⅜⅝⅞]?|[¼½¾⅓⅔⅛⅜⅝⅞]))?\s*(hours?|hrs?|hr|minutes?|mins?|min)\b/giu;
+  for (const match of raw.matchAll(pattern)) {
+    const low = parseLooseDurationNumber(match[1]);
+    const high = match[2] ? parseLooseDurationNumber(match[2]) : low;
+    if (!Number.isFinite(low) || !Number.isFinite(high)) continue;
+    const unit = match[3].toLowerCase();
+    let minutes = ((low + high) / 2) * (/^h/.test(unit) ? 60 : 1);
+    const context = raw.slice(Math.max(0, match.index - 30), Math.min(raw.length, match.index + match[0].length + 45)).toLowerCase();
+    if (/\bper\s+side\b/.test(context)) minutes *= 2;
+    mentions.push({ minutes, context });
+  }
+  return mentions;
+}
+
+function inferRecipeTimingFromSteps(recipe) {
+  const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
+  if (!steps.length) return null;
+
+  const servings = Number.isFinite(Number(recipe?.servings_count))
+    ? Number(recipe.servings_count)
+    : parseFirstInteger(recipe?.servings_text);
+  const recipeText = [
+    recipe?.title,
+    recipe?.description,
+    recipe?.category,
+    recipe?.recipe_type,
+    recipe?.cook_method,
+    ...(Array.isArray(recipe?.ingredients) ? recipe.ingredients.map((ingredient) => ingredient?.display_name) : []),
+  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join(" ");
+
+  let prepMinutes = 0;
+  let cookMinutes = 0;
+  let foundPrep = false;
+  let foundCook = false;
+
+  for (const step of steps) {
+    const text = normalizeText(step?.text ?? step);
+    if (!text) continue;
+    const lower = text.toLowerCase();
+    const mentions = durationMentionsFromText(text);
+    if (!mentions.length) continue;
+
+    const isCooking = /\b(fry|bake|roast|grill|broil|simmer|boil|saute|sauté|air fry|cook|heat oil|deep fry)\b/i.test(lower);
+    const isPrep = /\b(rise|proof|rest|chill|marinate|sit|foamy|double|puffy|knead|mix|whisk|combine|shape|roll|cut)\b/i.test(lower);
+
+    for (const mention of mentions) {
+      let minutes = mention.minutes;
+      if (!Number.isFinite(minutes) || minutes <= 0) continue;
+      if (isCooking) {
+        if (/\b(per\s+batch|per\s+side)\b/.test(mention.context) && /\b(fry|deep fry|oil)\b/.test(lower) && Number.isFinite(servings) && servings >= 8) {
+          minutes *= Math.min(4, Math.max(1, Math.ceil(servings / 4)));
+        }
+        cookMinutes += minutes;
+        foundCook = true;
+      } else if (isPrep) {
+        prepMinutes += minutes;
+        foundPrep = true;
+      }
+    }
+  }
+
+  if (!foundCook && /\b(fry|fried|doughnut|donut|bomboloni|bombolini)\b/i.test(recipeText)) {
+    cookMinutes = 18;
+    foundCook = true;
+  }
+  if (!foundPrep && /\b(yeast|doughnut|donut|bomboloni|bombolini|bread|dough)\b/i.test(recipeText)) {
+    prepMinutes = 90;
+    foundPrep = true;
+  }
+
+  const roundedPrep = foundPrep ? Math.max(1, Math.round(prepMinutes)) : null;
+  const roundedCook = foundCook ? Math.max(1, Math.round(cookMinutes)) : null;
+  if (!roundedPrep && !roundedCook) return null;
+  const total = Math.round((roundedPrep ?? 0) + (roundedCook ?? 0));
+  return {
+    prep_time_minutes: roundedPrep,
+    cook_time_minutes: roundedCook,
+    cook_time_text: durationText(total || roundedCook || roundedPrep),
+  };
+}
+
 function coerceStructuredRecipeCandidate(candidate, source) {
   const sourceIngredients = Array.isArray(candidate.ingredients) ? candidate.ingredients : [];
   const ingredients = uniqueBy(
@@ -8428,6 +8533,11 @@ const LOCAL_MACRO_PROFILES = [
     tablespoonGrams: 16,
   },
   {
+    pattern: /\b(nutella|chocolate hazelnut spread|hazelnut spread)\b/,
+    per100g: { calories_kcal: 539, protein_g: 6.3, carbs_g: 57.5, fat_g: 30.9 },
+    tablespoonGrams: 19,
+  },
+  {
     pattern: /\b(oil|olive oil|avocado oil|coconut oil)\b/,
     per100g: { calories_kcal: 884, protein_g: 0, carbs_g: 0, fat_g: 100 },
     tablespoonGrams: 13.5,
@@ -8487,13 +8597,15 @@ function normalizeMacroUnit(unit) {
 }
 
 function quantityForMacroEstimate(quantityText) {
-  const raw = normalizeText(quantityText);
+  const raw = normalizeText(quantityText)
+    .replace(/(\d+(?:\.\d+)?)(g|kg|ml|l|oz|lb|lbs|cups?|tbsp|tbs|tablespoons?|tsp|teaspoons?|scoops?)\b/gi, "$1 $2");
   if (!raw) return null;
   const parsed = parseIngredientMeasurement(raw);
   if (parsed) {
+    const unitToken = normalizeText(parsed.unit).split(/[\s(,]+/)[0] ?? parsed.unit;
     return {
       amount: parsed.amount,
-      unit: normalizeMacroUnit(parsed.unit),
+      unit: normalizeMacroUnit(unitToken),
     };
   }
 
@@ -8526,10 +8638,19 @@ function gramsForMacroProfile(quantity, profile) {
 function macroTotalsForIngredient(ingredient) {
   const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
   const quantity = quantityForMacroEstimate(ingredient?.quantity_text ?? ingredient?.quantity ?? "");
-  if (!name || !quantity) return null;
+  if (!name) return null;
 
   const profile = LOCAL_MACRO_PROFILES.find((entry) => entry.pattern.test(name.toLowerCase()));
   if (!profile) return null;
+  if (!quantity && /\bfor\s+fry(?:ing)?\b/i.test(ingredient?.quantity_text ?? "") && /\boil\b/i.test(name)) {
+    return {
+      calories_kcal: 360,
+      protein_g: 0,
+      carbs_g: 0,
+      fat_g: 40,
+    };
+  }
+  if (!quantity) return null;
 
   if (profile.each && quantity.unit === "ct") {
     const amount = Number(quantity.amount);
@@ -8797,8 +8918,98 @@ function normalizeNutritionEstimateFields(recipe) {
   };
 }
 
+function sourceCaptionLooksLikeRecipeBody(description) {
+  const raw = normalizeText(description);
+  if (!raw) return false;
+  const lower = raw.toLowerCase();
+  const dashCount = (raw.match(/\s[-–—]\s/g) ?? []).length;
+  return raw.length > 320
+    || (/\bingredients?\b/.test(lower) && /\b(instructions?|directions?|method)\b/.test(lower))
+    || dashCount >= 6
+    || (raw.length > 180 && /#\w+/.test(raw));
+}
+
+function compactRecipeDescription(recipe) {
+  const title = normalizeText(recipe?.title);
+  if (!title) return normalizeText(recipe?.description, 220) || null;
+
+  const ingredientNames = Array.isArray(recipe?.ingredients)
+    ? recipe.ingredients.map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name).toLowerCase()).filter(Boolean)
+    : [];
+  const text = [
+    title,
+    recipe?.description,
+    recipe?.category,
+    recipe?.recipe_type,
+    recipe?.cook_method,
+    ...ingredientNames,
+  ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join(" ");
+
+  const keyIngredient = ingredientNames.find((name) => /\bnutella|chocolate hazelnut|hazelnut spread\b/i.test(name))
+    ?? ingredientNames.find((name) => !/\b(salt|water|oil|sugar|flour)\b/i.test(name))
+    ?? ingredientNames[0]
+    ?? null;
+  const ingredientPhrase = keyIngredient
+    ? keyIngredient.replace(/\bnutella\b/gi, "Nutella")
+    : null;
+
+  if (/\b(bomboloni|bombolini|doughnut|doughnuts|donut|donuts)\b/i.test(text)) {
+    const filling = ingredientPhrase ? ` filled with ${ingredientPhrase}` : "";
+    return `${title} are soft, sugar-dusted doughnuts${filling}. A sweet frying project with pillowy yeast dough and a rich center.`;
+  }
+  if (/\b(cake|cookie|brownie|dessert|sweet|pastry|baking)\b/i.test(text)) {
+    const builtAround = ingredientPhrase ? ` built around ${ingredientPhrase}` : "";
+    return `${title} is a sweet homemade dessert${builtAround}. Expect a simple treat with clear prep, baking or cooking steps, and a rich finish.`;
+  }
+  if (/\b(taco|wrap|sandwich|burger|bowl|pasta|rice|noodle)\b/i.test(text)) {
+    const builtAround = ingredientPhrase ? ` with ${ingredientPhrase}` : "";
+    return `${title} is a practical, flavor-forward meal${builtAround}. It is built for straightforward prep and a satisfying finished plate.`;
+  }
+
+  const category = normalizeText(recipe?.recipe_type ?? recipe?.category).toLowerCase();
+  const typePhrase = category ? ` ${category}` : "";
+  const builtAround = ingredientPhrase ? ` built around ${ingredientPhrase}` : "";
+  return `${title} is a homemade${typePhrase} recipe${builtAround}. It has a concise ingredient list and step-by-step cooking flow.`;
+}
+
+function normalizeRecipeDisplayFields(recipe) {
+  if (!recipe || typeof recipe !== "object") return recipe;
+  const qualityFlags = uniqueStrings(Array.isArray(recipe.quality_flags) ? recipe.quality_flags : []);
+  let nextRecipe = { ...recipe };
+
+  const currentDescription = normalizeText(nextRecipe.description);
+  if (!currentDescription || sourceCaptionLooksLikeRecipeBody(currentDescription)) {
+    nextRecipe.description = compactRecipeDescription(nextRecipe);
+    qualityFlags.push("description_compacted");
+  } else {
+    nextRecipe.description = normalizeText(currentDescription, 220);
+  }
+
+  const timing = inferRecipeTimingFromSteps(nextRecipe);
+  const cookText = normalizeText(nextRecipe.cook_time_text);
+  const cookTextLooksPartial = /\b(per\s+side|per\s+batch|per\s+piece|per\s+donut|per\s+doughnut)\b/i.test(cookText)
+    || (parseFirstInteger(cookText) != null && parseFirstInteger(cookText) <= 5 && (nextRecipe.steps ?? []).length >= 5);
+  const hasValidPrepMinutes = Number.isFinite(Number(nextRecipe.prep_time_minutes)) && Number(nextRecipe.prep_time_minutes) > 0;
+  const hasValidCookMinutes = Number.isFinite(Number(nextRecipe.cook_time_minutes)) && Number(nextRecipe.cook_time_minutes) > 0;
+  if (timing && (!hasValidPrepMinutes || !hasValidCookMinutes || !cookText || cookTextLooksPartial)) {
+    nextRecipe = {
+      ...nextRecipe,
+      prep_time_minutes: hasValidPrepMinutes ? Number(nextRecipe.prep_time_minutes) : timing.prep_time_minutes,
+      cook_time_minutes: hasValidCookMinutes ? Number(nextRecipe.cook_time_minutes) : timing.cook_time_minutes,
+      cook_time_text: cookTextLooksPartial || !cookText ? timing.cook_time_text : cookText,
+    };
+    qualityFlags.push("timing_inferred");
+  }
+
+  return {
+    ...nextRecipe,
+    quality_flags: uniqueStrings(qualityFlags),
+  };
+}
+
 async function guaranteeRecipeDisplayMacros(normalizedRecipe) {
-  let nextRecipe = await maybeFillMissingMacros(normalizedRecipe ?? {});
+  let nextRecipe = normalizeRecipeDisplayFields(normalizedRecipe ?? {});
+  nextRecipe = await maybeFillMissingMacros(nextRecipe);
   if (!hasCompleteDisplayMacros(nextRecipe)) {
     nextRecipe = fillRecipeMacrosWithDisplayFallback(nextRecipe);
   }
@@ -8807,6 +9018,7 @@ async function guaranteeRecipeDisplayMacros(normalizedRecipe) {
 
 function missingDisplayMacroPatch(existingRecipe, candidateRecipe) {
   const patch = {};
+  const displayCandidate = normalizeRecipeDisplayFields(candidateRecipe ?? {});
   for (const field of ["calories_kcal", "protein_g", "carbs_g", "fat_g"]) {
     if (!isFiniteMacroValue(existingRecipe?.[field]) && isFiniteMacroValue(candidateRecipe?.[field])) {
       patch[field] = Number(candidateRecipe[field]);
@@ -8814,6 +9026,19 @@ function missingDisplayMacroPatch(existingRecipe, candidateRecipe) {
   }
   if (!normalizeText(existingRecipe?.est_calories_text) && normalizeText(candidateRecipe?.est_calories_text)) {
     patch.est_calories_text = normalizeText(candidateRecipe.est_calories_text);
+  }
+  if (sourceCaptionLooksLikeRecipeBody(existingRecipe?.description) && normalizeText(displayCandidate.description)) {
+    patch.description = normalizeText(displayCandidate.description, 220);
+  }
+  const existingHasValidPrep = Number.isFinite(Number(existingRecipe?.prep_time_minutes)) && Number(existingRecipe.prep_time_minutes) > 0;
+  const existingHasValidCook = Number.isFinite(Number(existingRecipe?.cook_time_minutes)) && Number(existingRecipe.cook_time_minutes) > 0;
+  if (
+    (!existingHasValidPrep || !existingHasValidCook || /\bper\s+(side|batch|piece|donut|doughnut)\b/i.test(normalizeText(existingRecipe?.cook_time_text)))
+    && (Number.isFinite(Number(displayCandidate.prep_time_minutes)) || Number.isFinite(Number(displayCandidate.cook_time_minutes)))
+  ) {
+    if (Number.isFinite(Number(displayCandidate.prep_time_minutes))) patch.prep_time_minutes = Number(displayCandidate.prep_time_minutes);
+    if (Number.isFinite(Number(displayCandidate.cook_time_minutes))) patch.cook_time_minutes = Number(displayCandidate.cook_time_minutes);
+    if (normalizeText(displayCandidate.cook_time_text)) patch.cook_time_text = normalizeText(displayCandidate.cook_time_text);
   }
   return patch;
 }
@@ -9804,6 +10029,7 @@ export {
   fillRecipeMacrosWithDisplayFallback,
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
+  normalizeRecipeDisplayFields,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,

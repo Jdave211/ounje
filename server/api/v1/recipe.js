@@ -20,6 +20,7 @@ import {
   deleteFailedRecipeIngestionJob,
   fetchRecipeIngestionJob,
   estimateRecipeMacrosLocally,
+  guaranteeRecipeDisplayMacros,
   listCompletedRecipeImportItems,
   listRecipeImportQueueItems,
   maybeGenerateImportedRecipeImage,
@@ -248,8 +249,25 @@ function hasCompleteDisplayMacros(recipe = {}) {
   });
 }
 
-function recipeDetailPayloadHasCompleteMacros(payload = {}) {
-  return hasCompleteDisplayMacros(payload?.recipe ?? payload);
+function recipeDetailPayloadIsDisplayReady(payload = {}) {
+  const recipe = payload?.recipe ?? payload;
+  if (!hasCompleteDisplayMacros(recipe)) return false;
+  const description = trimString(recipe?.description);
+  const lowerDescription = description.toLowerCase();
+  if (
+    description.length > 320
+    || (/\bingredients?\b/.test(lowerDescription) && /\b(instructions?|directions?|method)\b/.test(lowerDescription))
+  ) {
+    return false;
+  }
+  const cookText = trimString(recipe?.cook_time_text);
+  if (
+    /\bper\s+(side|batch|piece|donut|doughnut)\b/i.test(cookText)
+    && (!Number.isFinite(Number(recipe?.prep_time_minutes)) || !Number.isFinite(Number(recipe?.cook_time_minutes)))
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function missingDisplayMacroPatch(existingRecipe = {}, candidateRecipe = {}) {
@@ -262,14 +280,27 @@ function missingDisplayMacroPatch(existingRecipe = {}, candidateRecipe = {}) {
   if (!trimString(existingRecipe?.est_calories_text) && trimString(candidateRecipe?.est_calories_text)) {
     patch.est_calories_text = trimString(candidateRecipe.est_calories_text);
   }
+  if (trimString(candidateRecipe?.description) && trimString(candidateRecipe.description) !== trimString(existingRecipe?.description)) {
+    patch.description = trimString(candidateRecipe.description);
+  }
+  for (const field of ["prep_time_minutes", "cook_time_minutes"]) {
+    const existing = Number(existingRecipe?.[field]);
+    const candidate = Number(candidateRecipe?.[field]);
+    if ((!Number.isFinite(existing) || existing <= 0) && Number.isFinite(candidate) && candidate > 0) {
+      patch[field] = candidate;
+    }
+  }
+  const existingCookText = trimString(existingRecipe?.cook_time_text);
+  const candidateCookText = trimString(candidateRecipe?.cook_time_text);
+  if (candidateCookText && (!existingCookText || /\bper\s+(side|batch|piece|donut|doughnut)\b/i.test(existingCookText))) {
+    patch.cook_time_text = candidateCookText;
+  }
   return patch;
 }
 
 async function ensureRecipeDetailDisplayMacros(recipeID, detail = {}) {
-  if (hasCompleteDisplayMacros(detail)) return detail;
-
-  const estimate = estimateRecipeMacrosLocally(detail) ?? displayMacroFallbackForRecipe(detail);
-  const patchedValues = missingDisplayMacroPatch(detail, estimate);
+  const completed = await guaranteeRecipeDisplayMacros(detail);
+  const patchedValues = missingDisplayMacroPatch(detail, completed);
   if (Object.keys(patchedValues).length === 0) return detail;
 
   const nextDetail = {
@@ -848,7 +879,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       RECIPE_DETAIL_CACHE_TTL_MS,
       "recipe-detail"
     );
-    if (cached && recipeDetailPayloadHasCompleteMacros(cached)) return res.json(cached);
+    if (cached && recipeDetailPayloadIsDisplayReady(cached)) return res.json(cached);
 
     const recipe = recipeId.startsWith("uir_")
       ? await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID)
