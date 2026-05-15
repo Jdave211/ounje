@@ -112,6 +112,11 @@ final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
     ) {
         let userInfo = notification.request.content.userInfo
         let kind = (userInfo["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        NotificationCenter.default.post(
+            name: .ounjeRemoteNotificationReceived,
+            object: nil,
+            userInfo: userInfo
+        )
         if kind == "apns_test" {
             completionHandler([.banner, .sound, .badge, .list])
         } else {

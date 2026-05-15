@@ -228,13 +228,15 @@ export async function pushToUser({
   return results;
 }
 
-export async function pushTestNotificationToLatestDevice({ userId }) {
+export async function pushTestNotificationToLatestDevice({ userId, testId = null }) {
+  const normalizedTestId = normalize(testId);
   return pushToUser({
     userId,
     title: "Ounje test notification",
     body: "If this appears, APNs is wired correctly.",
     userInfo: {
       kind: "apns_test",
+      ...(normalizedTestId ? { test_id: normalizedTestId } : {}),
       deep_link: "ounje://notifications",
       action_url: "ounje://notifications",
     },

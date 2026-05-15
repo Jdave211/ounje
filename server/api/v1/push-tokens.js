@@ -49,7 +49,8 @@ router.post("/push-tokens/unregister", async (req, res) => {
 router.post("/push-tokens/test", async (req, res) => {
   try {
     const { userID } = await resolveAuthorizedUserID(req);
-    const results = await pushTestNotificationToLatestDevice({ userId: userID });
+    const testId = String(req.body?.test_id ?? req.body?.testId ?? "").trim();
+    const results = await pushTestNotificationToLatestDevice({ userId: userID, testId });
     const ok = results.some((result) => result.ok);
     const reasons = [...new Set(results.map((result) => result.reason).filter(Boolean))];
     const message = ok

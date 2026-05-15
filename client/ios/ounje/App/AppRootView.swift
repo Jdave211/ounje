@@ -596,7 +596,11 @@ final class AppNotificationCenterManager: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(session.userID, forHTTPHeaderField: "x-user-id")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["user_id": session.userID])
+        let testID = UUID().uuidString
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "user_id": session.userID,
+            "test_id": testID
+        ])
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -606,7 +610,10 @@ final class AppNotificationCenterManager: ObservableObject {
 
             let payload = try? JSONDecoder().decode(ServerPushTestResponse.self, from: data)
             if (200 ... 299).contains(httpResponse.statusCode), payload?.ok == true {
-                return "Server APNs accepted the test push. If you do not see it, check Focus mode or notification display settings."
+                if await waitForServerTestNotificationReceipt(testID: testID) {
+                    return "Server APNs delivered the test push to this app."
+                }
+                return "Server APNs accepted the test push, but this app did not receive it within 8 seconds. Check Focus mode, notification summary, or device notification settings."
             }
 
             if let message = payload?.message?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty {
@@ -625,6 +632,38 @@ final class AppNotificationCenterManager: ObservableObject {
             return "Server notification test failed (\(httpResponse.statusCode))."
         } catch {
             return "Server notification test failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func waitForServerTestNotificationReceipt(testID: String, timeout: TimeInterval = 8) async -> Bool {
+        await withCheckedContinuation { continuation in
+            var didResume = false
+            var token: NSObjectProtocol?
+            let resume: (Bool) -> Void = { value in
+                guard !didResume else { return }
+                didResume = true
+                if let token {
+                    NotificationCenter.default.removeObserver(token)
+                }
+                continuation.resume(returning: value)
+            }
+
+            token = NotificationCenter.default.addObserver(
+                forName: .ounjeRemoteNotificationReceived,
+                object: nil,
+                queue: .main
+            ) { notification in
+                let userInfo = notification.userInfo ?? [:]
+                let kind = (userInfo["kind"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let receivedTestID = (userInfo["test_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ?? (userInfo["testId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard kind == "apns_test", receivedTestID == testID else { return }
+                resume(true)
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+                resume(false)
+            }
         }
     }
 
@@ -2514,9 +2553,16 @@ private struct MealPlannerShellView: View {
                             await refreshSharedImportState(force: true)
                         }
                     },
-                    onDeleteFailedSharedImport: { envelopeID in
+                    onDeleteFailedSharedImport: { envelope in
                         Task {
-                            try? SharedRecipeImportInbox.delete(envelopeID: envelopeID)
+                            try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
+                            let jobID = (envelope.jobID ?? envelope.id).trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !jobID.isEmpty {
+                                try? await RecipeImportAPIService.shared.deleteFailedImportJob(
+                                    jobID: jobID,
+                                    accessToken: store.authSession?.accessToken
+                                )
+                            }
                             await refreshSharedImportState(force: true)
                         }
                     },
@@ -3766,7 +3812,7 @@ private struct CookbookTabView: View {
     @ObservedObject var toastCenter: AppToastCenter
     let onRefreshSharedImports: () async -> Void
     let onRetryFailedSharedImports: () -> Void
-    let onDeleteFailedSharedImport: (String) -> Void
+    let onDeleteFailedSharedImport: (SharedRecipeImportEnvelope) -> Void
     let onSelectRecipe: (DiscoverRecipeCardData) -> Void
 
     @EnvironmentObject private var savedStore: SavedRecipesStore
@@ -4043,11 +4089,8 @@ private struct CookbookTabView: View {
                     onRetryFailedSharedImports()
                     isImportQueuePresented = false
                 },
-                onDeleteFailed: { envelopeID in
-                    try? SharedRecipeImportInbox.delete(envelopeID: envelopeID)
-                    Task {
-                        await onRefreshSharedImports()
-                    }
+                onDeleteFailed: { envelope in
+                    onDeleteFailedSharedImport(envelope)
                 }
             )
             .presentationDetents([.medium, .large])
@@ -4964,7 +5007,7 @@ private struct SharedRecipeImportQueueSheet: View {
     let onOpenRecipe: (DiscoverRecipeCardData) -> Void
     let onRefreshAll: () -> Void
     let onRetryFailed: () -> Void
-    let onDeleteFailed: (String) -> Void
+    let onDeleteFailed: (SharedRecipeImportEnvelope) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SharedRecipeImportQueueTab = .queued
     @State private var revealedCompletedImportIDs: Set<String> = []
@@ -5158,7 +5201,7 @@ private struct SharedRecipeImportQueueSheet: View {
                             SharedRecipeImportQueueRow(
                                 item: item,
                                 onDelete: {
-                                    onDeleteFailed(item.id)
+                                    onDeleteFailed(item)
                                 }
                             )
                         }
@@ -7962,16 +8005,19 @@ private struct SharedRecipeImportQueueRow: View {
                         Image(systemName: "trash")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(Color.red)
-                            .frame(width: 30, height: 30)
+                            .frame(width: 44, height: 44)
                             .background(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                RoundedRectangle(cornerRadius: 13, style: .continuous)
                                     .fill(Color.red.opacity(0.12))
                             )
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .zIndex(20)
                     .accessibilityLabel("Delete failed import")
                 }
             }
+            .zIndex(10)
 
             if let error = item.lastError, !error.isEmpty {
                 Text(error)

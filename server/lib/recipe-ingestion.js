@@ -8838,6 +8838,45 @@ export async function fetchRecipeIngestionJob(jobID) {
   });
 }
 
+export async function deleteFailedRecipeIngestionJob(jobID, { userID = null } = {}) {
+  const normalizedJobID = normalizeText(jobID);
+  const normalizedUserID = normalizeText(userID);
+  if (!normalizedJobID) {
+    const error = new Error("Recipe import job id is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const job = await fetchJobRow(normalizedJobID);
+  if (!job) {
+    const error = new Error(`Ingestion job ${normalizedJobID} could not be found.`);
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (normalizedUserID && normalizeText(job.user_id) !== normalizedUserID) {
+    const error = new Error("Recipe import job does not belong to this user.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (normalizeText(job.status).toLowerCase() !== "failed") {
+    const error = new Error("Only failed recipe imports can be deleted.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  await deleteRows("recipe_ingestion_jobs", [
+    `id=eq.${encodeURIComponent(normalizedJobID)}`,
+    normalizedUserID ? `user_id=eq.${encodeURIComponent(normalizedUserID)}` : null,
+  ]);
+
+  return {
+    deleted: true,
+    id: normalizedJobID,
+  };
+}
+
 export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${nanoid(8)}`, accessToken = null } = {}) {
   const existingJob = typeof jobOrID === "string" ? await fetchJobRow(jobOrID) : jobOrID;
   if (!existingJob) {

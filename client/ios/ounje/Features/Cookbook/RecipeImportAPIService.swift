@@ -424,6 +424,20 @@ final class RecipeImportAPIService {
         throw lastError ?? RecipeImportServiceError.invalidRequest
     }
 
+    func deleteFailedImportJob(jobID: String, accessToken: String?) async throws {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                try await deleteFailedImportJob(baseURL: baseURL, jobID: jobID, accessToken: accessToken)
+                return
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
     private func importRecipe(
         baseURL: String,
         userID: String?,
@@ -585,5 +599,30 @@ final class RecipeImportAPIService {
         }
 
         return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+    }
+
+    private func deleteFailedImportJob(
+        baseURL: String,
+        jobID: String,
+        accessToken: String?
+    ) async throws {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/imports/\(jobID)") else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        applyAuthHeaders(to: &request, userID: nil, accessToken: accessToken)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Delete failed import failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
     }
 }

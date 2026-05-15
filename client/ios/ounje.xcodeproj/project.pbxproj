@@ -39,7 +39,6 @@
 		DAA00000000000000000012 /* ounje/App/OunjeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000012 /* ounje/App/OunjeApp.swift */; };
 		DAA00000000000000000013 /* ounje/App/AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000013 /* ounje/App/AppRootView.swift */; };
 		DAA00000000000000000014 /* ounje/App/AppTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000014 /* ounje/App/AppTab.swift */; };
-		DAA00000000000000000025 /* ounje/App/UserRuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000025 /* ounje/App/UserRuntimeStore.swift */; };
 		DAA00000000000000000015 /* ounje/Core/Networking/SupabaseConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000015 /* ounje/Core/Networking/SupabaseConfig.swift */; };
 		DAA00000000000000000016 /* ounje/Core/Services/ToastCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000016 /* ounje/Core/Services/ToastCenter.swift */; };
 		DAA00000000000000000017 /* ounje/Core/Networking/BackendEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000017 /* ounje/Core/Networking/BackendEndpoint.swift */; };
@@ -50,6 +49,7 @@
 		DAA00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift */; };
 		DAA00000000000000000023 /* ounje/App/OunjeAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000023 /* ounje/App/OunjeAppDelegate.swift */; };
 		DAA00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift */; };
+		DAA00000000000000000025 /* ounje/App/UserRuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB00000000000000000025 /* ounje/App/UserRuntimeStore.swift */; };
 		DAD00000000000000000001 /* ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000001 /* ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift */; };
 		DAD00000000000000000002 /* ounje/Core/Services/AppNotificationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000002 /* ounje/Core/Services/AppNotificationServices.swift */; };
 		DAD00000000000000000003 /* ounje/Core/Services/MembershipServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000003 /* ounje/Core/Services/MembershipServices.swift */; };
@@ -134,7 +134,6 @@
 		DAB00000000000000000012 /* ounje/App/OunjeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/OunjeApp.swift; sourceTree = "<group>"; };
 		DAB00000000000000000013 /* ounje/App/AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/AppRootView.swift; sourceTree = "<group>"; };
 		DAB00000000000000000014 /* ounje/App/AppTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/AppTab.swift; sourceTree = "<group>"; };
-		DAB00000000000000000025 /* ounje/App/UserRuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/UserRuntimeStore.swift; sourceTree = "<group>"; };
 		DAB00000000000000000015 /* ounje/Core/Networking/SupabaseConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Networking/SupabaseConfig.swift; sourceTree = "<group>"; };
 		DAB00000000000000000016 /* ounje/Core/Services/ToastCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/ToastCenter.swift; sourceTree = "<group>"; };
 		DAB00000000000000000017 /* ounje/Core/Networking/BackendEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Networking/BackendEndpoint.swift; sourceTree = "<group>"; };
@@ -145,6 +144,7 @@
 		DAB00000000000000000022 /* ounje/Features/Settings/FeedbackAttachmentStorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Settings/FeedbackAttachmentStorageService.swift; sourceTree = "<group>"; };
 		DAB00000000000000000023 /* ounje/App/OunjeAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/OunjeAppDelegate.swift; sourceTree = "<group>"; };
 		DAB00000000000000000024 /* ounje/Core/Services/OunjePushTokenRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/OunjePushTokenRegistrar.swift; sourceTree = "<group>"; };
+		DAB00000000000000000025 /* ounje/App/UserRuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/App/UserRuntimeStore.swift; sourceTree = "<group>"; };
 		DAE00000000000000000001 /* ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/AppRealtimeInvalidationCoordinator.swift; sourceTree = "<group>"; };
 		DAE00000000000000000002 /* ounje/Core/Services/AppNotificationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/AppNotificationServices.swift; sourceTree = "<group>"; };
 		DAE00000000000000000003 /* ounje/Core/Services/MembershipServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Services/MembershipServices.swift; sourceTree = "<group>"; };
@@ -811,7 +811,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0.4;
+				MARKETING_VERSION = 2.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -839,7 +839,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0.4;
+				MARKETING_VERSION = 2.0.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_VERSION = 5.0;

@@ -17,6 +17,7 @@ import {
   parseInstructionSteps as parseStructuredInstructionSteps,
 } from "../../lib/recipe-detail-utils.js";
 import {
+  deleteFailedRecipeIngestionJob,
   fetchRecipeIngestionJob,
   estimateRecipeMacrosLocally,
   listCompletedRecipeImportItems,
@@ -1338,6 +1339,22 @@ recipe_router.get("/recipe/imports/:id", async (req, res) => {
       return sendAuthError(res, error, "recipe/imports/status");
     }
     return res.status(Number(error?.statusCode) || 404).json({ error: error.message });
+  }
+});
+
+recipe_router.delete("/recipe/imports/:id", async (req, res) => {
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const jobID = String(req.params.id ?? "").trim();
+    const result = await deleteFailedRecipeIngestionJob(jobID, { userID });
+    recipeImportJobCache.delete(jobID);
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/imports/delete");
+    }
+    console.error("[recipe/imports/delete] failed:", error.message);
+    return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
   }
 });
 
