@@ -811,7 +811,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0.5;
+				MARKETING_VERSION = 2.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -839,7 +839,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0.5;
+				MARKETING_VERSION = 2.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_VERSION = 5.0;
@@ -969,7 +969,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = U8FPZXV6X6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
@@ -979,7 +979,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.0.5;
+				MARKETING_VERSION = 2.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;
@@ -997,7 +997,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OunjeShareExtension/OunjeShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = U8FPZXV6X6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OunjeShareExtension/Info.plist;
@@ -1007,7 +1007,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.0.5;
+				MARKETING_VERSION = 2.0.6;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;

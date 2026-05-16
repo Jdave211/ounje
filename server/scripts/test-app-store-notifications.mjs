@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 
 import {
+  classifyFounderSubscriptionAlert,
   deriveEntitlementFromAppStoreNotification,
   processAppStoreNotification,
 } from "../lib/app-store-notifications.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const NOW_MS = Date.UTC(2026, 4, 12, 12, 0, 0);
+const NOW_MS = Date.now();
 const USER_ID = "4ef93b7f-f7b4-4d9a-9b13-0c4ce63350a1";
 
 class MockSupabase {
@@ -248,6 +249,57 @@ async function run() {
     });
     assert.equal(result.testNotification, true);
     assert.equal(result.ledger.recorded, false);
+  }
+
+  {
+    const alertType = classifyFounderSubscriptionAlert({
+      notification: notification({ type: "SUBSCRIBED", subtype: "INITIAL_BUY" }),
+      transactionInfo: transaction({ offerType: 1 }),
+      renewalInfo: renewal(),
+    });
+    assert.equal(alertType, "trial_started");
+  }
+
+  {
+    const existingTrial = {
+      user_id: USER_ID,
+      metadata: { is_on_trial: true },
+    };
+    const alertType = classifyFounderSubscriptionAlert({
+      notification: notification({ type: "DID_CHANGE_RENEWAL_STATUS", subtype: "AUTO_RENEW_DISABLED" }),
+      transactionInfo: transaction(),
+      renewalInfo: renewal({ autoRenewStatus: 0 }),
+      existing: existingTrial,
+    });
+    assert.equal(alertType, "trial_cancelled");
+  }
+
+  {
+    const existingPaid = {
+      user_id: USER_ID,
+      metadata: { is_on_trial: false },
+    };
+    const alertType = classifyFounderSubscriptionAlert({
+      notification: notification({ type: "DID_CHANGE_RENEWAL_STATUS", subtype: "AUTO_RENEW_DISABLED" }),
+      transactionInfo: transaction(),
+      renewalInfo: renewal({ autoRenewStatus: 0 }),
+      existing: existingPaid,
+    });
+    assert.equal(alertType, "paid_cancelled");
+  }
+
+  {
+    const existingTrial = {
+      user_id: USER_ID,
+      metadata: { is_on_trial: true },
+    };
+    const alertType = classifyFounderSubscriptionAlert({
+      notification: notification({ type: "DID_RENEW" }),
+      transactionInfo: transaction(),
+      renewalInfo: renewal(),
+      existing: existingTrial,
+    });
+    assert.equal(alertType, "paid_started");
   }
 }
 

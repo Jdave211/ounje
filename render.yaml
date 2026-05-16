@@ -66,3 +66,5 @@ services:
         sync: false
       - key: APNS_KEY_BASE64
         sync: false
+      - key: OUNJE_FOUNDER_SLACK_WEBHOOK_URL
+        sync: false

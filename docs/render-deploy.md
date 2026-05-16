@@ -41,6 +41,7 @@ Set these in the Render API service:
 - `IFRAMELY_API_KEY`
 - `TWO_CAPTCHA_API_KEY`
 - `RECIPE_IMAGE_BUCKET`
+- `OUNJE_FOUNDER_SLACK_WEBHOOK_URL` for founder-only subscription lifecycle alerts
 
 Also keep these API runtime flags:
 

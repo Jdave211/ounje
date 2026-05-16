@@ -14,6 +14,7 @@ import { deleteRedisKey } from "./redis-cache.js";
 const ENTITLEMENTS_TABLE = "app_user_entitlements";
 const NOTIFICATION_EVENTS_TABLE = "app_store_notification_events";
 const DEFAULT_BUNDLE_ID = "net.ounje";
+const FOUNDER_SLACK_TIMEOUT_MS = 2_500;
 const APPLE_ROOT_CERTIFICATE_URLS = [
   "https://www.apple.com/certificateauthority/AppleRootCA-G3.cer",
   "https://www.apple.com/certificateauthority/AppleRootCA-G2.cer",
@@ -72,6 +73,14 @@ function productCadence(productID) {
   return null;
 }
 
+function firstNormalizedText(...values) {
+  for (const value of values) {
+    const normalized = normalizeText(value);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
 function asNotificationType(value) {
   return normalizeText(value).toUpperCase();
 }
@@ -82,6 +91,41 @@ function asSubtype(value) {
 
 function hasFutureMs(value, nowMs) {
   return isValidTimestampMs(value) && Number(value) > nowMs;
+}
+
+function parseMetadataBoolean(value) {
+  if (typeof value === "boolean") return value;
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function isIntroductoryOfferType(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized === "1"
+    || normalized.includes("intro")
+    || normalized.includes("free_trial")
+    || normalized.includes("free trial");
+}
+
+function isTrialLikeTransaction(transactionInfo, renewalInfo) {
+  const offerType = firstNormalizedText(transactionInfo?.offerType, renewalInfo?.offerType);
+  const offerIdentifier = firstNormalizedText(transactionInfo?.offerIdentifier, renewalInfo?.offerIdentifier).toLowerCase();
+  const offerDiscountType = firstNormalizedText(transactionInfo?.offerDiscountType, renewalInfo?.offerDiscountType).toLowerCase();
+  const price = Number(transactionInfo?.price ?? renewalInfo?.price);
+
+  return isIntroductoryOfferType(offerType)
+    || offerIdentifier.includes("trial")
+    || offerIdentifier.includes("intro")
+    || offerDiscountType.includes("free")
+    || (Number.isFinite(price) && price === 0);
+}
+
+function existingEntitlementWasTrial(existing) {
+  const metadata = existing?.metadata ?? {};
+  return parseMetadataBoolean(metadata.is_on_trial)
+    || parseMetadataBoolean(metadata.is_trial)
+    || parseMetadataBoolean(metadata.trial)
+    || isIntroductoryOfferType(metadata.offer_type);
 }
 
 function isMissingTableError(error, tableName) {
@@ -268,6 +312,10 @@ export function deriveEntitlementFromAppStoreNotification({
       expiration_intent: renewalInfo?.expirationIntent ?? null,
       billing_retry: renewalInfo?.isInBillingRetryPeriod ?? null,
       cadence: productCadence(productID),
+      offer_type: firstNormalizedText(transactionInfo?.offerType, renewalInfo?.offerType) || null,
+      offer_identifier: firstNormalizedText(transactionInfo?.offerIdentifier, renewalInfo?.offerIdentifier) || null,
+      offer_discount_type: firstNormalizedText(transactionInfo?.offerDiscountType, renewalInfo?.offerDiscountType) || null,
+      is_on_trial: isTrialLikeTransaction(transactionInfo, renewalInfo),
       transaction_expires_at: dateFromMs(transactionExpiresMs),
       grace_period_expires_at: dateFromMs(graceExpiresMs),
       purchase_at: dateFromMs(transactionInfo?.purchaseDate),
@@ -379,6 +427,179 @@ async function recordNotificationEvent(supabase, decoded, resolvedUserID, entitl
   return { recorded: !error, notificationUUID };
 }
 
+export function classifyFounderSubscriptionAlert({
+  notification,
+  transactionInfo = null,
+  renewalInfo = null,
+  existing = null,
+} = {}) {
+  const notificationType = asNotificationType(notification?.notificationType);
+  const subtype = asSubtype(notification?.subtype);
+  const isTrialNow = isTrialLikeTransaction(transactionInfo, renewalInfo);
+  const wasTrial = existingEntitlementWasTrial(existing);
+
+  if ((notificationType === "SUBSCRIBED" && (!subtype || subtype === "INITIAL_BUY"))
+      || notificationType === "INITIAL_BUY") {
+    return isTrialNow ? "trial_started" : "paid_started";
+  }
+
+  if ((notificationType === "DID_RENEW" || notificationType === "DID_RECOVER")
+      && wasTrial
+      && !isTrialNow) {
+    return "paid_started";
+  }
+
+  if (notificationType === "DID_CHANGE_RENEWAL_STATUS" && subtype === "AUTO_RENEW_DISABLED") {
+    return (wasTrial || isTrialNow) ? "trial_cancelled" : "paid_cancelled";
+  }
+
+  return null;
+}
+
+function founderAlertTitle(alertType) {
+  switch (alertType) {
+    case "trial_started":
+      return "New free trial started";
+    case "paid_started":
+      return "New paid subscriber";
+    case "trial_cancelled":
+      return "Free trial cancelled";
+    case "paid_cancelled":
+      return "Paid subscription cancelled";
+    default:
+      return "App Store subscription event";
+  }
+}
+
+function founderAlertEmoji(alertType) {
+  switch (alertType) {
+    case "trial_started":
+      return ":seedling:";
+    case "paid_started":
+      return ":moneybag:";
+    case "trial_cancelled":
+      return ":warning:";
+    case "paid_cancelled":
+      return ":rotating_light:";
+    default:
+      return ":iphone:";
+  }
+}
+
+function formatSlackField(title, value) {
+  return {
+    type: "mrkdwn",
+    text: `*${title}:*\n${normalizeText(value) || "unknown"}`,
+  };
+}
+
+async function resolveFounderAlertUserLabel(supabase, userID) {
+  const normalizedUserID = normalizeText(userID);
+  if (!normalizedUserID) return "unknown";
+
+  try {
+    const { data, error } = await supabase.auth?.admin?.getUserById?.(normalizedUserID) ?? {};
+    const email = normalizeText(data?.user?.email);
+    if (!error && email) return `${email} (${normalizedUserID})`;
+  } catch {
+    // Founder alerts are observability only. Never let auth lookup affect webhook processing.
+  }
+
+  return normalizedUserID;
+}
+
+async function sendFounderSubscriptionSlackAlert({
+  supabase,
+  alertType,
+  resolvedUserID,
+  entitlementState,
+  notification,
+  existing,
+}) {
+  const webhookURL = firstNormalizedText(
+    process.env.OUNJE_FOUNDER_SLACK_WEBHOOK_URL,
+    process.env.FOUNDER_SLACK_WEBHOOK_URL,
+    process.env.SLACK_WEBHOOK_URL
+  );
+  if (!webhookURL || !alertType) return { sent: false, reason: "not_configured" };
+
+  const metadata = entitlementState?.metadata ?? {};
+  const title = founderAlertTitle(alertType);
+  const userLabel = await resolveFounderAlertUserLabel(supabase, resolvedUserID);
+  const environment = metadata.app_store_environment
+    || normalizeText(notification?.data?.environment)
+    || "unknown";
+  const autoRenewStatus = metadata.auto_renew_status === 0
+    ? "off"
+    : metadata.auto_renew_status === 1
+      ? "on"
+      : "unknown";
+
+  const payload = {
+    text: `${title}: ${userLabel}`,
+    blocks: [
+      {
+        type: "header",
+        text: {
+          type: "plain_text",
+          text: `${founderAlertEmoji(alertType)} ${title}`,
+          emoji: true,
+        },
+      },
+      {
+        type: "section",
+        fields: [
+          formatSlackField("User", userLabel),
+          formatSlackField("Plan", entitlementState?.productID),
+          formatSlackField("Tier", entitlementState?.tier),
+          formatSlackField("Cadence", metadata.cadence),
+          formatSlackField("Environment", environment),
+          formatSlackField("Auto-renew", autoRenewStatus),
+          formatSlackField("Access until", entitlementState?.expiresAt),
+          formatSlackField("Previous state", existing?.status),
+        ],
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: `Apple event: ${metadata.notification_type || "unknown"} / ${metadata.notification_subtype || "none"} · original tx: ${entitlementState?.originalTransactionID || "unknown"}`,
+          },
+        ],
+      },
+    ],
+  };
+
+  const response = await fetch(webhookURL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(FOUNDER_SLACK_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Slack webhook failed with HTTP ${response.status}`);
+  }
+
+  return { sent: true, alertType };
+}
+
+function notifyFounderSubscriptionEvent(args) {
+  const alertType = classifyFounderSubscriptionAlert(args);
+  if (!alertType) return;
+
+  void sendFounderSubscriptionSlackAlert({ ...args, alertType })
+    .then((result) => {
+      if (result?.sent) {
+        console.log("[app-store/notifications] founder Slack alert sent:", result.alertType);
+      }
+    })
+    .catch((error) => {
+      console.warn("[app-store/notifications] founder Slack alert failed:", error.message);
+    });
+}
+
 export async function processAppStoreNotification({
   supabase,
   notification,
@@ -431,6 +652,16 @@ export async function processAppStoreNotification({
   }
 
   if (isProtectedManualEntitlement(existing, entitlementState.status)) {
+    notifyFounderSubscriptionEvent({
+      supabase,
+      notification,
+      transactionInfo,
+      renewalInfo,
+      existing,
+      entitlementState,
+      resolvedUserID,
+    });
+
     return {
       ok: true,
       protectedManualEntitlement: true,
@@ -479,6 +710,15 @@ export async function processAppStoreNotification({
   if (error) throw error;
   void deleteRedisKey(userScopedCacheKey("entitlement-current", resolvedUserID));
   void deleteRedisKey(userScopedCacheKey("user-bootstrap", resolvedUserID));
+  notifyFounderSubscriptionEvent({
+    supabase,
+    notification,
+    transactionInfo,
+    renewalInfo,
+    existing,
+    entitlementState,
+    resolvedUserID,
+  });
 
   return {
     ok: true,
