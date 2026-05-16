@@ -626,7 +626,11 @@ final class MealPlanningAppStore: ObservableObject {
         guard authSession?.userID == session.userID || resolvedLiveUserID == session.userID else { return }
         guard isOnboarded else { return }
 
-        let shouldLoadRemotePlan = latestPlan.map { !hasPersistablePrepContent($0) } ?? true
+        let bootstrapHistoryCount = runtimeSnapshot?.prepSummary.historyCount ?? 0
+        let shouldLoadRemotePlan = latestPlan.map { plan in
+            !hasPersistablePrepContent(plan)
+                || ((plan.batches?.count ?? 0) <= 1 && bootstrapHistoryCount > 1)
+        } ?? true
         if shouldLoadRemotePlan {
             isRefreshingPrepRecipes = true
         }
@@ -1475,10 +1479,11 @@ final class MealPlanningAppStore: ObservableObject {
             includeRemoteQuotes: !deferSlowArtifacts
         )
         guard activeGenerationToken == generationToken, self.profile == profile else { return nil }
-        let plan = await planHydratedWithRecipeDetailsIfNeeded(
+        let hydratedPlan = await planHydratedWithRecipeDetailsIfNeeded(
             generatedPlan,
             refreshProviders: !deferSlowArtifacts
         )
+        let plan = planPreservingKnownPrepBatches(hydratedPlan, from: previousPlan)
         guard activeGenerationToken == generationToken, self.profile == profile else { return nil }
         if plan.recipes.isEmpty, let previousPlan {
             updateCurrentPlanCache(with: previousPlan)
@@ -1997,6 +2002,44 @@ final class MealPlanningAppStore: ObservableObject {
         plan.mainShopSnapshot = activePlan.mainShopSnapshot
         plan.pipeline = activePlan.pipeline
         plan.generatedAt = Date()
+        return planMirroringPrimeBatch(plan, preferredBatchID: activeBatchID)
+    }
+
+    private func planPreservingKnownPrepBatches(_ newPlan: MealPlan, from previousPlan: MealPlan?) -> MealPlan {
+        guard let previousPlan,
+              let previousBatches = previousPlan.batches,
+              !previousBatches.isEmpty,
+              prepBatchStructureScore(for: previousPlan) > prepBatchStructureScore(for: newPlan)
+        else {
+            return newPlan
+        }
+
+        let activeBatchID = resolvedPrimeBatchID(in: previousPlan) ?? previousBatches.first?.id
+        guard let activeBatchID,
+              let activeIndex = previousBatches.firstIndex(where: { $0.id == activeBatchID })
+        else {
+            return newPlan
+        }
+
+        let preservedBatches = previousBatches
+            .enumerated()
+            .filter { $0.offset != activeIndex }
+            .map { entry -> PrepBatch in
+                entry.element
+            }
+        let preservedRecipeIDs = Set(preservedBatches.flatMap(\.recipes).map(\.recipe.id))
+
+        var activeBatch = previousBatches[activeIndex]
+        activeBatch.recipes = newPlan.recipes.filter { !preservedRecipeIDs.contains($0.recipe.id) }
+        activeBatch.groceryItems = newPlan.groceryItems.filter { item in
+            item.sourceIngredients.isEmpty
+                || !item.sourceIngredients.allSatisfy { preservedRecipeIDs.contains($0.recipeID) }
+        }
+        activeBatch.recurringRecipeIDs = newPlan.recurringRecipeIDs
+
+        var plan = newPlan
+        plan.activeBatchID = activeBatchID
+        plan.batches = [activeBatch] + preservedBatches
         return planMirroringPrimeBatch(plan, preferredBatchID: activeBatchID)
     }
 
@@ -2570,6 +2613,14 @@ final class MealPlanningAppStore: ObservableObject {
             ].joined(separator: ":")
         }
         .joined(separator: "|")
+    }
+
+    private func prepBatchStructureScore(for plan: MealPlan?) -> Int {
+        let batches = plan?.batches ?? []
+        let nonPrimaryRecipeCount = batches.dropFirst().reduce(0) { total, batch in
+            total + batch.recipes.count
+        }
+        return batches.count * 1_000 + nonPrimaryRecipeCount
     }
 
     private func resolvedRecurringRecipeIDs(for plan: MealPlan?) -> [String] {
@@ -3277,12 +3328,14 @@ final class MealPlanningAppStore: ObservableObject {
                 userID: userID,
                 accessToken: accessToken
             )
-            let usableFetched = usablePersistedPlans(from: fetched)
+            var usableFetched = usablePersistedPlans(from: fetched)
             guard !usableFetched.isEmpty else {
                 remoteMealPrepCycleLoadState = .empty
                 return .empty
             }
 
+            let remoteLatestBeforeBatchRepair = usableFetched.first
+            usableFetched = plansPreservingRichestKnownBatches(usableFetched)
             let localLatestPlan = latestPlan
             let remoteLatestPlan = usableFetched.first
             let preferredLatestPlan: MealPlan? = {
@@ -3296,10 +3349,14 @@ final class MealPlanningAppStore: ObservableObject {
                     ? localLatestPlan
                     : remoteLatestPlan
             }()
-            let shouldRepairRemoteLatestPlan = localLatestPlan != nil
-                && remoteLatestPlan != nil
-                && preferredLatestPlan == localLatestPlan
-                && preferredLatestPlan != remoteLatestPlan
+            let shouldRepairRemoteLatestPlan =
+                (remoteLatestBeforeBatchRepair != nil
+                    && remoteLatestPlan != nil
+                    && remoteLatestBeforeBatchRepair != remoteLatestPlan)
+                || (localLatestPlan != nil
+                    && remoteLatestPlan != nil
+                    && preferredLatestPlan == localLatestPlan
+                    && preferredLatestPlan != remoteLatestPlan)
 
             if let preferredLatestPlan {
                 let mergedHistory = mergedMealPrepHistory(
@@ -5544,6 +5601,20 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func usablePersistedPlans(from history: [MealPlan]) -> [MealPlan] {
         history.filter(isUsablePersistedPlan)
+    }
+
+    private func plansPreservingRichestKnownBatches(_ plans: [MealPlan]) -> [MealPlan] {
+        guard let latestPlan = plans.first,
+              let richestBatchPlan = plans.max(by: { lhs, rhs in
+                  prepBatchStructureScore(for: lhs) < prepBatchStructureScore(for: rhs)
+              })
+        else {
+            return plans
+        }
+
+        let repairedLatestPlan = planPreservingKnownPrepBatches(latestPlan, from: richestBatchPlan)
+        guard repairedLatestPlan != latestPlan else { return plans }
+        return [repairedLatestPlan] + plans.dropFirst()
     }
 
     private func isUsablePersistedPlan(_ plan: MealPlan) -> Bool {

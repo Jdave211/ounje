@@ -249,9 +249,75 @@ function hasCompleteDisplayMacros(recipe = {}) {
   });
 }
 
+function recipeHasVideoSourceHint(recipe = {}) {
+  const haystack = [
+    recipe?.source_platform,
+    recipe?.source,
+    recipe?.author_url,
+    recipe?.original_recipe_url,
+    recipe?.attached_video_url,
+    recipe?.recipe_url,
+  ]
+    .map((value) => String(value ?? "").toLowerCase())
+    .join(" ");
+
+  return haystack.includes("tiktok")
+    || haystack.includes("instagram")
+    || haystack.includes("youtube")
+    || haystack.includes("youtu.be");
+}
+
+function recipeHasAnySourceURL(recipe = {}) {
+  const provenance = recipe?.source_provenance_json && typeof recipe.source_provenance_json === "object"
+    ? recipe.source_provenance_json
+    : {};
+  const originalSocial = provenance.original_social_source && typeof provenance.original_social_source === "object"
+    ? provenance.original_social_source
+    : {};
+  const evidence = provenance.evidence_bundle && typeof provenance.evidence_bundle === "object"
+    ? provenance.evidence_bundle
+    : {};
+  const evidenceOriginalSocial = evidence.original_social_source && typeof evidence.original_social_source === "object"
+    ? evidence.original_social_source
+    : {};
+
+  return [
+    recipe?.attached_video_url,
+    recipe?.original_recipe_url,
+    recipe?.recipe_url,
+    recipe?.author_url,
+    provenance.url,
+    provenance.attached_video_url,
+    provenance.canonical_url,
+    provenance.source_url,
+    originalSocial.url,
+    originalSocial.attached_video_url,
+    originalSocial.canonical_url,
+    originalSocial.source_url,
+    evidence.url,
+    evidence.attached_video_url,
+    evidence.canonical_url,
+    evidence.source_url,
+    evidenceOriginalSocial.url,
+    evidenceOriginalSocial.attached_video_url,
+    evidenceOriginalSocial.canonical_url,
+    evidenceOriginalSocial.source_url,
+  ].some((value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return false;
+    try {
+      new URL(raw);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function recipeDetailPayloadIsDisplayReady(payload = {}) {
   const recipe = payload?.recipe ?? payload;
   if (!hasCompleteDisplayMacros(recipe)) return false;
+  if (recipeHasVideoSourceHint(recipe) && !recipeHasAnySourceURL(recipe)) return false;
   const description = trimString(recipe?.description);
   const lowerDescription = description.toLowerCase();
   if (
@@ -4895,6 +4961,9 @@ const CANONICAL_RECIPE_SELECT_FIELDS = [
   "prep_time_minutes",
   "ingredients_json",
   "steps_json",
+  "original_recipe_url",
+  "attached_video_url",
+  "source_provenance_json",
 ];
 
 const SEARCH_RECIPE_SELECT_FIELDS = [
@@ -4927,6 +4996,54 @@ const SEARCH_RECIPE_SELECT_FIELDS = [
   "servings_count",
   "prep_time_minutes",
 ];
+
+const RECIPE_DETAIL_SELECT = [
+  "id",
+  "title",
+  "description",
+  "author_name",
+  "author_handle",
+  "author_url",
+  "source",
+  "source_platform",
+  "category",
+  "subcategory",
+  "recipe_type",
+  "skill_level",
+  "cook_time_text",
+  "servings_text",
+  "serving_size_text",
+  "daily_diet_text",
+  "est_cost_text",
+  "est_calories_text",
+  "carbs_text",
+  "protein_text",
+  "fats_text",
+  "calories_kcal",
+  "protein_g",
+  "carbs_g",
+  "fat_g",
+  "prep_time_minutes",
+  "cook_time_minutes",
+  "hero_image_url",
+  "discover_card_image_url",
+  "recipe_url",
+  "original_recipe_url",
+  "attached_video_url",
+  "source_provenance_json",
+  "detail_footnote",
+  "image_caption",
+  "dietary_tags",
+  "flavor_tags",
+  "cuisine_tags",
+  "occasion_tags",
+  "main_protein",
+  "cook_method",
+  "published_date",
+  "ingredients_json",
+  "steps_json",
+  "servings_count",
+].join(",");
 
 function getPresetHardConstraints(filter = "All") {
   const preset = getDiscoverPreset(filter);
@@ -6523,7 +6640,7 @@ async function fetchRecipeById(id, accessToken = null) {
   if (normalizedID.startsWith("uir_")) {
     const rows = await fetchSupabaseTableRows(
       "user_import_recipes",
-      "id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
+      "id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,source_provenance_json,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
       [`id=eq.${encodeURIComponent(normalizedID)}`],
       [],
       null,
@@ -6532,8 +6649,15 @@ async function fetchRecipeById(id, accessToken = null) {
     return rows[0] ?? null;
   }
 
-  const recipes = await fetchRecipesByIds([normalizedID]);
-  return recipes[0] ?? null;
+  const rows = await fetchSupabaseTableRows(
+    "recipes",
+    RECIPE_DETAIL_SELECT,
+    [`id=eq.${encodeURIComponent(normalizedID)}`],
+    [],
+    1,
+    accessToken
+  );
+  return rows[0] ?? null;
 }
 
 async function fetchAuthorizedUserImportRecipeById(id, userID) {
@@ -6543,7 +6667,7 @@ async function fetchAuthorizedUserImportRecipeById(id, userID) {
 
   const rows = await fetchSupabaseTableRows(
     "user_import_recipes",
-    "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
+    "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,source_provenance_json,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
     [
       `id=eq.${encodeURIComponent(normalizedID)}`,
       `user_id=eq.${encodeURIComponent(normalizedUserID)}`,

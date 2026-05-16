@@ -1,8 +1,22 @@
 import SwiftUI
 import Foundation
 import UIKit
+import AVFoundation
 import AVKit
 import WebKit
+
+private let recipeAIEditedGold = Color(red: 0.98, green: 0.72, blue: 0.22)
+
+private func configureRecipeVideoAudioPlayback(for player: AVPlayer) {
+    do {
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        try AVAudioSession.sharedInstance().setActive(true)
+    } catch {
+        print("[RecipeDetail] Failed to activate recipe video audio session: \(error.localizedDescription)")
+    }
+    player.isMuted = false
+    player.volume = 1
+}
 
 struct RecipeAskOnboardingConfig {
     let demoRecipe: OnboardingRecipeEditDemoRecipe
@@ -339,8 +353,28 @@ struct RecipeDetailExperienceView: View {
         detail?.authorLine ?? presentedRecipe.recipeCard.authorLabel
     }
 
+    private var sourceURLCandidates: [URL] {
+        var seen = Set<String>()
+        return rawSourceURLCandidates
+        .filter(Self.isDisplayableOriginalURL)
+        .filter { url in
+            seen.insert(url.absoluteString).inserted
+        }
+    }
+
+    private var rawSourceURLCandidates: [URL] {
+        let directURLStrings = [
+            detail?.originalRecipeURLString,
+            detail?.recipeURLString,
+            detail?.attachedVideoURLString,
+            presentedRecipe.recipeCard.recipeURLString
+        ].compactMap { $0 }
+        return ((detail?.sourceProvenance?.upstreamURLStrings ?? []) + directURLStrings)
+        .compactMap(Self.normalizedSourceURL)
+    }
+
     private var externalURL: URL? {
-        detail?.originalURL ?? presentedRecipe.recipeCard.destinationURL
+        sourceURLCandidates.first
     }
 
     private var displayExternalURL: URL? {
@@ -356,13 +390,17 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var videoSourceURL: URL? {
-        if let attachedVideoURL = detail?.attachedVideoURL {
+        if let attachedVideoURL = detail?.attachedVideoURL,
+           Self.isUsableVideoSourceURL(attachedVideoURL) {
             return attachedVideoURL
         }
 
-        return [detail?.originalURL, presentedRecipe.recipeCard.destinationURL]
-            .compactMap { $0 }
-            .first(where: Self.isWatchableSocialVideoURL)
+        if let socialVideoURL = rawSourceURLCandidates.first(where: Self.isWatchableSocialVideoURL) {
+            return socialVideoURL
+        }
+
+        return rawSourceURLCandidates
+            .first(where: isJulienneVideoFallbackURL)
     }
 
     private var resolvedVideoURL: URL? {
@@ -373,11 +411,63 @@ struct RecipeDetailExperienceView: View {
         videoSourceURL != nil
     }
 
+    private static func normalizedSourceURL(from rawValue: String?) -> URL? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: trimmed.replacingOccurrences(of: " ", with: "%20"))
+    }
+
+    private static func isDisplayableOriginalURL(_ url: URL) -> Bool {
+        guard !isJulienneURL(url) else { return false }
+        if isSocialPlatformURL(url) {
+            return isWatchableSocialVideoURL(url)
+        }
+        return true
+    }
+
+    private static func isUsableVideoSourceURL(_ url: URL) -> Bool {
+        guard !isJulienneURL(url) else { return false }
+        return isWatchableSocialVideoURL(url) || RecipeVideoURLResolver.supportsNativePlayback(url)
+    }
+
+    private static func isJulienneURL(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        return host == "withjulienne.com" || host.hasSuffix(".withjulienne.com")
+    }
+
+    private func isJulienneVideoFallbackURL(_ url: URL) -> Bool {
+        guard Self.isJulienneURL(url) else { return false }
+        let sourceHints = [
+            detail?.sourcePlatform,
+            detail?.source,
+            presentedRecipe.recipeCard.source
+        ]
+        .compactMap { $0?.lowercased() }
+        .joined(separator: " ")
+
+        return sourceHints.contains("tiktok")
+            || sourceHints.contains("instagram")
+            || sourceHints.contains("youtube")
+            || sourceHints.contains("youtu.be")
+    }
+
+    private static func isSocialPlatformURL(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        return host.contains("tiktok.com")
+            || host.contains("instagram.com")
+            || host == "youtu.be"
+            || host.contains("youtube.com")
+            || host.contains("youtube-nocookie.com")
+    }
+
     private static func isWatchableSocialVideoURL(_ url: URL) -> Bool {
         let host = url.host?.lowercased() ?? ""
         let path = url.path.lowercased()
         if host.contains("tiktok.com") {
-            return true
+            if host == "vt.tiktok.com" || host == "vm.tiktok.com" { return true }
+            let components = url.pathComponents.map { $0.lowercased() }
+            return components.contains("video") || components.contains("t")
         }
         if host.contains("instagram.com") {
             return path.contains("/reel/") || path.contains("/p/") || path.contains("/tv/")
@@ -503,6 +593,7 @@ struct RecipeDetailExperienceView: View {
             guard let preparedVideo = await prepareInlineVideoIfNeeded() else { return }
             if preparedVideo.supportsNativePlayback, let videoURL = preparedVideo.url {
                 let player = AVPlayer(url: videoURL)
+                configureRecipeVideoAudioPlayback(for: player)
                 player.play()
                 await MainActor.run {
                     inlineVideoPlayer = player
@@ -523,6 +614,10 @@ struct RecipeDetailExperienceView: View {
 
     private func closeInlineVideo() {
         pauseInlineVideo()
+        inlineVideoPlayer?.replaceCurrentItem(with: nil)
+        inlineVideoPlayer = nil
+        shouldResumeInlineVideoAfterFullscreen = false
+        showInlineVideoFullscreen = false
         withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
             showInlineVideo = false
         }
@@ -691,7 +786,7 @@ struct RecipeDetailExperienceView: View {
                                             }
 
                                             if showsRecipeAskAction {
-                                                RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true) {
+                                                RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true, iconTint: recipeAIEditedGold) {
                                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                                     showAskSheet = true
                                                 }
@@ -1063,6 +1158,9 @@ struct RecipeDetailExperienceView: View {
                         onMinimize: {
                             shouldResumeInlineVideoAfterFullscreen = true
                             showInlineVideoFullscreen = false
+                        },
+                        onClose: {
+                            closeInlineVideo()
                         }
                     )
                 } else {
@@ -1519,7 +1617,7 @@ struct RecipeModalTitle: View {
             if isAdapted {
                 Image(systemName: "sparkles")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(OunjePalette.accent)
+                    .foregroundStyle(recipeAIEditedGold)
                     .accessibilityLabel("Edited recipe")
             }
         }
@@ -1963,8 +2061,8 @@ struct RecipeFullscreenVideoExperience: View {
     let video: RecipeResolvedVideoData
     let url: URL
     let onMinimize: () -> Void
+    let onClose: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var webAction: RecipeWebVideoAction = .none
 
@@ -2007,7 +2105,7 @@ struct RecipeFullscreenVideoExperience: View {
                     }
 
                     RecipeDetailTopIconButton(symbolName: "xmark") {
-                        dismiss()
+                        onClose()
                     }
                 }
                 .padding(.trailing, 20)
@@ -2019,6 +2117,7 @@ struct RecipeFullscreenVideoExperience: View {
         .onAppear {
             guard video.supportsNativePlayback, player == nil else { return }
             let nextPlayer = AVPlayer(url: url)
+            configureRecipeVideoAudioPlayback(for: nextPlayer)
             nextPlayer.play()
             player = nextPlayer
         }
@@ -2462,6 +2561,7 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
               video.loop = true;
               video.controls = false;
               video.muted = false;
+              video.volume = 1;
               video.playsInline = true;
               video.preload = 'auto';
               video.dataset.src = src;
@@ -2488,6 +2588,8 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
 
           window.ounjeTogglePlayback = function() {
             if (!window.ounjeVideo) return false;
+            window.ounjeVideo.muted = false;
+            window.ounjeVideo.volume = 1;
             if (window.ounjeVideo.paused) {
               window.ounjeVideo.play().catch(() => {});
             } else {
@@ -3559,6 +3661,7 @@ struct RecipeAskSheet: View {
                                     baseImageURL: baseImageURL,
                                     isSaved: savedStore.isSaved(result.recipeCard),
                                     isAddingToPrep: isAddingAdaptedRecipeToPrep,
+                                    summary: result.changeSummary,
                                     onAskAgain: {
                                         clearConversation()
                                     },
@@ -3723,6 +3826,7 @@ struct RecipeAskInlineResultPanel: View {
     let baseImageURL: URL?
     let isSaved: Bool
     let isAddingToPrep: Bool
+    let summary: String?
     let onAskAgain: () -> Void
     let onSave: () -> Void
     let onOpenPreview: () -> Void
@@ -3730,6 +3834,8 @@ struct RecipeAskInlineResultPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            RecipeAskChangeSummaryText(summary: summary)
+
             RecipeAdaptedPreviewCard(result: result, baseImageURL: baseImageURL, onOpen: onOpenPreview)
 
             HStack(spacing: 8) {
@@ -3811,17 +3917,7 @@ struct OnboardingRecipeAskInlineResultPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                (
-                    Text("Great, here is the new recipe: ")
-                        .fontWeight(.bold)
-                    + Text(summary)
-                )
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(OunjePalette.primaryText)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-            }
+            RecipeAskChangeSummaryText(summary: summary)
 
             RecipeAdaptedPreviewCard(
                 result: result,
@@ -3854,6 +3950,30 @@ struct OnboardingRecipeAskInlineResultPanel: View {
             .disabled(isSaved)
         }
         .padding(.top, 6)
+    }
+}
+
+private struct RecipeAskChangeSummaryText: View {
+    let summary: String?
+
+    private var normalizedSummary: String? {
+        guard let summary else { return nil }
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var body: some View {
+        if let normalizedSummary {
+            (
+                Text("Great, here is the new recipe: ")
+                    .fontWeight(.bold)
+                + Text(normalizedSummary)
+            )
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(OunjePalette.primaryText)
+            .lineSpacing(4)
+            .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -4603,6 +4723,7 @@ struct RecipeDetailCompactActionButton: View {
     var systemImage: String? = nil
     var showsInstagramGlyph: Bool = false
     var compact: Bool = false
+    var iconTint: Color? = nil
     let action: () -> Void
 
     var body: some View {
@@ -4613,6 +4734,7 @@ struct RecipeDetailCompactActionButton: View {
                 } else if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: compact ? 13 : 16, weight: .semibold))
+                        .foregroundStyle(iconTint ?? OunjePalette.primaryText)
                 }
                 Text(title)
                     .font(.system(size: compact ? 14 : 16, weight: .medium))

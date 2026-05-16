@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import express from "express";
 import { resolveAuthorizedUserID } from "../../lib/auth.js";
 import { readRedisJSON, writeRedisJSON } from "../../lib/redis-cache.js";
@@ -179,6 +180,130 @@ function providerConnectionsPayload(rows = []) {
   }));
 }
 
+function planBatches(plan) {
+  return Array.isArray(plan?.batches) ? plan.batches : [];
+}
+
+function planRootRecipes(plan) {
+  return Array.isArray(plan?.recipes) ? plan.recipes : [];
+}
+
+function planRootGroceryItems(plan) {
+  return Array.isArray(plan?.groceryItems) ? plan.groceryItems : [];
+}
+
+function recipeIDFromPlannedRecipe(plannedRecipe) {
+  return normalizeText(plannedRecipe?.recipe?.id ?? plannedRecipe?.recipe_id).toLowerCase();
+}
+
+function sourceRecipeID(source) {
+  return normalizeText(source?.recipeID ?? source?.recipe_id).toLowerCase();
+}
+
+function batchSignature(plan) {
+  return planBatches(plan)
+    .map((batch) => [
+      normalizeText(batch?.id),
+      normalizeText(batch?.name),
+      (Array.isArray(batch?.recipes) ? batch.recipes : []).map(recipeIDFromPlannedRecipe).join(","),
+    ].join(":"))
+    .join("|");
+}
+
+function batchStructureScore(plan) {
+  const batches = planBatches(plan);
+  const nonPrimaryRecipeCount = batches
+    .slice(1)
+    .reduce((total, batch) => total + (Array.isArray(batch?.recipes) ? batch.recipes.length : 0), 0);
+  return batches.length * 1000 + nonPrimaryRecipeCount;
+}
+
+function primaryBatchFromPlan(plan, fallbackName = "Usual") {
+  const batches = planBatches(plan);
+  const activeID = normalizeText(plan?.activeBatchID ?? plan?.active_batch_id);
+  const activeBatch = batches.find((batch) => normalizeText(batch?.id) === activeID) ?? batches[0] ?? {};
+  return {
+    ...activeBatch,
+    id: normalizeText(activeBatch?.id) || crypto.randomUUID(),
+    name: normalizeText(activeBatch?.name) || fallbackName,
+    recipes: Array.isArray(activeBatch?.recipes) && activeBatch.recipes.length > 0
+      ? activeBatch.recipes
+      : planRootRecipes(plan),
+    groceryItems: Array.isArray(activeBatch?.groceryItems) && activeBatch.groceryItems.length > 0
+      ? activeBatch.groceryItems
+      : planRootGroceryItems(plan),
+    recurringRecipeIDs: Array.isArray(activeBatch?.recurringRecipeIDs)
+      ? activeBatch.recurringRecipeIDs
+      : Array.isArray(plan?.recurringRecipeIDs) ? plan.recurringRecipeIDs : null,
+    createdAt: activeBatch?.createdAt ?? plan?.generatedAt ?? null,
+  };
+}
+
+function mergePlanWithRicherBatchStructure(latestPlan, richerPlan) {
+  const richerBatches = planBatches(richerPlan);
+  const latestBatches = planBatches(latestPlan);
+  if (!latestPlan || batchStructureScore(richerPlan) <= batchStructureScore(latestPlan)) return latestPlan;
+
+  const preservedTail = richerBatches.slice(1).map((batch) => ({
+    ...batch,
+    recipes: Array.isArray(batch?.recipes) ? batch.recipes : [],
+    groceryItems: Array.isArray(batch?.groceryItems) ? batch.groceryItems : [],
+    recurringRecipeIDs: Array.isArray(batch?.recurringRecipeIDs) ? batch.recurringRecipeIDs : null,
+  }));
+  const tailRecipeIDs = new Set(
+    preservedTail
+      .flatMap((batch) => Array.isArray(batch?.recipes) ? batch.recipes : [])
+      .map(recipeIDFromPlannedRecipe)
+      .filter(Boolean)
+  );
+  const latestPrimaryBatch = primaryBatchFromPlan(latestPlan, normalizeText(richerBatches[0]?.name) || "Usual");
+  latestPrimaryBatch.recipes = (latestPrimaryBatch.recipes ?? []).filter((plannedRecipe) => {
+    const recipeID = recipeIDFromPlannedRecipe(plannedRecipe);
+    return !recipeID || !tailRecipeIDs.has(recipeID);
+  });
+  latestPrimaryBatch.groceryItems = (latestPrimaryBatch.groceryItems ?? []).filter((item) => {
+    const sources = Array.isArray(item?.sourceIngredients) ? item.sourceIngredients : [];
+    return sources.length === 0 || !sources.every((source) => tailRecipeIDs.has(sourceRecipeID(source)));
+  });
+  const batches = [latestPrimaryBatch, ...preservedTail];
+  const activeBatchID = normalizeText(latestPlan.activeBatchID ?? latestPlan.active_batch_id)
+    || normalizeText(latestPrimaryBatch.id)
+    || null;
+
+  return {
+    ...latestPlan,
+    activeBatchID,
+    batches,
+    recipes: latestPrimaryBatch.recipes ?? [],
+    groceryItems: latestPrimaryBatch.groceryItems ?? [],
+    recurringRecipeIDs: latestPrimaryBatch.recurringRecipeIDs ?? null,
+  };
+}
+
+function bootstrapPrepPlanFromRows(rows = []) {
+  const latestRow = rows[0] ?? null;
+  if (!latestRow?.plan) {
+    return {
+      latestRow: null,
+      plan: null,
+      historyCount: 0,
+      repaired: false,
+    };
+  }
+
+  const richerRow = rows.reduce((best, row) => {
+    if (batchStructureScore(row?.plan) > batchStructureScore(best?.plan)) return row;
+    return best;
+  }, latestRow);
+  const repairedPlan = mergePlanWithRicherBatchStructure(latestRow.plan, richerRow?.plan);
+  return {
+    latestRow,
+    plan: repairedPlan,
+    historyCount: rows.length,
+    repaired: batchSignature(repairedPlan) !== batchSignature(latestRow.plan),
+  };
+}
+
 router.get("/bootstrap/user", async (req, res) => {
   try {
     const { userID } = await resolveAuthorizedUserID(req);
@@ -190,7 +315,7 @@ router.get("/bootstrap/user", async (req, res) => {
     const [
       profileResult,
       entitlementRow,
-      latestPlanResult,
+      mealPrepCyclesResult,
       recentImportsResult,
       savedIDsResult,
       latestSavedResult,
@@ -212,12 +337,11 @@ router.get("/bootstrap/user", async (req, res) => {
       safeQuery(
         supabase
           .from("meal_prep_cycles")
-          .select("plan,plan_id,generated_at")
+          .select("id,plan,plan_id,generated_at,updated_at")
           .eq("user_id", userID)
-          .order("generated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-        { data: null, error: null }
+          .order("updated_at", { ascending: false })
+          .limit(12),
+        { data: [], error: null }
       ),
       safeQuery(
         supabase
@@ -274,7 +398,7 @@ router.get("/bootstrap/user", async (req, res) => {
     ]);
 
     if (profileResult.error) throw profileResult.error;
-    if (latestPlanResult.error) throw latestPlanResult.error;
+    if (mealPrepCyclesResult.error) throw mealPrepCyclesResult.error;
     if (recentImportsResult.error) throw recentImportsResult.error;
     if (savedIDsResult.error) throw savedIDsResult.error;
     if (latestSavedResult.error) throw latestSavedResult.error;
@@ -288,6 +412,17 @@ router.get("/bootstrap/user", async (req, res) => {
     );
     const savedIDRows = (savedIDsResult.data ?? []).filter((row) => !tombstonedSavedRecipeIDs.has(row.recipe_id));
     const latestSavedRows = (latestSavedResult.data ?? []).filter((row) => !tombstonedSavedRecipeIDs.has(row.recipe_id));
+    const prepPlan = bootstrapPrepPlanFromRows(mealPrepCyclesResult.data ?? []);
+    if (prepPlan.repaired && prepPlan.latestRow?.id && prepPlan.plan) {
+      const { error: repairError } = await supabase
+        .from("meal_prep_cycles")
+        .update({ plan: prepPlan.plan })
+        .eq("id", prepPlan.latestRow.id)
+        .eq("user_id", userID);
+      if (repairError) {
+        console.warn("[bootstrap/user] failed to repair latest prep batch structure:", repairError.message);
+      }
+    }
     const payload = {
       version: 1,
       user_id: userID,
@@ -326,9 +461,9 @@ router.get("/bootstrap/user", async (req, res) => {
         : null,
       entitlement: entitlementToResponse(entitlementRow),
       prep: {
-        latest_plan: latestPlanResult.data?.plan ?? null,
-        latest_plan_id: latestPlanResult.data?.plan_id ?? null,
-        history_count: latestPlanResult.data?.plan ? 1 : 0,
+        latest_plan: prepPlan.plan ?? null,
+        latest_plan_id: prepPlan.latestRow?.plan_id ?? null,
+        history_count: prepPlan.historyCount,
         override_count: null,
       },
       saved: {

@@ -20,6 +20,125 @@ function normalizeRecipeLine(value) {
     .trim();
 }
 
+function cleanSourceURL(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw).toString();
+  } catch (_error) {
+    return null;
+  }
+}
+
+function isJulienneURL(value) {
+  const cleaned = cleanSourceURL(value);
+  if (!cleaned) return false;
+  try {
+    const host = new URL(cleaned).hostname.toLowerCase();
+    return host === "withjulienne.com" || host.endsWith(".withjulienne.com");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isSocialPlatformURL(value) {
+  const cleaned = cleanSourceURL(value);
+  if (!cleaned) return false;
+  try {
+    const host = new URL(cleaned).hostname.toLowerCase();
+    return host.includes("tiktok.com")
+      || host.includes("instagram.com")
+      || host === "youtu.be"
+      || host.includes("youtube.com")
+      || host.includes("youtube-nocookie.com");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isWatchableSocialVideoURL(value) {
+  const cleaned = cleanSourceURL(value);
+  if (!cleaned) return false;
+  const url = new URL(cleaned);
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.toLowerCase();
+  if (host.includes("tiktok.com")) {
+    return host === "vt.tiktok.com" || host === "vm.tiktok.com" || path.includes("/video/") || path.includes("/t/");
+  }
+  if (host.includes("instagram.com")) {
+    return path.includes("/reel/") || path.includes("/p/") || path.includes("/tv/");
+  }
+  if (host === "youtu.be" || host.includes("youtube.com") || host.includes("youtube-nocookie.com")) {
+    return host === "youtu.be" || path.includes("/shorts/") || path.includes("/watch");
+  }
+  return false;
+}
+
+function displayableOriginalSourceURL(value) {
+  const cleaned = cleanSourceURL(value);
+  if (!cleaned || isJulienneURL(cleaned)) return null;
+  if (isSocialPlatformURL(cleaned) && !isWatchableSocialVideoURL(cleaned)) return null;
+  return cleaned;
+}
+
+function collectSourceProvenanceURLStrings(provenance) {
+  if (!provenance || typeof provenance !== "object") return [];
+  const originalSocialSource = provenance.original_social_source && typeof provenance.original_social_source === "object"
+    ? provenance.original_social_source
+    : {};
+  const evidenceBundle = provenance.evidence_bundle && typeof provenance.evidence_bundle === "object"
+    ? provenance.evidence_bundle
+    : {};
+  const evidenceOriginalSocialSource = evidenceBundle.original_social_source && typeof evidenceBundle.original_social_source === "object"
+    ? evidenceBundle.original_social_source
+    : {};
+
+  return [
+    originalSocialSource.url,
+    originalSocialSource.attached_video_url,
+    originalSocialSource.canonical_url,
+    originalSocialSource.source_url,
+    evidenceOriginalSocialSource.url,
+    evidenceOriginalSocialSource.attached_video_url,
+    evidenceOriginalSocialSource.canonical_url,
+    evidenceOriginalSocialSource.source_url,
+    provenance.url,
+    provenance.attached_video_url,
+    provenance.canonical_url,
+    provenance.source_url,
+    evidenceBundle.url,
+    evidenceBundle.attached_video_url,
+    evidenceBundle.canonical_url,
+    evidenceBundle.source_url,
+    ...(Array.isArray(evidenceBundle.reference_urls) ? evidenceBundle.reference_urls : []),
+  ];
+}
+
+function resolveRecipeSourceURLs(recipe) {
+  const candidates = [
+    ...collectSourceProvenanceURLStrings(recipe.source_provenance_json),
+    recipe.original_recipe_url,
+    recipe.recipe_url,
+    recipe.attached_video_url,
+  ];
+  const displayable = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const cleaned = displayableOriginalSourceURL(candidate);
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    displayable.push(cleaned);
+  }
+  const firstDisplayable = displayable[0] ?? null;
+  const firstVideo = displayable.find(isWatchableSocialVideoURL) ?? null;
+
+  return {
+    recipe_url: firstDisplayable ?? cleanSourceURL(recipe.recipe_url),
+    original_recipe_url: firstDisplayable ?? cleanSourceURL(recipe.original_recipe_url),
+    attached_video_url: firstVideo ?? cleanSourceURL(recipe.attached_video_url),
+  };
+}
+
 const INGREDIENT_UNIT_WORDS = new Set([
   "cup",
   "cups",
@@ -739,6 +858,7 @@ function buildStructuredSteps(stepRows, stepIngredientRows, ingredients) {
 }
 
 export function normalizeRecipeDetail(recipe, related = {}) {
+  const sourceURLs = resolveRecipeSourceURLs(recipe);
   const structuredIngredients = Array.isArray(related.recipeIngredients)
     ? related.recipeIngredients.map(normalizeRecipeIngredientRow).filter(Boolean)
     : Array.isArray(recipe.recipe_ingredients)
@@ -811,8 +931,10 @@ export function normalizeRecipeDetail(recipe, related = {}) {
     cook_time_minutes: recipe.cook_time_minutes ?? null,
     hero_image_url: recipe.hero_image_url ?? null,
     discover_card_image_url: recipe.discover_card_image_url ?? null,
-    recipe_url: recipe.recipe_url ?? null,
-    original_recipe_url: recipe.original_recipe_url ?? null,
+    recipe_url: sourceURLs.recipe_url,
+    original_recipe_url: sourceURLs.original_recipe_url,
+    attached_video_url: sourceURLs.attached_video_url,
+    source_provenance_json: recipe.source_provenance_json ?? null,
     detail_footnote: recipe.detail_footnote ?? null,
     image_caption: recipe.image_caption ?? null,
     dietary_tags: Array.isArray(recipe.dietary_tags) ? recipe.dietary_tags : [],

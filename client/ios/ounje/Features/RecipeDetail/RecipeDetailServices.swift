@@ -425,6 +425,91 @@ enum RecipeQuantityFormatter {
     }
 }
 
+struct RecipeSourceProvenance: Codable, Hashable {
+    let sourceType: String?
+    let platform: String?
+    let urlString: String?
+    let sourceURLString: String?
+    let canonicalURLString: String?
+    let attachedVideoURLString: String?
+    let originalSocialSource: RecipeSourceProvenanceSource?
+    let evidenceBundle: RecipeSourceProvenanceEvidenceBundle?
+
+    enum CodingKeys: String, CodingKey {
+        case sourceType = "source_type"
+        case platform
+        case urlString = "url"
+        case sourceURLString = "source_url"
+        case canonicalURLString = "canonical_url"
+        case attachedVideoURLString = "attached_video_url"
+        case originalSocialSource = "original_social_source"
+        case evidenceBundle = "evidence_bundle"
+    }
+
+    var upstreamURLStrings: [String] {
+        let primaryCandidates: [String?] = [
+            originalSocialSource?.urlString,
+            originalSocialSource?.attachedVideoURLString,
+            originalSocialSource?.canonicalURLString,
+            originalSocialSource?.sourceURLString,
+            evidenceBundle?.originalSocialSource?.urlString,
+            evidenceBundle?.originalSocialSource?.attachedVideoURLString,
+            evidenceBundle?.originalSocialSource?.canonicalURLString,
+            evidenceBundle?.originalSocialSource?.sourceURLString,
+            urlString,
+            attachedVideoURLString,
+            canonicalURLString,
+            sourceURLString,
+            evidenceBundle?.urlString,
+            evidenceBundle?.attachedVideoURLString,
+            evidenceBundle?.canonicalURLString,
+            evidenceBundle?.sourceURLString
+        ]
+        let referenceCandidates: [String?] = evidenceBundle?.referenceURLStrings ?? []
+        return uniqueURLStrings(primaryCandidates + referenceCandidates)
+    }
+
+    private func uniqueURLStrings(_ values: [String?]) -> [String] {
+        var seen = Set<String>()
+        return values
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0).inserted }
+    }
+}
+
+struct RecipeSourceProvenanceSource: Codable, Hashable {
+    let urlString: String?
+    let sourceURLString: String?
+    let canonicalURLString: String?
+    let attachedVideoURLString: String?
+
+    enum CodingKeys: String, CodingKey {
+        case urlString = "url"
+        case sourceURLString = "source_url"
+        case canonicalURLString = "canonical_url"
+        case attachedVideoURLString = "attached_video_url"
+    }
+}
+
+struct RecipeSourceProvenanceEvidenceBundle: Codable, Hashable {
+    let urlString: String?
+    let sourceURLString: String?
+    let canonicalURLString: String?
+    let attachedVideoURLString: String?
+    let referenceURLStrings: [String]?
+    let originalSocialSource: RecipeSourceProvenanceSource?
+
+    enum CodingKeys: String, CodingKey {
+        case urlString = "url"
+        case sourceURLString = "source_url"
+        case canonicalURLString = "canonical_url"
+        case attachedVideoURLString = "attached_video_url"
+        case referenceURLStrings = "reference_urls"
+        case originalSocialSource = "original_social_source"
+    }
+}
+
 struct RecipeDetailData: Identifiable, Codable, Hashable {
     let id: String
     let title: String
@@ -458,6 +543,7 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
     let recipeURLString: String?
     let originalRecipeURLString: String?
     let attachedVideoURLString: String?
+    let sourceProvenance: RecipeSourceProvenance?
     let detailFootnote: String?
     let imageCaption: String?
     let dietaryTags: [String]
@@ -503,6 +589,7 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
         case recipeURLString = "recipe_url"
         case originalRecipeURLString = "original_recipe_url"
         case attachedVideoURLString = "attached_video_url"
+        case sourceProvenance = "source_provenance_json"
         case detailFootnote = "detail_footnote"
         case imageCaption = "image_caption"
         case dietaryTags = "dietary_tags"
@@ -628,6 +715,7 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
             recipeURLString: recipeURLString,
             originalRecipeURLString: originalRecipeURLString,
             attachedVideoURLString: attachedVideoURLString,
+            sourceProvenance: sourceProvenance,
             detailFootnote: detailFootnote,
             imageCaption: imageCaption,
             dietaryTags: dietaryTags,
@@ -707,6 +795,7 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
             recipeURLString: card.recipeURLString,
             originalRecipeURLString: card.recipeURLString,
             attachedVideoURLString: nil,
+            sourceProvenance: nil,
             detailFootnote: nil,
             imageCaption: nil,
             dietaryTags: [],
@@ -856,6 +945,7 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
             recipeURLString: recipeURLString,
             originalRecipeURLString: originalRecipeURLString,
             attachedVideoURLString: attachedVideoURLString,
+            sourceProvenance: sourceProvenance,
             detailFootnote: detailFootnote,
             imageCaption: imageCaption,
             dietaryTags: dietaryTags,
@@ -1186,6 +1276,7 @@ final class RecipeDetailViewModel: ObservableObject {
                 recipeURLString: current.recipeURLString,
                 originalRecipeURLString: current.originalRecipeURLString,
                 attachedVideoURLString: current.attachedVideoURLString,
+                sourceProvenance: current.sourceProvenance,
                 detailFootnote: current.detailFootnote,
                 imageCaption: current.imageCaption,
                 dietaryTags: current.dietaryTags,
@@ -1354,7 +1445,54 @@ actor RecipeDetailService {
     }
 
     private func shouldUseCachedDetail(_ detail: RecipeDetailData, accessToken: String?) -> Bool {
-        !detail.shouldRefreshDisplayMacros
+        guard !detail.shouldRefreshDisplayMacros else { return false }
+
+        // Lightweight card previews are intentionally sparse. Do not let them
+        // satisfy a detail fetch, or source/video fields can stay missing.
+        guard !detail.ingredients.isEmpty || !detail.steps.isEmpty else { return false }
+
+        if hasVideoSourceHint(detail), !hasAnySourceURL(detail) {
+            return false
+        }
+
+        return true
+    }
+
+    private func hasAnySourceURL(_ detail: RecipeDetailData) -> Bool {
+        let directValues = [
+            detail.attachedVideoURLString,
+            detail.originalRecipeURLString,
+            detail.recipeURLString,
+            detail.authorURLString
+        ]
+
+        let provenanceValues = (detail.sourceProvenance?.upstreamURLStrings ?? []).map(Optional.some)
+
+        return (directValues + provenanceValues)
+            .contains { value in
+                guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+                    return false
+                }
+                return URL(string: value) != nil
+            }
+    }
+
+    private func hasVideoSourceHint(_ detail: RecipeDetailData) -> Bool {
+        let haystack = [
+            detail.sourcePlatform,
+            detail.source,
+            detail.authorURLString,
+            detail.originalRecipeURLString,
+            detail.attachedVideoURLString,
+            detail.recipeURLString
+        ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+
+        return haystack.contains("tiktok")
+            || haystack.contains("instagram")
+            || haystack.contains("youtube")
+            || haystack.contains("youtu.be")
     }
 
     private func fetchRecipeDetailUncached(id: String, accessToken: String? = nil) async throws -> RecipeDetailData {
@@ -1721,6 +1859,7 @@ actor RecipeDetailService {
             "recipe_url",
             "original_recipe_url",
             "attached_video_url",
+            "source_provenance_json",
             "detail_footnote",
             "image_caption",
             "dietary_tags",
@@ -1865,6 +2004,7 @@ actor RecipeDetailService {
             recipeURLString: recipe.recipeURLString,
             originalRecipeURLString: recipe.originalRecipeURLString,
             attachedVideoURLString: recipe.attachedVideoURLString,
+            sourceProvenance: recipe.sourceProvenance,
             detailFootnote: recipe.detailFootnote,
             imageCaption: recipe.imageCaption,
             dietaryTags: recipe.dietaryTags ?? [],
@@ -2244,6 +2384,7 @@ struct SupabaseRecipeDetailRow: Decodable {
     let recipeURLString: String?
     let originalRecipeURLString: String?
     let attachedVideoURLString: String?
+    let sourceProvenance: RecipeSourceProvenance?
     let detailFootnote: String?
     let imageCaption: String?
     let dietaryTags: [String]?
@@ -2289,6 +2430,7 @@ struct SupabaseRecipeDetailRow: Decodable {
         case recipeURLString = "recipe_url"
         case originalRecipeURLString = "original_recipe_url"
         case attachedVideoURLString = "attached_video_url"
+        case sourceProvenance = "source_provenance_json"
         case detailFootnote = "detail_footnote"
         case imageCaption = "image_caption"
         case dietaryTags = "dietary_tags"
@@ -2336,6 +2478,7 @@ struct SupabaseRecipeDetailRow: Decodable {
         recipeURLString = try container.decodeIfPresent(String.self, forKey: .recipeURLString)
         originalRecipeURLString = try container.decodeIfPresent(String.self, forKey: .originalRecipeURLString)
         attachedVideoURLString = try container.decodeIfPresent(String.self, forKey: .attachedVideoURLString)
+        sourceProvenance = try container.decodeIfPresent(RecipeSourceProvenance.self, forKey: .sourceProvenance)
         detailFootnote = try container.decodeIfPresent(String.self, forKey: .detailFootnote)
         imageCaption = try container.decodeIfPresent(String.self, forKey: .imageCaption)
         dietaryTags = try container.decodeIfPresent([String].self, forKey: .dietaryTags)
@@ -2410,6 +2553,7 @@ struct SupabaseRecipeDetailRow: Decodable {
             recipeURLString: recipeURLString,
             originalRecipeURLString: originalRecipeURLString,
             attachedVideoURLString: attachedVideoURLString,
+            sourceProvenance: sourceProvenance,
             detailFootnote: detailFootnote,
             imageCaption: imageCaption,
             dietaryTags: dietaryTags ?? [],

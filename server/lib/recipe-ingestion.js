@@ -2538,6 +2538,7 @@ function buildSourceProvenanceRecord(source, { reviewState = null, confidenceSco
     source_url: cleanURL(source.source_url ?? null),
     canonical_url: cleanURL(source.canonical_url ?? null),
     attached_video_url: cleanURL(source.attached_video_url ?? null),
+    original_social_source: source.original_social_source ? compactJSON(source.original_social_source) : null,
     title: normalizeText(source.title ?? "") || null,
     description: normalizeText(source.description ?? source.meta_description ?? "") || null,
     author_name: normalizeText(source.author_name ?? "") || null,
