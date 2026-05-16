@@ -474,15 +474,44 @@ function founderAlertTitle(alertType) {
 function founderAlertEmoji(alertType) {
   switch (alertType) {
     case "trial_started":
-      return ":seedling:";
+      return ":sparkles:";
     case "paid_started":
-      return ":moneybag:";
+      return ":money_with_wings:";
     case "trial_cancelled":
-      return ":warning:";
+      return ":mag:";
     case "paid_cancelled":
-      return ":rotating_light:";
+      return ":broken_heart:";
     default:
       return ":iphone:";
+  }
+}
+
+function founderAlertColor(alertType) {
+  switch (alertType) {
+    case "trial_started":
+    case "paid_started":
+      return "#2E8B57";
+    case "trial_cancelled":
+      return "#D9822B";
+    case "paid_cancelled":
+      return "#C2410C";
+    default:
+      return "#64748B";
+  }
+}
+
+function founderAlertSignal(alertType) {
+  switch (alertType) {
+    case "trial_started":
+      return "Good news: trial started";
+    case "paid_started":
+      return "Great news: paid conversion";
+    case "trial_cancelled":
+      return "Churn signal: trial auto-renew disabled";
+    case "paid_cancelled":
+      return "Churn signal: paid auto-renew disabled";
+    default:
+      return "Subscription event";
   }
 }
 
@@ -537,34 +566,46 @@ async function sendFounderSubscriptionSlackAlert({
 
   const payload = {
     text: `${title}: ${userLabel}`,
-    blocks: [
+    attachments: [
       {
-        type: "header",
-        text: {
-          type: "plain_text",
-          text: `${founderAlertEmoji(alertType)} ${title}`,
-          emoji: true,
-        },
-      },
-      {
-        type: "section",
-        fields: [
-          formatSlackField("User", userLabel),
-          formatSlackField("Plan", entitlementState?.productID),
-          formatSlackField("Tier", entitlementState?.tier),
-          formatSlackField("Cadence", metadata.cadence),
-          formatSlackField("Environment", environment),
-          formatSlackField("Auto-renew", autoRenewStatus),
-          formatSlackField("Access until", entitlementState?.expiresAt),
-          formatSlackField("Previous state", existing?.status),
-        ],
-      },
-      {
-        type: "context",
-        elements: [
+        color: founderAlertColor(alertType),
+        blocks: [
           {
-            type: "mrkdwn",
-            text: `Apple event: ${metadata.notification_type || "unknown"} / ${metadata.notification_subtype || "none"} · original tx: ${entitlementState?.originalTransactionID || "unknown"}`,
+            type: "header",
+            text: {
+              type: "plain_text",
+              text: `${founderAlertEmoji(alertType)} ${title}`,
+              emoji: true,
+            },
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `*${founderAlertSignal(alertType)}*`,
+            },
+          },
+          {
+            type: "section",
+            fields: [
+              formatSlackField("User", userLabel),
+              formatSlackField("Plan", entitlementState?.productID),
+              formatSlackField("Tier", entitlementState?.tier),
+              formatSlackField("Cadence", metadata.cadence),
+              formatSlackField("Environment", environment),
+              formatSlackField("Auto-renew", autoRenewStatus),
+              formatSlackField("Access until", entitlementState?.expiresAt),
+              formatSlackField("Previous state", existing?.status),
+            ],
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: `Apple event: ${metadata.notification_type || "unknown"} / ${metadata.notification_subtype || "none"} · original tx: ${entitlementState?.originalTransactionID || "unknown"}`,
+              },
+            ],
           },
         ],
       },
