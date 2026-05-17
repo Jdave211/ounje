@@ -1381,7 +1381,7 @@ struct CookbookCyclePlateImage: View {
                     .shadow(color: .black.opacity(0.24), radius: 9, y: 6)
             } else if loader.isLoading {
                 ProgressView()
-                    .tint(OunjePalette.accent)
+                    .tint(.white)
                     .frame(width: size, height: size)
             } else {
                 Text(recipe.emoji)

@@ -58,6 +58,12 @@ function normalizeTimestamp(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function metadataBoolean(value) {
+  if (typeof value === "boolean") return value;
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 function isEntitlementActive(status, expiresAt, source) {
   if (status !== "active") return false;
   const normalizedExpiry = normalizeTimestamp(expiresAt);
@@ -158,6 +164,7 @@ router.post("/entitlements/sync", async (req, res) => {
 
     const signedTransactionInfo = normalizeText(req.body?.signed_transaction_info ?? req.body?.signedTransactionInfo);
     if (incomingSource === "app_store" && signedTransactionInfo) {
+      const clientMetadata = req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {};
       const verifiedTransaction = await verifyAppStoreTransactionInfo(signedTransactionInfo);
       const appAccountToken = normalizeText(verifiedTransaction?.appAccountToken);
       if (!appAccountToken || appAccountToken !== userID) {
@@ -189,6 +196,8 @@ router.post("/entitlements/sync", async (req, res) => {
         expires_at: verifiedState.expiresAt,
         metadata: {
           ...verifiedState.metadata,
+          is_on_trial: Boolean(verifiedState.metadata?.is_on_trial) || metadataBoolean(clientMetadata.is_on_trial),
+          client_reported_is_on_trial: metadataBoolean(clientMetadata.is_on_trial),
           sync_source: "client_signed_transaction",
         },
       };
