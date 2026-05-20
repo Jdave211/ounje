@@ -232,6 +232,35 @@ function _canonicalImportRedisCacheKey(key) {
   return `ounje:canonical-import:${digest}`;
 }
 
+function compactCanonicalImportJobForCache(job) {
+  if (!job || typeof job !== "object") return null;
+  return {
+    id: normalizeText(job.id) || null,
+    user_id: normalizeText(job.user_id) || null,
+    target_state: normalizeText(job.target_state) || null,
+    source_type: normalizeText(job.source_type) || null,
+    source_url: cleanURL(job.source_url ?? null),
+    canonical_url: cleanURL(job.canonical_url ?? null),
+    dedupe_key: normalizeText(job.dedupe_key) || null,
+    dedupe_recipe_id: normalizeText(job.dedupe_recipe_id) || null,
+    recipe_id: normalizeText(job.recipe_id) || null,
+    status: normalizeText(job.status) || null,
+    review_state: normalizeText(job.review_state) || null,
+    confidence_score: Number.isFinite(Number(job.confidence_score)) ? Number(job.confidence_score) : null,
+    quality_flags: Array.isArray(job.quality_flags) ? job.quality_flags.slice(0, 24).map(normalizeText).filter(Boolean) : [],
+    review_reason: normalizeText(job.review_reason) || null,
+    error_message: normalizeText(job.error_message) || null,
+    queued_at: job.queued_at ?? null,
+    fetched_at: job.fetched_at ?? null,
+    parsed_at: job.parsed_at ?? null,
+    normalized_at: job.normalized_at ?? null,
+    saved_at: job.saved_at ?? null,
+    completed_at: job.completed_at ?? null,
+    created_at: job.created_at ?? null,
+    updated_at: job.updated_at ?? null,
+  };
+}
+
 function _sharedRedisCacheKey(namespace, key) {
   if (!namespace || !key) return null;
   const digest = crypto.createHash("sha256").update(String(key)).digest("hex");
@@ -350,9 +379,11 @@ async function fetchYtdlMetadataCached(sourceURL, { options = {}, timeoutMs = SO
 function _setCanonicalImportCache(userID, canonicalURL, dedupeKey, job) {
   const key = _canonicalImportCacheKey(userID, canonicalURL, dedupeKey);
   if (!key || !job) return;
+  const compactJob = compactCanonicalImportJobForCache(job);
+  if (!compactJob?.recipe_id) return;
   _canonicalImportCache.delete(key); // refresh insertion order for LRU
-  _canonicalImportCache.set(key, { job, cachedAt: Date.now() });
-  void writeRedisJSON(_canonicalImportRedisCacheKey(key), job, Math.ceil(CANONICAL_IMPORT_CACHE_TTL_MS / 1000));
+  _canonicalImportCache.set(key, { job: compactJob, cachedAt: Date.now() });
+  void writeRedisJSON(_canonicalImportRedisCacheKey(key), compactJob, Math.ceil(CANONICAL_IMPORT_CACHE_TTL_MS / 1000));
   if (_canonicalImportCache.size > CANONICAL_IMPORT_CACHE_MAX) {
     _canonicalImportCache.delete(_canonicalImportCache.keys().next().value);
   }
@@ -570,6 +601,7 @@ Rules:
 - Best-guess quantities are allowed for common dishes, but keep them conservative and ordinary for the stated serving size.
 - Do not collapse distinct grocery items into generic buckets. If the source or web references expose individual ingredients, keep them as individual shoppable rows instead of "spices", "seasoning", "sauce", or similar umbrella labels.
 - Preserve ingredients like honey, paprika, chili powder, garlic powder, fresh herbs, and other concrete grocery items explicitly when the source supports them.
+- Do not include both a component label and its underlying ingredients. For example, do not list "meat sauce" if ground meat, tomato, onion, garlic, and seasonings are already listed; do not list both "parmesan cheese" and "parmesan cheese, grated".
 - If web references disagree, prefer the most mainstream consensus version that still matches the original source.
 - Never add niche embellishments that are not needed to make the recipe cookable.
 - Do not remove strong source-supported details from the imported recipe.
@@ -585,6 +617,8 @@ Rules:
 - Preserve source-supported dish identity, title, cuisine, and author/source metadata.
 - Ensure ingredients, quantities, and steps agree with each other.
 - If a step mentions an ingredient that is not listed, either add a conservative ingredient only when clearly necessary, or rewrite the step to use an already listed equivalent.
+- Never add duplicate alias ingredients just to satisfy a step. Prefer rewriting step wording to use the existing listed ingredient name.
+- Do not list both a prepared component and its sub-ingredients unless the prepared component is actually bought as an ingredient.
 - If a step mentions a listed ingredient, keep that ingredient linked in the step's ingredients array with the same practical quantity.
 - Prefer not to add non-shopping pantry liquids like water unless the recipe would be confusing without it.
 - Replace vague or technically wrong cooking verbs with practical cooking actions.
@@ -1746,6 +1780,30 @@ function assessRecipeSignals(source) {
 
 async function assessRecipeLikelihood(source) {
   const signals = assessRecipeSignals(source);
+  const sourceType = normalizeText(source?.source_type ?? source?.platform ?? "").toLowerCase();
+  if (sourceType === "media_image" || sourceType === "photo") {
+    const mealGate = source?.photo_meal_gate && typeof source.photo_meal_gate === "object"
+      ? source.photo_meal_gate
+      : null;
+    if (mealGate?.is_meal) {
+      return {
+        is_recipe: true,
+        confidence: Math.max(0.72, Number.isFinite(Number(mealGate.confidence)) ? Number(mealGate.confidence) : 0),
+        reason: "Photo meal gate accepted the image as food; continue with photo-to-recipe inference.",
+        method: "photo_meal_gate_accept",
+        signals,
+      };
+    }
+    if (mealGate) {
+      return {
+        is_recipe: false,
+        confidence: Number.isFinite(Number(mealGate.confidence)) ? Number(mealGate.confidence) : 0.9,
+        reason: normalizeText(mealGate.reject_reason ?? "") || "Photo meal gate did not find enough visible food to build a recipe.",
+        method: "photo_meal_gate_reject",
+        signals,
+      };
+    }
+  }
   let score = 0;
 
   if (signals.structuredIngredientCount >= 3) score += 5;
@@ -3517,7 +3575,8 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
     completed_at: now,
   });
   const recipe = await fetchRecipeCardProjection(cachedJob.recipe_id).catch(() => null);
-  const recipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
+  const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
+  const recipeDetail = await ensurePersistedRecipeDisplayMacros(cachedJob.recipe_id, rawRecipeDetail).catch(() => rawRecipeDetail);
   if (normalizeText(job.target_state).toLowerCase() === "saved") {
     await upsertSavedRecipeForUser(completed.user_id, recipeDetail ?? recipe, {
       restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
@@ -3618,7 +3677,8 @@ async function completeJobFromExistingImportedRecipe(job, recipeRow, { workerID,
   });
   _setCanonicalImportCache(job.user_id, completed.canonical_url ?? canonicalURL ?? null, completed.dedupe_key ?? null, completed);
   const recipe = await fetchRecipeCardProjection(recipeID).catch(() => null);
-  const recipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
+  const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
+  const recipeDetail = await ensurePersistedRecipeDisplayMacros(recipeID, rawRecipeDetail).catch(() => rawRecipeDetail);
   if (normalizeText(job.target_state).toLowerCase() === "saved") {
     await upsertSavedRecipeForUser(completed.user_id, recipeDetail ?? recipe, {
       restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
@@ -3702,6 +3762,27 @@ async function createCompletedJobRowFromExistingJob(request, job, { dedupeKey = 
   );
 }
 
+function buildPhotoImportDedupeKey(attachments = []) {
+  if (!Array.isArray(attachments)) return null;
+  for (const attachment of attachments) {
+    if (String(attachment?.kind ?? "").toLowerCase() !== "image") continue;
+    const stableRemoteKey = [
+      attachment.storage_bucket,
+      attachment.storage_path,
+      attachment.public_hero_url,
+      attachment.source_url,
+    ].map((value) => normalizeText(value)).filter(Boolean).join("|");
+    if (stableRemoteKey) {
+      return crypto.createHash("sha256").update(`photo-remote:${stableRemoteKey}`).digest("hex");
+    }
+    const dataURL = String(attachment.data_url ?? "").trim();
+    if (dataURL) {
+      return crypto.createHash("sha256").update(`photo-data:${dataURL}`).digest("hex");
+    }
+  }
+  return null;
+}
+
 async function createJobRow(request) {
   const jobID = `ri_${nanoid(14)}`;
   const enqueueCanonicalURL = await expandCanonicalSourceURLForEnqueue(
@@ -3714,18 +3795,11 @@ async function createJobRow(request) {
       canonical_url: enqueueCanonicalURL,
     };
   }
-  const photoAttachmentKey = request.source_type === "media_image"
-    ? (request.attachments ?? [])
-        .map((attachment) => [
-          attachment.storage_bucket,
-          attachment.storage_path,
-          attachment.public_hero_url,
-          attachment.source_url,
-        ].filter(Boolean).join("/"))
-        .find(Boolean)
+  const photoDedupeKey = request.source_type === "media_image"
+    ? buildPhotoImportDedupeKey(request.attachments ?? [])
     : null;
-  const dedupeKey = photoAttachmentKey
-    ? crypto.createHash("sha256").update(photoAttachmentKey).digest("hex")
+  const dedupeKey = photoDedupeKey
+    ? photoDedupeKey
     : buildDedupeKey({
         sourceUrl: request.source_url,
         canonicalUrl: request.canonical_url ?? request.source_url,
@@ -4018,6 +4092,26 @@ async function fetchCanonicalRecipeDetailByID(recipeID, config = tableConfigForR
     recipeSteps,
     stepIngredients,
   });
+}
+
+async function ensurePersistedRecipeDisplayMacros(recipeID, detail, config = tableConfigForRecipeID(recipeID)) {
+  if (!recipeID || !detail) return detail;
+  const completed = await guaranteeRecipeDisplayMacros(detail);
+  const patch = missingDisplayMacroPatch(detail, completed);
+  if (Object.keys(patch).length > 0) {
+    await patchRows(
+      config.recipeTable,
+      [`id=eq.${encodeURIComponent(recipeID)}`],
+      patch,
+      { prefer: "return=minimal" }
+    ).catch((error) => {
+      console.warn("[recipe-ingestion] failed to patch recipe display macros:", error.message);
+    });
+  }
+  return {
+    ...detail,
+    ...patch,
+  };
 }
 
 function buildSavedProjection(recipeDetail) {
@@ -6484,8 +6578,12 @@ async function runPhotoVisualAnalysis(imageInput, mealGate, photoContext = {}) {
         role: "system",
         content: [
           "Analyze the food photo for recipe reconstruction.",
-          "Do not create the final recipe. Extract visual evidence only.",
-          "Call out uncertainty clearly when ingredients or method are not visible.",
+          "Do not create the final recipe. Identify the most likely recipe/dish name a normal cook would search for, then extract visual evidence.",
+          "Prefer a common canonical recipe name over a literal inventory of visible items when the image strongly matches a known dish.",
+          "Use visual cues such as sauce texture, garnish, plating, noodle/rice shape, browning, coating, and common dish patterns.",
+          "Do not be overly forensic: the photo cannot show every ingredient, so include likely hidden ingredients only when they are normal for the candidate dish.",
+          "When uncertain, return multiple ranked dish_candidates with confidence and explain the uncertainty.",
+          "Avoid unsupported broad cuisine labels unless the image clearly supports them.",
         ].join("\n"),
       },
       {
@@ -6501,6 +6599,12 @@ async function runPhotoVisualAnalysis(imageInput, mealGate, photoContext = {}) {
                 meal_gate: mealGate,
               }),
               "Return JSON with dish_candidates, visible_ingredients, likely_hidden_ingredients, cooking_methods, cuisine_hints, plating_context, uncertainty.",
+              "dish_candidates item shape:",
+              JSON.stringify({
+                name: "spaghetti bolognese",
+                confidence: 0.0,
+                reasoning: "short visual reason",
+              }),
             ].join("\n"),
           },
           imagePart,
@@ -6521,11 +6625,19 @@ async function runPhotoVisualAnalysis(imageInput, mealGate, photoContext = {}) {
 }
 
 function photoRecipeSearchQuery(visualAnalysis = {}, photoContext = {}) {
-  const candidate = visualAnalysis?.dish_candidates?.[0]?.name
+  return photoRecipeSearchQueries(visualAnalysis, photoContext)[0] ?? "plated dish recipe";
+}
+
+function photoRecipeSearchQueries(visualAnalysis = {}, photoContext = {}) {
+  const candidate = (typeof visualAnalysis?.dish_candidates?.[0] === "string"
+    ? visualAnalysis.dish_candidates[0]
+    : visualAnalysis?.dish_candidates?.[0]?.name)
     ?? photoContext?.dish_hint
-    ?? visualAnalysis?.visible_ingredients?.slice(0, 4).join(" ");
+    ?? visualAnalysis?.visible_ingredients?.slice(0, 5).join(" ")
+    ?? "plated dish";
   const place = photoContext?.coarse_place_context ? ` ${photoContext.coarse_place_context}` : "";
-  return normalizeText(`${candidate ?? "plated dish"}${place}`.trim(), 180) || "plated dish recipe";
+  const query = normalizeText(`${candidate}${place}`.trim(), 180) || "plated dish";
+  return [/\brecipe\b/i.test(query) ? query : `${query} recipe`];
 }
 
 async function runPhotoFallbackWebContext(visualAnalysis, photoContext, source) {
@@ -6533,15 +6645,20 @@ async function runPhotoFallbackWebContext(visualAnalysis, photoContext, source) 
   try {
     const recipeSearchSource = await extractRecipeSearchSource(query, [], { source });
     return {
-      matched_dish_name: visualAnalysis?.dish_candidates?.[0]?.name ?? photoContext?.dish_hint ?? null,
+      query,
+      matched_dish_name: query.replace(/\s+recipe$/i, ""),
       confidence: 0.45,
-      reference_urls: (recipeSearchSource?.recipe_sources ?? []).map((entry) => entry.url).filter(Boolean).slice(0, RECIPE_REFERENCE_MAX_SOURCES),
+      reference_urls: (recipeSearchSource?.recipe_sources ?? [])
+        .map((entry) => cleanURL(entry.canonical_url ?? entry.source_url ?? entry.url ?? null))
+        .filter(Boolean)
+        .slice(0, 4),
       ingredient_patterns: (recipeSearchSource?.ingredient_candidates ?? []).slice(0, 24),
       quantity_patterns: [],
-      technique_notes: (recipeSearchSource?.instruction_candidates ?? []).slice(0, 10),
+      technique_notes: (recipeSearchSource?.instruction_candidates ?? []).slice(0, 12),
       restaurant_context: photoContext?.coarse_place_context ?? null,
       cautions: ["Perplexity Sonar was unavailable; used Ounje web-reference fallback."],
       fallback: true,
+      search_queries: [query],
       search_methods: recipeSearchSource?.search_methods ?? [],
     };
   } catch (error) {
@@ -6555,6 +6672,7 @@ async function runPhotoFallbackWebContext(visualAnalysis, photoContext, source) 
       restaurant_context: photoContext?.coarse_place_context ?? null,
       cautions: [`Web-reference fallback failed: ${errorSummary(error).message}`],
       fallback: true,
+      search_queries: [query],
     };
   }
 }
@@ -6564,68 +6682,65 @@ async function runPhotoSonarContext(visualAnalysis, photoContext, source) {
     return runPhotoFallbackWebContext(visualAnalysis, photoContext, source);
   }
   const query = photoRecipeSearchQuery(visualAnalysis, photoContext);
-  const payload = {
-    model: PHOTO_RECIPE_SONAR_MODEL,
-    temperature: 0.1,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        schema: {
-          type: "object",
-          properties: {
-            matched_dish_name: { type: ["string", "null"] },
-            confidence: { type: "number" },
-            exact_match_supported: { type: "boolean" },
-            reference_urls: { type: "array", items: { type: "string" } },
-            ingredient_patterns: {},
-            quantity_patterns: {},
-            technique_notes: {},
-            restaurant_context: {},
-            cautions: { type: "array", items: { type: "string" } },
+  try {
+    const payload = {
+      model: PHOTO_RECIPE_SONAR_MODEL,
+      temperature: 0.1,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          schema: {
+            type: "object",
+            properties: {
+              matched_dish_name: { type: ["string", "null"] },
+              confidence: { type: "number" },
+              exact_match_supported: { type: "boolean" },
+              reference_urls: { type: "array", items: { type: "string" } },
+              ingredient_patterns: {},
+              quantity_patterns: {},
+              technique_notes: {},
+              restaurant_context: {},
+              cautions: { type: "array", items: { type: "string" } },
+            },
+            required: [
+              "matched_dish_name",
+              "confidence",
+              "exact_match_supported",
+              "reference_urls",
+              "ingredient_patterns",
+              "quantity_patterns",
+              "technique_notes",
+              "restaurant_context",
+              "cautions",
+            ],
           },
-          required: [
-            "matched_dish_name",
-            "confidence",
-            "exact_match_supported",
-            "reference_urls",
-            "ingredient_patterns",
-            "quantity_patterns",
-            "technique_notes",
-            "restaurant_context",
-            "cautions",
-          ],
         },
       },
-    },
-    messages: [
-      {
-        role: "system",
-        content: [
-          "You are Ounje's grounded food web researcher.",
-          "Search for restaurant, menu, and recipe evidence for the provided food query.",
-          "Do not search for JSON, schema, programming, or validation libraries.",
-          "Prefer exact restaurant/menu matches only if supported by a source.",
-          "If no source directly confirms the restaurant/menu item, say the restaurant match is not found; do not write that the restaurant serves the dish.",
-          "If exact match is unsupported, return similar recipe/menu patterns and mark exact_match_supported false.",
-          "Return food citations and ingredient/quantity patterns, not a final recipe.",
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: [
-          `Food search query: ${query}`,
-          JSON.stringify({
-            dish_hint: photoContext?.dish_hint ?? null,
-            coarse_place_context: photoContext?.coarse_place_context ?? null,
-            visual_analysis: visualAnalysis,
-          }),
-          "Return JSON with matched_dish_name, confidence, exact_match_supported, reference_urls, ingredient_patterns, quantity_patterns, technique_notes, restaurant_context, cautions.",
-        ].join("\n\n"),
-      },
-    ],
-  };
-  const startedAt = Date.now();
-  try {
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are Ounje's grounded food web researcher.",
+            "Search for recipe evidence for the likely dish from a food photo.",
+            "Do not search for JSON, schema, programming, or validation libraries.",
+            "Return ingredient/quantity patterns and cooking technique notes, not a final recipe.",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: [
+            `Food photo recipe search query: ${query}`,
+            JSON.stringify({
+              dish_hint: photoContext?.dish_hint ?? null,
+              coarse_place_context: photoContext?.coarse_place_context ?? null,
+              visual_analysis: visualAnalysis,
+            }),
+            "Return JSON with matched_dish_name, confidence, exact_match_supported, reference_urls, ingredient_patterns, quantity_patterns, technique_notes, restaurant_context, cautions.",
+          ].join("\n\n"),
+        },
+      ],
+    };
+    const startedAt = Date.now();
     const response = await fetch(PERPLEXITY_API_URL, {
       method: "POST",
       headers: {
@@ -6655,15 +6770,17 @@ async function runPhotoSonarContext(visualAnalysis, photoContext, source) {
     const rawContent = responsePayload?.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(rawContent.match(/\{[\s\S]*\}/)?.[0] ?? rawContent);
     return {
+      query,
       matched_dish_name: normalizeText(parsed?.matched_dish_name ?? "") || null,
       confidence: Number.isFinite(Number(parsed?.confidence)) ? Number(parsed.confidence) : 0.5,
-      reference_urls: Array.isArray(parsed?.reference_urls) ? parsed.reference_urls.map(cleanURL).filter(Boolean).slice(0, RECIPE_REFERENCE_MAX_SOURCES) : [],
-      ingredient_patterns: uniqueStrings(Array.isArray(parsed?.ingredient_patterns) ? parsed.ingredient_patterns : []),
-      quantity_patterns: uniqueStrings(Array.isArray(parsed?.quantity_patterns) ? parsed.quantity_patterns : []),
-      technique_notes: uniqueStrings(Array.isArray(parsed?.technique_notes) ? parsed.technique_notes : []),
+      reference_urls: Array.isArray(parsed?.reference_urls) ? parsed.reference_urls.map(cleanURL).filter(Boolean).slice(0, 2) : [],
+      ingredient_patterns: uniqueStrings(Array.isArray(parsed?.ingredient_patterns) ? parsed.ingredient_patterns : []).slice(0, 16),
+      quantity_patterns: uniqueStrings(Array.isArray(parsed?.quantity_patterns) ? parsed.quantity_patterns : []).slice(0, 10),
+      technique_notes: uniqueStrings(Array.isArray(parsed?.technique_notes) ? parsed.technique_notes : []).slice(0, 8),
       restaurant_context: normalizeText(parsed?.restaurant_context ?? "", 700) || null,
       cautions: uniqueStrings(Array.isArray(parsed?.cautions) ? parsed.cautions : []),
       fallback: false,
+      search_queries: [query],
     };
   } catch (error) {
     const fallback = await runPhotoFallbackWebContext(visualAnalysis, photoContext, source);
@@ -6778,11 +6895,13 @@ async function extractPhotoRecipeSource(request) {
       photo_meal_gate: mealGate,
       photo_visual_analysis: visualAnalysis,
       photo_sonar_context: sonarContext,
+      photo_search_queries: sonarContext?.search_queries ?? photoRecipeSearchQueries(visualAnalysis, photoContext),
       evidence_json: {
         photo_context: photoContext,
         meal_gate: mealGate,
         visual_analysis: visualAnalysis,
         sonar_context: sonarContext,
+        search_queries: sonarContext?.search_queries ?? photoRecipeSearchQueries(visualAnalysis, photoContext),
         hero_image_url: heroImageURL,
       },
     },
@@ -8215,26 +8334,6 @@ function photoRecipeFallbackDraft(source) {
   };
 }
 
-function validatePhotoRecipeStructurally(recipe, source) {
-  const issues = [];
-  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
-  const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
-  if (!normalizeText(recipe?.title ?? "")) issues.push("missing_title");
-  if (ingredients.length < 4) issues.push("too_few_ingredients");
-  if (steps.length < 3) issues.push("too_few_steps");
-  const ingredientNames = ingredients.map((entry) => normalizeText(entry?.display_name ?? entry?.name ?? "", 80).toLowerCase()).filter(Boolean);
-  const stepText = steps.map((entry) => normalizeText(entry?.text ?? entry?.description ?? entry ?? "", 600).toLowerCase()).join("\n");
-  const matchedIngredientCount = ingredientNames.filter((name) => name.length > 2 && stepText.includes(name.split(/\s+/).slice(-1)[0])).length;
-  if (ingredientNames.length >= 4 && matchedIngredientCount < 2) issues.push("steps_do_not_reference_ingredients");
-  if (ingredientNames.some((name) => /^(ingredient|extra protein|protein|vegetable|sauce|seasoning)$/i.test(name))) {
-    issues.push("placeholder_ingredient");
-  }
-  if (/exact/i.test(recipe?.description ?? "") && !source?.photo_sonar_context?.reference_urls?.length) {
-    issues.push("unsupported_exact_source_claim");
-  }
-  return uniqueStrings(issues);
-}
-
 async function synthesizeRecipeFromPhoto(source, { jobID = null } = {}) {
   if (!source?.photo_meal_gate?.is_meal) {
     return {
@@ -8264,7 +8363,10 @@ async function synthesizeRecipeFromPhoto(source, { jobID = null } = {}) {
       "Create a cookable Ounje recipe from the photo analysis and grounded web evidence.",
       "Use web references for mainstream quantities when the photo cannot show amounts.",
       "Keep uncertainty in provenance, but make the recipe useful.",
-      "Do not add ingredients unsupported by the photo, dish type, references, or basic pantry/cooking necessities.",
+      "Use the photo to identify the likely dish, not as a strict ingredient checklist.",
+      "Allow normal hidden ingredients for the likely dish when supported by dish candidates, references, or standard cooking practice.",
+      "Avoid duplicate ingredient identities and avoid ingredients that clearly contradict the image/evidence.",
+      "Do not include both a prepared component label and the underlying ingredients. Example: use ground beef plus tomato ingredients, not an extra 'meat sauce' row.",
       "Do not claim this is an exact restaurant recipe unless a cited source supports that exact match.",
       "Return strict JSON with recipe, quality_flags, review_reason, and provenance_flags.",
       "",
@@ -8323,33 +8425,14 @@ async function synthesizeRecipeFromPhoto(source, { jobID = null } = {}) {
   };
   let parsed = await makeRequest();
   let recipe = parsed.recipe ?? parsed;
-  let issues = validatePhotoRecipeStructurally(recipe, source);
-  let repaired = false;
-  if (issues.length) {
-    const repairedParsed = await makeRequest({ repairIssues: issues, previousRecipe: recipe });
-    const repairedRecipe = repairedParsed.recipe ?? repairedParsed;
-    const repairedIssues = validatePhotoRecipeStructurally(repairedRecipe, source);
-    if (repairedIssues.length < issues.length) {
-      parsed = repairedParsed;
-      recipe = repairedRecipe;
-      issues = repairedIssues;
-      repaired = true;
-    }
-  }
+  const issues = [];
   if (jobID) {
     await storeArtifact(jobID, {
       artifact_type: "photo_recipe_cleanup",
       content_type: "application/json",
       source_url: source.source_url ?? null,
-      raw_json: compactJSON({ parsed, validation_issues: issues, repaired }),
-      metadata: { repaired, issue_count: issues.length, model: PHOTO_RECIPE_CLEANUP_MODEL },
-    }).catch(() => {});
-    await storeArtifact(jobID, {
-      artifact_type: "photo_final_validator",
-      content_type: "application/json",
-      source_url: source.source_url ?? null,
-      raw_json: compactJSON({ issues, repaired, passed: !issues.length }),
-      metadata: { passed: !issues.length, issue_count: issues.length },
+      raw_json: compactJSON({ parsed }),
+      metadata: { model: PHOTO_RECIPE_CLEANUP_MODEL },
     }).catch(() => {});
   }
   return {
@@ -8361,12 +8444,8 @@ async function synthesizeRecipeFromPhoto(source, { jobID = null } = {}) {
       ...(source.photo_context?.coarse_place_context ? ["restaurant_clone_inferred"] : []),
       ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
       ...(Array.isArray(parsed.provenance_flags) ? parsed.provenance_flags : []),
-      ...(repaired ? ["photo_cleanup_repaired"] : []),
-      ...(issues.length ? ["needs_review", "photo_final_validator_failed"] : ["photo_final_validator_passed"]),
     ]),
-    review_reason: issues.length
-      ? `Photo recipe needs review: ${issues.join(", ")}.`
-      : parsed.review_reason ?? null,
+    review_reason: parsed.review_reason ?? null,
   };
 }
 
@@ -8560,6 +8639,22 @@ const LOCAL_MACRO_PROFILES = [
     tablespoonGrams: 14.5,
   },
   {
+    pattern: /\b(chicken breast|chicken breasts|boneless skinless chicken|chicken thigh|chicken thighs|chicken)\b/,
+    per100g: { calories_kcal: 165, protein_g: 31, carbs_g: 0, fat_g: 3.6 },
+  },
+  {
+    pattern: /\b(salmon)\b/,
+    per100g: { calories_kcal: 208, protein_g: 20, carbs_g: 0, fat_g: 13 },
+  },
+  {
+    pattern: /\b(shrimp|prawn|prawns)\b/,
+    per100g: { calories_kcal: 99, protein_g: 24, carbs_g: 0.2, fat_g: 0.3 },
+  },
+  {
+    pattern: /\b(tofu)\b/,
+    per100g: { calories_kcal: 144, protein_g: 17, carbs_g: 3, fat_g: 9 },
+  },
+  {
     pattern: /\b(ground beef|beef mince|minced beef)\b/,
     per100g: { calories_kcal: 250, protein_g: 17.2, carbs_g: 0, fat_g: 19.6 },
   },
@@ -8725,10 +8820,10 @@ function fillRecipeMacrosWithLocalEstimate(normalizedRecipe) {
 
   return {
     ...normalizedRecipe,
-    calories_kcal: Number.isFinite(normalizedRecipe.calories_kcal) ? normalizedRecipe.calories_kcal : estimate.calories_kcal,
-    protein_g: Number.isFinite(normalizedRecipe.protein_g) ? normalizedRecipe.protein_g : estimate.protein_g,
-    carbs_g: Number.isFinite(normalizedRecipe.carbs_g) ? normalizedRecipe.carbs_g : estimate.carbs_g,
-    fat_g: Number.isFinite(normalizedRecipe.fat_g) ? normalizedRecipe.fat_g : estimate.fat_g,
+    calories_kcal: isFiniteMacroValue(normalizedRecipe.calories_kcal) ? Number(normalizedRecipe.calories_kcal) : estimate.calories_kcal,
+    protein_g: isFiniteMacroValue(normalizedRecipe.protein_g) ? Number(normalizedRecipe.protein_g) : estimate.protein_g,
+    carbs_g: isFiniteMacroValue(normalizedRecipe.carbs_g) ? Number(normalizedRecipe.carbs_g) : estimate.carbs_g,
+    fat_g: isFiniteMacroValue(normalizedRecipe.fat_g) ? Number(normalizedRecipe.fat_g) : estimate.fat_g,
     est_calories_text: normalizedRecipe.est_calories_text ?? estimate.est_calories_text,
   };
 }
@@ -8738,10 +8833,10 @@ function fillRecipeMacrosWithLocalEstimate(normalizedRecipe) {
 // estimating per-serving calories/protein/carbs/fat from the finalized ingredient list.
 async function maybeFillMissingMacros(normalizedRecipe) {
   const missingAny =
-    !Number.isFinite(normalizedRecipe.calories_kcal)
-    || !Number.isFinite(normalizedRecipe.protein_g)
-    || !Number.isFinite(normalizedRecipe.carbs_g)
-    || !Number.isFinite(normalizedRecipe.fat_g);
+    !isFiniteMacroValue(normalizedRecipe.calories_kcal)
+    || !isFiniteMacroValue(normalizedRecipe.protein_g)
+    || !isFiniteMacroValue(normalizedRecipe.carbs_g)
+    || !isFiniteMacroValue(normalizedRecipe.fat_g);
   if (!missingAny) return normalizedRecipe;
   return fillRecipeMacrosWithLocalEstimate(normalizedRecipe);
 }
@@ -8763,6 +8858,15 @@ function isFiniteMacroValue(value) {
     && Number.isFinite(Number(value));
 }
 
+function parseCaloriesKcalFromText(value) {
+  const raw = normalizeText(value).toLowerCase();
+  if (!raw) return null;
+  const match = raw.match(/(?:approximately\s*)?(\d{2,4}(?:\.\d+)?)\s*(?:kcal|calories?|cals?)\b/);
+  if (!match) return null;
+  const calories = Number(match[1]);
+  return Number.isFinite(calories) && calories > 0 ? Math.round(calories) : null;
+}
+
 function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
   if (hasCompleteDisplayMacros(normalizedRecipe)) return normalizedRecipe;
 
@@ -8782,6 +8886,8 @@ function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
     fallback = { calories_kcal: 360, protein_g: /chicken|salmon|tuna|beef|tofu|egg/.test(text) ? 28 : 14, carbs_g: 26, fat_g: 18 };
   } else if (/brownie|cookie|cake|dessert|sweet|pancake|waffle/.test(text)) {
     fallback = { calories_kcal: 330, protein_g: /protein|yogurt|egg/.test(text) ? 14 : 7, carbs_g: 42, fat_g: 13 };
+  } else if (/chicken|turkey|salmon|shrimp|prawn|beef|pork|tofu|skewer|kebab|meatball/.test(text)) {
+    fallback = { calories_kcal: 430, protein_g: 34, carbs_g: 14, fat_g: 22 };
   } else if (/bowl|rice|pasta|noodle|wrap|sandwich|burger|taco|burrito/.test(text)) {
     fallback = { calories_kcal: 520, protein_g: 30, carbs_g: 58, fat_g: 18 };
   } else if (/soup|stew|chili/.test(text)) {
@@ -8790,9 +8896,16 @@ function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
     fallback = { calories_kcal: 450, protein_g: 36, carbs_g: 42, fat_g: 14 };
   }
 
+  const parsedCaloriesKcal = parseCaloriesKcalFromText(normalizedRecipe?.est_calories_text);
   const caloriesKcal = isFiniteMacroValue(normalizedRecipe?.calories_kcal)
     ? Number(normalizedRecipe.calories_kcal)
-    : fallback.calories_kcal;
+    : parsedCaloriesKcal ?? fallback.calories_kcal;
+  const hadParsedCalories = !isFiniteMacroValue(normalizedRecipe?.calories_kcal)
+    && parsedCaloriesKcal != null;
+  const qualityFlags = uniqueStrings([
+    ...(Array.isArray(normalizedRecipe?.quality_flags) ? normalizedRecipe.quality_flags : []),
+    hadParsedCalories ? "nutrition_calorie_text_parsed" : "nutrition_display_fallback",
+  ]);
   return {
     ...normalizedRecipe,
     calories_kcal: caloriesKcal,
@@ -8800,6 +8913,7 @@ function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
     carbs_g: isFiniteMacroValue(normalizedRecipe?.carbs_g) ? Number(normalizedRecipe.carbs_g) : fallback.carbs_g,
     fat_g: isFiniteMacroValue(normalizedRecipe?.fat_g) ? Number(normalizedRecipe.fat_g) : fallback.fat_g,
     est_calories_text: normalizeText(normalizedRecipe?.est_calories_text) || `${caloriesKcal} kcal per serving (estimate)`,
+    quality_flags: qualityFlags,
   };
 }
 
@@ -8932,7 +9046,7 @@ function sourceCaptionLooksLikeRecipeBody(description) {
 
 function compactRecipeDescription(recipe) {
   const title = normalizeText(recipe?.title);
-  if (!title) return normalizeText(recipe?.description, 220) || null;
+  if (!title) return limitText(recipe?.description, 220) || null;
 
   const ingredientNames = Array.isArray(recipe?.ingredients)
     ? recipe.ingredients.map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name).toLowerCase()).filter(Boolean)
@@ -8973,17 +9087,162 @@ function compactRecipeDescription(recipe) {
   return `${title} is a homemade${typePhrase} recipe${builtAround}. It has a concise ingredient list and step-by-step cooking flow.`;
 }
 
-function normalizeRecipeDisplayFields(recipe) {
+function recipeIngredientDisplayDedupeKey(name = "") {
+  const key = normalizeKey(name);
+  if (!key) return "";
+  if (/\b(parmesan|parmigiano)\b/.test(key)) return "parmesan_cheese";
+  if (/\b(fresh basil|dried basil|basil leaves|basil)\b/.test(key)) return "basil";
+  if (/\b(crushed tomatoes|canned tomatoes|tomato sauce|marinara|pomodoro|red sauce|tomatoes?|tomato)\b/.test(key)) return "tomato";
+  if (/\b(meat sauce|ground meat|minced meat|ground beef|beef mince|minced beef)\b/.test(key)) return "ground_meat";
+  if (/\b(spaghetti|linguine|fettuccine|pasta)\b/.test(key)) return "pasta";
+  return normalizeIngredientMatchSignature(key);
+}
+
+function recipeIngredientDeduplicationScore(ingredient = {}) {
+  const name = normalizeText(ingredient.display_name ?? ingredient.name ?? "");
+  const key = normalizeKey(name);
+  const quantity = normalizeText(ingredient.quantity_text ?? ingredient.quantity ?? "");
+  let score = 0;
+  if (quantity && !/^to taste$/i.test(quantity)) score += 4;
+  if (/\b(fresh|canned|crushed|ground|grated|whole|large|small|medium)\b/.test(key)) score += 2;
+  if (/\b(meat sauce|ground meat|tomato$|^tomato$|^basil$)\b/.test(key)) score -= 3;
+  if (/\bor\b/.test(key)) score -= 1;
+  score += Math.min(4, name.split(/\s+/).filter(Boolean).length);
+  return score;
+}
+
+function dedupeRecipeIngredientsForDisplay(ingredients = []) {
+  const byKey = new Map();
+  const originalNames = [];
+  let changed = false;
+  for (const ingredient of ingredients) {
+    const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
+    if (!name) continue;
+    const dedupeKey = recipeIngredientDisplayDedupeKey(name);
+    originalNames.push({ dedupeKey, name });
+    const normalized = {
+      ...ingredient,
+      display_name: name,
+      quantity_text: normalizeText(ingredient?.quantity_text ?? ingredient?.quantity ?? "") || null,
+    };
+    const existing = byKey.get(dedupeKey);
+    if (!existing) {
+      byKey.set(dedupeKey, normalized);
+      continue;
+    }
+    changed = true;
+    const preferred = recipeIngredientDeduplicationScore(normalized) >= recipeIngredientDeduplicationScore(existing)
+      ? normalized
+      : existing;
+    const fallback = preferred === normalized ? existing : normalized;
+    byKey.set(dedupeKey, {
+      ...preferred,
+      quantity_text: normalizeText(preferred.quantity_text) || normalizeText(fallback.quantity_text) || null,
+    });
+  }
+  const replacements = new Map();
+  for (const original of originalNames) {
+    const preferred = byKey.get(original.dedupeKey);
+    const preferredName = normalizeText(preferred?.display_name ?? "");
+    if (preferredName && normalizeKey(preferredName) !== normalizeKey(original.name)) {
+      replacements.set(normalizeKey(original.name), preferredName);
+      changed = true;
+    }
+  }
+  return {
+    ingredients: Array.from(byKey.values()),
+    replacements,
+    changed: changed || byKey.size !== ingredients.length,
+  };
+}
+
+function cleanupStepIngredientReferences(steps = [], ingredients = [], replacements = new Map()) {
+  if (!Array.isArray(steps) || !steps.length || !Array.isArray(ingredients) || !ingredients.length) {
+    return { steps, changed: false };
+  }
+
+  const ingredientByNameKey = new Map();
+  const ingredientByDedupeKey = new Map();
+  for (const ingredient of ingredients) {
+    const displayName = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
+    if (!displayName) continue;
+    ingredientByNameKey.set(normalizeKey(displayName), ingredient);
+    ingredientByDedupeKey.set(recipeIngredientDisplayDedupeKey(displayName), ingredient);
+  }
+
+  let changed = false;
+  const cleanedSteps = steps.map((step) => {
+    if (!Array.isArray(step?.ingredients)) return step;
+    const cleanedRefs = [];
+    const seen = new Set();
+    for (const ref of step.ingredients) {
+      const rawName = normalizeText(ref?.display_name ?? ref?.name ?? ref?.ingredient ?? ref);
+      if (!rawName) continue;
+      const replacementName = replacements.get(normalizeKey(rawName)) ?? rawName;
+      const matchedIngredient = ingredientByNameKey.get(normalizeKey(replacementName))
+        ?? ingredientByDedupeKey.get(recipeIngredientDisplayDedupeKey(replacementName));
+      const displayName = normalizeText(matchedIngredient?.display_name ?? replacementName);
+      if (!displayName) continue;
+      const refKey = normalizeKey(displayName);
+      if (seen.has(refKey)) {
+        changed = true;
+        continue;
+      }
+      seen.add(refKey);
+      if (normalizeKey(displayName) !== normalizeKey(rawName)) changed = true;
+      const baseRef = ref && typeof ref === "object" ? ref : {};
+      cleanedRefs.push({
+        ...baseRef,
+        display_name: displayName,
+        quantity_text: normalizeText(baseRef.quantity_text ?? baseRef.quantity ?? matchedIngredient?.quantity_text ?? "") || null,
+      });
+    }
+    if (cleanedRefs.length !== step.ingredients.length) changed = true;
+    return {
+      ...step,
+      ingredients: cleanedRefs,
+    };
+  });
+
+  return {
+    steps: cleanedSteps,
+    changed,
+  };
+}
+
+function deterministicRecipeCleanup(recipe) {
   if (!recipe || typeof recipe !== "object") return recipe;
   const qualityFlags = uniqueStrings(Array.isArray(recipe.quality_flags) ? recipe.quality_flags : []);
   let nextRecipe = { ...recipe };
+  let ingredientReplacements = new Map();
+
+  if (Array.isArray(nextRecipe.ingredients)) {
+    const deduped = dedupeRecipeIngredientsForDisplay(nextRecipe.ingredients);
+    if (deduped.changed) {
+      nextRecipe.ingredients = deduped.ingredients;
+      ingredientReplacements = deduped.replacements;
+      qualityFlags.push("ingredient_aliases_deduped");
+    }
+  }
+
+  if (Array.isArray(nextRecipe.steps) && Array.isArray(nextRecipe.ingredients)) {
+    const cleanedSteps = cleanupStepIngredientReferences(
+      nextRecipe.steps,
+      nextRecipe.ingredients,
+      ingredientReplacements
+    );
+    if (cleanedSteps.changed) {
+      nextRecipe.steps = cleanedSteps.steps;
+      qualityFlags.push("step_ingredient_refs_cleaned");
+    }
+  }
 
   const currentDescription = normalizeText(nextRecipe.description);
   if (!currentDescription || sourceCaptionLooksLikeRecipeBody(currentDescription)) {
     nextRecipe.description = compactRecipeDescription(nextRecipe);
     qualityFlags.push("description_compacted");
   } else {
-    nextRecipe.description = normalizeText(currentDescription, 220);
+    nextRecipe.description = limitText(currentDescription, 220);
   }
 
   const timing = inferRecipeTimingFromSteps(nextRecipe);
@@ -9008,8 +9267,12 @@ function normalizeRecipeDisplayFields(recipe) {
   };
 }
 
+function normalizeRecipeDisplayFields(recipe) {
+  return deterministicRecipeCleanup(recipe);
+}
+
 async function guaranteeRecipeDisplayMacros(normalizedRecipe) {
-  let nextRecipe = normalizeRecipeDisplayFields(normalizedRecipe ?? {});
+  let nextRecipe = deterministicRecipeCleanup(normalizedRecipe ?? {});
   nextRecipe = await maybeFillMissingMacros(nextRecipe);
   if (!hasCompleteDisplayMacros(nextRecipe)) {
     nextRecipe = fillRecipeMacrosWithDisplayFallback(nextRecipe);
@@ -9025,11 +9288,17 @@ function missingDisplayMacroPatch(existingRecipe, candidateRecipe) {
       patch[field] = Number(candidateRecipe[field]);
     }
   }
-  if (!normalizeText(existingRecipe?.est_calories_text) && normalizeText(candidateRecipe?.est_calories_text)) {
+  if (
+    normalizeText(candidateRecipe?.est_calories_text)
+    && (
+      !normalizeText(existingRecipe?.est_calories_text)
+      || Object.prototype.hasOwnProperty.call(patch, "calories_kcal")
+    )
+  ) {
     patch.est_calories_text = normalizeText(candidateRecipe.est_calories_text);
   }
   if (sourceCaptionLooksLikeRecipeBody(existingRecipe?.description) && normalizeText(displayCandidate.description)) {
-    patch.description = normalizeText(displayCandidate.description, 220);
+    patch.description = limitText(displayCandidate.description, 220);
   }
   const existingHasValidPrep = Number.isFinite(Number(existingRecipe?.prep_time_minutes)) && Number(existingRecipe.prep_time_minutes) > 0;
   const existingHasValidCook = Number.isFinite(Number(existingRecipe?.cook_time_minutes)) && Number(existingRecipe.cook_time_minutes) > 0;
@@ -9278,17 +9547,21 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     evidenceBundle: source.source_provenance_json ?? null,
   });
 
-  return {
-    normalized_recipe: {
-      ...normalized,
-      source_provenance_json: sourceProvenance,
-    },
-    quality_flags: uniqueStrings([
+  const finalNormalizedRecipe = await guaranteeRecipeDisplayMacros({
+    ...normalized,
+    source_provenance_json: sourceProvenance,
+  });
+  const finalQualityFlags = uniqueStrings([
       ...(modelResult.quality_flags ?? []),
       ...(usedConceptFallback ? ["concept_prompt_fallback"] : []),
       ...(secondaryFillApplied ? ["secondary_fill_applied"] : []),
       ...(assessment.quality_flags ?? []),
-    ]),
+      ...(Array.isArray(finalNormalizedRecipe.quality_flags) ? finalNormalizedRecipe.quality_flags : []),
+    ]);
+
+  return {
+    normalized_recipe: finalNormalizedRecipe,
+    quality_flags: finalQualityFlags,
     confidence_score: assessment.confidence_score,
     review_state: assessment.review_state,
     review_reason: modelResult.review_reason ?? assessment.review_reason,
@@ -9390,7 +9663,7 @@ export async function fetchRecipeIngestionJob(jobID) {
     throw new Error(`Ingestion job ${jobID} could not be found.`);
   }
 
-  const [recipe, recipeDetail] = job.recipe_id
+  const [recipe, rawRecipeDetail] = job.recipe_id
     ? await Promise.all([
         fetchRecipeCardProjection(job.recipe_id).catch(() => null),
         ["saved", "needs_review", "draft"].includes(normalizeText(job.status))
@@ -9398,6 +9671,7 @@ export async function fetchRecipeIngestionJob(jobID) {
           : Promise.resolve(null),
       ])
     : [null, null];
+  const recipeDetail = await ensurePersistedRecipeDisplayMacros(job.recipe_id, rawRecipeDetail).catch(() => rawRecipeDetail);
   return formatJobResponse(job, {
     recipe,
     recipe_detail: recipeDetail,
@@ -10021,7 +10295,10 @@ export {
   RECIPE_INGESTION_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
   PHOTO_MEAL_GATE_MODEL,
+  assessRecipeLikelihood,
+  buildPhotoImportDedupeKey,
   maybeGenerateImportedRecipeImage,
+  photoRecipeSearchQueries,
   buildFinalRecipeValidationIssues,
   buildDedupeKey,
   canonicalImportIdentityForURL,

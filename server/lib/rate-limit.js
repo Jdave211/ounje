@@ -99,9 +99,10 @@ export function createRateLimit({ name, windowSeconds, max, keyFn, skipIfDisable
       if (!client) return next();
 
       const current = await withTimeout(client.incr(redisKey), DEFAULT_OPERATION_TIMEOUT_MS, "ratelimit_incr");
-      if (current === 1) {
-        // Best-effort TTL; if EXPIRE fails the key just lingers until next IDLE.
-        void withTimeout(
+      if (current === 1 || await withTimeout(client.ttl(redisKey), DEFAULT_OPERATION_TIMEOUT_MS, "ratelimit_ttl").catch(() => -2) < 0) {
+        // Always enforce expiry. If the first fire-and-forget EXPIRE is lost
+        // during process shutdown, the next hit repairs the bucket TTL.
+        await withTimeout(
           client.expire(redisKey, windowSeconds),
           DEFAULT_OPERATION_TIMEOUT_MS,
           "ratelimit_expire"

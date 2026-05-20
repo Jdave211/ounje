@@ -9,13 +9,16 @@ const {
   RECIPE_IMPORT_COMPLETION_MODEL,
   RECIPE_INGESTION_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
+  assessRecipeLikelihood,
   buildDedupeKey,
+  buildPhotoImportDedupeKey,
   canonicalImportIdentityForURL,
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
   isCanonicalCacheableSource,
   isOpenAITerminalModelError,
   isResumableIngestionJob,
+  photoRecipeSearchQueries,
   recipeNeedsCompletionPass,
   recipeNeedsSecondaryFill,
   shouldProcessImportInline,
@@ -58,9 +61,70 @@ assert.equal(
   })
 );
 
+assert.equal(
+  buildPhotoImportDedupeKey([
+    {
+      kind: "image",
+      storage_bucket: "recipe-import-media",
+      storage_path: "users/u/photo-imports/a/source.jpg",
+    },
+  ]),
+  buildPhotoImportDedupeKey([
+    {
+      kind: "image",
+      storage_bucket: "recipe-import-media",
+      storage_path: "users/u/photo-imports/a/source.jpg",
+    },
+  ])
+);
+assert.equal(
+  buildPhotoImportDedupeKey([{ kind: "image", data_url: "data:image/jpeg;base64,abc123" }]),
+  buildPhotoImportDedupeKey([{ kind: "image", data_url: "data:image/jpeg;base64,abc123" }])
+);
+
 assert.equal(isOpenAITerminalModelError({ status: 400, message: "The model does not exist" }), true);
 assert.equal(isOpenAITerminalModelError({ status: 429, message: "rate limit" }), false);
 assert.equal(isOpenAITerminalModelError({ status: 500, message: "server error" }), false);
+
+const acceptedPhotoGate = await assessRecipeLikelihood({
+  source_type: "media_image",
+  platform: "photo",
+  title: "Chicken skewers",
+  photo_meal_gate: { is_meal: true, confidence: 0.64 },
+  ingredient_candidates: [],
+  instruction_candidates: [],
+});
+assert.equal(acceptedPhotoGate.is_recipe, true);
+assert.equal(acceptedPhotoGate.method, "photo_meal_gate_accept");
+
+const rejectedPhotoGate = await assessRecipeLikelihood({
+  source_type: "media_image",
+  platform: "photo",
+  title: "Receipt",
+  photo_meal_gate: { is_meal: false, confidence: 0.91, reject_reason: "No visible food." },
+  ingredient_candidates: [],
+  instruction_candidates: [],
+});
+assert.equal(rejectedPhotoGate.is_recipe, false);
+assert.equal(rejectedPhotoGate.method, "photo_meal_gate_reject");
+
+const photoQueryFromDishCandidate = photoRecipeSearchQueries({
+  dish_candidates: ["spaghetti with meat sauce"],
+  visible_ingredients: ["spaghetti", "tomato sauce", "parmesan", "basil"],
+}, {});
+assert.equal(photoQueryFromDishCandidate[0], "spaghetti with meat sauce recipe");
+assert.equal(
+  photoRecipeSearchQueries({
+    dish_candidates: [{ name: "Pasta al Pomodoro with Basil and Parmesan" }],
+  }, {})[0],
+  "Pasta al Pomodoro with Basil and Parmesan recipe"
+);
+assert.equal(
+  photoRecipeSearchQueries({
+    visible_ingredients: ["spaghetti", "tomato sauce", "parmesan", "basil"],
+  }, {})[0],
+  "spaghetti tomato sauce parmesan basil recipe"
+);
 
 assert.equal(isResumableIngestionJob({
   status: "failed",
@@ -149,5 +213,88 @@ const macroGuaranteed = await guaranteeRecipeDisplayMacros({
 });
 assert.equal(hasCompleteDisplayMacros(macroGuaranteed), true);
 assert.equal(Number.isFinite(macroGuaranteed.calories_kcal), true);
+
+const textOnlyCaloriesGuaranteed = await guaranteeRecipeDisplayMacros({
+  title: "Garlic Parmesan Chicken Skewers",
+  description: "Garlic parmesan chicken skewers cooked in an air fryer.",
+  category: "Dinner",
+  recipe_type: "Dinner",
+  main_protein: "Chicken",
+  cook_method: "air fryer",
+  servings_text: "4 servings",
+  servings_count: 4,
+  est_calories_text: "Approximately 420 kcal per serving (estimate)",
+  calories_kcal: null,
+  protein_g: null,
+  carbs_g: null,
+  fat_g: null,
+  ingredients: [
+    { display_name: "Chicken breast", quantity_text: "2 lb" },
+    { display_name: "Olive oil", quantity_text: "2 tbsp" },
+    { display_name: "Grated parmesan cheese", quantity_text: "1/4 cup" },
+    { display_name: "Light mayo", quantity_text: "2 tbsp" },
+  ],
+  steps: [
+    { text: "Season the chicken and thread onto skewers." },
+    { text: "Air fry until cooked through, then brush with garlic parmesan sauce." },
+  ],
+});
+assert.equal(hasCompleteDisplayMacros(textOnlyCaloriesGuaranteed), true);
+assert.equal(Number.isFinite(textOnlyCaloriesGuaranteed.calories_kcal), true);
+assert.equal(Number.isFinite(textOnlyCaloriesGuaranteed.protein_g), true);
+assert.equal(Number.isFinite(textOnlyCaloriesGuaranteed.carbs_g), true);
+assert.equal(Number.isFinite(textOnlyCaloriesGuaranteed.fat_g), true);
+
+const parsedCaloriesGuaranteed = await guaranteeRecipeDisplayMacros({
+  title: "Mystery tray bake",
+  servings_text: "4 servings",
+  servings_count: 4,
+  est_calories_text: "Approximately 420 kcal per serving (estimate)",
+  ingredients: [
+    { display_name: "Prepared filling", quantity_text: null },
+    { display_name: "Prepared sauce", quantity_text: null },
+  ],
+  steps: [
+    { text: "Assemble and bake until hot." },
+  ],
+});
+assert.equal(hasCompleteDisplayMacros(parsedCaloriesGuaranteed), true);
+assert.equal(parsedCaloriesGuaranteed.calories_kcal, 420);
+
+const dedupedPhotoIngredients = await guaranteeRecipeDisplayMacros({
+  title: "Spaghetti with meat sauce",
+  servings_text: "4 servings",
+  servings_count: 4,
+  ingredients: [
+    { display_name: "ground beef", quantity_text: "500 g" },
+    { display_name: "meat sauce", quantity_text: "400 g" },
+    { display_name: "canned tomatoes", quantity_text: "400 g" },
+    { display_name: "tomato", quantity_text: "400 g" },
+    { display_name: "fresh basil", quantity_text: "few leaves" },
+    { display_name: "basil", quantity_text: "few leaves" },
+    { display_name: "parmesan cheese, grated", quantity_text: "to serve" },
+    { display_name: "parmesan cheese", quantity_text: "to serve" },
+  ],
+  steps: [
+    {
+      text: "Brown the ground beef, simmer with tomatoes, and serve over pasta with basil and parmesan.",
+      ingredients: [
+        { display_name: "meat sauce", quantity_text: "400 g" },
+        { display_name: "ground meat", quantity_text: null },
+        { display_name: "basil", quantity_text: "few leaves" },
+        { display_name: "fresh basil", quantity_text: "few leaves" },
+        { display_name: "parmesan cheese", quantity_text: "to serve" },
+      ],
+    },
+  ],
+});
+assert.deepEqual(
+  dedupedPhotoIngredients.ingredients.map((ingredient) => ingredient.display_name),
+  ["ground beef", "canned tomatoes", "fresh basil", "parmesan cheese, grated"]
+);
+assert.deepEqual(
+  dedupedPhotoIngredients.steps[0].ingredients.map((ingredient) => ingredient.display_name),
+  ["ground beef", "fresh basil", "parmesan cheese, grated"]
+);
 
 console.log("recipe ingestion cost guard tests passed");
