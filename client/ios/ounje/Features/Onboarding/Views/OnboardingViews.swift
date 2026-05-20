@@ -2631,7 +2631,7 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func revealSolutionPage() {
-        let stepRawValue = currentStep.rawValue
+        let stepRawValue = currentStep.storedValue
         let shouldAutoAdvance = stepTransitionDirection >= 0
         solutionRevealTask?.cancel()
 
@@ -3285,7 +3285,7 @@ struct FirstLoginOnboardingView: View {
 
     private func persistDraftLocally() {
         guard !currentStep.isAutoTransition else { return }
-        store.saveOnboardingDraft(draftProfile, step: currentStep.rawValue)
+        store.saveOnboardingDraft(draftProfile, step: currentStep.storedValue)
     }
 
     private func persistDraftForResume(step: SetupStep) {
@@ -3296,7 +3296,7 @@ struct FirstLoginOnboardingView: View {
     private func persistDraft(step: SetupStep? = nil) {
         let profile = draftProfile
         let resolvedStep = step ?? currentStep
-        store.saveOnboardingDraft(profile, step: resolvedStep.rawValue)
+        store.saveOnboardingDraft(profile, step: resolvedStep.storedValue)
 
         guard !store.isOnboarded, let session = store.authSession else { return }
         Task(priority: .utility) {
@@ -3306,7 +3306,7 @@ struct FirstLoginOnboardingView: View {
                 displayName: profile.trimmedPreferredName ?? session.displayName,
                 authProvider: session.provider,
                 onboarded: false,
-                lastOnboardingStep: resolvedStep.rawValue,
+                lastOnboardingStep: resolvedStep.storedValue,
                 profile: profile,
                 accessToken: session.accessToken
             )
@@ -3391,6 +3391,11 @@ struct FirstLoginOnboardingView: View {
         // (TikTok / Instagram / photos / links). No ingestion work runs here.
         case shareImport = 17
 
+        // Store a versioned step number instead of the enum raw value. The raw
+        // values contain retired onboarding pages and are kept only so older
+        // profile rows can still be decoded safely.
+        private static let currentStorageBase = 100
+
         static var allCases: [SetupStep] {
             [
                 .identity,
@@ -3411,11 +3416,15 @@ struct FirstLoginOnboardingView: View {
         }
 
         static var completedRawValue: Int {
-            Self.allCases.last?.rawValue ?? SetupStep.address.rawValue
+            Self.allCases.last?.storedValue ?? currentStorageBase
         }
 
         var index: Int {
             Self.allCases.firstIndex(of: self) ?? 0
+        }
+
+        var storedValue: Int {
+            Self.currentStorageBase + index + 1
         }
 
         var title: String {
@@ -3633,14 +3642,21 @@ struct FirstLoginOnboardingView: View {
         }
 
         static func resumeStep(from rawValue: Int) -> SetupStep {
-            guard rawValue >= SetupStep.identity.rawValue else { return .identity }
-            let maxActiveRawValue = Self.allCases.map(\.rawValue).max() ?? SetupStep.address.rawValue
-            let clampedValue = min(rawValue, maxActiveRawValue)
-            if let exactStep = SetupStep(rawValue: clampedValue),
-               Self.allCases.contains(exactStep) {
-                return exactStep
+            guard rawValue > 0 else { return .identity }
+
+            if let currentStep = step(forCurrentStoredValue: rawValue) {
+                return currentStep
             }
-            return Self.allCases.first(where: { $0.rawValue > clampedValue }) ?? .identity
+
+            if let legacyStep = legacyStep(for: rawValue) {
+                return legacyStep
+            }
+
+            if rawValue > completedRawValue {
+                return Self.allCases.last ?? .identity
+            }
+
+            return .identity
         }
 
         static func hasReached(_ step: SetupStep, storedRawValue: Int) -> Bool {
@@ -3652,21 +3668,71 @@ struct FirstLoginOnboardingView: View {
             let rhsIndex = orderedIndex(for: rhs)
 
             if lhsIndex == rhsIndex {
-                return max(lhs, rhs)
+                return normalizedStoredValue(for: lhsIndex, fallback: max(lhs, rhs))
             }
 
-            return lhsIndex > rhsIndex ? lhs : rhs
+            let winningIndex = max(lhsIndex, rhsIndex)
+            return normalizedStoredValue(for: winningIndex, fallback: lhsIndex > rhsIndex ? lhs : rhs)
         }
 
         private static func orderedIndex(for rawValue: Int) -> Int {
-            guard rawValue >= SetupStep.identity.rawValue else { return -1 }
+            guard rawValue > 0 else { return -1 }
 
-            if let exactStep = SetupStep(rawValue: rawValue),
-               let exactIndex = Self.allCases.firstIndex(of: exactStep) {
-                return exactIndex
+            if let currentStep = step(forCurrentStoredValue: rawValue) {
+                return currentStep.index
             }
 
-            return resumeStep(from: rawValue).index
+            if let legacyStep = legacyStep(for: rawValue) {
+                return legacyStep.index
+            }
+
+            return rawValue > completedRawValue ? (Self.allCases.count - 1) : -1
+        }
+
+        private static func normalizedStoredValue(for orderedIndex: Int, fallback: Int) -> Int {
+            guard allCases.indices.contains(orderedIndex) else { return max(0, fallback) }
+            return allCases[orderedIndex].storedValue
+        }
+
+        private static func step(forCurrentStoredValue rawValue: Int) -> SetupStep? {
+            let orderedIndex = rawValue - currentStorageBase - 1
+            guard allCases.indices.contains(orderedIndex) else { return nil }
+            return allCases[orderedIndex]
+        }
+
+        private static func legacyStep(for rawValue: Int) -> SetupStep? {
+            switch rawValue {
+            case 1:
+                return .identity
+            case 2:
+                return .challenge
+            case 3:
+                return .solution
+            case 4:
+                return .solutionWays
+            case 17:
+                return .shareImport
+            case 5, 6:
+                return .allergies
+            case 13:
+                return .diets
+            case 15:
+                return .recipeEditIntro
+            case 14:
+                return .recipeEditDemo
+            case 10:
+                return .ordering
+            case 11:
+                return .address
+            case 7, 8, 9:
+                return .budget
+            case 12:
+                return .recipeStyle
+            case 16:
+                return .paywallIntro
+            default:
+                return nil
+            }
         }
     }
 }

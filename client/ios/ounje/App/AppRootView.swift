@@ -2303,7 +2303,6 @@ private struct MealPlannerShellView: View {
         }
         .task(id: "shared-import::\(store.authSession?.userID ?? "signed-out")") {
             await refreshSharedImportState(force: true)
-            await processPendingSharedImports(scope: .queued)
         }
         .task(id: "shared-import-inbox::\(store.authSession?.userID ?? "signed-out")") {
             await sharedImportInbox.refresh()
@@ -2339,7 +2338,7 @@ private struct MealPlannerShellView: View {
                 }
 
                 if hasQueuedWork {
-                    await processPendingSharedImports(scope: .queued)
+                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: false)
                 }
 
                 let shouldRefreshSharedState = hasLiveImport || Date().timeIntervalSince(lastSharedImportRefreshAt) >= 30
@@ -2376,7 +2375,7 @@ private struct MealPlannerShellView: View {
                 await refreshSharedImportState(force: false)
                 lastSharedImportRefreshAt = .now
                 if hasQueuedSharedImportWork || hasLiveSharedImportWork {
-                    await processPendingSharedImports(scope: .queued)
+                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: false)
                     await refreshSharedImportState(force: true)
                     lastSharedImportRefreshAt = .now
                 }
@@ -2490,7 +2489,7 @@ private struct MealPlannerShellView: View {
                     },
                     onRetryFailedSharedImports: {
                         Task {
-                            await processPendingSharedImports(scope: .failed)
+                            await processPendingSharedImports(scope: .failed, allowNewSubmissions: true)
                             await refreshSharedImportState(force: true)
                         }
                     },
@@ -2895,7 +2894,7 @@ private struct MealPlannerShellView: View {
         }
         Task {
             await sharedImportInbox.refresh()
-            await processPendingSharedImports(scope: .queued)
+            await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
             await refreshSharedImportState(force: true)
             lastSharedImportRefreshAt = .now
         }
@@ -3109,7 +3108,10 @@ private struct MealPlannerShellView: View {
     }
 
     @MainActor
-    private func processPendingSharedImports(scope: SharedImportProcessingScope = .queued) async {
+    private func processPendingSharedImports(
+        scope: SharedImportProcessingScope = .queued,
+        allowNewSubmissions: Bool = false
+    ) async {
         guard !isProcessingSharedImports,
               let session = await store.freshUserDataSession() else { return }
         let userID = session.userID
@@ -3130,13 +3132,20 @@ private struct MealPlannerShellView: View {
         defer { isProcessingSharedImports = false }
 
         let eligibleEnvelopes = envelopes.filter { envelope in
+            let hasServerJob = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             switch scope {
             case .queued:
-                return envelope.shouldAutoProcess
+                if hasServerJob {
+                    return envelope.isLiveQueueState
+                }
+                return allowNewSubmissions && envelope.shouldAutoProcess
             case .failed:
-                return envelope.isRetryNeeded
+                return allowNewSubmissions && envelope.isRetryNeeded
             case .all:
-                return envelope.shouldAutoProcess || envelope.isRetryNeeded
+                if hasServerJob {
+                    return envelope.isLiveQueueState
+                }
+                return allowNewSubmissions && (envelope.shouldAutoProcess || envelope.isRetryNeeded)
             }
         }
 
@@ -4003,6 +4012,7 @@ private struct CookbookTabView: View {
                 historyStore: recipeImportHistory,
                 initialTab: importQueueInitialTab,
                 onOpenRecipe: { recipe in
+                    isImportQueuePresented = false
                     onSelectRecipe(recipe)
                 },
                 onRefreshAll: {

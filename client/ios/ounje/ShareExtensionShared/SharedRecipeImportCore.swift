@@ -56,6 +56,9 @@ enum SharedRecipeImportInbox {
             if !jobID.isEmpty {
                 continue
             }
+            if envelope.serverSubmittedAt != nil {
+                continue
+            }
 
             let ref = envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
             guard now.timeIntervalSince(ref) >= seconds else { continue }

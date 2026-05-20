@@ -1,0 +1,57 @@
+{
+  "app": {
+    "name": "Ounje",
+    "description": "Ounje helps people turn saved recipe links, food videos, meal photos, cravings, and fridge ingredients into meal prep plans, recipes, grocery lists, and provider checkout paths.",
+    "public_url": "https://ounje-idbl.onrender.com",
+    "contact_name": "Dave",
+    "contact_email": "thisisounje@gmail.com",
+    "features": [
+      "Import saved recipe videos, screenshots, links, captions, or meal photos.",
+      "Turn a craving or restaurant meal memory into a practical home-cooking direction.",
+      "Generate organized grocery lists and supported cart handoff paths from recipes or meal plans."
+    ],
+    "positioning": [
+      "Food input first: saved TikTok recipe, restaurant meal, caption, fridge photo, or craving.",
+      "Ounje output second: cleaned-up recipe, meal prep plan, grocery list, or cart path.",
+      "Always remind readers to review ingredients, allergens, quantities, and substitutions themselves."
+    ]
+  },
+  "quora": {
+    "candidate_target": 15,
+    "draft_target": 5,
+    "min_candidates_before_drafting": 10,
+    "min_relevance_score": 0.55,
+    "queries": [
+      "site:quora.com meal planning app grocery list recipes",
+      "site:quora.com how do I organize saved recipes from TikTok",
+      "site:quora.com best way to turn recipes into grocery list",
+      "site:quora.com how do I meal prep from cravings",
+      "site:quora.com what can I cook with ingredients in my fridge",
+      "site:quora.com how to recreate restaurant meals at home",
+      "site:quora.com recipe organizer app for grocery shopping",
+      "site:quora.com how do I save recipe videos and actually cook them"
+    ],
+    "avoid_topics": [
+      "medical nutrition advice",
+      "eating disorder advice",
+      "weight loss guarantees",
+      "allergy safety claims"
+    ]
+  },
+  "roundups": {
+    "candidate_target": 15,
+    "draft_target": 10,
+    "min_candidates_before_drafting": 10,
+    "min_relevance_score": 0.35,
+    "queries": [
+      "best meal planning apps",
+      "best recipe organizer apps",
+      "best grocery list apps for meal prep",
+      "best apps to save recipes from social media",
+      "best AI meal planning apps",
+      "best apps for cooking from what is in your fridge",
+      "top meal prep apps",
+      "best apps to make grocery lists from recipes"
+    ]
+  }
+}

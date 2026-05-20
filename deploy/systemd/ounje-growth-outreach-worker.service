@@ -1,0 +1,18 @@
+[Unit]
+Description=Ounje growth outreach worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ounje
+WorkingDirectory=/opt/ounje
+Environment=NODE_ENV=production
+Environment=OUNJE_RUNTIME_ENV=production
+EnvironmentFile=-/etc/ounje/ounje.env
+ExecStart=/usr/bin/env node /opt/ounje/server/scripts/growth_outreach_worker.mjs --worker-id vm_growth_outreach_worker --lock-seconds 1800 --idle-sleep-ms 60000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -269,7 +269,6 @@ final class MealPlanningAppStore: ObservableObject {
     private var bootstrapDidConfirmOnboardingState = false
     private var pendingCartSyncIntent: PendingCartSyncIntent?
     private var remoteMealPrepCycleLoadState: RemoteMealPrepCycleLoadState = .notRequested
-    private var activeAutoPrepGenerationKey: String?
     @Published private(set) var hiddenMainShopItemKeys: Set<String> = []
     private var hiddenMainShopPlanID: UUID?
     /// UI/tracking hint restored from disk when token refresh is not available.
@@ -1201,7 +1200,10 @@ final class MealPlanningAppStore: ObservableObject {
                 ? 0
                 : (
                     persistedOnboarded
-                        ? remoteState.lastOnboardingStep
+                        ? FirstLoginOnboardingView.SetupStep.latestStoredRawValue(
+                            remoteState.lastOnboardingStep,
+                            FirstLoginOnboardingView.SetupStep.completedRawValue
+                        )
                         : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(remoteState.lastOnboardingStep, lastOnboardingStep)
                 )
 
@@ -1864,21 +1866,9 @@ final class MealPlanningAppStore: ObservableObject {
         if let latestPlan, hasPersistablePrepContent(latestPlan) {
             return
         }
-        guard remoteMealPrepCycleLoadState.confirmsNoUsablePrep else {
-            return
-        }
-        let userID = resolvedLiveUserID ?? authSession?.userID ?? "anonymous"
-        let generationKey = "\(userID)::\(automationAnchorString(for: profile.scheduledDeliveryDate()))"
-        guard activeAutoPrepGenerationKey != generationKey else { return }
-        activeAutoPrepGenerationKey = generationKey
-        defer {
-            if activeAutoPrepGenerationKey == generationKey {
-                activeAutoPrepGenerationKey = nil
-            }
-        }
-        if latestPlan.map(hasPersistablePrepContent) != true {
-            await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
-        }
+        // App entry must not infer "empty prep" means "generate a new prep".
+        // Returning users can intentionally clear a prep; only onboarding
+        // completion seeds the first Usual bracket automatically.
     }
 
     @discardableResult
@@ -2187,7 +2177,7 @@ final class MealPlanningAppStore: ObservableObject {
         async let membershipRefresh: Void = refreshMembershipEntitlement(trigger: "post-onboarding")
         if profile.isPlanningReady {
             await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
-            await ensureOnboardingUsualPrepBatch()
+            await ensureOnboardingUsualPrepBatch(profile: profile)
         }
         await membershipRefresh
 
@@ -2239,23 +2229,38 @@ final class MealPlanningAppStore: ObservableObject {
         )
     }
 
-    private func ensureOnboardingUsualPrepBatch() async {
+    private func ensureOnboardingUsualPrepBatch(profile: UserProfile) async {
         guard var plan = latestPlan, !plan.recipes.isEmpty else { return }
-        let existingBatches = plan.batches ?? []
-        if let usualBatch = existingBatches.first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame }),
-           !usualBatch.recipes.isEmpty {
+        var existingBatches = plan.batches ?? []
+        let seedRecipes = Array(plan.recipes.prefix(3))
+        let seededPlan = planner.rebuildPlanCartOnly(
+            profile: profile,
+            basePlan: plan,
+            recipes: seedRecipes,
+            history: planHistory,
+            recurringRecipeIDs: plan.recurringRecipeIDs ?? []
+        )
+        if let usualIndex = existingBatches.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame }),
+           !existingBatches[usualIndex].recipes.isEmpty {
+            let usualBatch = existingBatches[usualIndex]
             _ = setPrimePrepBatch(batchID: usualBatch.id, persistRemote: false)
             return
         }
 
+        let existingEmptyUsual = existingBatches.first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame })
         let usualBatch = PrepBatch(
+            id: existingEmptyUsual?.id ?? UUID(),
             name: "Usual",
-            recipes: Array(plan.recipes.prefix(3)),
-            groceryItems: plan.groceryItems,
-            recurringRecipeIDs: plan.recurringRecipeIDs
+            recipes: seedRecipes,
+            groceryItems: seededPlan.groceryItems,
+            recurringRecipeIDs: seededPlan.recurringRecipeIDs,
+            createdAt: existingEmptyUsual?.createdAt ?? Date()
         )
 
-        if existingBatches.isEmpty {
+        if let emptyUsualIndex = existingBatches.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame }) {
+            existingBatches[emptyUsualIndex] = usualBatch
+            plan.batches = existingBatches
+        } else if existingBatches.isEmpty {
             plan.batches = [usualBatch]
         } else {
             plan.batches = [usualBatch] + existingBatches
@@ -2398,7 +2403,6 @@ final class MealPlanningAppStore: ObservableObject {
         isHydratingRemoteState = false
         isCompletingOnboarding = false
         activeHistoryUserID = nil
-        activeAutoPrepGenerationKey = nil
         isRunningAutomationPass = false
         cachedAuthenticatedEntryRoute = nil
         hasPersistedOnboardingState = false
