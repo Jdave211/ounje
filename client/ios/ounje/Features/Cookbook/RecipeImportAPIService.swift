@@ -439,6 +439,19 @@ final class RecipeImportAPIService {
         throw lastError ?? RecipeImportServiceError.invalidRequest
     }
 
+    func retryImportJob(jobID: String, accessToken: String?) async throws -> RecipeImportResponse {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                return try await retryImportJob(baseURL: baseURL, jobID: jobID, accessToken: accessToken)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
     private func importRecipe(
         baseURL: String,
         userID: String?,
@@ -625,5 +638,32 @@ final class RecipeImportAPIService {
             let fallback = "Delete failed import failed (\(httpResponse.statusCode))."
             throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
         }
+    }
+
+    private func retryImportJob(
+        baseURL: String,
+        jobID: String,
+        accessToken: String?
+    ) async throws -> RecipeImportResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/imports/\(jobID)/retry") else {
+            throw RecipeImportServiceError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        applyAuthHeaders(to: &request, userID: nil, accessToken: accessToken)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RecipeImportServiceError.invalidResponse
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            let fallback = "Retry failed import failed (\(httpResponse.statusCode))."
+            throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+        }
+
+        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
     }
 }

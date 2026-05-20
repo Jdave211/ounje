@@ -28,6 +28,7 @@ import {
   persistNormalizedRecipe,
   processRecipeIngestionJob,
   queueRecipeIngestion,
+  retryRecipeIngestionJob,
 } from "../../lib/recipe-ingestion.js";
 import {
   attachDiscoverBrackets,
@@ -1500,6 +1501,29 @@ recipe_router.delete("/recipe/imports/:id", async (req, res) => {
       return sendAuthError(res, error, "recipe/imports/delete");
     }
     console.error("[recipe/imports/delete] failed:", error.message);
+    return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
+  }
+});
+
+recipe_router.post("/recipe/imports/:id/retry", async (req, res) => {
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const jobID = String(req.params.id ?? "").trim();
+    const result = await retryRecipeIngestionJob(jobID, { userID });
+    recipeImportJobCache.delete(jobID);
+    await writeSharedTimedCache(
+      recipeImportJobCache,
+      jobID,
+      result,
+      RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS,
+      "recipe-import-job"
+    );
+    return res.json(result);
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/imports/retry");
+    }
+    console.error("[recipe/imports/retry] failed:", error.message);
     return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
   }
 });

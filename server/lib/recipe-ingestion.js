@@ -9717,6 +9717,82 @@ export async function deleteFailedRecipeIngestionJob(jobID, { userID = null } = 
   };
 }
 
+export async function retryRecipeIngestionJob(jobID, { userID = null } = {}) {
+  const normalizedJobID = normalizeText(jobID);
+  const normalizedUserID = normalizeText(userID);
+  if (!normalizedJobID) {
+    const error = new Error("Recipe import job id is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const job = await fetchJobRow(normalizedJobID);
+  if (!job) {
+    const error = new Error(`Ingestion job ${normalizedJobID} could not be found.`);
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (normalizedUserID && normalizeText(job.user_id) !== normalizedUserID) {
+    const error = new Error("Recipe import job does not belong to this user.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const status = normalizeText(job.status).toLowerCase();
+  if (!["failed", "retryable"].includes(status)) {
+    const error = new Error("Only failed or retryable recipe imports can be retried.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const requestPayload = job.request_payload && typeof job.request_payload === "object"
+    ? job.request_payload
+    : {};
+  const hasStoredInput = Boolean(
+    normalizeText(job.source_url)
+      || normalizeText(job.canonical_url)
+      || normalizeText(job.input_text)
+      || normalizeText(requestPayload.source_url)
+      || normalizeText(requestPayload.source_text)
+      || (Array.isArray(requestPayload.attachments) && requestPayload.attachments.length > 0)
+  );
+  if (!hasStoredInput) {
+    const error = new Error("This import has no stored source to retry. Start a new import with the photo or link.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const retried = await appendJobEvent(normalizedJobID, "user_retry_queued", {
+    previous_status: status,
+  }, {
+    status: "retryable",
+    review_state: "pending",
+    review_reason: null,
+    error_message: null,
+    attempts: 0,
+    worker_id: null,
+    leased_at: null,
+    completed_at: null,
+    fetched_at: null,
+    parsed_at: null,
+    normalized_at: null,
+    saved_at: null,
+    recipe_id: null,
+    dedupe_recipe_id: null,
+  });
+
+  void publishRedisJSON(RECIPE_IMPORT_WAKE_CHANNEL, {
+    job_id: retried.id,
+    user_id: retried.user_id ?? null,
+    source_type: retried.source_type ?? null,
+    queued_at: nowIso(),
+    reason: "user_retry",
+  });
+
+  return formatJobResponse(retried, { processing_mode: "queued" });
+}
+
 export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${nanoid(8)}`, accessToken = null } = {}) {
   const existingJob = typeof jobOrID === "string" ? await fetchJobRow(jobOrID) : jobOrID;
   if (!existingJob) {

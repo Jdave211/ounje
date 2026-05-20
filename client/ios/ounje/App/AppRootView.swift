@@ -2631,8 +2631,10 @@ private struct MealPlannerShellView: View {
                 return
             }
 
+            let envelopeID = UUID().uuidString
+            let persistedAttachments = try persistSharedImportMediaDrafts(drafts, envelopeID: envelopeID)
             let localEnvelope = SharedRecipeImportEnvelope(
-                id: UUID().uuidString,
+                id: envelopeID,
                 createdAt: Date(),
                 jobID: nil,
                 targetState: "prepped",
@@ -2640,7 +2642,7 @@ private struct MealPlannerShellView: View {
                 sourceURLString: nil,
                 canonicalSourceURLString: nil,
                 sourceApp: sourceApp,
-                attachments: [],
+                attachments: persistedAttachments,
                 processingState: "queued",
                 attemptCount: 1,
                 lastAttemptAt: Date(),
@@ -3160,6 +3162,8 @@ private struct MealPlannerShellView: View {
             do {
                 let shouldPollExistingJob = !previousJobID.isEmpty
                     && !envelope.isRetryNeeded
+                let shouldRetryExistingJob = !previousJobID.isEmpty
+                    && envelope.isRetryNeeded
                 var trackedEnvelope = envelope
                 if !shouldPollExistingJob {
                     trackedEnvelope = SharedRecipeImportEnvelope(
@@ -3187,6 +3191,8 @@ private struct MealPlannerShellView: View {
                 let response: RecipeImportResponse
                 if shouldPollExistingJob {
                     response = try await RecipeImportAPIService.shared.fetchImportJob(jobID: previousJobID, accessToken: accessToken)
+                } else if shouldRetryExistingJob {
+                    response = try await RecipeImportAPIService.shared.retryImportJob(jobID: previousJobID, accessToken: accessToken)
                 } else {
                     let attachments = try await sharedImportAttachmentPayloads(from: envelope.attachments)
                     response = try await RecipeImportAPIService.shared.importRecipe(
@@ -8906,8 +8912,12 @@ private struct DiscoverComposerSheet: View {
                 guard let session, !trimmedAccessToken.isEmpty else {
                     throw RecipeImportServiceError.requestFailed("Sign in again before importing a recipe.")
                 }
+                let envelopeID = UUID().uuidString
+                let persistedAttachments = isPhotoRecipeImport
+                    ? try persistSharedImportMediaDrafts(attachmentsForImport, envelopeID: envelopeID)
+                    : []
                 let localEnvelope = SharedRecipeImportEnvelope(
-                    id: UUID().uuidString,
+                    id: envelopeID,
                     createdAt: Date(),
                     jobID: nil,
                     targetState: selectedTargetContext == .prepped ? "prepped" : "saved",
@@ -8915,7 +8925,7 @@ private struct DiscoverComposerSheet: View {
                     sourceURLString: sourceURLForImport,
                     canonicalSourceURLString: nil,
                     sourceApp: isPhotoRecipeImport ? "Ounje Photo" : "Ounje",
-                    attachments: [],
+                    attachments: persistedAttachments,
                     processingState: "queued",
                     attemptCount: 1,
                     lastAttemptAt: Date(),
@@ -9603,6 +9613,31 @@ private struct RecipeImportMediaDraft: Identifiable {
     let previewData: Data?
     let payload: RecipeImportAttachmentPayload
 
+    var defaultFileExtension: String {
+        switch kind {
+        case .image:
+            return "jpg"
+        case .video:
+            return "mov"
+        }
+    }
+
+    func retryData() throws -> Data {
+        if let previewData, !previewData.isEmpty {
+            return previewData
+        }
+
+        if let dataURL = payload.dataURL,
+           let commaIndex = dataURL.firstIndex(of: ",") {
+            let encoded = String(dataURL[dataURL.index(after: commaIndex)...])
+            if let data = Data(base64Encoded: encoded), !data.isEmpty {
+                return data
+            }
+        }
+
+        throw RecipeImportMediaError.unreadable
+    }
+
     static func load(from item: PhotosPickerItem, userID: String?, accessToken: String?) async throws -> RecipeImportMediaDraft? {
         let imageType = item.supportedContentTypes.first(where: { $0.conforms(to: .image) })
         let videoType = item.supportedContentTypes.first(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) })
@@ -9876,6 +9911,35 @@ private func sharedImportAttachmentPayloads(
         default:
             return nil
         }
+    }
+}
+
+private func persistSharedImportMediaDrafts(
+    _ drafts: [RecipeImportMediaDraft],
+    envelopeID: String
+) throws -> [SharedRecipeImportAttachment] {
+    guard !drafts.isEmpty else { return [] }
+    let mediaDirectory = try SharedRecipeImportInbox.mediaDirectoryURL(for: envelopeID)
+
+    return try drafts.enumerated().map { index, draft in
+        let payload = draft.payload
+        let rawFileName = payload.fileName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let baseFileName = rawFileName.isEmpty
+            ? "recipe-media-\(index).\(draft.defaultFileExtension)"
+            : rawFileName
+        let fileName = "\(index)-\(baseFileName)"
+        let data = try draft.retryData()
+        let fileURL = mediaDirectory.appendingPathComponent(fileName, isDirectory: false)
+        try data.write(to: fileURL, options: .atomic)
+
+        return SharedRecipeImportAttachment(
+            id: draft.id.uuidString,
+            kind: payload.kind,
+            fileName: fileName,
+            relativePath: SharedRecipeImportInbox.relativeMediaPath(envelopeID: envelopeID, fileName: fileName),
+            mimeType: payload.mimeType,
+            originalURLString: payload.sourceURL ?? payload.publicHeroURL
+        )
     }
 }
 
