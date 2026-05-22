@@ -2,6 +2,7 @@ import SwiftUI
 import Foundation
 import UIKit
 import PhotosUI
+import AVFoundation
 
 struct PrepTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
@@ -167,6 +168,11 @@ struct PrepTabView: View {
                 onCaptureFoodPhoto(image)
             } onCancel: {
                 isFoodCameraPresented = false
+            } onSelectGallery: {
+                isFoodCameraPresented = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    isFoodPhotoLibraryPresented = true
+                }
             }
             .ignoresSafeArea()
         }
@@ -257,50 +263,467 @@ struct PrepTabView: View {
     }
 }
 
-struct PrepFoodCameraCaptureView: UIViewControllerRepresentable {
+struct PrepFoodCameraCaptureView: View {
     let onCapture: (UIImage) -> Void
     let onCancel: () -> Void
+    let onSelectGallery: (() -> Void)?
+    @StateObject private var camera = PrepFoodCameraController()
+    @State private var showsFramingPrompt = true
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.cameraCaptureMode = .photo
-        picker.cameraDevice = UIImagePickerController.isCameraDeviceAvailable(.rear) ? .rear : .front
-        picker.allowsEditing = false
-        picker.showsCameraControls = true
-        picker.delegate = context.coordinator
-        return picker
+    init(
+        _ onCapture: @escaping (UIImage) -> Void,
+        onCancel: @escaping () -> Void,
+        onSelectGallery: (() -> Void)? = nil
+    ) {
+        self.onCapture = onCapture
+        self.onCancel = onCancel
+        self.onSelectGallery = onSelectGallery
     }
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    var body: some View {
+        ZStack {
+            PrepFoodCameraPreview(session: camera.session)
+                .ignoresSafeArea()
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onCapture: onCapture, onCancel: onCancel)
-    }
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.22),
+                    Color.clear,
+                    Color.black.opacity(0.34)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
 
-    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
-        private let onCapture: (UIImage) -> Void
-        private let onCancel: () -> Void
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 24)
+                    .padding(.top, 64)
 
-        init(onCapture: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
-            self.onCapture = onCapture
-            self.onCancel = onCancel
-        }
+                Spacer(minLength: 0)
 
-        func imagePickerController(
-            _ picker: UIImagePickerController,
-            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
-        ) {
-            guard let image = info[.originalImage] as? UIImage else {
-                onCancel()
-                return
+                VStack(spacing: 22) {
+                    HStack(spacing: 16) {
+                        scannerOptionTile(
+                            title: "Scan",
+                            systemImage: "viewfinder",
+                            isSelected: true
+                        )
+                        .allowsHitTesting(false)
+
+                        Button {
+                            onSelectGallery?()
+                        } label: {
+                            scannerOptionTile(
+                                title: "Gallery",
+                                systemImage: "photo.on.rectangle.angled",
+                                isSelected: false
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(onSelectGallery == nil)
+                        .opacity(onSelectGallery == nil ? 0.42 : 0.74)
+                    }
+
+                    HStack(spacing: 22) {
+                        Circle()
+                            .fill(Color.clear)
+                            .frame(width: 54, height: 54)
+
+                        Button {
+                            camera.capturePhoto()
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.white.opacity(0.36))
+                                    .frame(width: 94, height: 94)
+
+                                Circle()
+                                    .fill(Color.white.opacity(0.96))
+                                    .frame(width: 72, height: 72)
+                                    .overlay {
+                                        Circle()
+                                            .stroke(Color.black.opacity(0.72), lineWidth: 3)
+                                    }
+                            }
+                            .shadow(color: .black.opacity(0.32), radius: 12, x: 0, y: 6)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(camera.isCapturing)
+                        .opacity(camera.isCapturing ? 0.66 : 1)
+
+                        Button {
+                            camera.toggleTorch()
+                        } label: {
+                            Image(systemName: camera.isTorchOn ? "bolt.fill" : "bolt")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(camera.supportsTorch ? OunjePalette.accent : .white.opacity(0.42))
+                                .frame(width: 54, height: 54)
+                                .background(
+                                    Circle()
+                                        .fill(camera.isTorchOn ? Color.white.opacity(0.9) : Color.black.opacity(0.32))
+                                )
+                                .overlay {
+                                    Circle()
+                                        .stroke(Color.white.opacity(camera.isTorchOn ? 0.34 : 0.18), lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(camera.isCapturing || !camera.supportsTorch)
+                        .opacity(camera.isCapturing ? 0.66 : 1)
+                    }
+                }
+                .padding(.bottom, 34)
             }
-            onCapture(image)
+
+            ScannerCornerBrackets()
+                .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
+                .frame(width: 258, height: 328)
+                .shadow(color: .black.opacity(0.28), radius: 7, x: 0, y: 3)
+                .allowsHitTesting(false)
+
+            Text("Place the meal in frame")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.black.opacity(0.36))
+                )
+                .shadow(color: .black.opacity(0.28), radius: 8, x: 0, y: 3)
+                .opacity(showsFramingPrompt ? 1 : 0)
+                .scaleEffect(showsFramingPrompt ? 1 : 0.96)
+                .animation(.easeOut(duration: 0.24), value: showsFramingPrompt)
+                .allowsHitTesting(false)
+
+            if let errorMessage = camera.errorMessage {
+                VStack {
+                    Spacer()
+                    Text(errorMessage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(Color.black.opacity(0.62))
+                        )
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 158)
+                }
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+        .onAppear {
+            camera.onCapture = onCapture
+            camera.onCancel = onCancel
+            camera.start()
+            showsFramingPrompt = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.65) {
+                showsFramingPrompt = false
+            }
+        }
+        .onDisappear {
+            camera.stop()
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
+                    .background(Circle().fill(Color.black.opacity(0.28)))
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            SleeScriptDisplayText("Ounje", size: 34, color: .white)
+                .shadow(color: .black.opacity(0.26), radius: 8, x: 0, y: 2)
+
+            Spacer()
+
+            Color.clear
+                .frame(width: 56, height: 56)
+        }
+    }
+
+    private func scannerOptionTile(title: String, systemImage: String, isSelected: Bool) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(isSelected ? .black : .white)
+                .frame(width: 34, height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(isSelected ? Color.white.opacity(0.92) : Color.white.opacity(0.14))
+                )
+
+            Text(title)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(isSelected ? 0.96 : 0.74))
+        }
+        .frame(width: 86, height: 72)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.black.opacity(isSelected ? 0.28 : 0.2))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(isSelected ? 0.24 : 0.13), lineWidth: 1)
+        }
+    }
+}
+
+private struct PrepFoodCameraPreview: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> PreviewView {
+        let view = PreviewView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        uiView.previewLayer.session = session
+    }
+
+    final class PreviewView: UIView {
+        override class var layerClass: AnyClass {
+            AVCaptureVideoPreviewLayer.self
         }
 
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            onCancel()
+        var previewLayer: AVCaptureVideoPreviewLayer {
+            layer as! AVCaptureVideoPreviewLayer
         }
+    }
+}
+
+private final class PrepFoodCameraController: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
+    let session = AVCaptureSession()
+    var onCapture: ((UIImage) -> Void)?
+    var onCancel: (() -> Void)?
+
+    @Published var isCapturing = false
+    @Published var errorMessage: String?
+    @Published var supportsTorch = false
+    @Published var isTorchOn = false
+
+    private let output = AVCapturePhotoOutput()
+    private let queue = DispatchQueue(label: "ounje.food-camera.session")
+    private var didConfigure = false
+    private var captureDevice: AVCaptureDevice?
+    private var torchEnabled = false
+
+    func start() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            configureAndStart()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.configureAndStart()
+                    } else {
+                        self?.errorMessage = "Camera access is off for Ounje."
+                    }
+                }
+            }
+        default:
+            errorMessage = "Camera access is off for Ounje."
+        }
+    }
+
+    func stop() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.setTorchOn(false)
+            guard self.session.isRunning else { return }
+            self.session.stopRunning()
+        }
+    }
+
+    func capturePhoto() {
+        guard didConfigure else {
+            errorMessage = "Camera is still warming up."
+            return
+        }
+        guard !isCapturing else { return }
+        isCapturing = true
+        let settings = AVCapturePhotoSettings()
+        settings.flashMode = .off
+        output.capturePhoto(with: settings, delegate: self)
+    }
+
+    func toggleTorch() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.setTorchOn(!self.torchEnabled)
+        }
+    }
+
+    private func configureAndStart() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if !self.didConfigure {
+                self.session.beginConfiguration()
+                self.session.sessionPreset = .photo
+
+                defer {
+                    self.session.commitConfiguration()
+                }
+
+                guard
+                    let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) ??
+                        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+                else {
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Camera unavailable on this device."
+                    }
+                    return
+                }
+
+                do {
+                    let input = try AVCaptureDeviceInput(device: device)
+                    self.captureDevice = device
+                    if self.session.canAddInput(input) {
+                        self.session.addInput(input)
+                    }
+                    if self.session.canAddOutput(self.output) {
+                        self.session.addOutput(self.output)
+                    }
+                    self.didConfigure = true
+                    let supportsTorch = device.hasTorch && device.isTorchAvailable
+                    DispatchQueue.main.async {
+                        self.supportsTorch = supportsTorch
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Camera failed to start."
+                    }
+                    return
+                }
+            }
+
+            if !self.session.isRunning {
+                self.session.startRunning()
+            }
+        }
+    }
+
+    private func setTorchOn(_ isOn: Bool) {
+        guard let device = captureDevice, device.hasTorch, device.isTorchAvailable else {
+            torchEnabled = false
+            DispatchQueue.main.async {
+                self.supportsTorch = false
+                self.isTorchOn = false
+            }
+            return
+        }
+
+        var didLock = false
+        do {
+            try device.lockForConfiguration()
+            didLock = true
+            if isOn {
+                try device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+            } else {
+                device.torchMode = .off
+            }
+            device.unlockForConfiguration()
+            didLock = false
+            torchEnabled = isOn
+            DispatchQueue.main.async {
+                self.supportsTorch = true
+                self.isTorchOn = isOn
+            }
+        } catch {
+            if didLock {
+                device.unlockForConfiguration()
+            }
+            torchEnabled = false
+            DispatchQueue.main.async {
+                self.errorMessage = "Couldn’t toggle the light."
+                self.isTorchOn = false
+            }
+        }
+    }
+
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        if error != nil {
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.errorMessage = "Couldn’t take that photo."
+            }
+            return
+        }
+
+        guard
+            let data = photo.fileDataRepresentation(),
+            let image = UIImage(data: data)
+        else {
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.errorMessage = "Couldn’t read that photo."
+            }
+            return
+        }
+
+        DispatchQueue.main.async {
+            self.isCapturing = false
+            self.onCapture?(image)
+        }
+    }
+
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
+        error: Error?
+    ) {
+        if error != nil {
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.errorMessage = "Couldn’t take that photo."
+            }
+        }
+    }
+}
+
+private struct ScannerCornerBrackets: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cornerLength = min(rect.width, rect.height) * 0.24
+        var path = Path()
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerLength))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + cornerLength, y: rect.minY))
+
+        path.move(to: CGPoint(x: rect.maxX - cornerLength, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerLength))
+
+        path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerLength))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - cornerLength, y: rect.maxY))
+
+        path.move(to: CGPoint(x: rect.minX + cornerLength, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cornerLength))
+
+        return path
     }
 }
 

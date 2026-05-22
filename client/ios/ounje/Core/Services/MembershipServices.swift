@@ -268,7 +268,7 @@ final class SupabaseEntitlementService {
                 }
                 var request = URLRequest(url: url)
                 request.httpMethod = "GET"
-                request.timeoutInterval = 20
+                request.timeoutInterval = 8
                 request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
                 request.setValue(userID, forHTTPHeaderField: "x-user-id")
                 let (data, response) = try await URLSession.shared.data(for: request)
@@ -330,7 +330,7 @@ final class SupabaseEntitlementService {
                 }
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
-                request.timeoutInterval = 20
+                request.timeoutInterval = 8
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
                 request.setValue(userID, forHTTPHeaderField: "x-user-id")

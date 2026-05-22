@@ -13,7 +13,8 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const DEFAULT_BATCH_SIZE = 3;
 const DEFAULT_IDLE_SLEEP_MS = 20_000;
-const DEFAULT_WAKE_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_WAKE_TIMEOUT_MS = 60_000;
+const MAX_WAKE_TIMEOUT_MS = 60_000;
 const MAX_EMPTY_QUEUE_SLEEP_MS = 10 * 60 * 1000;
 
 function parseArgs(argv) {
@@ -22,9 +23,12 @@ function parseArgs(argv) {
     batchSize: DEFAULT_BATCH_SIZE,
     idleSleepMs: DEFAULT_IDLE_SLEEP_MS,
     wakeMode: String(process.env.RECIPE_INGESTION_WORKER_WAKE_MODE ?? "poll").trim().toLowerCase(),
-    wakeTimeoutMs: Math.max(
-      60_000,
-      Number.parseInt(process.env.RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS ?? "", 10) || DEFAULT_WAKE_TIMEOUT_MS
+    wakeTimeoutMs: Math.min(
+      MAX_WAKE_TIMEOUT_MS,
+      Math.max(
+        10_000,
+        Number.parseInt(process.env.RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS ?? "", 10) || DEFAULT_WAKE_TIMEOUT_MS
+      )
     ),
     workerID: null,
   };
@@ -35,7 +39,7 @@ function parseArgs(argv) {
     else if (token === "--batch-size") args.batchSize = Math.max(1, Number.parseInt(argv[index + 1] ?? "", 10) || DEFAULT_BATCH_SIZE), index += 1;
     else if (token === "--idle-sleep-ms") args.idleSleepMs = Math.max(1_000, Number.parseInt(argv[index + 1] ?? "", 10) || DEFAULT_IDLE_SLEEP_MS), index += 1;
     else if (token === "--wake-mode") args.wakeMode = String(argv[index + 1] ?? "poll").trim().toLowerCase(), index += 1;
-    else if (token === "--wake-timeout-ms") args.wakeTimeoutMs = Math.max(60_000, Number.parseInt(argv[index + 1] ?? "", 10) || DEFAULT_WAKE_TIMEOUT_MS), index += 1;
+    else if (token === "--wake-timeout-ms") args.wakeTimeoutMs = Math.min(MAX_WAKE_TIMEOUT_MS, Math.max(10_000, Number.parseInt(argv[index + 1] ?? "", 10) || DEFAULT_WAKE_TIMEOUT_MS)), index += 1;
     else if (token === "--worker-id") args.workerID = String(argv[index + 1] ?? "").trim() || null, index += 1;
   }
 
@@ -130,7 +134,9 @@ async function main() {
   } while (true);
 }
 
-main().catch((error) => {
+main().then(() => {
+  process.exit(0);
+}).catch((error) => {
   console.error("[recipe-ingestion-worker] fatal:", error.message);
   process.exit(1);
 });

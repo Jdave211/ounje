@@ -1175,7 +1175,7 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var paywallIntroStepContent: some View {
-        OnboardingMinimalTransitionPage(title: "One last thing")
+        OnboardingMinimalTransitionPage(title: "Your food system is ready")
         .onAppear(perform: schedulePaywallIntroPresentation)
     }
 

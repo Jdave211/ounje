@@ -56,11 +56,8 @@ enum SharedRecipeImportInbox {
             if !jobID.isEmpty {
                 continue
             }
-            if envelope.serverSubmittedAt != nil {
-                continue
-            }
 
-            let ref = envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
+            let ref = envelope.serverSubmittedAt ?? envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
             guard now.timeIntervalSince(ref) >= seconds else { continue }
             let failed = SharedRecipeImportEnvelope(
                 id: envelope.id,
@@ -76,7 +73,9 @@ enum SharedRecipeImportInbox {
                 attemptCount: envelope.attemptCount,
                 lastAttemptAt: envelope.lastAttemptAt,
                 serverSubmittedAt: envelope.serverSubmittedAt,
-                lastError: "Import handoff was interrupted. Tap Retry imports.",
+                lastError: envelope.serverSubmittedAt == nil
+                    ? "Import handoff was interrupted. Tap Retry imports."
+                    : "Import handoff could not be matched to a server job. Tap Retry imports.",
                 updatedAt: Date()
             )
             try update(failed)

@@ -563,7 +563,7 @@ final class MealPlanningAppStore: ObservableObject {
             membershipEntitlement = snapshot.entitlement
         }
         syncProfilePricingTierToEntitlement()
-        if source == .remote || snapshot.entitlement?.isActive == true {
+        if source == .remote || source == .disk || snapshot.entitlement?.isActive == true {
             membershipEntitlementResolved = true
             billingStatusMessage = nil
         }
@@ -784,9 +784,9 @@ final class MealPlanningAppStore: ObservableObject {
         }
 
         // ── Phase 1: Local StoreKit scan (reads from device, no network) ──────────
-        // If StoreKit has an active transaction, use it immediately. If it does not,
-        // keep the splash up until the server confirms the state so active subscribers
-        // are not briefly thrown into the paywall on launch.
+        // Route from the best local/cached state immediately. The server refresh
+        // below remains authoritative, but it must not hold the root gate behind a
+        // slow network/DB request during sign-in or app launch.
         let localSnapshot = try? await StoreKitMembershipBillingService.shared.currentEntitlementSnapshot(userID: session.userID)
         if let localSnapshot {
             membershipEntitlement = localSnapshot
@@ -799,9 +799,7 @@ final class MealPlanningAppStore: ObservableObject {
         } else {
             membershipEntitlement = nil
             syncProfilePricingTierToEntitlement()
-            if !membershipEntitlementResolved {
-                membershipEntitlementResolved = false
-            }
+            membershipEntitlementResolved = true
         }
         onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
 
@@ -1825,6 +1823,9 @@ final class MealPlanningAppStore: ObservableObject {
 
         if let resolvedTargetBatchID {
             assignRecipeToPrepBatch(immediatePlannedRecipe, batchID: resolvedTargetBatchID, profile: profile)
+            if let latestPlan {
+                _ = await persistLatestPlanRemotelyIfPossible(latestPlan)
+            }
             await persistPrepRecipeOverrideIfPossible(override)
             await syncPrepMutationToAutomation(trigger: "prep_recipe_updated", forceCartSync: true)
             return
@@ -3409,13 +3410,14 @@ final class MealPlanningAppStore: ObservableObject {
             let localBatches = localPlan.batches ?? []
             let remoteBatches = remotePlan.batches ?? []
             guard !localBatches.isEmpty else { return false }
-            guard localMutationIsFresh else { return false }
+            let localLooksNewer = localPlan.generatedAt > remotePlan.generatedAt
+            guard localMutationIsFresh || localLooksNewer else { return false }
             if remoteBatches.isEmpty || localBatches.count > remoteBatches.count {
                 return true
             }
             return localBatches.count == remoteBatches.count
                 && prepBatchSignature(for: localPlan) != prepBatchSignature(for: remotePlan)
-                && localPlan.generatedAt >= remotePlan.generatedAt
+                && (localMutationIsFresh || localPlan.generatedAt >= remotePlan.generatedAt)
         }
         return localMutationIsFresh && localPlan.generatedAt >= remotePlan.generatedAt
     }

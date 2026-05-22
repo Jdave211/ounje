@@ -225,10 +225,10 @@ struct RootView: View {
     }
 
     private var shouldShowMembershipRefreshGate: Bool {
-        OunjeLaunchFlags.paywallsEnabled
-            && store.membershipEntitlementResolved
-            && store.isRefreshingMembershipEntitlement
-            && !store.hasActivePaidEntitlement
+        // Entitlement refresh is now a background correctness sync. Blocking the
+        // shell/paywall here made sign-in feel stuck whenever the server or DB was
+        // slow, even after local StoreKit/runtime state had resolved the route.
+        false
     }
 
     @MainActor
@@ -1005,9 +1005,20 @@ private final class RecipeImportHistoryStore: ObservableObject {
 
 private func mergedSharedImportEnvelopes(
     local: [SharedRecipeImportEnvelope],
-    backend: [SharedRecipeImportEnvelope]
+    backend: [SharedRecipeImportEnvelope],
+    completed: [RecipeImportCompletedItem] = []
 ) -> [SharedRecipeImportEnvelope] {
-    var merged = local
+    let completedMatchedLocalIDs = Set(
+        local
+            .filter { envelope in
+                guard !envelope.isPinnedTypedImport else { return false }
+                guard !completed.isEmpty else { return false }
+                return completed.contains(where: { $0.matches(envelope: envelope) })
+            }
+            .map(\.id)
+    )
+    let filteredLocal = local.filter { !completedMatchedLocalIDs.contains($0.id) }
+    var merged = filteredLocal
     var seenKeys = Set<String>()
 
     func keys(for envelope: SharedRecipeImportEnvelope) -> [String] {
@@ -1024,7 +1035,7 @@ private func mergedSharedImportEnvelopes(
         }
     }
 
-    for envelope in local {
+    for envelope in filteredLocal {
         keys(for: envelope).forEach { seenKeys.insert($0) }
     }
 
@@ -3034,7 +3045,8 @@ private struct MealPlannerShellView: View {
     private var combinedSharedImportEnvelopes: [SharedRecipeImportEnvelope] {
         mergedSharedImportEnvelopes(
             local: sharedImportInbox.envelopes,
-            backend: recipeImportHistory.backendQueueEnvelopes
+            backend: recipeImportHistory.backendQueueEnvelopes,
+            completed: recipeImportHistory.completedItems
         )
     }
 
@@ -3811,7 +3823,8 @@ private struct CookbookTabView: View {
     private var combinedSharedImportEnvelopes: [SharedRecipeImportEnvelope] {
         mergedSharedImportEnvelopes(
             local: sharedImportInbox.envelopes,
-            backend: recipeImportHistory.backendQueueEnvelopes
+            backend: recipeImportHistory.backendQueueEnvelopes,
+            completed: recipeImportHistory.completedItems
         )
     }
 
@@ -3930,7 +3943,7 @@ private struct CookbookTabView: View {
     }
 
     private var activeImportProgressItem: SharedRecipeImportEnvelope? {
-        sharedImportInbox.envelopes.first(where: \.isLiveQueueState)
+        combinedSharedImportEnvelopes.first(where: \.isLiveQueueState)
     }
 
     var body: some View {
@@ -4907,7 +4920,8 @@ private struct SharedRecipeImportQueueSheet: View {
     private var allItems: [SharedRecipeImportEnvelope] {
         mergedSharedImportEnvelopes(
             local: items,
-            backend: historyStore.backendQueueEnvelopes
+            backend: historyStore.backendQueueEnvelopes,
+            completed: historyStore.completedItems
         )
     }
 
@@ -8384,6 +8398,7 @@ private struct DiscoverComposerSheet: View {
                         Spacer(minLength: 12)
 
                         NewRecipeTargetSwitcher(selection: $selectedTargetContext)
+                            .offset(y: -5)
                     }
 
                     Text(helperCopy)
@@ -8484,6 +8499,12 @@ private struct DiscoverComposerSheet: View {
             } onCancel: {
                 isImportCameraPresented = false
                 clearPhotoSelectionIfEmpty()
+            } onSelectGallery: {
+                selectedMediaItems = []
+                isImportCameraPresented = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    isPhotoPickerPresented = true
+                }
             }
             .ignoresSafeArea()
         }
@@ -8684,7 +8705,7 @@ private struct DiscoverComposerSheet: View {
                 .padding(.vertical, 12)
                 .background(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color(hex: "D97A3A"))
+                        .fill(OunjePalette.accent)
                 )
             }
             .buttonStyle(.plain)
@@ -8762,7 +8783,7 @@ private struct DiscoverComposerSheet: View {
     private var submitArrowIcon: some View {
         ZStack {
             Circle()
-                .fill(Color(hex: "D97A3A"))
+                .fill(OunjePalette.accent)
                 .frame(width: 34, height: 34)
 
             if isSubmitting {

@@ -304,6 +304,13 @@ function bootstrapPrepPlanFromRows(rows = []) {
   };
 }
 
+function prepPlanShouldLoadRicherHistory(plan) {
+  if (!plan) return false;
+  const batches = planBatches(plan);
+  if (batches.length > 1) return false;
+  return planRootRecipes(plan).length > 0 || planRootGroceryItems(plan).length > 0;
+}
+
 router.get("/bootstrap/user", async (req, res) => {
   try {
     const { userID } = await resolveAuthorizedUserID(req);
@@ -315,7 +322,7 @@ router.get("/bootstrap/user", async (req, res) => {
     const [
       profileResult,
       entitlementRow,
-      mealPrepCyclesResult,
+      latestMealPrepCycleResult,
       recentImportsResult,
       savedIDsResult,
       latestSavedResult,
@@ -340,7 +347,7 @@ router.get("/bootstrap/user", async (req, res) => {
           .select("id,plan,plan_id,generated_at,updated_at")
           .eq("user_id", userID)
           .order("updated_at", { ascending: false })
-          .limit(12),
+          .limit(1),
         { data: [], error: null }
       ),
       safeQuery(
@@ -398,7 +405,7 @@ router.get("/bootstrap/user", async (req, res) => {
     ]);
 
     if (profileResult.error) throw profileResult.error;
-    if (mealPrepCyclesResult.error) throw mealPrepCyclesResult.error;
+    if (latestMealPrepCycleResult.error) throw latestMealPrepCycleResult.error;
     if (recentImportsResult.error) throw recentImportsResult.error;
     if (savedIDsResult.error) throw savedIDsResult.error;
     if (latestSavedResult.error) throw latestSavedResult.error;
@@ -412,7 +419,30 @@ router.get("/bootstrap/user", async (req, res) => {
     );
     const savedIDRows = (savedIDsResult.data ?? []).filter((row) => !tombstonedSavedRecipeIDs.has(row.recipe_id));
     const latestSavedRows = (latestSavedResult.data ?? []).filter((row) => !tombstonedSavedRecipeIDs.has(row.recipe_id));
-    const prepPlan = bootstrapPrepPlanFromRows(mealPrepCyclesResult.data ?? []);
+    let mealPrepRows = latestMealPrepCycleResult.data ?? [];
+    let prepPlan = bootstrapPrepPlanFromRows(mealPrepRows);
+
+    // Normal launches should not read a dozen full plan JSON blobs. Only fall
+    // back to old rows when the latest plan looks like a legacy one-batch
+    // collapse and may need bracket-structure repair.
+    if (prepPlanShouldLoadRicherHistory(prepPlan.plan)) {
+      const richerHistoryResult = await safeQuery(
+        supabase
+          .from("meal_prep_cycles")
+          .select("id,plan,plan_id,generated_at,updated_at")
+          .eq("user_id", userID)
+          .order("updated_at", { ascending: false })
+          .limit(12),
+        { data: mealPrepRows, error: null }
+      );
+      if (richerHistoryResult.error) {
+        console.warn("[bootstrap/user] failed to read prep history for bracket repair:", richerHistoryResult.error.message);
+      } else if ((richerHistoryResult.data ?? []).length > 0) {
+        mealPrepRows = richerHistoryResult.data;
+        prepPlan = bootstrapPrepPlanFromRows(mealPrepRows);
+      }
+    }
+
     if (prepPlan.repaired && prepPlan.latestRow?.id && prepPlan.plan) {
       const { error: repairError } = await supabase
         .from("meal_prep_cycles")

@@ -3012,10 +3012,10 @@ function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
     ? jobRow.request_payload
     : {};
   const rawSourceURL = normalizeText(
-    jobRow?.canonical_url
-      ?? jobRow?.source_url
-      ?? requestPayload?.canonical_url
+    jobRow?.source_url
       ?? requestPayload?.source_url
+      ?? jobRow?.canonical_url
+      ?? requestPayload?.canonical_url
       ?? recipeProjection?.recipe_url
       ?? null
   );
@@ -3252,14 +3252,15 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
     importedRows = [];
   }
 
-  const importedRecipeIDs = new Set(importedRows.map((row) => normalizeText(row?.id)).filter(Boolean));
   const importedSourceJobIDs = new Set(importedRows.map((row) => normalizeText(row?.source_job_id)).filter(Boolean));
   const importedItems = importedRows.map(summarizeCompletedImportedRecipe);
   const jobRows = rows
     .filter((row) => {
-      const recipeID = normalizeText(row?.recipe_id);
       const jobID = normalizeText(row?.id);
-      return (!recipeID || !importedRecipeIDs.has(recipeID)) && (!jobID || !importedSourceJobIDs.has(jobID));
+      // Hide only the terminal job that produced the canonical imported row.
+      // Keep dedupe/cache-hit jobs that reused an existing recipe_id: their
+      // source URL is what lets old share-extension envelopes reconcile.
+      return !jobID || !importedSourceJobIDs.has(jobID);
     });
   const projectionByID = await fetchCompletedRecipeProjectionsByID(jobRows.map((row) => row?.recipe_id));
   const jobItems = jobRows.map((row) => summarizeCompletedImportJob(row, projectionByID.get(normalizeText(row?.recipe_id)) ?? null));
