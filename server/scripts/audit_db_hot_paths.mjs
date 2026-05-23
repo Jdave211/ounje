@@ -122,6 +122,22 @@ function summarizeImport(row) {
   };
 }
 
+function secondsBetween(start, end) {
+  const started = new Date(start).getTime();
+  const ended = new Date(end).getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(ended)) return null;
+  return Math.max(0, Math.round((ended - started) / 1000));
+}
+
+function percentile(sortedValues, percentileValue) {
+  if (!sortedValues.length) return null;
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil((percentileValue / 100) * sortedValues.length) - 1)
+  );
+  return sortedValues[index];
+}
+
 async function redisHealth() {
   const status = redisConfigStatus();
   if (!status.configured) return { configured: false, ok: false };
@@ -168,6 +184,24 @@ audit.recipe_ping = await timed("recipes limit 1", () => fetchRows("recipes", "i
 audit.import_ping = await timed("user_import_recipes limit 1", () => fetchRows("user_import_recipes", "id", (query) => query.limit(1)));
 audit.saved_ping = await timed("saved_recipes limit 1", () => fetchRows("saved_recipes", "recipe_id", (query) => query.limit(1)));
 audit.cart_ping = await timed("main_shop_items limit 1", () => fetchRows("main_shop_items", "id", (query) => query.limit(1)));
+audit.high_churn_counts = await timed("high churn table counts", async () => {
+  const thirtyDaysAgo = isoMinutesAgo(30 * 24 * 60);
+  const tables = [
+    "recipe_ingestion_jobs",
+    "recipe_ingestion_artifacts",
+    "ai_call_logs",
+    "instacart_run_logs",
+    "instacart_run_log_traces",
+  ];
+  const entries = await Promise.all(tables.map(async (table) => {
+    const total = await exactCount(table).catch((error) => ({ error: error.message }));
+    const olderThan30Days = await exactCount(table, [
+      (query) => query.lt("created_at", thirtyDaysAgo),
+    ]).catch((error) => ({ error: error.message }));
+    return [table, { total, older_than_30_days: olderThan30Days }];
+  }));
+  return Object.fromEntries(entries);
+});
 
 audit.job_status_counts = await timed("recipe_ingestion_jobs status counts", () => statusCounts("recipe_ingestion_jobs", jobStatuses));
 audit.recent_job_status_counts = await timed("recipe_ingestion_jobs recent status counts", () => statusCounts(
@@ -175,6 +209,40 @@ audit.recent_job_status_counts = await timed("recipe_ingestion_jobs recent statu
   jobStatuses,
   [(query) => query.gte("created_at", isoMinutesAgo(24 * 60))]
 ));
+audit.recent_queue_waits = await timed("recent ingestion queue wait", () => fetchRows(
+  "recipe_ingestion_jobs",
+  "id,status,source_type,worker_id,queued_at,leased_at,completed_at,created_at",
+  (query) => query
+    .gte("created_at", isoMinutesAgo(48 * 60))
+    .not("queued_at", "is", null)
+    .not("leased_at", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(500)
+).then((rows) => {
+  const waits = rows
+    .map((row) => ({
+      id: row.id,
+      status: row.status,
+      source_type: row.source_type,
+      worker_id: row.worker_id,
+      queued_at: row.queued_at,
+      leased_at: row.leased_at,
+      completed_at: row.completed_at,
+      wait_seconds: secondsBetween(row.queued_at, row.leased_at),
+    }))
+    .filter((row) => Number.isFinite(row.wait_seconds));
+  const sortedWaits = waits.map((row) => row.wait_seconds).sort((a, b) => a - b);
+  return {
+    checked: waits.length,
+    p50_wait_seconds: percentile(sortedWaits, 50),
+    p90_wait_seconds: percentile(sortedWaits, 90),
+    p95_wait_seconds: percentile(sortedWaits, 95),
+    max_wait_seconds: sortedWaits.at(-1) ?? null,
+    longest: [...waits]
+      .sort((a, b) => b.wait_seconds - a.wait_seconds)
+      .slice(0, 10),
+  };
+}));
 audit.queued_or_retryable_stale = await timed("queued/retryable older than stale cutoff", () => fetchRows(
   "recipe_ingestion_jobs",
   "id,user_id,target_state,source_type,source_url,canonical_url,recipe_id,status,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,completed_at,updated_at,event_log",

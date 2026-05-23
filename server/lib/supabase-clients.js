@@ -18,15 +18,53 @@ import { createClient } from "@supabase/supabase-js";
 let serviceRoleClient = null;
 let anonClient = null;
 
+export const DEFAULT_SUPABASE_FETCH_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(String(process.env.SUPABASE_FETCH_TIMEOUT_MS ?? ""), 10) || 12_000
+);
+
 function readEnv(name) {
   return String(process.env[name] ?? "").trim();
 }
 
-function defaultClientOptions() {
+function timeoutFetch(timeoutMs = DEFAULT_SUPABASE_FETCH_TIMEOUT_MS) {
+  return async function fetchWithSupabaseTimeout(input, init = {}) {
+    const controller = new AbortController();
+    const upstreamSignal = init.signal;
+    const timeoutID = setTimeout(() => {
+      controller.abort(new Error(`supabase_fetch_timeout_${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const abortFromUpstream = () => {
+      controller.abort(upstreamSignal?.reason ?? new Error("supabase_fetch_aborted"));
+    };
+
+    if (upstreamSignal?.aborted) {
+      abortFromUpstream();
+    } else if (upstreamSignal) {
+      upstreamSignal.addEventListener("abort", abortFromUpstream, { once: true });
+    }
+
+    try {
+      return await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutID);
+      upstreamSignal?.removeEventListener?.("abort", abortFromUpstream);
+    }
+  };
+}
+
+export function defaultClientOptions({ timeoutMs = DEFAULT_SUPABASE_FETCH_TIMEOUT_MS } = {}) {
   return {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+    },
+    global: {
+      fetch: timeoutFetch(timeoutMs),
     },
   };
 }

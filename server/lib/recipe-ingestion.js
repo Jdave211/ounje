@@ -9603,6 +9603,35 @@ function isImportQueuedForWorker(jobRow) {
   return ["queued", "retryable"].includes(normalizeText(jobRow?.status).toLowerCase());
 }
 
+async function publishRecipeImportWake(jobRow, { reason = "queued" } = {}) {
+  if (!jobRow?.id) return false;
+  const startedAt = performance.now();
+  const published = await publishRedisJSON(RECIPE_IMPORT_WAKE_CHANNEL, {
+    job_id: jobRow.id,
+    user_id: jobRow.user_id ?? null,
+    source_type: jobRow.source_type ?? null,
+    queued_at: nowIso(),
+    reason,
+  });
+  const durationMs = Math.round(performance.now() - startedAt);
+
+  if (!published) {
+    console.warn("[recipe-ingestion] redis wake publish failed", {
+      job_id: jobRow.id,
+      reason,
+      duration_ms: durationMs,
+    });
+  } else if (durationMs >= 250) {
+    console.log("[recipe-ingestion] redis wake publish slow", {
+      job_id: jobRow.id,
+      reason,
+      duration_ms: durationMs,
+    });
+  }
+
+  return published;
+}
+
 export async function queueRecipeIngestion(payload = {}, options = {}) {
   const requests = Array.isArray(payload.sources)
     ? payload.sources.map((entry) => normalizeImportPayload({ ...payload, ...entry }))
@@ -9627,13 +9656,9 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     };
 
     const job = await createJobRow(queuedRequest);
+    let wakePublished = null;
     if (isImportQueuedForWorker(job)) {
-      void publishRedisJSON(RECIPE_IMPORT_WAKE_CHANNEL, {
-        job_id: job.id,
-        user_id: job.user_id ?? null,
-        source_type: job.source_type ?? null,
-        queued_at: nowIso(),
-      });
+      wakePublished = await publishRecipeImportWake(job, { reason: "queued" });
     }
     if (processInline) {
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
@@ -9641,7 +9666,10 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
       const processingMode = ["saved", "draft", "needs_review"].includes(normalizeText(job.status))
         ? "cached"
         : "queued";
-      results.push(formatJobResponse(job, { processing_mode: processingMode }));
+      results.push(formatJobResponse(job, {
+        processing_mode: processingMode,
+        wake_published: wakePublished,
+      }));
     }
   }
 
@@ -9783,15 +9811,12 @@ export async function retryRecipeIngestionJob(jobID, { userID = null } = {}) {
     dedupe_recipe_id: null,
   });
 
-  void publishRedisJSON(RECIPE_IMPORT_WAKE_CHANNEL, {
-    job_id: retried.id,
-    user_id: retried.user_id ?? null,
-    source_type: retried.source_type ?? null,
-    queued_at: nowIso(),
-    reason: "user_retry",
-  });
+  const wakePublished = await publishRecipeImportWake(retried, { reason: "user_retry" });
 
-  return formatJobResponse(retried, { processing_mode: "queued" });
+  return formatJobResponse(retried, {
+    processing_mode: "queued",
+    wake_published: wakePublished,
+  });
 }
 
 export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${nanoid(8)}`, accessToken = null } = {}) {

@@ -13,6 +13,7 @@ import { startRecipeFineTunePolling } from "./lib/recipe-model-registry.js";
 import { withAIUsageContext } from "./lib/openai-usage-logger.js";
 import { checkRedisHealth } from "./lib/redis-cache.js";
 import { renderRecipeSharePage, resolveRecipeShareLink } from "./lib/recipe-share-links.js";
+import { defaultClientOptions } from "./lib/supabase-clients.js";
 
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
 
@@ -73,6 +74,10 @@ const HEALTHZ_FAILURE_CACHE_TTL_MS = Math.max(
   2_000,
   Number.parseInt(String(process.env.OUNJE_HEALTHZ_FAILURE_CACHE_TTL_MS ?? ""), 10) || 10_000
 );
+const HEALTHZ_SUPABASE_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(String(process.env.OUNJE_HEALTHZ_SUPABASE_TIMEOUT_MS ?? ""), 10) || 3_500
+);
 let healthSupabaseClient = null;
 let cachedHealthz = null;
 
@@ -82,12 +87,11 @@ function getHealthSupabaseClient() {
   }
 
   if (!healthSupabaseClient) {
-    healthSupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
+    healthSupabaseClient = createClient(
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
+      defaultClientOptions({ timeoutMs: HEALTHZ_SUPABASE_TIMEOUT_MS })
+    );
   }
 
   return healthSupabaseClient;
