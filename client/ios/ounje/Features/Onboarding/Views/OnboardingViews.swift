@@ -75,6 +75,7 @@ struct FirstLoginOnboardingView: View {
     @State private var onboardingAutoAdvanceTask: Task<Void, Never>?
     @State private var recipeUpgradeIntroTextVisible = false
     @State private var recipeUpgradeIntroTextExiting = false
+    @State private var paywallWarmupStage = 0
     @State private var recipeStylePreviewRecipe: DiscoverRecipeCardData?
     @State private var isRecipeStylePreviewLoading = false
     @State private var recipeEditDemoRecipes: [OnboardingRecipeEditDemoRecipe] = []
@@ -538,7 +539,7 @@ struct FirstLoginOnboardingView: View {
                 }
             }
             if newStep == .paywallIntro {
-                schedulePaywallIntroPresentation()
+                resetPaywallWarmup()
             }
             persistDraftForResume(step: newStep)
         }
@@ -593,7 +594,7 @@ struct FirstLoginOnboardingView: View {
                 }
             }
             if currentStep == .paywallIntro {
-                schedulePaywallIntroPresentation()
+                resetPaywallWarmup()
             }
         }
         .onDisappear {
@@ -825,8 +826,12 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var introHeaderActionTitle: String {
-        if currentStep == .recipeEditIntro || currentStep == .paywallIntro {
+        if currentStep == .recipeEditIntro {
             return ""
+        }
+
+        if currentStep == .paywallIntro {
+            return paywallWarmupStage < 2 ? "Continue" : ""
         }
 
         if currentStep == .address {
@@ -1175,8 +1180,23 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var paywallIntroStepContent: some View {
-        OnboardingMinimalTransitionPage(title: "Your food system is ready")
-        .onAppear(perform: schedulePaywallIntroPresentation)
+        Group {
+            switch paywallWarmupStage {
+            case 0:
+                OnboardingTrialInvitationPage(accent: currentStepAccent)
+            case 1:
+                OnboardingTrialControlPage(accent: currentStepAccent)
+            default:
+                EmptyView()
+            }
+        }
+        .id(paywallWarmupStage)
+        .transition(
+            .asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .move(edge: .leading).combined(with: .opacity)
+            )
+        )
     }
 
     /// Visual-only share-import education. Onboarding should teach the path
@@ -2450,6 +2470,24 @@ struct FirstLoginOnboardingView: View {
         }
     }
 
+    private func resetPaywallWarmup() {
+        onboardingAutoAdvanceTask?.cancel()
+        paywallWarmupStage = 0
+    }
+
+    private func advancePaywallWarmup() {
+        guard currentStep == .paywallIntro else { return }
+
+        if paywallWarmupStage < 1 {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                paywallWarmupStage += 1
+            }
+        } else {
+            paywallWarmupStage += 1
+            finishOnboardingOrPresentPaywall()
+        }
+    }
+
     private func scheduleSolutionTypewriterTransition() {
         onboardingAutoAdvanceTask?.cancel()
         solutionAnimationVisible = false
@@ -2518,6 +2556,11 @@ struct FirstLoginOnboardingView: View {
 
         if currentStep == .shareImport {
             advance()
+            return
+        }
+
+        if currentStep == .paywallIntro {
+            advancePaywallWarmup()
             return
         }
 
@@ -3734,6 +3777,127 @@ struct FirstLoginOnboardingView: View {
                 return nil
             }
         }
+    }
+}
+
+private struct OnboardingTrialInvitationPage: View {
+    let accent: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var didEnter = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let phoneWidth = min(proxy.size.width + 18, 392)
+            let phoneFullHeight = min(max(proxy.size.height * 0.76, 500), 650)
+            let phoneVisibleHeight = min(max(phoneFullHeight * 0.64, 330), 416)
+
+            VStack(spacing: 0) {
+                (
+                    Text("We want you\n")
+                        .foregroundColor(OunjePalette.primaryText) +
+                    Text("to try ")
+                        .foregroundColor(OunjePalette.primaryText) +
+                    Text("Ounje")
+                        .foregroundColor(accent) +
+                    Text("\nfor free")
+                        .foregroundColor(OunjePalette.primaryText)
+                )
+                    .font(.system(size: 38, weight: .black, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .opacity(didEnter ? 1 : 0)
+                    .offset(y: didEnter || reduceMotion ? 0 : -26)
+                    .padding(.top, 10)
+
+                Spacer(minLength: 8)
+
+                ZStack(alignment: .top) {
+                    Image("OnboardingTrialRecipePhone")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: phoneWidth, height: phoneFullHeight, alignment: .top)
+                        .shadow(color: accent.opacity(0.28), radius: 30, x: 0, y: 20)
+                }
+                .frame(width: phoneWidth, height: phoneVisibleHeight, alignment: .top)
+                .clipped()
+                .overlay(alignment: .bottom) {
+                    LinearGradient(
+                        colors: [
+                            OunjePalette.background.opacity(0),
+                            OunjePalette.background.opacity(0.78),
+                            OunjePalette.background
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: min(phoneVisibleHeight * 0.42, 160))
+                    .allowsHitTesting(false)
+                }
+                .opacity(didEnter ? 1 : 0)
+                .offset(y: didEnter || reduceMotion ? 0 : 42)
+                .scaleEffect(didEnter || reduceMotion ? 1 : 0.96)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onAppear {
+                if reduceMotion {
+                    didEnter = true
+                    return
+                }
+
+                didEnter = false
+                withAnimation(.spring(response: 0.54, dampingFraction: 0.86).delay(0.08)) {
+                    didEnter = true
+                }
+            }
+        }
+    }
+}
+
+private struct OnboardingTrialControlPage: View {
+    let accent: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                (
+                    Text("You'll get a reminder\n")
+                        .foregroundColor(OunjePalette.primaryText) +
+                    Text("1 day before\n")
+                        .foregroundColor(accent) +
+                    Text("your trial ends")
+                        .foregroundColor(OunjePalette.primaryText) +
+                     Text("."))
+                    .font(.system(size: 37, weight: .black, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 356)
+                    .padding(.top, 30)
+
+                Spacer(minLength: 26)
+
+                OnboardingTrialBellGraphic(accent: accent)
+                    .frame(width: min(proxy.size.width, 352), height: min(max(proxy.size.height * 0.48, 300), 390))
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
+}
+
+private struct OnboardingTrialBellGraphic: View {
+    let accent: Color
+
+    var body: some View {
+        Image("OnboardingTrialBell")
+            .resizable()
+            .scaledToFit()
+            .shadow(color: accent.opacity(0.2), radius: 28, x: 0, y: 18)
     }
 }
 

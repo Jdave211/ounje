@@ -215,6 +215,7 @@ const WARM_RECIPE_DETAIL_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const IMPORT_ENQUEUE_LOCK_TTL_SECONDS = 15;
 const IMPORT_PROCESS_LOCK_TTL_SECONDS = 30 * 60;
 const SOURCE_METADATA_CACHE_TTL_SECONDS = 6 * 60 * 60;
+const FAILED_IMPORT_DEDUPE_REUSE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const GLOBAL_IMPORT_CACHE_NAMESPACE = "__global__";
 const RECIPE_IMPORT_WAKE_CHANNEL = "ounje:recipe-ingestion:queued";
 const _canonicalImportCache = new Map();
@@ -1952,18 +1953,202 @@ function socialRecipeRecoveryText(source) {
   ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join("\n");
 }
 
+const SOCIAL_RECIPE_IDENTITY_PATTERN = /\b(recipe|food|dish|meal|cook|bake|fried|roasted|grilled|cheesy|garlic|rolls?|bread|pizza|pasta|noodles?|rice|bowl|taco|burger|sandwich|chicken|beef|pork|salmon|shrimp|egg|tofu|sauce|dessert|cake|cookie|brownie|soup|stew|salad|plantains?|donuts?|doughnuts?|tiramisu|curry|jollof|bolognese|alfredo|jerk|bbq|barbecue)\b/i;
+const GENERIC_SOCIAL_RECIPE_TAGS = new Set([
+  "recipe",
+  "recipes",
+  "food",
+  "foodie",
+  "foodlover",
+  "foodporn",
+  "cooking",
+  "cook",
+  "chef",
+  "cheflife",
+  "dinner",
+  "lunch",
+  "breakfast",
+  "meal",
+  "meals",
+  "explore",
+  "explorepage",
+  "exploremore",
+  "fyp",
+  "reels",
+  "viral",
+  "entree",
+  "entrees",
+]);
+
+function socialRecipeIdentityText(source) {
+  return [
+    source?.title,
+    source?.description,
+    source?.meta_description,
+    source?.caption_text,
+    source?.raw_text,
+    source?.body_text,
+    source?.transcript_text,
+    source?.page_signals_summary?.title,
+    source?.page_signals_summary?.meta_title,
+    source?.page_signals_summary?.meta_description,
+  ].map((value) => normalizeText(value)).filter(Boolean).join("\n");
+}
+
+function splitCompactFoodHashtag(value) {
+  let text = normalizeText(value)
+    .replace(/^#+/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim();
+  if (!text) return "";
+  if (!/\s/.test(text) && text.length >= 8) {
+    const compactTerms = [
+      "barbecue",
+      "bolognese",
+      "plantain",
+      "plantains",
+      "chicken",
+      "doughnut",
+      "doughnuts",
+      "tiramisu",
+      "alfredo",
+      "shrimp",
+      "salmon",
+      "cookie",
+      "cookies",
+      "brownie",
+      "garlic",
+      "cheesy",
+      "fried",
+      "roast",
+      "roasted",
+      "grilled",
+      "curry",
+      "jollof",
+      "pizza",
+      "pasta",
+      "noodle",
+      "noodles",
+      "burger",
+      "sandwich",
+      "bread",
+      "sauce",
+      "salad",
+      "taco",
+      "beef",
+      "pork",
+      "rice",
+      "soup",
+      "stew",
+      "cake",
+      "donut",
+      "donuts",
+      "brown",
+      "jerk",
+      "bbq",
+      "egg",
+    ].sort((left, right) => right.length - left.length);
+    let spaced = text.toLowerCase();
+    for (const term of compactTerms) {
+      spaced = spaced.replace(new RegExp(term, "g"), ` ${term} `);
+    }
+    text = normalizeText(spaced) || text;
+  }
+  return text;
+}
+
+function cleanSocialDishCandidate(value) {
+  const cleaned = normalizeText(value)
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/[@#][\w.-]+/g, " ")
+    .replace(/\b\d+(?:[.,]\d+)?\s*(?:k|m)?\s*(?:likes?|comments?|views?)\b/gi, " ")
+    .replace(/\b(?:instagram|tiktok|youtube|reels?|shorts?)\b/gi, " ")
+    .replace(/\b(?:chapter|verse)\s+\d+[^\n#.]*/gi, " ")
+    .replace(/\bnot\s+for\s+dunya\b/gi, " ")
+    .replace(/[^\p{L}\p{N}\s'&-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = cleaned
+    .split(/\s+/)
+    .filter((word) => !/^(and|with|for|the|this|that|from|make|made|easy|best|viral|more|likes?|comments?|views?|on|by|in|of|a|an)$/i.test(word));
+  if (words.length < 2 || words.length > 9) return "";
+  const candidate = words.join(" ");
+  if (!SOCIAL_RECIPE_IDENTITY_PATTERN.test(candidate)) return "";
+  return candidate;
+}
+
+function socialDishCandidatesFromText(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
+
+  const candidates = [];
+  const hashtagMatches = normalized.match(/#[\p{L}\p{N}_-]+/gu) ?? [];
+  for (const hashtag of hashtagMatches) {
+    const phrase = splitCompactFoodHashtag(hashtag);
+    const key = normalizeKey(phrase);
+    if (!phrase || GENERIC_SOCIAL_RECIPE_TAGS.has(key.replace(/\s+/g, "")) || GENERIC_SOCIAL_RECIPE_TAGS.has(key)) continue;
+    const cleaned = cleanSocialDishCandidate(phrase);
+    if (cleaned) candidates.push({ value: cleaned, method: "hashtag" });
+  }
+
+  const lines = normalized
+    .split(/\n|(?:\s+-\s+)|(?:\s+·\s+)/)
+    .map((line) => normalizeText(line))
+    .filter(Boolean);
+  for (const line of lines) {
+    const quoteMatches = [...line.matchAll(/[“"]([^”"]{4,140})[”"]/g)].map((match) => match[1]);
+    const pieces = quoteMatches.length ? quoteMatches : [line];
+    for (const piece of pieces) {
+      const withoutMetrics = piece
+        .replace(/^\s*(?:instagram\s*)?\d+(?:[.,]\d+)?\s*(?:k|m)?\s+likes?,?\s*\d*(?:[.,]\d+)?\s*(?:k|m)?\s*comments?\s*-\s*[^:]{0,80}:\s*/i, "")
+        .split(/#|\b(?:chapter|verse)\b|\.{2,}|…|;|\|/i)[0];
+      const cleaned = cleanSocialDishCandidate(withoutMetrics);
+      if (cleaned) candidates.push({ value: cleaned, method: "caption" });
+    }
+  }
+
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    const key = normalizeKey(candidate.value);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildReferenceRecipeQueryCandidateFromSocialSource(source) {
+  const identityText = socialRecipeIdentityText(source);
+  const candidates = socialDishCandidatesFromText(identityText);
+  const best = candidates.find((candidate) => {
+    const wordCount = candidate.value.split(/\s+/).length;
+    return wordCount >= 2 && wordCount <= 6;
+  }) ?? candidates[0] ?? null;
+  if (!best) return null;
+  return {
+    query: normalizeText(`${best.value} recipe`),
+    dish: best.value,
+    method: best.method,
+  };
+}
+
 function socialSourceHasFoodIdentity(source) {
   const sourceType = normalizeText(source?.source_type ?? source?.platform ?? "").toLowerCase();
   const isSocialSource = ["tiktok", "instagram", "youtube", "shorts", "reel", "social"].some((token) => sourceType.includes(token));
   if (!isSocialSource) return false;
 
+  if (buildReferenceRecipeQueryCandidateFromSocialSource(source)?.query) return true;
+
   const text = socialRecipeRecoveryText(source);
 
   if (!text) return false;
-  return /\b(recipe|food|dish|meal|cook|bake|fried|roasted|grilled|cheesy|garlic|rolls?|bread|pizza|pasta|noodles?|rice|bowl|taco|burger|sandwich|chicken|beef|pork|salmon|shrimp|egg|tofu|sauce|dessert|cake|cookie|brownie|soup|stew|salad)\b/i.test(text);
+  return SOCIAL_RECIPE_IDENTITY_PATTERN.test(text);
 }
 
 function buildReferenceRecipeQueryFromSocialSource(source) {
+  const referenceCandidate = buildReferenceRecipeQueryCandidateFromSocialSource(source);
+  if (referenceCandidate?.query) return referenceCandidate.query;
+
   const candidates = [
     source?.caption_text,
     source?.raw_text,
@@ -3408,7 +3593,51 @@ async function findExistingJobForRequest(request, dedupeKey) {
   const existing = rows[0] ?? null;
   if (!existing) return null;
 
-  return normalizeText(existing.status).toLowerCase() === "failed" ? null : existing;
+  return isReusableExistingImportJob(existing) ? existing : null;
+}
+
+function isReusableExistingImportJob(job) {
+  const status = normalizeText(job?.status).toLowerCase();
+  if (!status) return false;
+  if (status !== "failed") return true;
+
+  const timestamp = Date.parse(job.completed_at ?? job.updated_at ?? job.created_at ?? "");
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= FAILED_IMPORT_DEDUPE_REUSE_TTL_MS;
+}
+
+async function markDuplicateFailedImportsSuperseded(job, { reason = "Superseded by a successful import of the same source." } = {}) {
+  const jobID = normalizeText(job?.id ?? "");
+  const userID = normalizeText(job?.user_id ?? "");
+  const dedupeKey = normalizeText(job?.dedupe_key ?? "");
+  if (!jobID || !userID || !dedupeKey) return 0;
+
+  const rows = await patchRows(
+    "recipe_ingestion_jobs",
+    [
+      `id=neq.${encodeURIComponent(jobID)}`,
+      `user_id=eq.${encodeURIComponent(userID)}`,
+      "status=eq.failed",
+      `dedupe_key=eq.${encodeURIComponent(dedupeKey)}`,
+    ],
+    {
+      status: "superseded",
+      error_message: null,
+      review_reason: reason,
+      review_state: "approved",
+      completed_at: nowIso(),
+    },
+    { prefer: "return=representation" }
+  ).catch((error) => {
+    console.warn("[recipe-ingestion] failed to supersede duplicate failed imports", {
+      job_id: jobID,
+      dedupe_key: dedupeKey,
+      error: errorSummary(error),
+    });
+    return [];
+  });
+
+  return Array.isArray(rows) ? rows.length : 0;
 }
 
 async function findExistingJobForRequestSource(request, dedupeKey = null) {
@@ -3445,7 +3674,7 @@ async function findExistingJobForRequestSource(request, dedupeKey = null) {
     }
   );
 
-  return rows.find((row) => normalizeText(row.status).toLowerCase() !== "failed") ?? null;
+  return rows.find((row) => isReusableExistingImportJob(row)) ?? null;
 }
 
 async function findCompletedCanonicalImportForRequest(request, { canonicalURL = null, dedupeKey = null, excludeJobID = null, scope = "user" } = {}) {
@@ -3588,6 +3817,7 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
     recipeID: cachedJob.recipe_id,
     recipeDetail,
   });
+  await markDuplicateFailedImportsSuperseded(completed);
   invalidateUserBootstrapCache(completed.user_id);
   return formatJobResponse(completed, {
     recipe,
@@ -3645,6 +3875,7 @@ async function completeJobByCloningGlobalImportedRecipe(job, cachedJob, { worker
     recipeID: persisted.recipe_id,
     recipeDetail: persisted.recipe_detail,
   });
+  await markDuplicateFailedImportsSuperseded(completed);
   if (persisted.saved_state === "inserted") {
     scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: job.id });
   }
@@ -3690,6 +3921,7 @@ async function completeJobFromExistingImportedRecipe(job, recipeRow, { workerID,
     recipeID,
     recipeDetail,
   });
+  await markDuplicateFailedImportsSuperseded(completed);
   invalidateUserBootstrapCache(completed.user_id);
   return formatJobResponse(completed, {
     recipe,
@@ -3740,6 +3972,7 @@ async function createCompletedJobRowFromExistingImportedRecipe(request, recipeRo
   });
   await restoreSavedRecipeForImportRequest(request, completed, { requestedAt: now }).catch(() => false);
   _setCanonicalImportCache(request.user_id, completed.canonical_url ?? null, completed.dedupe_key ?? null, completed);
+  await markDuplicateFailedImportsSuperseded(completed);
   return completed;
 }
 
@@ -4746,8 +4979,12 @@ function coerceStructuredRecipeCandidate(candidate, source) {
 }
 
 function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
+  const usesPublicRecipeTables = config.recipeTable === PUBLIC_RECIPE_TABLE_CONFIG.recipeTable;
+  const makeChildRowID = (prefix) => usesPublicRecipeTables
+    ? crypto.randomUUID()
+    : `${prefix}${nanoid(12)}`;
   const discoverBrackets = sanitizeDiscoverBrackets(normalized, normalized.discover_brackets ?? []);
-  const recipeID = config.recipeTable === PUBLIC_RECIPE_TABLE_CONFIG.recipeTable
+  const recipeID = usesPublicRecipeTables
     ? crypto.randomUUID()
     : (
         String(normalized?.id ?? "").trim().startsWith(config.recipePrefix)
@@ -4755,7 +4992,7 @@ function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
           : `${config.recipePrefix}${nanoid(14)}`
       );
   const recipeIngredients = (normalized.ingredients ?? []).map((ingredient, index) => ({
-    id: `${config.ingredientPrefix}${nanoid(12)}`,
+    id: makeChildRowID(config.ingredientPrefix),
     recipe_id: recipeID,
     ingredient_id: ingredient.ingredient_id ?? null,
     display_name: ingredient.display_name,
@@ -4768,7 +5005,7 @@ function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
   const stepIngredients = [];
 
   for (const step of normalized.steps ?? []) {
-    const stepID = `${config.stepPrefix}${nanoid(12)}`;
+    const stepID = makeChildRowID(config.stepPrefix);
     recipeSteps.push({
       id: stepID,
       recipe_id: recipeID,
@@ -4779,7 +5016,7 @@ function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
 
     for (const [index, ingredient] of (step.ingredients ?? []).entries()) {
       stepIngredients.push({
-        id: `${config.stepIngredientPrefix}${nanoid(12)}`,
+        id: makeChildRowID(config.stepIngredientPrefix),
         recipe_step_id: stepID,
         ingredient_id: ingredient.ingredient_id ?? recipeIngredients.find((row) => normalizeKey(row.display_name) === normalizeKey(ingredient.display_name))?.ingredient_id ?? null,
         display_name: ingredient.display_name,
@@ -9663,8 +9900,11 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     if (processInline) {
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
     } else {
-      const processingMode = ["saved", "draft", "needs_review"].includes(normalizeText(job.status))
+      const status = normalizeText(job.status).toLowerCase();
+      const processingMode = ["saved", "draft", "needs_review"].includes(status)
         ? "cached"
+        : status === "failed"
+          ? "failed"
         : "queued";
       results.push(formatJobResponse(job, {
         processing_mode: processingMode,
@@ -10082,19 +10322,35 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
           }
 
           if (referenceSource) {
+            const originalSocialSource = {
+              source_type: source.source_type ?? null,
+              platform: source.platform ?? null,
+              source_url: source.source_url ?? null,
+              canonical_url: source.canonical_url ?? null,
+              attached_video_url: source.attached_video_url ?? null,
+              title: source.title ?? null,
+              description: source.description ?? source.meta_description ?? null,
+              author_name: source.author_name ?? null,
+              author_handle: source.author_handle ?? null,
+              recipe_gate: recipeGate,
+            };
             source = {
               ...referenceSource,
-              platform: "web_search_from_social_reference",
-              original_social_source: {
-                source_type: source.source_type ?? null,
-                platform: source.platform ?? null,
-                source_url: source.source_url ?? null,
-                canonical_url: source.canonical_url ?? null,
-                title: source.title ?? null,
-                description: source.description ?? source.meta_description ?? null,
-                author_name: source.author_name ?? null,
-                author_handle: source.author_handle ?? null,
-                recipe_gate: recipeGate,
+              source_url: originalSocialSource.source_url ?? originalSocialSource.canonical_url ?? referenceSource.source_url ?? null,
+              canonical_url: originalSocialSource.canonical_url ?? originalSocialSource.source_url ?? referenceSource.canonical_url ?? null,
+              attached_video_url: originalSocialSource.attached_video_url
+                ?? originalSocialSource.canonical_url
+                ?? originalSocialSource.source_url
+                ?? referenceSource.attached_video_url
+                ?? null,
+              platform: originalSocialSource.platform ?? "web_search_from_social_reference",
+              source_platform: originalSocialSource.platform ?? "web_search_from_social_reference",
+              author_name: originalSocialSource.author_name ?? referenceSource.author_name ?? null,
+              author_handle: originalSocialSource.author_handle ?? referenceSource.author_handle ?? null,
+              original_social_source: originalSocialSource,
+              source_provenance_json: {
+                ...(referenceSource.source_provenance_json ?? {}),
+                original_social_source: compactJSON(originalSocialSource),
               },
             };
             job = await appendJobEvent(existingJob.id, "not_recipe_converted_to_reference_recipe", {
@@ -10302,6 +10558,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       recipeID: persisted.recipe_id,
       recipeDetail: persisted.recipe_detail,
     });
+    await markDuplicateFailedImportsSuperseded(job);
     if (existingJob.user_id && persisted.saved_state === "inserted") {
       scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: existingJob.id });
     }
