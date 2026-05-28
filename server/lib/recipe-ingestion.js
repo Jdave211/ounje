@@ -70,10 +70,6 @@ const SOCIAL_FETCH_TIMEOUT_MS = Math.max(
   3_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FETCH_TIMEOUT_MS ?? "10000", 10) || 10_000
 );
-const IMPORT_ENQUEUE_CANONICAL_RESOLVE_TIMEOUT_MS = Math.max(
-  750,
-  Number.parseInt(process.env.RECIPE_IMPORT_ENQUEUE_CANONICAL_TIMEOUT_MS ?? "3000", 10) || 3_000
-);
 const SOCIAL_FRAME_PROBE_TIMEOUT_MS = Math.max(
   2_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_PROBE_TIMEOUT_MS ?? "5000", 10) || 5_000
@@ -1148,23 +1144,8 @@ async function expandCanonicalSourceURLForEnqueue(sourceURL, sourceType = null) 
     return cachedCanonical.canonical_url;
   }
 
-  try {
-    const response = await fetchWithTimeout(normalized, {
-      redirect: "follow",
-      headers: {
-        "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-      },
-    }, IMPORT_ENQUEUE_CANONICAL_RESOLVE_TIMEOUT_MS, "TikTok enqueue redirect resolve");
-
-    const redirected = cleanURL(response.url ?? normalized);
-    if (redirected && redirected !== normalized) {
-      void writeRedisJSON(canonicalCacheKey, { canonical_url: redirected }, SOURCE_METADATA_CACHE_TTL_SECONDS);
-      return redirected;
-    }
-  } catch {
-    return normalized;
-  }
-
+  // Enqueue must not depend on TikTok or any external redirect resolving.
+  // The worker expands canonical URLs after the job is durably stored.
   return normalized;
 }
 
@@ -3326,13 +3307,7 @@ export async function listRecipeImportQueueItems({ userID = null, limit = null }
   const resolvedLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
     ? Math.min(parsedLimit, 200)
     : 100;
-
-  let totalCount = 0;
-  try {
-    totalCount = await countRows("recipe_ingestion_jobs", { filters });
-  } catch {
-    totalCount = 0;
-  }
+  const queryLimit = Math.min(Math.max(resolvedLimit * 2, resolvedLimit + 10), 300);
 
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
@@ -3340,28 +3315,20 @@ export async function listRecipeImportQueueItems({ userID = null, limit = null }
     {
       filters,
       order: ["updated_at.desc", "created_at.desc"],
-      limit: resolvedLimit,
+      limit: queryLimit,
     }
   );
 
-  const visibleRows = [];
-  for (const row of rows) {
-    if (normalizeText(row.status).toLowerCase() === "failed") {
-      const completedDuplicate = await findCompletedCanonicalImportForRequest(row, {
-        canonicalURL: row.canonical_url ?? row.source_url ?? null,
-        dedupeKey: row.dedupe_key ?? null,
-        excludeJobID: row.id,
-      }).catch(() => null);
-      if (completedDuplicate) {
-        continue;
-      }
-    }
-    visibleRows.push(row);
-  }
+  const visibleRows = rows
+    // Do not do a per-row completed-duplicate lookup here. That made the import
+    // modal issue N extra DB reads whenever old failures were present. Duplicate
+    // suppression happens when jobs are created/processed; list rendering stays
+    // bounded to one read.
+    .slice(0, resolvedLimit);
 
   return {
     items: visibleRows.map(summarizeRecipeImportQueueJob),
-    totalCount: Math.max(0, totalCount - (rows.length - visibleRows.length)),
+    totalCount: visibleRows.length,
   };
 }
 
@@ -3381,20 +3348,6 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
   let rows = [];
   let importedRows = [];
   let lastError = null;
-  let totalCount = 0;
-  let importedTotalCount = 0;
-  try {
-    totalCount = await countRows("recipe_ingestion_jobs", { filters });
-  } catch {
-    totalCount = 0;
-  }
-  try {
-    const importedFilters = userID ? [`user_id=eq.${encodeURIComponent(userID)}`] : [];
-    importedTotalCount = await countRows(USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable, { filters: importedFilters });
-  } catch {
-    importedTotalCount = 0;
-  }
-
   const parsedLimit = Number.parseInt(String(limit ?? ""), 10);
   const resolvedLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
     ? Math.min(parsedLimit, 500)
@@ -3457,7 +3410,7 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
     .sort((left, right) => timestampValue(right) - timestampValue(left));
   return {
     items,
-    totalCount: Math.max(importedTotalCount || 0, items.length),
+    totalCount: items.length,
   };
 }
 

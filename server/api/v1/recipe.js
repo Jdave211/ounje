@@ -955,7 +955,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       return res.status(404).json({ error: "Recipe not found." });
     }
 
-    if (recipeId.startsWith("uir_") && hasStructuredRecipeJSON(recipe)) {
+    if (hasStructuredRecipeJSON(recipe)) {
       const recipeDetail = await ensureRecipeDetailDisplayMacros(recipeId, normalizeRecipeDetail(recipe));
       const payload = {
         recipe: recipeDetail,
@@ -965,7 +965,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
         recipeDetailCache,
         detailCacheKey,
         payload,
-        IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS,
+        recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
         "recipe-detail"
       );
 
