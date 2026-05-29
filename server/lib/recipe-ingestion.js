@@ -17,6 +17,7 @@ import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
 import { acquireRedisLock, publishRedisJSON, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
+import { importQueueBusyError, recordDbOperation } from "./db-guardrails.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
 
@@ -210,6 +211,10 @@ const CANONICAL_IMPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const WARM_RECIPE_DETAIL_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const IMPORT_ENQUEUE_LOCK_TTL_SECONDS = 15;
 const IMPORT_PROCESS_LOCK_TTL_SECONDS = 30 * 60;
+const IMPORT_MAX_ACTIVE_PER_USER = Math.max(
+  1,
+  Number.parseInt(String(process.env.OUNJE_IMPORT_MAX_ACTIVE_PER_USER ?? "3"), 10) || 3
+);
 const SOURCE_METADATA_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const FAILED_IMPORT_DEDUPE_REUSE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const GLOBAL_IMPORT_CACHE_NAMESPACE = "__global__";
@@ -2780,6 +2785,7 @@ function buildSourceProvenanceRecord(source, { reviewState = null, confidenceSco
 
 async function supabaseRequest(pathname, { method = "GET", body = null, headers = {} } = {}) {
   assertSupabaseConfig();
+  const startedAt = Date.now();
   const url = pathname.startsWith("http") ? pathname : `${SUPABASE_URL}${pathname}`;
   const supabaseRestKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   const request = {
@@ -2797,12 +2803,36 @@ async function supabaseRequest(pathname, { method = "GET", body = null, headers 
     request.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, request);
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(data?.message ?? data?.error ?? `${method} ${pathname} failed`);
+  let response = null;
+  try {
+    response = await fetch(url, request);
+    const data = await response.json().catch(() => null);
+    recordDbOperation({
+      operation: "recipe-ingestion-rest",
+      method,
+      path: pathname,
+      durationMs: Date.now() - startedAt,
+      ok: response.ok,
+      status: response.status,
+      error: response.ok ? null : (data?.message ?? data?.error ?? `${method} ${pathname} failed`),
+    });
+    if (!response.ok) {
+      throw new Error(data?.message ?? data?.error ?? `${method} ${pathname} failed`);
+    }
+    return data;
+  } catch (error) {
+    if (!response) {
+      recordDbOperation({
+        operation: "recipe-ingestion-rest",
+        method,
+        path: pathname,
+        durationMs: Date.now() - startedAt,
+        ok: false,
+        error,
+      });
+    }
+    throw error;
   }
-  return data;
 }
 
 async function callSupabaseRpc(functionName, payload) {
@@ -3630,6 +3660,25 @@ async function findExistingJobForRequestSource(request, dedupeKey = null) {
   return rows.find((row) => isReusableExistingImportJob(row)) ?? null;
 }
 
+async function countActiveImportsForUser(userID) {
+  const normalizedUserID = normalizeText(userID);
+  if (!normalizedUserID) return 0;
+  const activeStatuses = ["queued", "retryable", "processing", "fetching", "parsing", "normalized"];
+  const rows = await fetchRows(
+    "recipe_ingestion_jobs",
+    "id",
+    {
+      filters: [
+        `user_id=eq.${encodeURIComponent(normalizedUserID)}`,
+        `status=in.${buildInClause(activeStatuses)}`,
+      ],
+      order: ["created_at.desc"],
+      limit: IMPORT_MAX_ACTIVE_PER_USER + 1,
+    }
+  );
+  return rows.length;
+}
+
 async function findCompletedCanonicalImportForRequest(request, { canonicalURL = null, dedupeKey = null, excludeJobID = null, scope = "user" } = {}) {
   const cacheableURL = cleanURL(canonicalURL ?? request.canonical_url ?? request.source_url ?? null);
   const cacheDedupeKey = dedupeKey ?? buildDedupeKey({
@@ -4053,6 +4102,11 @@ async function createJobRow(request) {
       canonicalURL: request.canonical_url ?? request.source_url ?? null,
     });
     if (completed) return completed;
+  }
+
+  const activeImportCount = await countActiveImportsForUser(request.user_id);
+  if (activeImportCount >= IMPORT_MAX_ACTIVE_PER_USER) {
+    throw importQueueBusyError(`Import queue is busy. Wait for one import to finish before adding another.`);
   }
 
   const created = await insertRecipeIngestionJobRow({

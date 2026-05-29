@@ -24,6 +24,13 @@ function redisOperationTimeoutMs() {
   return Math.max(100, Number.parseInt(String(process.env.REDIS_OPERATION_TIMEOUT_MS ?? "350"), 10) || 350);
 }
 
+function redisMaxJSONBytes() {
+  return Math.max(
+    16 * 1024,
+    Number.parseInt(String(process.env.OUNJE_REDIS_MAX_JSON_BYTES ?? "262144"), 10) || 262_144
+  );
+}
+
 function redactedRedisEndpoint() {
   const urlString = redisURL();
   if (!urlString) return null;
@@ -138,9 +145,20 @@ export async function writeRedisJSON(key, value, ttlSeconds) {
   if (!key || value == null) return false;
   const seconds = Math.max(1, Number.parseInt(String(ttlSeconds ?? ""), 10) || 1);
   try {
+    const serialized = JSON.stringify(value);
+    const byteLength = Buffer.byteLength(serialized, "utf8");
+    const maxBytes = redisMaxJSONBytes();
+    if (byteLength > maxBytes) {
+      console.warn("[redis-cache] skip_oversized_json", {
+        key: String(key).slice(0, 120),
+        bytes: byteLength,
+        max_bytes: maxBytes,
+      });
+      return false;
+    }
     const client = await getRedisClient();
     if (!client) return false;
-    await withTimeout(client.set(key, JSON.stringify(value), { EX: seconds }), redisOperationTimeoutMs(), "redis_set");
+    await withTimeout(client.set(key, serialized, { EX: seconds }), redisOperationTimeoutMs(), "redis_set");
     return true;
   } catch (error) {
     lastRedisError = error;

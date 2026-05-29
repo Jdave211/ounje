@@ -1435,7 +1435,16 @@ recipe_router.post("/recipe/imports", recipeImportRateLimit, async (req, res) =>
     return res.status(202).json(result);
   } catch (error) {
     console.error("[recipe/imports] queue failed:", error.message);
-    return res.status(400).json({ error: error.message });
+    const statusCode = Number(error?.statusCode) || 400;
+    const retryAfter = Number(error?.retryAfterSeconds);
+    if (statusCode === 429 && Number.isFinite(retryAfter)) {
+      res.set("Retry-After", String(retryAfter));
+    }
+    return res.status(statusCode).json({
+      error: error.message,
+      ...(error?.code ? { code: error.code } : {}),
+      ...(Number.isFinite(retryAfter) ? { retry_after_seconds: retryAfter } : {}),
+    });
   }
 });
 

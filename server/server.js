@@ -14,6 +14,11 @@ import { withAIUsageContext } from "./lib/openai-usage-logger.js";
 import { checkRedisHealth } from "./lib/redis-cache.js";
 import { renderRecipeSharePage, resolveRecipeShareLink } from "./lib/recipe-share-links.js";
 import { defaultClientOptions } from "./lib/supabase-clients.js";
+import {
+  getGuardrailState,
+  maybeBlockNonEssentialDuringDegraded,
+  recordApiRouteMetric,
+} from "./lib/db-guardrails.js";
 
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
 
@@ -56,10 +61,19 @@ app.use((req, res, next) => {
         cache_stats: cacheStats ?? undefined,
       });
     }
+
+    recordApiRouteMetric({
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs,
+    });
   });
 
   next();
 });
+
+app.use(maybeBlockNonEssentialDuringDegraded);
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(serverDir, "..");
@@ -290,6 +304,7 @@ app.get("/healthz", async (req, res) => {
         redis: redis.status,
       },
       redis,
+      guardrails: getGuardrailState(),
       checkedAt: new Date().toISOString(),
     };
     cachedHealthz = {
@@ -306,6 +321,7 @@ app.get("/healthz", async (req, res) => {
       dependencies: {
         supabase: error.message,
       },
+      guardrails: getGuardrailState(),
       checkedAt: new Date().toISOString(),
     };
     cachedHealthz = {
@@ -390,6 +406,7 @@ if (ENABLE_RECIPE_FINE_TUNE_POLLING) {
   console.log("[recipe-model-registry] fine-tune polling disabled");
 }
 console.log(`[recipe-ingestion] recipe_ingestion_role=${RECIPE_INGESTION_ROLE} worker=${RECIPE_INGESTION_WORKER_ID} polling=${ENABLE_RECIPE_INGESTION_POLLING ? "enabled" : "disabled"}`);
+console.log("[db-guardrail] config", getGuardrailState());
 if (ENABLE_RECIPE_INGESTION_POLLING && CAN_CLAIM_RECIPE_INGESTION_JOBS) {
   console.log(`[recipe-ingestion] polling enabled worker=${RECIPE_INGESTION_WORKER_ID}`);
   startRecipeIngestionPolling();

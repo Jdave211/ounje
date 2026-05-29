@@ -23,6 +23,7 @@
     "recipes:ingestion-health": "node server/scripts/check_recipe_ingestion_worker_health.mjs",
     "recipes:ingestion-repair-stale": "node server/scripts/repair_stale_recipe_ingestion_jobs.mjs",
     "db:audit-hot-paths": "node server/scripts/audit_db_hot_paths.mjs",
+    "db:guardrails-smoke": "node server/scripts/test-db-guardrails.mjs",
     "recipes:repair-display-macros": "node server/scripts/repair_recipe_display_macros.mjs",
     "recipes:ingestion-smoke-ai-logging": "node server/scripts/smoke-recipe-ingestion-ai-logging.mjs",
     "recipes:backfill-sparse-imports": "node server/scripts/backfill_sparse_user_import_recipes.mjs",
