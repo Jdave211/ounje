@@ -3475,7 +3475,7 @@ struct RecipeAskSheet: View {
                     viewModel.errorMessage = "Sign in again to ask Ounje."
                     return
                 }
-                await viewModel.adapt(
+                let response = await viewModel.adapt(
                     recipeID: recipeID,
                     userID: session.userID,
                     prompt: intent.promptSeed,
@@ -3483,6 +3483,9 @@ struct RecipeAskSheet: View {
                     profile: profile,
                     accessToken: session.accessToken
                 )
+                if response != nil {
+                    AppReviewPromptCoordinator.promptAfterFirstRecipeEdit()
+                }
             }
         case let .onboarding(config):
             guard let fixture = onboardingFixtures.first(where: { $0.intent == intent }) else { return }
@@ -3919,6 +3922,10 @@ struct OnboardingRecipeAskInlineResultPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             RecipeAskChangeSummaryText(summary: summary)
 
+            if result.recipeDetail.hasCompleteDisplayMacros {
+                OnboardingRecipeNutritionNote(detail: result.recipeDetail)
+            }
+
             RecipeAdaptedPreviewCard(
                 result: result,
                 baseImageURL: baseImageURL,
@@ -3950,6 +3957,53 @@ struct OnboardingRecipeAskInlineResultPanel: View {
             .disabled(isSaved)
         }
         .padding(.top, 6)
+    }
+}
+
+struct OnboardingRecipeNutritionNote: View {
+    let detail: RecipeDetailData
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chart.bar.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(OunjePalette.accent)
+
+            HStack(spacing: 6) {
+                if let kcal = detail.caloriesKcal {
+                    Text("~\(Int(kcal.rounded())) kcal")
+                        .font(.system(size: 11.5, weight: .black, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                }
+                if let p = detail.proteinG {
+                    nutritionPill("\(Int(p.rounded()))g protein")
+                }
+                if let c = detail.carbsG {
+                    nutritionPill("\(Int(c.rounded()))g carbs")
+                }
+                if let f = detail.fatG {
+                    nutritionPill("\(Int(f.rounded()))g fat")
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.72))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(OunjePalette.accent.opacity(0.22), lineWidth: 1)
+                )
+        )
+    }
+
+    private func nutritionPill(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .foregroundStyle(OunjePalette.secondaryText)
     }
 }
 

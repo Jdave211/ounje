@@ -218,10 +218,15 @@ struct RootView: View {
     }
 
     private var shouldShowSubscriptionGate: Bool {
+        // Require Phase-2 server confirmation before gating. A timeout means
+        // our server is unreachable (cold start / network issue), not that the
+        // user's subscription is gone — showing the paywall in that case is
+        // a false positive that blocks valid subscribers.
         OunjeLaunchFlags.paywallsEnabled
             && store.membershipEntitlementResolved
             && !store.isRefreshingMembershipEntitlement
             && !store.hasActivePaidEntitlement
+            && store.membershipEntitlementServerConfirmed
     }
 
     private var shouldShowMembershipRefreshGate: Bool {
@@ -334,6 +339,43 @@ private struct OunjeSplashLoaderFallbackView: View {
 }
 
 @MainActor
+enum AppReviewPromptCoordinator {
+    private static let firstImportPromptKey = "ounje.reviewPrompt.firstRecipeImport.v1"
+    private static let firstEditPromptKey = "ounje.reviewPrompt.firstRecipeEdit.v1"
+    private static let lastPromptAtKey = "ounje.reviewPrompt.lastPromptAt.v1"
+    private static let minimumPromptSpacing: TimeInterval = 24 * 60 * 60
+
+    static func promptAfterFirstRecipeImport() {
+        promptOnce(key: firstImportPromptKey)
+    }
+
+    static func promptAfterFirstRecipeEdit() {
+        promptOnce(key: firstEditPromptKey)
+    }
+
+    private static func promptOnce(key: String) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: key) else { return }
+        if let lastPromptAt = defaults.object(forKey: lastPromptAtKey) as? Date,
+           Date().timeIntervalSince(lastPromptAt) < minimumPromptSpacing {
+            return
+        }
+
+        defaults.set(true, forKey: key)
+        defaults.set(Date(), forKey: lastPromptAtKey)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard UIApplication.shared.applicationState == .active,
+                  let scene = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene })
+                    .first(where: { $0.activationState == .foregroundActive })
+            else { return }
+            SKStoreReviewController.requestReview(in: scene)
+        }
+    }
+}
+
+@MainActor
 final class AppNotificationCenterManager: ObservableObject {
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var inboxEvents: [AppNotificationEvent] = []
@@ -378,10 +420,7 @@ final class AppNotificationCenterManager: ObservableObject {
         isSyncing = true
         defer { isSyncing = false }
 
-            await refreshAuthorizationStatus()
-            if authorizationStatus == .notDetermined {
-                await requestAuthorizationIfNeeded()
-            }
+        await refreshAuthorizationStatus()
 
         guard authorizationStatus == .authorized || authorizationStatus == .provisional else {
             return
@@ -447,6 +486,62 @@ final class AppNotificationCenterManager: ObservableObject {
             lastSyncFailureAt = Date()
             // Back off hard after repeated failures so notification delivery
             // problems don't create unbounded pending-event request churn.
+        }
+    }
+
+    @discardableResult
+    func requestNotificationPermissionAndRegister(session: AuthSession?) async -> Bool {
+        await refreshAuthorizationStatus()
+        if authorizationStatus == .notDetermined {
+            await requestAuthorizationIfNeeded()
+        }
+
+        guard authorizationStatus == .authorized || authorizationStatus == .provisional else {
+            return false
+        }
+
+        await registerForRemoteNotificationsIfAllowed()
+        OunjePushTokenRegistrar.shared.registerCurrentTokenIfPossible(session: session, force: true)
+        return true
+    }
+
+    @discardableResult
+    func scheduleTrialEndingReminder(entitlement: AppUserEntitlement?) async -> Bool {
+        await refreshAuthorizationStatus()
+        guard canPresentLocalNotifications,
+              let expiresAt = entitlement?.expiresAt,
+              expiresAt > Date()
+        else {
+            return false
+        }
+
+        let reminderDate = expiresAt.addingTimeInterval(-24 * 60 * 60)
+        guard reminderDate > Date().addingTimeInterval(60) else { return false }
+
+        let identifier = "ounje-trial-ending-reminder"
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
+
+        let content = UNMutableNotificationContent()
+        content.title = "Your Ounje trial ends tomorrow"
+        content.body = "Keep it if it’s helping. You can manage or cancel anytime in App Store subscriptions."
+        content.sound = .default
+        content.categoryIdentifier = "OUNJE_TRIAL_REMINDER"
+        content.threadIdentifier = "membership"
+        content.userInfo = [
+            "kind": "trial_reminder",
+            "actionURL": "ounje://profile/membership",
+            "action_url": "ounje://profile/membership",
+            "deep_link": "ounje://profile/membership",
+        ]
+
+        let interval = max(60, reminderDate.timeIntervalSinceNow)
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        do {
+            try await notificationCenter.add(request)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -717,6 +812,12 @@ final class AppNotificationCenterManager: ObservableObject {
                 intentIdentifiers: [],
                 options: []
             ),
+            UNNotificationCategory(
+                identifier: "OUNJE_TRIAL_REMINDER",
+                actions: [],
+                intentIdentifiers: [],
+                options: []
+            ),
         ])
     }
 
@@ -961,6 +1062,7 @@ private final class RecipeImportHistoryStore: ObservableObject {
     private var lastRefreshUserID: String?
     private var lastRefreshAt: Date?
     private let passiveRefreshTTL: TimeInterval = 45
+    private var locallyDeletedQueueIDs: Set<String> = []
 
     var badgeCount: Int {
         totalCompletedCount
@@ -995,11 +1097,25 @@ private final class RecipeImportHistoryStore: ObservableObject {
             totalCompletedCount = page.totalCount
         }
         if let page = try? await RecipeImportAPIService.shared.fetchImportQueue(userID: userID, accessToken: accessToken) {
-            backendQueueEnvelopes = page.items.map(\.sharedImportEnvelope)
+            let fetchedEnvelopes = page.items.map(\.sharedImportEnvelope)
+            let fetchedIDs = Set(fetchedEnvelopes.map(\.id))
+            locallyDeletedQueueIDs = locallyDeletedQueueIDs.intersection(fetchedIDs)
+            backendQueueEnvelopes = fetchedEnvelopes.filter { !locallyDeletedQueueIDs.contains($0.id) }
             totalBackendQueueCount = page.totalCount
         }
         lastRefreshUserID = userID
         lastRefreshAt = .now
+    }
+
+    func removeQueuedImportImmediately(_ envelope: SharedRecipeImportEnvelope) {
+        let jobID = (envelope.jobID ?? envelope.id).trimmingCharacters(in: .whitespacesAndNewlines)
+        let ids = Set([envelope.id, jobID].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        locallyDeletedQueueIDs.formUnion(ids)
+        backendQueueEnvelopes.removeAll { candidate in
+            ids.contains(candidate.id) || ids.contains((candidate.jobID ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        totalBackendQueueCount = max(0, totalBackendQueueCount - 1)
+        lastRefreshAt = nil
     }
 }
 
@@ -2505,6 +2621,7 @@ private struct MealPlannerShellView: View {
                         }
                     },
                     onDeleteFailedSharedImport: { envelope in
+                        recipeImportHistory.removeQueuedImportImmediately(envelope)
                         Task {
                             try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
                             let jobID = (envelope.jobID ?? envelope.id).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2559,6 +2676,7 @@ private struct MealPlannerShellView: View {
             thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
             destination: .appTab(.prep)
         )
+        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
     }
 
     @MainActor
@@ -2799,6 +2917,7 @@ private struct MealPlannerShellView: View {
                     ?? response.recipe?.imageURLString,
                 destination: .appTab(.prep)
             )
+            AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
         } catch {
             toastCenter.show(
                 title: "Photo import failed",
@@ -3301,6 +3420,7 @@ private struct MealPlannerShellView: View {
                         thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
                         destination: .appTab(.prep)
                     )
+                    AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
                     try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
                 } else if isLiveBackendState {
                     let normalizedProcessingState: String = {
@@ -3359,6 +3479,7 @@ private struct MealPlannerShellView: View {
                         thumbnailURLString: response.recipe?.imageURL?.absoluteString,
                         destination: response.recipe.map(AppToastDestination.recipe) ?? .recipeImportQueue(.completed)
                     )
+                    AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
                     try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
                 }
 
@@ -9115,6 +9236,7 @@ private struct DiscoverComposerSheet: View {
                             systemImage: "calendar.badge.plus",
                             showsProgress: false
                         )
+                        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
                     } else if selectedTargetContext == .saved {
                         showConfirmation(
                             title: "Saved to cookbook",
@@ -9122,6 +9244,7 @@ private struct DiscoverComposerSheet: View {
                             systemImage: "bookmark.fill",
                             showsProgress: false
                         )
+                        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
                     } else {
                         dismiss()
                     }

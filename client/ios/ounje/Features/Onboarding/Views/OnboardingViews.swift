@@ -4,6 +4,7 @@ import Foundation
 struct FirstLoginOnboardingView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var toastCenter: AppToastCenter
+    @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
     @AppStorage("ounje.selectedPricingTier") private var selectedTierRawValue = "free"
     @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
@@ -719,7 +720,7 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var onboardingTopChromeHeight: CGFloat {
-        usesIntroChoiceLayout ? 58 : 44
+        58
     }
 
     private var onboardingBottomChromeHeight: CGFloat {
@@ -1381,14 +1382,23 @@ struct FirstLoginOnboardingView: View {
                         spacing: spacing
                     ) {
                         ForEach(displayedRecipes) { demoRecipe in
-                            DiscoverRemoteRecipeCard(
-                                recipe: demoRecipe.card,
-                                showsSaveAction: false,
-                                showsTopActions: false,
-                                showsImageLoadingSkeleton: false,
-                                layout: layout
-                            ) {
-                                onSelect(demoRecipe)
+                            ZStack(alignment: .bottom) {
+                                DiscoverRemoteRecipeCard(
+                                    recipe: demoRecipe.card,
+                                    showsSaveAction: false,
+                                    showsTopActions: false,
+                                    showsImageLoadingSkeleton: false,
+                                    layout: layout
+                                ) {
+                                    onSelect(demoRecipe)
+                                }
+                                .frame(width: cardWidth, height: layout.cardHeight)
+
+                                if demoRecipe.detail.hasCompleteDisplayMacros {
+                                    RecipeMacroOverlayStrip(detail: demoRecipe.detail)
+                                        .frame(width: cardWidth)
+                                        .clipShape(RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous))
+                                }
                             }
                             .frame(width: cardWidth, height: layout.cardHeight)
                         }
@@ -1406,6 +1416,45 @@ struct FirstLoginOnboardingView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .frame(height: (layout.cardHeight * 2) + spacing)
+        }
+    }
+
+    private struct RecipeMacroOverlayStrip: View {
+        let detail: RecipeDetailData
+
+        var body: some View {
+            HStack(spacing: 5) {
+                if let kcal = detail.caloriesKcal {
+                    Text("~\(Int(kcal.rounded())) kcal")
+                        .font(.system(size: 9.5, weight: .black, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.95))
+                }
+                if let p = detail.proteinG {
+                    macroChip("\(Int(p.rounded()))g P")
+                }
+                if let c = detail.carbsG {
+                    macroChip("\(Int(c.rounded()))g C")
+                }
+                if let f = detail.fatG {
+                    macroChip("\(Int(f.rounded()))g F")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                LinearGradient(
+                    colors: [.black.opacity(0), .black.opacity(0.72)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        }
+
+        private func macroChip(_ text: String) -> some View {
+            Text(text)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
         }
     }
 
@@ -1483,46 +1532,94 @@ struct FirstLoginOnboardingView: View {
     }
 
     private var solutionWaysStepContent: some View {
-        let items = solutionHelpItems
+        GeometryReader { proxy in
+            let heroWidth = min(proxy.size.width * 1.08, 390)
+            let cardWidth = min(proxy.size.width - 62, 322)
+            let heroYOffset = max(proxy.size.height * 0.18, 106)
 
-        return VStack(spacing: 42) {
-            Spacer(minLength: 0)
+            ZStack(alignment: .top) {
+                RadialGradient(
+                    colors: [
+                        currentStepAccent.opacity(0.2),
+                        Color.clear
+                    ],
+                    center: .center,
+                    startRadius: 16,
+                    endRadius: 250
+                )
+                .offset(y: heroYOffset + 40)
+                .opacity(solutionHelpVisibleCount > 0 ? 1 : 0)
 
-            Text("Here's how Ounje helps you")
-                .font(.system(size: 33, weight: .black, design: .rounded))
-                .foregroundStyle(OunjePalette.primaryText)
-                .multilineTextAlignment(.center)
+                Image("OnboardingSocialMatchaPhone")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: heroWidth)
+                    .shadow(color: currentStepAccent.opacity(0.24), radius: 28, x: 0, y: 18)
+                    .opacity(solutionHelpVisibleCount > 0 ? 0.9 : 0)
+                    .offset(y: heroYOffset)
+                    .scaleEffect(solutionHelpVisibleCount > 0 ? 1 : 0.96)
+                    .animation(.spring(response: 0.56, dampingFraction: 0.86), value: solutionHelpVisibleCount)
 
-            VStack(alignment: .leading, spacing: 30) {
-                ForEach(items.indices, id: \.self) { index in
-                    HStack(alignment: .top, spacing: 18) {
-                        Text(String(format: "%02d", index + 1))
-                            .font(.system(size: 34, weight: .black, design: .rounded))
-                            .foregroundStyle(currentStepAccent)
-                            .frame(width: 58, alignment: .leading)
+                VStack(spacing: 0) {
+                    Text("+500 people have already\nachieved their food goals\nwith Ounje")
+                        .font(.system(size: 33, weight: .black, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(1)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 356)
+                        .opacity(solutionHelpVisibleCount > 0 ? 1 : 0)
+                        .offset(y: solutionHelpVisibleCount > 0 ? 0 : -18)
+                        .animation(.spring(response: 0.48, dampingFraction: 0.84), value: solutionHelpVisibleCount)
 
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(items[index].title)
-                                .font(.system(size: 20, weight: .black, design: .rounded))
-                                .foregroundStyle(OunjePalette.primaryText)
+                    Spacer(minLength: 0)
 
-                            Text(items[index].detail)
-                                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .lineSpacing(3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                    VStack(spacing: 13) {
+                        OnboardingSocialProofCard(
+                            title: "Finally making all those TikTok recipes",
+                            detail: "I stopped saving food and forgetting it. Ounje turns videos into real ingredients, steps, and prep.",
+                            author: "- @fitbytay_",
+                            accent: currentStepAccent
+                        )
+                        .frame(width: cardWidth)
+                        .rotationEffect(.degrees(-3))
+                        .offset(x: -18)
+                        .opacity(solutionHelpVisibleCount > 0 ? 1 : 0)
+                        .offset(y: solutionHelpVisibleCount > 0 ? 0 : 22)
+
+                        OnboardingSocialProofCard(
+                            title: "Changed how I prepare for marathons",
+                            detail: "I can still eat food I enjoy if I use Ounje to tweak some ingredients a bit.",
+                            author: "- @miles4breakfast",
+                            accent: currentStepAccent
+                        )
+                        .frame(width: cardWidth)
+                        .rotationEffect(.degrees(2))
+                        .offset(x: 24)
+                        .opacity(solutionHelpVisibleCount > 1 ? 1 : 0)
+                        .offset(y: solutionHelpVisibleCount > 1 ? 0 : 22)
+
+                        OnboardingSocialProofCard(
+                            title: "Meal planning finally feels lighter",
+                            detail: "My prep and grocery list stay connected, so weeknights stop feeling chaotic.",
+                            author: "- @jane.cooks.quick",
+                            accent: currentStepAccent
+                        )
+                        .frame(width: cardWidth)
+                        .rotationEffect(.degrees(-1))
+                        .offset(x: -8)
+                        .opacity(solutionHelpVisibleCount > 2 ? 1 : 0)
+                        .offset(y: solutionHelpVisibleCount > 2 ? 0 : 22)
                     }
-                    .opacity(solutionHelpVisibleCount > index ? 1 : 0)
-                    .offset(x: solutionHelpVisibleCount > index ? 0 : 26)
-                    .animation(.spring(response: 0.42, dampingFraction: 0.82), value: solutionHelpVisibleCount)
+                    .offset(y: -18)
+                    .padding(.bottom, max(46, proxy.size.height * 0.07))
+                    .animation(.spring(response: 0.48, dampingFraction: 0.86), value: solutionHelpVisibleCount)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, max(6, proxy.size.height * 0.015))
             }
-            .frame(maxWidth: 356, alignment: .leading)
-
-            Spacer(minLength: 48)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: scheduleSolutionWaysTransition)
     }
 
@@ -2413,6 +2510,7 @@ struct FirstLoginOnboardingView: View {
         }
 
         guard canAdvanceCurrentStep, let next = currentStep.next else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         persistDraftForResume(step: next)
         stepTransitionDirection = 1
         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
@@ -2451,6 +2549,7 @@ struct FirstLoginOnboardingView: View {
         onboardingAutoAdvanceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard !Task.isCancelled, currentStep == .recipeEditIntro else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             recipeUpgradeIntroTextVisible = true
             try? await Task.sleep(nanoseconds: 1_350_000_000)
             guard !Task.isCancelled, currentStep == .recipeEditIntro else { return }
@@ -2484,7 +2583,11 @@ struct FirstLoginOnboardingView: View {
             }
         } else {
             paywallWarmupStage += 1
-            finishOnboardingOrPresentPaywall()
+            Task { @MainActor in
+                let session = await store.freshUserDataSession()
+                _ = await notificationCenter.requestNotificationPermissionAndRegister(session: session)
+                finishOnboardingOrPresentPaywall()
+            }
         }
     }
 
@@ -2515,8 +2618,10 @@ struct FirstLoginOnboardingView: View {
         onboardingAutoAdvanceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 160_000_000)
             guard !Task.isCancelled, currentStep == .solutionWays else { return }
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             for index in 1...solutionHelpItems.count {
                 solutionHelpVisibleCount = index
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 try? await Task.sleep(nanoseconds: 460_000_000)
                 guard !Task.isCancelled, currentStep == .solutionWays else { return }
             }
@@ -2610,6 +2715,7 @@ struct FirstLoginOnboardingView: View {
 
     private func goBack() {
         guard let previousStep = currentStep.previous else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         persistDraftForResume(step: previousStep)
         stepTransitionDirection = -1
         withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
@@ -3557,7 +3663,7 @@ struct FirstLoginOnboardingView: View {
             case .solution:
                 return "See how Ounje will help."
             case .solutionWays:
-                return "See the plan."
+                return "See why Ounje fits."
             case .recipeStyle:
                 return "Choose your recipe look."
             case .allergies:
@@ -3780,6 +3886,52 @@ struct FirstLoginOnboardingView: View {
     }
 }
 
+private struct OnboardingSocialProofCard: View {
+    let title: String
+    let detail: String
+    let author: String
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 2) {
+                ForEach(0..<5, id: \.self) { _ in
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(Color(red: 1.0, green: 0.76, blue: 0.24))
+                }
+            }
+
+            Text(title)
+                .font(.system(size: 13, weight: .black, design: .rounded))
+                .foregroundStyle(Color(red: 0.08, green: 0.08, blue: 0.07))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(detail)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color(red: 0.26, green: 0.25, blue: 0.23))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(author)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(accent.opacity(0.82))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(red: 0.98, green: 0.96, blue: 0.9))
+                .shadow(color: Color.black.opacity(0.2), radius: 16, x: 0, y: 10)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.4), lineWidth: 1)
+        }
+    }
+}
+
 private struct OnboardingTrialInvitationPage: View {
     let accent: Color
 
@@ -3866,7 +4018,7 @@ private struct OnboardingTrialControlPage: View {
                 (
                     Text("You'll get a reminder\n")
                         .foregroundColor(OunjePalette.primaryText) +
-                    Text("1 day before\n")
+                    Text("2 days before\n")
                         .foregroundColor(accent) +
                     Text("your trial ends")
                         .foregroundColor(OunjePalette.primaryText) +

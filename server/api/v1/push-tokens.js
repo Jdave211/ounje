@@ -1,6 +1,6 @@
 import express from "express";
 import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
-import { registerDeviceToken, unregisterDeviceToken } from "../../lib/push-tokens.js";
+import { pushToUser, registerDeviceToken, unregisterDeviceToken } from "../../lib/push-tokens.js";
 
 const router = express.Router();
 
@@ -42,6 +42,34 @@ router.post("/push-tokens/unregister", async (req, res) => {
       return sendAuthError(res, error, "push-tokens/unregister");
     }
     console.error("[push-tokens/unregister] error:", error.message);
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
+  }
+});
+
+router.post("/push-tokens/test", async (req, res) => {
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const title = String(req.body?.title ?? "Ounje notifications are ready").trim();
+    const body = String(req.body?.body ?? "This is a test push from your Ounje backend.").trim();
+    const results = await pushToUser({
+      userId: userID,
+      title,
+      body,
+      category: "OUNJE_TEST",
+      threadId: "ounje-test",
+      userInfo: {
+        kind: "notification_test",
+        deep_link: "ounje://notifications",
+        source: "push_tokens_test_endpoint",
+      },
+      limitLatest: true,
+    });
+    return res.json({ ok: true, results });
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "push-tokens/test");
+    }
+    console.error("[push-tokens/test] error:", error.message);
     return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });

@@ -2944,6 +2944,31 @@ final class SupabaseIngredientsCatalogService {
             lookup[key] = imageURLString
         }
 
+        let unresolvedNames = cached.missingNames.filter { requestedName in
+            Self.ingredientLookupKeys(for: requestedName).allSatisfy { lookup[$0] == nil }
+        }
+        if !unresolvedNames.isEmpty {
+            let fallbackRows = try await SupabaseRecipeIngredientArtService.shared.fetchArtRows(
+                ingredientIDs: [],
+                displayNames: Array(unresolvedNames.prefix(6))
+            )
+            for row in fallbackRows {
+                guard let imageURLString = row.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !imageURLString.isEmpty
+                else { continue }
+                for key in Self.ingredientLookupKeys(for: row.displayName) where lookup[key] == nil {
+                    lookup[key] = imageURLString
+                }
+            }
+            for requestedName in unresolvedNames where lookup[requestedName] == nil {
+                if let imageURLString = Self.ingredientLookupKeys(for: requestedName)
+                    .compactMap({ lookup[$0] })
+                    .first {
+                    lookup[requestedName] = imageURLString
+                }
+            }
+        }
+
         await SupabaseIngredientImageLookupCache.shared.store(
             lookup: lookup,
             requestedNames: cached.missingNames

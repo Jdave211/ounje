@@ -382,6 +382,142 @@ async function ensureRecipeDetailDisplayMacros(recipeID, detail = {}) {
   return nextDetail;
 }
 
+function normalizedIngredientImageKey(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function ingredientImageLookupKeys(value) {
+  const normalized = normalizedIngredientImageKey(value);
+  if (!normalized) return [];
+
+  const keys = [];
+  const append = (key) => {
+    const normalizedKey = normalizedIngredientImageKey(key);
+    if (normalizedKey && !keys.includes(normalizedKey)) keys.push(normalizedKey);
+  };
+
+  append(normalized);
+
+  const phraseAliases = {
+    "unsalted butter": "butter",
+    "salted butter": "butter",
+    "melted butter": "butter",
+    "softened butter": "butter",
+    "lemon juice": "lemon",
+    "fresh lemon juice": "lemon",
+    "lemon zest": "lemon",
+    "lime juice": "lime",
+    "fresh lime juice": "lime",
+    "lime zest": "lime",
+    "orange juice": "orange",
+    "orange zest": "orange",
+  };
+
+  for (const [needle, alias] of Object.entries(phraseAliases)) {
+    if (normalized.includes(needle)) append(alias);
+  }
+
+  const descriptorTokens = new Set([
+    "fresh", "freshly", "raw", "dried", "ground", "whole", "chopped", "minced",
+    "grated", "sliced", "crushed", "peeled", "large", "small", "medium",
+    "melted", "softened", "unsalted", "salted", "cold", "warm", "hot",
+  ]);
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const stripped = tokens.filter((token) => !descriptorTokens.has(token)).join(" ");
+  if (stripped !== normalized) append(stripped);
+
+  if (tokens.includes("butter")) append("butter");
+  if (tokens.includes("lemon") && tokens.some((token) => ["juice", "zest", "wedge", "wedges", "slice", "slices"].includes(token))) {
+    append("lemon");
+  }
+  if (tokens.includes("lime") && tokens.some((token) => ["juice", "zest", "wedge", "wedges", "slice", "slices"].includes(token))) {
+    append("lime");
+  }
+
+  return keys;
+}
+
+function recipeDetailNeedsIngredientImageHydration(detail = {}) {
+  if (detail?.ingredient_images_hydrated === true) return false;
+  const ingredients = Array.isArray(detail?.ingredients) ? detail.ingredients : [];
+  if (!ingredients.length) return false;
+  return ingredients.some((ingredient) => {
+    const name = String(ingredient?.display_name ?? ingredient?.displayName ?? ingredient?.name ?? "").trim();
+    const imageURL = String(ingredient?.image_url ?? ingredient?.imageURL ?? ingredient?.imageUrl ?? "").trim();
+    return name && !imageURL;
+  });
+}
+
+async function fetchIngredientImageLookup(names = []) {
+  const lookupKeys = [...new Set(
+    names
+      .flatMap(ingredientImageLookupKeys)
+      .filter(Boolean)
+  )].slice(0, 120);
+  if (!lookupKeys.length) return new Map();
+
+  const rows = await fetchSupabaseTableRows(
+    "ingredients",
+    "normalized_name,display_name,default_image_url",
+    [`normalized_name=in.(${lookupKeys.map((key) => encodeURIComponent(`"${key}"`)).join(",")})`],
+    [],
+    200,
+    SUPABASE_SERVICE_ROLE_KEY || null
+  ).catch((error) => {
+    console.warn("[recipe/detail] ingredient image lookup failed:", error.message);
+    return [];
+  });
+
+  const lookup = new Map();
+  for (const row of rows) {
+    const imageURL = String(row?.default_image_url ?? "").trim();
+    if (!imageURL) continue;
+    for (const value of [row?.normalized_name, row?.display_name]) {
+      for (const key of ingredientImageLookupKeys(value)) {
+        if (key && !lookup.has(key)) lookup.set(key, imageURL);
+      }
+    }
+  }
+  return lookup;
+}
+
+async function hydrateRecipeDetailIngredientImages(detail = {}) {
+  if (!recipeDetailNeedsIngredientImageHydration(detail)) return detail;
+
+  const ingredients = Array.isArray(detail.ingredients) ? detail.ingredients : [];
+  const names = ingredients
+    .map((ingredient) => ingredient?.display_name ?? ingredient?.displayName ?? ingredient?.name)
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  const imageLookup = await fetchIngredientImageLookup(names);
+  if (!imageLookup.size) {
+    return {
+      ...detail,
+      ingredient_images_hydrated: true,
+    };
+  }
+
+  return {
+    ...detail,
+    ingredient_images_hydrated: true,
+    ingredients: ingredients.map((ingredient) => {
+      const currentImage = String(ingredient?.image_url ?? ingredient?.imageURL ?? ingredient?.imageUrl ?? "").trim();
+      if (currentImage) return ingredient;
+      const name = ingredient?.display_name ?? ingredient?.displayName ?? ingredient?.name;
+      const imageURL = ingredientImageLookupKeys(name).map((key) => imageLookup.get(key)).find(Boolean);
+      return imageURL ? { ...ingredient, image_url: imageURL } : ingredient;
+    }),
+  };
+}
+
+async function prepareRecipeDetailForDisplay(recipeID, detail = {}) {
+  const macroReady = await ensureRecipeDetailDisplayMacros(recipeID, detail);
+  return hydrateRecipeDetailIngredientImages(macroReady);
+}
+
 function hasStructuredRecipeJSON(recipe = {}) {
   return (Array.isArray(recipe.ingredients_json) && recipe.ingredients_json.length > 0)
     || (Array.isArray(recipe.steps_json) && recipe.steps_json.length > 0);
@@ -946,7 +1082,19 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       RECIPE_DETAIL_CACHE_TTL_MS,
       "recipe-detail"
     );
-    if (cached && recipeDetailPayloadIsDisplayReady(cached)) return res.json(cached);
+    if (cached && recipeDetailPayloadIsDisplayReady(cached)) {
+      if (!recipeDetailNeedsIngredientImageHydration(cached.recipe)) return res.json(cached);
+      const hydratedRecipe = await hydrateRecipeDetailIngredientImages(cached.recipe);
+      const hydratedPayload = { recipe: hydratedRecipe };
+      await writeSharedTimedCache(
+        recipeDetailCache,
+        detailCacheKey,
+        hydratedPayload,
+        recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
+        "recipe-detail"
+      );
+      return res.json(hydratedPayload);
+    }
 
     const recipe = recipeId.startsWith("uir_")
       ? await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID)
@@ -956,7 +1104,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     }
 
     if (hasStructuredRecipeJSON(recipe)) {
-      const recipeDetail = await ensureRecipeDetailDisplayMacros(recipeId, normalizeRecipeDetail(recipe));
+      const recipeDetail = await prepareRecipeDetailForDisplay(recipeId, normalizeRecipeDetail(recipe));
       const payload = {
         recipe: recipeDetail,
       };
@@ -984,7 +1132,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
         )
       : [];
 
-    const recipeDetail = await ensureRecipeDetailDisplayMacros(recipeId, normalizeRecipeDetail(recipe, {
+    const recipeDetail = await prepareRecipeDetailForDisplay(recipeId, normalizeRecipeDetail(recipe, {
         recipeIngredients,
         recipeSteps,
         stepIngredients,
@@ -1290,7 +1438,7 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
       .slice(0, limit)
       .map(({ recipe: candidate }) => toRecipeCardPayload(candidate));
 
-    if (fastRecipePayloads.length >= Math.min(3, limit)) {
+    if (!recipeId.startsWith("uir_") && fastRecipePayloads.length >= Math.min(3, limit)) {
       return res.json({
         recipes: fastRecipePayloads,
         rankingMode: "similar_semantic_fast",

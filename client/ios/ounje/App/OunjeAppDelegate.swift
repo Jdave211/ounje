@@ -116,6 +116,13 @@ final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
             object: nil,
             userInfo: userInfo
         )
+        let kind = String(describing: userInfo["kind"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if kind == "notification_test" || kind == "apns_test" {
+            completionHandler([.banner, .list, .sound])
+            return
+        }
         completionHandler([])
     }
 
