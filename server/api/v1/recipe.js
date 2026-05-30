@@ -185,7 +185,9 @@ const embeddingCache = new CappedMap(320);
 const recipeVideoResolveCache = new CappedMap(120);
 const recipeDetailCache = new CappedMap(400);
 const recipeImportJobCache = new CappedMap(240);
-const RECIPE_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+// Public recipes are immutable catalog entries — 30 min TTL means 6× fewer
+// ingredient-image-lookup DB round-trips on cache misses vs the old 5 min.
+const RECIPE_DETAIL_CACHE_TTL_MS = 30 * 60 * 1000;
 const IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS = 2 * 1000;
 const RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS = 60 * 1000;
@@ -451,6 +453,14 @@ function recipeDetailNeedsIngredientImageHydration(detail = {}) {
   });
 }
 
+// The ingredients table is mostly static (images don't change often).
+// Cache the full lookup in Redis so cache-miss detail fetches don't always
+// need a DB round-trip just to resolve ingredient image URLs.
+const INGREDIENT_IMAGE_LOOKUP_REDIS_KEY = "ounje:ingredient-images:lookup-v1";
+const INGREDIENT_IMAGE_LOOKUP_TTL_SECONDS = 60 * 60; // 1 hour
+const ingredientImageLookupMemCache = new CappedMap(1);
+const INGREDIENT_IMAGE_LOOKUP_MEM_TTL_MS = 10 * 60 * 1000; // 10 min in-process
+
 async function fetchIngredientImageLookup(names = []) {
   const lookupKeys = [...new Set(
     names
@@ -459,32 +469,60 @@ async function fetchIngredientImageLookup(names = []) {
   )].slice(0, 120);
   if (!lookupKeys.length) return new Map();
 
+  // Layer 1: in-process map (avoids Redis on hot paths)
+  const memEntry = ingredientImageLookupMemCache.get("all");
+  if (memEntry && Date.now() - memEntry.createdAt < INGREDIENT_IMAGE_LOOKUP_MEM_TTL_MS) {
+    return filterLookupForKeys(memEntry.value, lookupKeys);
+  }
+
+  // Layer 2: Redis — whole-table blob, keyed once for the entire instance
+  const redisCached = await readRedisJSON(INGREDIENT_IMAGE_LOOKUP_REDIS_KEY);
+  if (redisCached && typeof redisCached === "object") {
+    const lookup = new Map(Object.entries(redisCached));
+    ingredientImageLookupMemCache.set("all", { value: lookup, createdAt: Date.now() });
+    return filterLookupForKeys(lookup, lookupKeys);
+  }
+
+  // Layer 3: DB — build the full lookup and backfill both caches
   const rows = await fetchSupabaseTableRows(
     "ingredients",
     "normalized_name,display_name,default_image_url",
-    [`normalized_name=in.(${lookupKeys.map((key) => encodeURIComponent(`"${key}"`)).join(",")})`],
     [],
-    200,
+    [],
+    5000,
     SUPABASE_SERVICE_ROLE_KEY || null
   ).catch((error) => {
     console.warn("[recipe/detail] ingredient image lookup failed:", error.message);
     return [];
   });
 
-  const lookup = new Map();
+  const fullLookup = new Map();
   for (const row of rows) {
     const imageURL = String(row?.default_image_url ?? "").trim();
     if (!imageURL) continue;
     for (const value of [row?.normalized_name, row?.display_name]) {
       for (const key of ingredientImageLookupKeys(value)) {
-        if (key && !lookup.has(key)) lookup.set(key, imageURL);
+        if (key && !fullLookup.has(key)) fullLookup.set(key, imageURL);
       }
     }
   }
-  return lookup;
+
+  ingredientImageLookupMemCache.set("all", { value: fullLookup, createdAt: Date.now() });
+  void writeRedisJSON(INGREDIENT_IMAGE_LOOKUP_REDIS_KEY, Object.fromEntries(fullLookup), INGREDIENT_IMAGE_LOOKUP_TTL_SECONDS);
+
+  return filterLookupForKeys(fullLookup, lookupKeys);
 }
 
-async function hydrateRecipeDetailIngredientImages(detail = {}) {
+function filterLookupForKeys(lookup, keys) {
+  const filtered = new Map();
+  for (const key of keys) {
+    const url = lookup.get(key);
+    if (url) filtered.set(key, url);
+  }
+  return filtered;
+}
+
+async function hydrateRecipeDetailIngredientImages(detail = {}, preloadedLookup = null) {
   if (!recipeDetailNeedsIngredientImageHydration(detail)) return detail;
 
   const ingredients = Array.isArray(detail.ingredients) ? detail.ingredients : [];
@@ -492,7 +530,7 @@ async function hydrateRecipeDetailIngredientImages(detail = {}) {
     .map((ingredient) => ingredient?.display_name ?? ingredient?.displayName ?? ingredient?.name)
     .map((value) => String(value ?? "").trim())
     .filter(Boolean);
-  const imageLookup = await fetchIngredientImageLookup(names);
+  const imageLookup = preloadedLookup ?? await fetchIngredientImageLookup(names);
   if (!imageLookup.size) {
     return {
       ...detail,
@@ -514,8 +552,22 @@ async function hydrateRecipeDetailIngredientImages(detail = {}) {
 }
 
 async function prepareRecipeDetailForDisplay(recipeID, detail = {}) {
-  const macroReady = await ensureRecipeDetailDisplayMacros(recipeID, detail);
-  return hydrateRecipeDetailIngredientImages(macroReady);
+  // Macros and image-lookup are independent — run them concurrently.
+  // ensureRecipeDetailDisplayMacros only touches numerical fields;
+  // fetchIngredientImageLookup only touches ingredient image URLs.
+  const ingredients = Array.isArray(detail.ingredients) ? detail.ingredients : [];
+  const ingredientNames = ingredients
+    .map((i) => i?.display_name ?? i?.displayName ?? i?.name)
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean);
+
+  const needsImageHydration = recipeDetailNeedsIngredientImageHydration(detail);
+  const [macroReady, imageLookup] = await Promise.all([
+    ensureRecipeDetailDisplayMacros(recipeID, detail),
+    needsImageHydration ? fetchIngredientImageLookup(ingredientNames) : Promise.resolve(new Map()),
+  ]);
+
+  return hydrateRecipeDetailIngredientImages(macroReady, imageLookup.size ? imageLookup : null);
 }
 
 function hasStructuredRecipeJSON(recipe = {}) {
