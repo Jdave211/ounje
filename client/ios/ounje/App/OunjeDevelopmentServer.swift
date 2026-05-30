@@ -6,7 +6,7 @@ enum OunjeLaunchFlags {
 
     static var usesSimulatorBillingBypass: Bool {
 #if DEBUG && targetEnvironment(simulator)
-        ProcessInfo.processInfo.environment["OUNJE_REQUIRE_STOREKIT_PAYWALL"] != "1"
+        true
 #else
         false
 #endif
