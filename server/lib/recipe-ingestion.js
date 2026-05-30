@@ -3575,9 +3575,13 @@ async function findExistingJobForRequest(request, dedupeKey) {
     ? `user_id=eq.${encodeURIComponent(request.user_id)}`
     : "user_id=is.null";
 
+  // Dedup lookups never read request_payload off the returned job (consumers
+  // use recipe_id/source_url/dedupe_key/status and re-fetch recipe detail by
+  // id; formatJobResponse reads event_log, not request_payload). Skip the
+  // 257 KB–3.4 MB blob.
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
     {
       filters: [
         `dedupe_key=eq.${encodeURIComponent(dedupeKey)}`,
@@ -3661,7 +3665,7 @@ async function findExistingJobForRequestSource(request, dedupeKey = null) {
 
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
     {
       filters: [
         userFilter,
@@ -3740,7 +3744,7 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
 
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
     {
       filters,
       order: ["completed_at.desc", "saved_at.desc", "updated_at.desc", "created_at.desc"],
