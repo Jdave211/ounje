@@ -490,12 +490,21 @@ final class DiscoverRecipeImageLoader: ObservableObject {
         }
 
         lastKey = key
-        image = nil
         isLoading = true
 
         defer {
             isLoading = false
         }
+
+        // Fast path: check the prefetch cache before hitting the network.
+        for url in candidates {
+            if let cached = await ImagePrefetcher.shared.cachedImage(for: url.absoluteString) {
+                image = cached
+                return
+            }
+        }
+
+        image = nil
 
         for url in candidates {
             do {
@@ -515,8 +524,6 @@ final class DiscoverRecipeImageLoader: ObservableObject {
                 continue
             }
         }
-
-        image = nil
     }
 }
 
