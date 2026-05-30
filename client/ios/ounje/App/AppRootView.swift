@@ -223,6 +223,7 @@ struct RootView: View {
         // user's subscription is gone — showing the paywall in that case is
         // a false positive that blocks valid subscribers.
         OunjeLaunchFlags.paywallsEnabled
+            && !OunjeLaunchFlags.usesSimulatorBillingBypass
             && store.membershipEntitlementResolved
             && !store.isRefreshingMembershipEntitlement
             && !store.hasActivePaidEntitlement
