@@ -1390,9 +1390,12 @@ export async function repairStaleRecipeIngestionJobs({
   const staleMinutes = Math.max(1, Number.parseInt(String(staleAfterMinutes), 10) || 15);
   const resolvedLimit = Math.max(1, Math.min(Number.parseInt(String(limit), 10) || 50, 250));
   const cutoff = new Date(Date.now() - staleMinutes * 60_000).toISOString();
+  // This maintenance scan only reads id/status/attempts/max_attempts/leased_at/
+  // review_state/review_reason. Never pull request_payload/event_log/input_text
+  // here — request_payload alone averages ~257 KB/row.
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,status,review_state,review_reason,attempts,max_attempts,leased_at",
     {
       filters: [
         `status=in.${buildInClause(LIVE_RECIPE_IMPORT_STATUSES)}`,
@@ -3342,9 +3345,15 @@ export async function listRecipeImportQueueItems({ userID = null, limit = null }
     : 100;
   const queryLimit = Math.min(Math.max(resolvedLimit * 2, resolvedLimit + 10), 300);
 
+  // Do NOT select request_payload here: it averages ~257 KB (max 3.4 MB) per
+  // row because it stores import attachments/photo data, and the queue-list
+  // summarizer only reads it as a fallback for source_url/source_type/
+  // canonical_url/target_state/source_text — all of which are populated as
+  // dedicated top-level columns. Pulling the blob made this status-poll query
+  // serialize tens of MB of JSON on a small instance.
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,created_at,updated_at",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,created_at,updated_at",
     {
       filters,
       order: ["updated_at.desc", "created_at.desc"],
@@ -3373,9 +3382,15 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
     filters.push(`user_id=eq.${encodeURIComponent(userID)}`);
   }
 
+  // Omit request_payload (avg ~257 KB, max 3.4 MB — import attachments) and
+  // event_log (unused by summarizeCompletedImportJob). This list returns up to
+  // 500 rows; pulling request_payload made it serialize tens of MB of JSON.
+  // Every small field the summarizer reads as a request_payload fallback
+  // (source_url/source_type/canonical_url/source_text) is backed by a populated
+  // top-level column.
   const selectVariants = [
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,evidence_bundle_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,evidence_bundle_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at",
   ];
 
   let rows = [];
@@ -3573,9 +3588,13 @@ async function findExistingJobForRequest(request, dedupeKey) {
     ? `user_id=eq.${encodeURIComponent(request.user_id)}`
     : "user_id=is.null";
 
+  // Dedup lookups never read request_payload off the returned job (consumers
+  // use recipe_id/source_url/dedupe_key/status and re-fetch recipe detail by
+  // id; formatJobResponse reads event_log, not request_payload). Skip the
+  // 257 KB–3.4 MB blob.
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
     {
       filters: [
         `dedupe_key=eq.${encodeURIComponent(dedupeKey)}`,
@@ -3659,7 +3678,7 @@ async function findExistingJobForRequestSource(request, dedupeKey = null) {
 
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
     {
       filters: [
         userFilter,
@@ -3738,7 +3757,7 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
 
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,request_payload,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,dedupe_recipe_id,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at,event_log",
     {
       filters,
       order: ["completed_at.desc", "saved_at.desc", "updated_at.desc", "created_at.desc"],

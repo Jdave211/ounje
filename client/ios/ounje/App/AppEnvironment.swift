@@ -178,6 +178,11 @@ final class MealPlanningAppStore: ObservableObject {
     /// Used to hold the paywall gate splash until entitlement is confirmed.
     @Published private(set) var membershipEntitlementResolved: Bool = false
     @Published private(set) var isRefreshingMembershipEntitlement: Bool = false
+    /// True only after Phase 2 (server) of an entitlement refresh completes
+    /// successfully — as opposed to timing out. The subscription gate must not
+    /// block users when the server is unreachable: a timeout is not confirmation
+    /// that the user's subscription is gone.
+    @Published private(set) var membershipEntitlementServerConfirmed: Bool = false
     @Published var manualInstacartRerunQueuedAt: Date?
     @Published var isManualAutoshopRunning = false
     @Published var manualAutoshopErrorMessage: String?
@@ -366,6 +371,12 @@ final class MealPlanningAppStore: ObservableObject {
             return false
         }
         if !isOnboarded, !bootstrapDidConfirmOnboardingState, hasCachedPlannerEvidence {
+            return false
+        }
+        // If the user has an active subscription, let them into the app even when
+        // onboarding didn't complete cleanly (e.g. after subscribing from the
+        // in-onboarding paywall and completeOnboarding is slow or failed).
+        if membershipEntitlementResolved && membershipEntitlement?.isActive == true {
             return false
         }
         return !isOnboarded
@@ -841,6 +852,7 @@ final class MealPlanningAppStore: ObservableObject {
             syncProfilePricingTierToEntitlement()
             billingStatusMessage = nil
             membershipEntitlementResolved = true
+            membershipEntitlementServerConfirmed = true
             onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
         } catch {
             // Server unreachable — keep the local StoreKit snapshot.
@@ -906,6 +918,7 @@ final class MealPlanningAppStore: ObservableObject {
                 )
                 membershipEntitlement = remoteEntitlement ?? snapshot
                 syncProfilePricingTierToEntitlement()
+                membershipEntitlementServerConfirmed = true
                 onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
             } catch {
                 print("[Membership] Post-purchase entitlement sync failed:", error.localizedDescription)

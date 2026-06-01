@@ -13,6 +13,27 @@ const AUTH_USER_CACHE_MAX_ENTRIES = 500;
 const AUTH_USER_VERIFY_TIMEOUT_MS = 8_000;
 const authUserCache = new Map();
 
+// Token verification runs on every authenticated request that misses the
+// in-memory auth cache (token refresh, cache eviction, cold start). Building a
+// fresh Supabase client per miss allocates a full GoTrue + PostgREST + Realtime
+// stack each time. `getClaims(token)` / `getUser(token)` accept the JWT as an
+// explicit argument, so a single header-less, module-scoped anon client
+// verifies identically without that per-request construction cost.
+let authVerifyClient = null;
+function getAuthVerifyClient() {
+  if (authVerifyClient) return authVerifyClient;
+  if (!SUPABASE_URL) return null;
+  const key = SUPABASE_ANON_KEY || SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) return null;
+  authVerifyClient = createClient(SUPABASE_URL, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+  return authVerifyClient;
+}
+
 function normalizeText(value) {
   return String(value ?? "")
     .toLowerCase()
@@ -138,14 +159,43 @@ function safeDate(value) {
   return date && !Number.isNaN(date.getTime()) ? date : null;
 }
 
+// Service-role clients bypass RLS entirely, so the per-user `x-user-id` header
+// these calls used to set is cosmetic — every query in this module enforces
+// ownership in application code (an explicit `user_id` filter or a post-fetch
+// `user_id` check). Reuse one module-singleton service-role client instead of
+// allocating a fresh GoTrue + PostgREST + Realtime stack on every call. This
+// path runs in the bootstrap hot path (`getCurrentInstacartRunLogSummary`) on
+// every app launch.
+let serviceRoleAdminClient = null;
+function getServiceRoleAdminClient() {
+  if (serviceRoleAdminClient) return serviceRoleAdminClient;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
+  serviceRoleAdminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+  return serviceRoleAdminClient;
+}
+
 function createSupabaseClient(accessToken = null, userID = null, { admin = false } = {}) {
   if (!SUPABASE_URL) return null;
 
+  // Fast path: a shared, header-less service-role singleton (RLS bypassed).
+  if (admin && SUPABASE_SERVICE_ROLE_KEY) {
+    const shared = getServiceRoleAdminClient();
+    if (shared) return shared;
+  }
+
+  // Degenerate fallback (service-role key unavailable): keep the old behavior of
+  // an anon-key client carrying the `x-user-id` header so the RLS actor policy
+  // still resolves and admin queries don't silently return empty.
   const key = admin
     ? SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
     : accessToken
-      ? SUPABASE_ANON_KEY || SUPABASE_SERVICE_ROLE_KEY
-      : SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+    ? SUPABASE_ANON_KEY || SUPABASE_SERVICE_ROLE_KEY
+    : SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   if (!key) return null;
 
   const headers = {};
@@ -176,7 +226,7 @@ export async function resolveAuthenticatedUserID(accessToken = null) {
   const cached = readCachedAuthUser(cacheKey);
   if (cached) return cached;
 
-  const client = createSupabaseClient(token);
+  const client = getAuthVerifyClient();
   if (!client?.auth?.getUser) return null;
 
   if (typeof client.auth.getClaims === "function") {

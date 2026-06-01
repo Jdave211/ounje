@@ -257,6 +257,12 @@ final class DiscoverRecipesViewModel: ObservableObject {
             recipes = appendResults && requestedOffset > 0
                 ? dedupeRecipesByID(recipes + mixedRecipes)
                 : mixedRecipes
+            // Kick off background image prefetch for the newly loaded batch so
+            // cards are image-ready before the user scrolls to them.
+            let urlsToPrefetch = mixedRecipes.flatMap { $0.imageCandidates.prefix(1).map(\.absoluteString) }
+            Task.detached(priority: .utility) {
+                await ImagePrefetcher.shared.prefetch(urlsToPrefetch)
+            }
             responseCache[loadKey] = InMemoryDiscoverCacheEntry(
                 recipes: mixedRecipes,
                 filters: response.filters,
@@ -518,6 +524,10 @@ final class DiscoverRecipesViewModel: ObservableObject {
         recipes = appendResults && requestedOffset > 0
             ? dedupeRecipesByID(recipes + cachedRecipes)
             : cachedRecipes
+        let urlsToPrefetch = cachedRecipes.flatMap { $0.imageCandidates.prefix(1).map(\.absoluteString) }
+        Task.detached(priority: .utility) {
+            await ImagePrefetcher.shared.prefetch(urlsToPrefetch)
+        }
         filters = Self.stableFilters
         errorMessage = nil
         hasResolvedInitialLoad = true

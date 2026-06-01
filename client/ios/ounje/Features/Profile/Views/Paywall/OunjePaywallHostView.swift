@@ -9,6 +9,7 @@ struct OunjePaywallHostView: View {
     let onUpgradeSuccess: (() -> Void)?
 
     @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
     @Environment(\.openURL) private var openURL
     @State private var selectedTier: OunjePricingTier
     @State private var selectedCadence: OunjeMembershipBillingCadence
@@ -314,7 +315,12 @@ struct OunjePaywallHostView: View {
     }
 
     private var displayedErrorMessage: String? {
-        let message = localErrorMessage ?? store.billingStatusMessage
+        // Only surface the store-level billing message when a purchase was
+        // actually attempted. Background entitlement refresh timeouts should
+        // not show as errors when the user hasn't tapped anything yet.
+        let message = purchaseVisualState == .failed
+            ? (localErrorMessage ?? store.billingStatusMessage)
+            : localErrorMessage
         guard let message, !message.isEmpty else { return nil }
         let lowercased = message.lowercased()
         if lowercased.contains("invalid jwt")
@@ -375,6 +381,7 @@ struct OunjePaywallHostView: View {
 
         if await store.purchaseMembershipPlan(selectedPlan) {
             purchaseVisualState = .success
+            _ = await notificationCenter.scheduleTrialEndingReminder(entitlement: store.membershipEntitlement)
             confettiBurstID += 1
             try? await Task.sleep(nanoseconds: 950_000_000)
             handleUnlockSuccess()

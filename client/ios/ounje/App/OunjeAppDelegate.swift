@@ -17,6 +17,16 @@ final class OunjeAppDelegate: NSObject, UIApplicationDelegate {
         // to silently consume a token that we then drop. The notification
         // manager triggers registration only after the user grants permission.
         UNUserNotificationCenter.current().delegate = OunjeNotificationDelegate.shared
+
+        // The default URLCache is ~512 KB memory / 10 MB disk — far too small
+        // for recipe card images. Raise it so images survive tab switches and
+        // short backgrounding without re-downloading.
+        URLCache.shared = URLCache(
+            memoryCapacity: 50 * 1024 * 1024,   // 50 MB in-process
+            diskCapacity: 200 * 1024 * 1024,     // 200 MB on disk
+            diskPath: "ounje-image-cache"
+        )
+
         return true
     }
 
@@ -116,6 +126,13 @@ final class OunjeNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
             object: nil,
             userInfo: userInfo
         )
+        let kind = String(describing: userInfo["kind"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if kind == "notification_test" || kind == "apns_test" {
+            completionHandler([.banner, .list, .sound])
+            return
+        }
         completionHandler([])
     }
 
