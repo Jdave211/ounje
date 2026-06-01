@@ -190,6 +190,20 @@ const INGREDIENT_UNIT_WORDS = new Set([
 
 const FRACTION_CHARACTER_PATTERN = "¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞";
 
+// Collapse compound quantities written with a connective — "2 and 3/4 cups",
+// "1 & ½ tsp" — into a single mixed number ("2 3/4", "1 ½"). Every ingredient
+// parser must run this before splitting quantity from name; otherwise "2" gets
+// taken as the amount and "and 3/4 cups all-purpose flour" is left as the name.
+// Only fires when the second operand is an actual fraction, so real names like
+// "5 and 10 bean blend" are untouched.
+const COMPOUND_FRACTION_CONNECTOR_REGEX = new RegExp(
+  `(\\d+)\\s+(?:and|&)\\s+(\\d+\\/\\d+|[${FRACTION_CHARACTER_PATTERN}])`,
+  "gi"
+);
+function collapseCompoundFractionConnectors(value) {
+  return String(value ?? "").replace(COMPOUND_FRACTION_CONNECTOR_REGEX, "$1 $2");
+}
+
 function cleanIngredientDisplayName(value) {
   let normalized = normalizeRecipeLine(value);
   if (!normalized) return "";
@@ -222,15 +236,9 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
     };
   }
 
-  // Collapse compound quantities written with a connective — "2 and 3/4 cups",
-  // "1 & ½ tsp" — into a single mixed number ("2 3/4", "1 ½"). Without this the
-  // leading-quantity matcher split "2" off as the amount and left "and 3/4 cups
-  // all-purpose flour" as the ingredient name (and "3/4"/"344g" leaked out as their
-  // own bogus ingredients). Only fires when the second operand is an actual fraction.
-  let workingName = name.replace(
-    new RegExp(`(\\d+)\\s+(?:and|&)\\s+(\\d+\\/\\d+|[${FRACTION_CHARACTER_PATTERN}])`, "gi"),
-    "$1 $2"
-  );
+  // Collapse "2 and 3/4 cups" / "1 & ½ tsp" compound quantities to a single mixed
+  // number so the leading-quantity matcher keeps them together (see helper docs).
+  let workingName = collapseCompoundFractionConnectors(name);
   let workingQuantity = quantity;
 
   if (workingQuantity) {
@@ -440,7 +448,7 @@ function parseQuantityAndUnitText(value) {
 }
 
 function parseIngredientLine(line) {
-  const normalized = normalizeRecipeLine(line);
+  const normalized = collapseCompoundFractionConnectors(normalizeRecipeLine(line));
   if (!normalized) return null;
 
   let remainder = normalized;

@@ -29,6 +29,20 @@ import {
   sanitizeRecipeText,
 } from "./recipe-detail-utils.js";
 
+import {
+  RECIPE_INGESTION_MODEL,
+  RECIPE_SEARCH_SYNTHESIS_MODEL,
+  RECIPE_IMPORT_COMPLETION_MODEL,
+  RECIPE_WEB_REFERENCE_MODEL,
+  RECIPE_FINAL_VALIDATOR_MODEL,
+  RECIPE_GATE_MODEL,
+  PHOTO_RECIPE_VISION_MODEL,
+  PHOTO_MEAL_GATE_MODEL,
+  PHOTO_RECIPE_CLEANUP_MODEL,
+  PHOTO_RECIPE_SONAR_MODEL,
+  SHORT_VIDEO_TRANSCRIBE_MODEL,
+} from "./ingestion/models.js";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -40,16 +54,6 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const RECIPE_IMAGE_BUCKET = process.env.RECIPE_IMAGE_BUCKET ?? "recipe-images";
 const RECIPE_IMPORT_MEDIA_BUCKET = process.env.RECIPE_IMPORT_MEDIA_BUCKET ?? "recipe-import-media";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
-const RECIPE_INGESTION_MODEL = process.env.RECIPE_INGESTION_MODEL ?? "gpt-4o-mini";
-const RECIPE_SEARCH_SYNTHESIS_MODEL = process.env.RECIPE_SEARCH_SYNTHESIS_MODEL ?? "gpt-5-nano";
-const RECIPE_IMPORT_COMPLETION_MODEL = process.env.RECIPE_IMPORT_COMPLETION_MODEL ?? "gpt-5-nano";
-const RECIPE_WEB_REFERENCE_MODEL = process.env.RECIPE_WEB_REFERENCE_MODEL ?? "gpt-5-nano";
-const RECIPE_FINAL_VALIDATOR_MODEL = process.env.RECIPE_FINAL_VALIDATOR_MODEL ?? RECIPE_IMPORT_COMPLETION_MODEL;
-const RECIPE_GATE_MODEL = process.env.RECIPE_GATE_MODEL ?? "gpt-5-nano";
-const PHOTO_RECIPE_VISION_MODEL = process.env.PHOTO_RECIPE_VISION_MODEL ?? RECIPE_INGESTION_MODEL;
-const PHOTO_MEAL_GATE_MODEL = process.env.PHOTO_MEAL_GATE_MODEL ?? PHOTO_RECIPE_VISION_MODEL;
-const PHOTO_RECIPE_CLEANUP_MODEL = process.env.PHOTO_RECIPE_CLEANUP_MODEL ?? RECIPE_IMPORT_COMPLETION_MODEL;
-const PHOTO_RECIPE_SONAR_MODEL = process.env.PHOTO_RECIPE_SONAR_MODEL ?? "sonar";
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY ?? "";
 const PERPLEXITY_API_URL = process.env.PERPLEXITY_API_URL ?? "https://api.perplexity.ai/chat/completions";
 const ENABLE_AI_WEB_REFERENCE_SEARCH = !["0", "false", "no", "off"].includes(String(process.env.RECIPE_ENABLE_AI_WEB_REFERENCE_SEARCH ?? "1").trim().toLowerCase());
@@ -57,7 +61,6 @@ const PLAYWRIGHT_FALLBACK_PATH = "/Users/davejaga/.openclaw/skills/playwright-sc
 const DEFAULT_USER_AGENT =
   process.env.USER_AGENT ||
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
-const SHORT_VIDEO_TRANSCRIBE_MODEL = process.env.SHORT_VIDEO_TRANSCRIBE_MODEL ?? "gpt-4o-mini-transcribe";
 const MAX_SOCIAL_FRAME_COUNT = Math.max(2, Number.parseInt(process.env.RECIPE_INGESTION_MAX_SOCIAL_FRAMES ?? "4", 10) || 4);
 const SOCIAL_METADATA_TIMEOUT_MS = Math.max(
   5_000,
@@ -3390,7 +3393,10 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
         select,
         {
           filters,
-          order: ["completed_at.desc", "updated_at.desc", "created_at.desc"],
+          // id.desc is a unique final tiebreaker so rows sharing a timestamp
+          // (same-second imports, or null completed_at) come back in a stable order
+          // instead of Postgres' arbitrary physical order.
+          order: ["completed_at.desc", "updated_at.desc", "created_at.desc", "id.desc"],
           limit: resolvedLimit,
         }
       );
@@ -3412,7 +3418,7 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
       "id,user_id,source_job_id,title,source,source_platform,recipe_url,original_recipe_url,attached_video_url,hero_image_url,discover_card_image_url,cook_time_text,review_state,created_at,updated_at",
       {
         filters: importedFilters,
-        order: ["updated_at.desc", "created_at.desc"],
+        order: ["updated_at.desc", "created_at.desc", "id.desc"],
         limit: resolvedLimit,
       }
     );
@@ -3437,7 +3443,14 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
     return Number.isFinite(parsed) ? parsed : 0;
   };
   const items = [...jobItems, ...importedItems]
-    .sort((left, right) => timestampValue(right) - timestampValue(left));
+    .sort((left, right) => {
+      const delta = timestampValue(right) - timestampValue(left);
+      if (delta !== 0) return delta;
+      // Stable, unique tiebreaker: equal-timestamp items must not shuffle between
+      // fetches (the two source tables are merged here, so insertion order alone
+      // is not deterministic).
+      return String(right?.id ?? "").localeCompare(String(left?.id ?? ""));
+    });
   return {
     items,
     totalCount: items.length,
@@ -9159,12 +9172,17 @@ function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
     fallback = { calories_kcal: 450, protein_g: 36, carbs_g: 42, fat_g: 14 };
   }
 
+  // Non-positive calories means the stored macro block is untrustworthy (an all-zeros
+  // row), so don't preserve the bogus zeros — fall back to parsed/heuristic values for
+  // every field. When calories are real, keep any individually supplied macro.
+  const caloriesTrustworthy = isFiniteMacroValue(normalizedRecipe?.calories_kcal)
+    && Number(normalizedRecipe.calories_kcal) > 0;
+  const keepExistingMacro = (field) => caloriesTrustworthy && isFiniteMacroValue(normalizedRecipe?.[field]);
   const parsedCaloriesKcal = parseCaloriesKcalFromText(normalizedRecipe?.est_calories_text);
-  const caloriesKcal = isFiniteMacroValue(normalizedRecipe?.calories_kcal)
+  const caloriesKcal = caloriesTrustworthy
     ? Number(normalizedRecipe.calories_kcal)
     : parsedCaloriesKcal ?? fallback.calories_kcal;
-  const hadParsedCalories = !isFiniteMacroValue(normalizedRecipe?.calories_kcal)
-    && parsedCaloriesKcal != null;
+  const hadParsedCalories = !caloriesTrustworthy && parsedCaloriesKcal != null;
   const qualityFlags = uniqueStrings([
     ...(Array.isArray(normalizedRecipe?.quality_flags) ? normalizedRecipe.quality_flags : []),
     hadParsedCalories ? "nutrition_calorie_text_parsed" : "nutrition_display_fallback",
@@ -9172,9 +9190,9 @@ function fillRecipeMacrosWithDisplayFallback(normalizedRecipe) {
   return {
     ...normalizedRecipe,
     calories_kcal: caloriesKcal,
-    protein_g: isFiniteMacroValue(normalizedRecipe?.protein_g) ? Number(normalizedRecipe.protein_g) : fallback.protein_g,
-    carbs_g: isFiniteMacroValue(normalizedRecipe?.carbs_g) ? Number(normalizedRecipe.carbs_g) : fallback.carbs_g,
-    fat_g: isFiniteMacroValue(normalizedRecipe?.fat_g) ? Number(normalizedRecipe.fat_g) : fallback.fat_g,
+    protein_g: keepExistingMacro("protein_g") ? Number(normalizedRecipe.protein_g) : fallback.protein_g,
+    carbs_g: keepExistingMacro("carbs_g") ? Number(normalizedRecipe.carbs_g) : fallback.carbs_g,
+    fat_g: keepExistingMacro("fat_g") ? Number(normalizedRecipe.fat_g) : fallback.fat_g,
     est_calories_text: normalizeText(normalizedRecipe?.est_calories_text) || `${caloriesKcal} kcal per serving (estimate)`,
     quality_flags: qualityFlags,
   };

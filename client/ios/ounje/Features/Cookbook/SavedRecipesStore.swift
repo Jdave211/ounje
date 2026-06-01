@@ -46,11 +46,16 @@ final class SavedRecipesStore: ObservableObject {
             load(for: snapshot.userID, preserveExistingWhenMissing: true)
         }
 
-        if snapshot.savedRecipes.isEmpty, !snapshot.savedRecipeIDs.isEmpty {
-            if savedRecipes.isEmpty {
-                isSyncingRemote = true
+        if snapshot.savedRecipes.isEmpty {
+            // Snapshot carries no saved cards. If it still lists IDs the cards just
+            // haven't hydrated yet; if it's fully empty but we already hold saves,
+            // treat it as a partial snapshot and don't wipe the cookbook.
+            if !snapshot.savedRecipeIDs.isEmpty || !savedRecipes.isEmpty {
+                if savedRecipes.isEmpty {
+                    isSyncingRemote = true
+                }
+                return
             }
-            return
         }
 
         let remoteRecipes = snapshot.savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
@@ -93,13 +98,20 @@ final class SavedRecipesStore: ObservableObject {
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
             )
-            let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
-
-            if mergedRecipes != savedRecipes {
-                savedRecipes = mergedRecipes
-                persist()
+            // A successful-but-empty fetch must not wipe a non-empty cookbook — it's
+            // almost always a transient/partial read (the saved-recipes query has been
+            // seen taking 8-12s). Genuine per-recipe unsaves are reconciled via
+            // tombstones, not by an empty bulk result, so this stays deterministic.
+            if remoteRecipes.isEmpty, !savedRecipes.isEmpty {
+                hasPendingRemoteSaveRetry = true
+            } else {
+                let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
+                if mergedRecipes != savedRecipes {
+                    savedRecipes = mergedRecipes
+                    persist()
+                }
+                markRemoteSyncComplete(for: authSession.userID)
             }
-            markRemoteSyncComplete(for: authSession.userID)
         } catch {
             // Keep local saves available even when network sync fails.
             hasPendingRemoteSaveRetry = true
@@ -130,10 +142,15 @@ final class SavedRecipesStore: ObservableObject {
                 userID: authSession.userID,
                 accessToken: authSession.accessToken
             )
-            let filteredRemoteRecipes = remoteRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
-            savedRecipes = merge(local: savedRecipes, remote: filteredRemoteRecipes)
-            persist()
-            markRemoteSyncComplete(for: authSession.userID)
+            // Don't let a transient empty read wipe a populated cookbook (see bootstrap()).
+            if remoteRecipes.isEmpty, !savedRecipes.isEmpty {
+                hasPendingRemoteSaveRetry = true
+            } else {
+                let filteredRemoteRecipes = remoteRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
+                savedRecipes = merge(local: savedRecipes, remote: filteredRemoteRecipes)
+                persist()
+                markRemoteSyncComplete(for: authSession.userID)
+            }
         } catch {
             // Avoid immediately repeating the same failing remote read. The next
             // explicit or TTL-based sync will retry while local saves stay visible.

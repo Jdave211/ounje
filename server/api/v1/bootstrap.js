@@ -365,6 +365,10 @@ router.get("/bootstrap/user", async (req, res) => {
           .select("recipe_id,saved_at")
           .eq("user_id", userID)
           .order("saved_at", { ascending: false })
+          // recipe_id is unique per user (PK is user_id+recipe_id), so it is a stable
+          // tiebreaker — without it, rows sharing a saved_at (common in migrated data)
+          // return in arbitrary order and a capped fetch yields a random subset.
+          .order("recipe_id", { ascending: false })
           .limit(SAVED_RECIPE_ID_LIMIT),
         { data: [], error: null }
       ),
@@ -374,6 +378,7 @@ router.get("/bootstrap/user", async (req, res) => {
           .select("recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source,saved_at")
           .eq("user_id", userID)
           .order("saved_at", { ascending: false })
+          .order("recipe_id", { ascending: false })
           .limit(SAVED_RECIPE_CARD_LIMIT),
         { data: [], error: null }
       ),

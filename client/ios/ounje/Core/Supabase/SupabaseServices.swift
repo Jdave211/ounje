@@ -552,7 +552,7 @@ final class SupabaseSavedRecipesService {
     func fetchSavedRecipeIDs(userID: String, accessToken: String? = nil) async throws -> [String] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
-                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id&user_id=eq.\(encodedUserID)&order=saved_at.desc"
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id&user_id=eq.\(encodedUserID)&order=saved_at.desc,recipe_id.desc"
               ) else {
             throw SupabaseSavedRecipesError.invalidRequest
         }
@@ -576,7 +576,7 @@ final class SupabaseSavedRecipesService {
     func fetchSavedRecipeTitles(userID: String, accessToken: String? = nil) async throws -> [String] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
-                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title&user_id=eq.\(encodedUserID)&order=saved_at.desc"
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title&user_id=eq.\(encodedUserID)&order=saved_at.desc,recipe_id.desc"
               ) else {
             throw SupabaseSavedRecipesError.invalidRequest
         }
@@ -601,7 +601,7 @@ final class SupabaseSavedRecipesService {
     func fetchSavedRecipes(userID: String, accessToken: String? = nil) async throws -> [DiscoverRecipeCardData] {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
-                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source&user_id=eq.\(encodedUserID)&order=saved_at.desc"
+                string: "\(SupabaseConfig.url)/rest/v1/saved_recipes?select=recipe_id,title,description,author_name,author_handle,category,recipe_type,cook_time_text,published_date,discover_card_image_url,hero_image_url,recipe_url,source&user_id=eq.\(encodedUserID)&order=saved_at.desc,recipe_id.desc"
               ) else {
             throw SupabaseSavedRecipesError.invalidRequest
         }

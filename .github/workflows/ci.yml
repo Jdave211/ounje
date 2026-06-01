@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    name: Server syntax + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # Heavy postinstall (Playwright browsers, etc.) isn't needed to syntax-check
+      # or run the offline unit tests.
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      # Catch syntax errors across the entire server tree, including the modules
+      # the recipe-ingestion refactor splits things into.
+      - name: Syntax check (server)
+        run: |
+          set -e
+          find server -type f \( -name '*.js' -o -name '*.mjs' \) -print0 \
+            | xargs -0 -n1 node --check
+
+      - name: Run offline tests
+        run: npm test

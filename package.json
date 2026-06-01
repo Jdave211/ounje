@@ -9,6 +9,7 @@
   "scripts": {
     "server": "nodemon --watch server --ext js,mjs,json --exec \"bash server/scripts/start-server.sh\"",
     "start": "bash server/scripts/start-server.sh",
+    "test": "node server/scripts/test-recipe-ingestion-cost-guards.mjs && node server/scripts/test-recipe-ingestion-quality.mjs",
     "start:vm": "node server/scripts/vm-bootstrap.mjs",
     "sync:ios-host": "bash server/scripts/start-server.sh --sync-only",
     "flavorgraph:index": "python3 server/scripts/build_flavorgraph_index.py",
