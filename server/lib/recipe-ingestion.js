@@ -9657,18 +9657,28 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   if (source.source_type === "concept_prompt" && (!normalized.ingredients.length || !normalized.steps.length)) {
     normalized = coerceStructuredRecipeCandidate(buildConceptFallbackRecipe(source), source);
   }
-  normalized = await enrichRecipeLowRiskFields(normalized, source);
+  // Low-risk field fill runs once per branch *after* sparse-repair (below), which is
+  // where it matters (it fills quantities on any ingredients repair just added). The
+  // previous unconditional pre-repair call here was a redundant extra round-trip.
   if (source.source_type === "concept_prompt") {
     normalized = await repairSparseImportedRecipe(normalized, source);
     normalized = await enrichRecipeLowRiskFields(normalized, source);
-    const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
-    normalized = completion.recipe;
-    modelResult.quality_flags = uniqueStrings([
-      ...(modelResult.quality_flags ?? []),
-      ...(completion.quality_flags ?? []),
-      ...(completion.applied ? ["import_completion_applied"] : []),
-    ]);
-    modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    // Only run the (slow) web-evidence completion + reference search when the recipe
+    // is actually missing core data. Previously this fired on every import because the
+    // intended gate (recipeNeedsCompletionPass) was never wired up and the completion
+    // query falls back to the title, which is almost always present — so complete web
+    // imports paid for a needless web search. Sparse photo/social imports still pass
+    // this gate and get completed.
+    if (recipeNeedsCompletionPass(normalized)) {
+      const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
+      normalized = completion.recipe;
+      modelResult.quality_flags = uniqueStrings([
+        ...(modelResult.quality_flags ?? []),
+        ...(completion.quality_flags ?? []),
+        ...(completion.applied ? ["import_completion_applied"] : []),
+      ]);
+      modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    }
     const secondaryFill = await enrichRecipeSecondaryFields(normalized, source, { jobID });
     normalized = secondaryFill.recipe;
     secondaryFillApplied = secondaryFill.applied;
@@ -9683,14 +9693,22 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   if (source.source_type !== "concept_prompt" && source.source_type !== "media_image") {
     normalized = await repairSparseImportedRecipe(normalized, source);
     normalized = await enrichRecipeLowRiskFields(normalized, source);
-    const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
-    normalized = completion.recipe;
-    modelResult.quality_flags = uniqueStrings([
-      ...(modelResult.quality_flags ?? []),
-      ...(completion.quality_flags ?? []),
-      ...(completion.applied ? ["import_completion_applied"] : []),
-    ]);
-    modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    // Only run the (slow) web-evidence completion + reference search when the recipe
+    // is actually missing core data. Previously this fired on every import because the
+    // intended gate (recipeNeedsCompletionPass) was never wired up and the completion
+    // query falls back to the title, which is almost always present — so complete web
+    // imports paid for a needless web search. Sparse photo/social imports still pass
+    // this gate and get completed.
+    if (recipeNeedsCompletionPass(normalized)) {
+      const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
+      normalized = completion.recipe;
+      modelResult.quality_flags = uniqueStrings([
+        ...(modelResult.quality_flags ?? []),
+        ...(completion.quality_flags ?? []),
+        ...(completion.applied ? ["import_completion_applied"] : []),
+      ]);
+      modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    }
     if (source.source_type === "recipe_search") {
       const verification = await verifyRecipeSearchSynthesis(normalized, source);
       normalized = coerceStructuredRecipeCandidate(verification.recipe ?? normalized, source);
@@ -9714,14 +9732,22 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   if (source.source_type === "media_image") {
     normalized = await repairSparseImportedRecipe(normalized, source);
     normalized = await enrichRecipeLowRiskFields(normalized, source);
-    const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
-    normalized = completion.recipe;
-    modelResult.quality_flags = uniqueStrings([
-      ...(modelResult.quality_flags ?? []),
-      ...(completion.quality_flags ?? []),
-      ...(completion.applied ? ["import_completion_applied"] : []),
-    ]);
-    modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    // Only run the (slow) web-evidence completion + reference search when the recipe
+    // is actually missing core data. Previously this fired on every import because the
+    // intended gate (recipeNeedsCompletionPass) was never wired up and the completion
+    // query falls back to the title, which is almost always present — so complete web
+    // imports paid for a needless web search. Sparse photo/social imports still pass
+    // this gate and get completed.
+    if (recipeNeedsCompletionPass(normalized)) {
+      const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
+      normalized = completion.recipe;
+      modelResult.quality_flags = uniqueStrings([
+        ...(modelResult.quality_flags ?? []),
+        ...(completion.quality_flags ?? []),
+        ...(completion.applied ? ["import_completion_applied"] : []),
+      ]);
+      modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
+    }
     const secondaryFill = await enrichRecipeSecondaryFields(normalized, source, { jobID });
     normalized = secondaryFill.recipe;
     secondaryFillApplied = secondaryFill.applied;

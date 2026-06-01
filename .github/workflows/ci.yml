@@ -12,10 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No npm cache here: package-lock.json is intentionally gitignored in this repo,
+      # and setup-node's `cache: npm` fails hard when there's no committed lockfile.
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
       # Heavy postinstall (Playwright browsers, etc.) isn't needed to syntax-check
       # or run the offline unit tests.
