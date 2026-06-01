@@ -10,6 +10,7 @@ struct PrepTabView: View {
     @Binding var selectedTab: AppTab
     @Binding var requestedCookbookCycleID: String?
     let recipeTransitionNamespace: Namespace.ID
+    var showCreateRecipeCue: Bool = false
     let onSelectRecipe: (PlannedRecipe) -> Void
     let onImportFoodPhotos: ([PhotosPickerItem]) -> Void
     let onCaptureFoodPhoto: (UIImage) -> Void
@@ -82,6 +83,7 @@ struct PrepTabView: View {
                     VStack(alignment: .leading, spacing: 26) {
                         PrepTrackerCard(
                             store: store,
+                            showCreateRecipeCue: showCreateRecipeCue,
                             onCreateNewRecipe: onCreateNewRecipe
                         )
 
@@ -2894,6 +2896,7 @@ struct MealsSummaryCard: View {
 
 struct PrepTrackerCard: View {
     @ObservedObject var store: MealPlanningAppStore
+    var showCreateRecipeCue: Bool = false
     let onCreateNewRecipe: () -> Void
     @Environment(\.openURL) private var openURL
     @State private var isScheduleEditorPresented = false
@@ -2936,6 +2939,17 @@ struct PrepTrackerCard: View {
                     .offset(y: createRecipePulse ? -2 : 0)
                     .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: createRecipePulse)
                     .accessibilityLabel("Create new recipe")
+                    .overlay(alignment: .bottomTrailing) {
+                        if showCreateRecipeCue {
+                            OnboardingTapCueView(
+                                label: "Add more",
+                                labelOffset: CGSize(width: -54, height: 6)
+                            )
+                            .offset(x: -4, y: 50)
+                            .transition(.opacity.combined(with: .scale(scale: 0.7)))
+                            .allowsHitTesting(false)
+                        }
+                    }
                     .zIndex(20)
                 }
 

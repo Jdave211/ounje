@@ -16,6 +16,10 @@ final class SavedRecipesStore: ObservableObject {
     private var activeAccessToken: String?
     private var deletedSavedRecipeIDs: Set<String> = []
     private var pendingRemoteDeleteRecipeIDs: Set<String> = []
+    // Recipes saved locally this session that the server hasn't confirmed back yet.
+    // Kept in-memory only (never persisted) so a freshly imported/saved card survives
+    // refreshes that race ahead of the backend, while relaunches stay remote-authoritative.
+    private var pendingRemoteSaveRecipeIDs: Set<String> = []
     private var hasPendingRemoteSaveRetry = false
     private var lastRemoteSyncUserID: String?
     private var lastRemoteSyncAt: Date?
@@ -144,11 +148,13 @@ final class SavedRecipesStore: ObservableObject {
         if shouldSave {
             deletedSavedRecipeIDs.remove(recipe.id)
             pendingRemoteDeleteRecipeIDs.remove(recipe.id)
+            pendingRemoteSaveRecipeIDs.insert(recipe.id)
             savedRecipes.removeAll { $0.id == recipe.id }
             savedRecipes.insert(recipe, at: 0)
             toastCenter.showSavedRecipe(recipe)
         } else {
             savedRecipes.removeAll { $0.id == recipe.id }
+            pendingRemoteSaveRecipeIDs.remove(recipe.id)
             deletedSavedRecipeIDs.insert(recipe.id)
             pendingRemoteDeleteRecipeIDs.insert(recipe.id)
             toastCenter.showUnsavedRecipe(
@@ -229,6 +235,9 @@ final class SavedRecipesStore: ObservableObject {
         let resolved = mergeRecipeCards(primary: recipe, fallback: existing)
         deletedSavedRecipeIDs.remove(recipe.id)
         pendingRemoteDeleteRecipeIDs.remove(recipe.id)
+        // Guard this freshly imported card against being dropped by a remote refresh
+        // that races ahead of the backend write.
+        pendingRemoteSaveRecipeIDs.insert(recipe.id)
         if let existingIndex {
             savedRecipes[existingIndex] = resolved
         } else {
@@ -321,6 +330,9 @@ final class SavedRecipesStore: ObservableObject {
     }
 
     private func load(for userID: String?, preserveExistingWhenMissing: Bool = false) {
+        // load() runs only on a user switch (or first launch); pending-save guards are
+        // session/user scoped, so clear them to avoid leaking across accounts.
+        pendingRemoteSaveRecipeIDs.removeAll()
         let defaults = UserDefaults.standard
         let primaryKey = storageKey(for: userID)
         let deletedKey = deletedStorageKey(for: userID)
@@ -382,12 +394,21 @@ final class SavedRecipesStore: ObservableObject {
     private func merge(local: [DiscoverRecipeCardData], remote: [DiscoverRecipeCardData]) -> [DiscoverRecipeCardData] {
         let filteredRemote = remote.filter { !deletedSavedRecipeIDs.contains($0.id) }
         let filteredLocal = local.filter { !deletedSavedRecipeIDs.contains($0.id) }
+        let remoteIDs = Set(filteredRemote.map(\.id))
 
-        // Remote saved rows are authoritative after bootstrap/refresh. Keeping
-        // stale local-only imported cards here is what resurrected unsaved
-        // recipes after import-history refreshes and relaunches.
+        // A remote fetch is authoritative, so once a card shows up remotely it no
+        // longer needs the pending-confirmation guard below.
+        pendingRemoteSaveRecipeIDs.subtract(remoteIDs)
+
+        // Remote saved rows are authoritative after bootstrap/refresh. Previously we
+        // dropped every local row missing from remote, which deleted a recipe that was
+        // JUST imported/saved whenever a refresh raced ahead of the server — it only
+        // reappeared after an app relaunch. Keep local rows that remote already knows
+        // about, plus recent local saves still awaiting remote confirmation. Tombstoned
+        // (explicitly unsaved) recipes are already filtered out above, so this no longer
+        // resurrects unsaved items.
         return deduplicated(filteredRemote + filteredLocal.filter { recipe in
-            filteredRemote.contains { $0.id == recipe.id }
+            remoteIDs.contains(recipe.id) || pendingRemoteSaveRecipeIDs.contains(recipe.id)
         })
     }
 

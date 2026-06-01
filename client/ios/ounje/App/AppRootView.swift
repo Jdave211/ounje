@@ -2156,6 +2156,7 @@ private struct MealPlannerShellView: View {
     @State private var isPhotoImportComposerPresented = false
     @State private var photoImportComposerContext: CookbookComposerContext = .prepped
     @State private var isProcessingPrepPhotoImport = false
+    @State private var showPrepCreateCue = false
 
     private enum SharedImportProcessingScope {
         case queued
@@ -2400,6 +2401,15 @@ private struct MealPlannerShellView: View {
             if newTab != .discover {
                 discoverSearchText = ""
             }
+            if newTab != .prep {
+                showPrepCreateCue = false
+            }
+        }
+        .onAppear {
+            activateFirstPrepCoachIfNeeded()
+        }
+        .onChange(of: store.pendingFirstPrepCoach) { _ in
+            activateFirstPrepCoachIfNeeded()
         }
         .sheet(isPresented: $isPhotoImportComposerPresented) {
             DiscoverComposerSheet(context: photoImportComposerContext, initialText: nil)
@@ -2409,6 +2419,36 @@ private struct MealPlannerShellView: View {
                 .environmentObject(toastCenter)
                 .presentationDetents([.height(430), .fraction(0.62), .large])
                 .presentationDragIndicator(.hidden)
+        }
+    }
+
+    /// First-run prep coach: bounce to the Prep tab, toast "your prep is ready", and
+    /// reveal a pointer at the add-recipe button. Triggered once by the store after a
+    /// new user finishes onboarding with a non-empty prep.
+    private func activateFirstPrepCoachIfNeeded() {
+        guard store.pendingFirstPrepCoach else { return }
+        store.pendingFirstPrepCoach = false
+
+        withAnimation(OunjeMotion.screenSpring) {
+            selectedTab = .prep
+        }
+        withAnimation(.easeInOut(duration: 0.4).delay(0.45)) {
+            showPrepCreateCue = true
+        }
+        toastCenter.show(
+            title: "Your prep is ready",
+            subtitle: "Feel free to add more.",
+            systemImage: "sparkles"
+        )
+
+        // Fade the pointer out on its own if the user doesn't engage with it.
+        Task {
+            try? await Task.sleep(nanoseconds: 9_000_000_000)
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    showPrepCreateCue = false
+                }
+            }
         }
     }
 
@@ -2453,6 +2493,7 @@ private struct MealPlannerShellView: View {
                 selectedTab: $selectedTab,
                 requestedCookbookCycleID: $requestedCookbookCycleID,
                 recipeTransitionNamespace: recipeTransitionNamespace,
+                showCreateRecipeCue: showPrepCreateCue,
                 onSelectRecipe: { plannedRecipe in
                     presentRecipeDetail(PresentedRecipeDetail(plannedRecipe: plannedRecipe))
                 },
@@ -2467,6 +2508,7 @@ private struct MealPlannerShellView: View {
                     }
                 },
                 onCreateNewRecipe: {
+                    showPrepCreateCue = false
                     photoImportComposerContext = .prepped
                     DispatchQueue.main.async {
                         isPhotoImportComposerPresented = true

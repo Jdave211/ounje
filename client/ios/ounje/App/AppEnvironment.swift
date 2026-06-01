@@ -193,6 +193,12 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var hasResolvedInitialState = false
     @Published var lastOnboardingStep = 0
     @Published private(set) var isCompletingOnboarding = false
+    /// One-shot signal: set once right after a new user finishes onboarding with a
+    /// non-empty prep. The shell consumes it to bounce the user to the Prep tab,
+    /// toast "Your prep is ready", and point at the add-recipe button. Guarded by
+    /// `firstPrepCoachShownKey` so it only ever fires once per device.
+    @Published var pendingFirstPrepCoach = false
+    static let firstPrepCoachShownKey = "ounje-first-prep-coach-shown-v1"
     @Published private(set) var authSessionNilMetrics: [String: Int] = [:]
 
     private let planner = MealPlanningAgent()
@@ -1485,8 +1491,15 @@ final class MealPlanningAppStore: ObservableObject {
         )
         let plan = planPreservingKnownPrepBatches(hydratedPlan, from: previousPlan)
         guard activeGenerationToken == generationToken, self.profile == profile else { return nil }
-        if plan.recipes.isEmpty, let previousPlan {
-            updateCurrentPlanCache(with: previousPlan)
+        // Never lock in an empty plan. For a brand-new user the candidate fetch can
+        // transiently return nothing (e.g. a cold backend timing out on the first
+        // post-onboarding call); caching that empty result left them stuck on
+        // "No prep meals yet" with nothing to recover from. Keep any previous plan,
+        // otherwise leave the plan unset so a retry can populate it.
+        if plan.recipes.isEmpty {
+            if let previousPlan {
+                updateCurrentPlanCache(with: previousPlan)
+            }
             return nil
         }
         updateCurrentPlanCache(with: plan, persistRemote: false)
@@ -2177,8 +2190,30 @@ final class MealPlanningAppStore: ObservableObject {
         // membership refresh should not serialize behind it.
         async let membershipRefresh: Void = refreshMembershipEntitlement(trigger: "post-onboarding")
         if profile.isPlanningReady {
-            await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
+            // The first post-onboarding candidate fetch is the most failure-prone moment
+            // (cold backend, slow LLM curation). A single empty/timed-out attempt used to
+            // leave new users with no prep at all, so retry a few times with backoff
+            // before giving up.
+            let maxOnboardingPlanAttempts = 3
+            var onboardingPlanAttempt = 0
+            while onboardingPlanAttempt < maxOnboardingPlanAttempts {
+                let generated = await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
+                if let generated, !generated.recipes.isEmpty { break }
+                onboardingPlanAttempt += 1
+                if onboardingPlanAttempt < maxOnboardingPlanAttempts {
+                    try? await Task.sleep(nanoseconds: UInt64(onboardingPlanAttempt) * 2_000_000_000)
+                }
+            }
             await ensureOnboardingUsualPrepBatch(profile: profile)
+
+            // First-run coach: if the new user now has a prep, ask the shell to bounce
+            // them to the Prep tab with a "your prep is ready" toast + a pointer at the
+            // add button. Fires at most once per device.
+            if latestPlan?.recipes.isEmpty == false,
+               !UserDefaults.standard.bool(forKey: Self.firstPrepCoachShownKey) {
+                UserDefaults.standard.set(true, forKey: Self.firstPrepCoachShownKey)
+                pendingFirstPrepCoach = true
+            }
         }
         await membershipRefresh
 

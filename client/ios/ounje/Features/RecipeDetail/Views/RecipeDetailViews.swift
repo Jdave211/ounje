@@ -1065,10 +1065,24 @@ struct RecipeDetailExperienceView: View {
             }
             .task(id: presentedRecipe.id) {
                 triggerChromeReveal()
-                let loadedCount = presentedRecipe.plannedRecipe?.servings ?? viewModel.detail?.displayServings ?? 4
-                baseServingsCount = max(1, loadedCount)
-                servingsCount = max(1, loadedCount)
+                // Native servings = the count the recipe's ingredient amounts are written for.
+                // Chosen servings = what the user is cooking (a prep override, or native by default).
+                let nativeServings = presentedRecipe.plannedRecipe?.recipe.servings
+                    ?? viewModel.detail?.displayServings
+                    ?? 4
+                let chosenServings = presentedRecipe.plannedRecipe?.servings ?? nativeServings
+                baseServingsCount = max(1, nativeServings)
+                servingsCount = max(1, chosenServings)
                 await loadResolvedRecipeDetail()
+                // Re-anchor base to the resolved native count once detail loads so ingredient
+                // scaling stays correct — but don't clobber a serving the user changed mid-load.
+                if let resolvedNative = viewModel.detail?.displayServings {
+                    let wasUnchanged = servingsCount == max(1, chosenServings)
+                    baseServingsCount = max(1, resolvedNative)
+                    if presentedRecipe.plannedRecipe?.servings == nil, wasUnchanged {
+                        servingsCount = max(1, resolvedNative)
+                    }
+                }
             }
         }
         .background(detailBackground.ignoresSafeArea())
@@ -1397,7 +1411,11 @@ struct RecipeDetailExperienceView: View {
             title: detail.title,
             cuisine: Self.cuisinePreference(from: detail),
             prepMinutes: resolvedRecipeDurationMinutes(from: detail),
-            servings: max(1, servingsCount),
+            // Stamp the recipe's NATIVE serving count — the count its ingredient amounts
+            // are written for. The user's chosen serving is carried separately as the
+            // plan override, so the cart scales by (chosen / native). Using servingsCount
+            // here would force that ratio to 1.0 and ignore the serving the user picked.
+            servings: max(1, detail.displayServings),
             storageFootprint: .medium,
             tags: Self.recipeTags(from: detail),
             ingredients: ingredients,

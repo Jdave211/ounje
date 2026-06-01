@@ -241,7 +241,12 @@ function displayMacroFallbackForRecipe(recipe = {}) {
 }
 
 function hasCompleteDisplayMacros(recipe = {}) {
-  return ["calories_kcal", "protein_g", "carbs_g", "fat_g"].every((field) => {
+  // Calories must be a positive number — a stored 0 kcal means "no macro data",
+  // not a real value, and should not count as complete.
+  if (!(Number.isFinite(Number(recipe?.calories_kcal)) && Number(recipe.calories_kcal) > 0)) {
+    return false;
+  }
+  return ["protein_g", "carbs_g", "fat_g"].every((field) => {
     const value = recipe?.[field];
     return value !== null
       && value !== undefined
@@ -339,8 +344,13 @@ function recipeDetailPayloadIsDisplayReady(payload = {}) {
 
 function missingDisplayMacroPatch(existingRecipe = {}, candidateRecipe = {}) {
   const patch = {};
+  // Non-positive calories => the existing macro block is untrustworthy (an all-zeros
+  // row), so accept the candidate's values instead of treating stored zeros as present.
+  const existingCaloriesUsable = Number.isFinite(Number(existingRecipe?.calories_kcal))
+    && Number(existingRecipe.calories_kcal) > 0;
   for (const field of ["calories_kcal", "protein_g", "carbs_g", "fat_g"]) {
-    if (!Number.isFinite(Number(existingRecipe?.[field])) && Number.isFinite(Number(candidateRecipe?.[field]))) {
+    const existingFieldUsable = existingCaloriesUsable && Number.isFinite(Number(existingRecipe?.[field]));
+    if (!existingFieldUsable && Number.isFinite(Number(candidateRecipe?.[field]))) {
       patch[field] = Number(candidateRecipe[field]);
     }
   }
@@ -2469,7 +2479,7 @@ async function buildFastBaseDiscoverRecipes({
   }
 
   return {
-    recipes: recipes.slice(0, target),
+    recipes: deprioritizeImagelessRecipes(recipes).slice(0, target),
     rankingMode: "base_fast_cached_pool",
   };
 }
@@ -2673,7 +2683,8 @@ function composeBaseDiscoverFeed({
     selectedIds.add(recipe.id);
   }
 
-  return stableShuffle(composed, `${seed}|shuffled`).slice(0, target);
+  const shuffled = stableShuffle(composed, `${seed}|shuffled`);
+  return deprioritizeImagelessRecipes(shuffled).slice(0, target);
 }
 
 function frontloadPresetRecipes(recipes, filter, limit) {
@@ -7064,6 +7075,31 @@ function filterRecipesByAllergies(recipes, profile) {
 
     return !allergies.some((allergen) => haystack.includes(allergen));
   });
+}
+
+function recipeHasDiscoverImage(recipe) {
+  const card = typeof recipe?.discover_card_image_url === "string" ? recipe.discover_card_image_url.trim() : "";
+  const hero = typeof recipe?.hero_image_url === "string" ? recipe.hero_image_url.trim() : "";
+  return Boolean(card) || Boolean(hero);
+}
+
+// Recipes without a usable hero/card image render as a bare placeholder ("plate"
+// emoji) in Discover and look broken when they headline the feed. Keep them in the
+// pool as filler, but sink them below every image-having recipe so they only appear
+// once the imaged catalogue is exhausted. Order within each partition is preserved.
+function deprioritizeImagelessRecipes(recipes) {
+  if (!Array.isArray(recipes) || recipes.length <= 1) return recipes ?? [];
+  const withImage = [];
+  const withoutImage = [];
+  for (const recipe of recipes) {
+    if (recipeHasDiscoverImage(recipe)) {
+      withImage.push(recipe);
+    } else {
+      withoutImage.push(recipe);
+    }
+  }
+  if (!withImage.length || !withoutImage.length) return recipes;
+  return [...withImage, ...withoutImage];
 }
 
 function deprioritizeHistoricalRecipes(recipes, historyRecipeIds) {

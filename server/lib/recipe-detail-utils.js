@@ -222,7 +222,15 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
     };
   }
 
-  let workingName = name;
+  // Collapse compound quantities written with a connective — "2 and 3/4 cups",
+  // "1 & ½ tsp" — into a single mixed number ("2 3/4", "1 ½"). Without this the
+  // leading-quantity matcher split "2" off as the amount and left "and 3/4 cups
+  // all-purpose flour" as the ingredient name (and "3/4"/"344g" leaked out as their
+  // own bogus ingredients). Only fires when the second operand is an actual fraction.
+  let workingName = name.replace(
+    new RegExp(`(\\d+)\\s+(?:and|&)\\s+(\\d+\\/\\d+|[${FRACTION_CHARACTER_PATTERN}])`, "gi"),
+    "$1 $2"
+  );
   let workingQuantity = quantity;
 
   if (workingQuantity) {
@@ -244,7 +252,11 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
     }
   }
 
-  const leadingMatch = workingName.match(new RegExp(`^((?:\\d+\\s+)?\\d+\\/\\d+|\\d+(?:\\.\\d+)?|[${FRACTION_CHARACTER_PATTERN}])(?:\\s+([a-zA-Z-]+))?\\s+(.+)$`));
+  // Amount alternatives, most specific first: mixed number ("2 3/4"), integer plus
+  // a unicode fraction ("2 ¾" / "2¾"), bare fraction ("3/4"), integer/decimal, or a
+  // lone unicode fraction. This keeps the whole compound amount together instead of
+  // leaving the fractional part stranded in the ingredient name.
+  const leadingMatch = workingName.match(new RegExp(`^((?:\\d+\\s+\\d+\\/\\d+)|(?:\\d+\\s*[${FRACTION_CHARACTER_PATTERN}])|(?:\\d+\\/\\d+)|(?:\\d+(?:\\.\\d+)?)|[${FRACTION_CHARACTER_PATTERN}])(?:\\s+([a-zA-Z-]+))?\\s+(.+)$`));
   if (leadingMatch) {
     const parsedQuantity = leadingMatch[1].trim();
     const parsedUnit = normalizeRecipeLine(leadingMatch[2] ?? "") || null;

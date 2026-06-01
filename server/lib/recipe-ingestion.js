@@ -9063,13 +9063,23 @@ function fillRecipeMacrosWithLocalEstimate(normalizedRecipe) {
   const estimate = estimateRecipeMacrosLocally(normalizedRecipe);
   if (!estimate) return normalizedRecipe;
 
+  // Real food is never 0 kcal. When calories are absent or zero the entire stored
+  // macro block is untrustworthy (an all-zeros row), so re-estimate every field
+  // rather than preserving the bogus zeros. When calories ARE positive, keep any
+  // individually supplied macro (a genuine 0 g protein/carb/fat is valid).
+  const caloriesTrustworthy = isFiniteMacroValue(normalizedRecipe.calories_kcal)
+    && Number(normalizedRecipe.calories_kcal) > 0;
+  const keepExisting = (field) => caloriesTrustworthy && isFiniteMacroValue(normalizedRecipe[field]);
+
   return {
     ...normalizedRecipe,
-    calories_kcal: isFiniteMacroValue(normalizedRecipe.calories_kcal) ? Number(normalizedRecipe.calories_kcal) : estimate.calories_kcal,
-    protein_g: isFiniteMacroValue(normalizedRecipe.protein_g) ? Number(normalizedRecipe.protein_g) : estimate.protein_g,
-    carbs_g: isFiniteMacroValue(normalizedRecipe.carbs_g) ? Number(normalizedRecipe.carbs_g) : estimate.carbs_g,
-    fat_g: isFiniteMacroValue(normalizedRecipe.fat_g) ? Number(normalizedRecipe.fat_g) : estimate.fat_g,
-    est_calories_text: normalizedRecipe.est_calories_text ?? estimate.est_calories_text,
+    calories_kcal: caloriesTrustworthy ? Number(normalizedRecipe.calories_kcal) : estimate.calories_kcal,
+    protein_g: keepExisting("protein_g") ? Number(normalizedRecipe.protein_g) : estimate.protein_g,
+    carbs_g: keepExisting("carbs_g") ? Number(normalizedRecipe.carbs_g) : estimate.carbs_g,
+    fat_g: keepExisting("fat_g") ? Number(normalizedRecipe.fat_g) : estimate.fat_g,
+    est_calories_text: caloriesTrustworthy && normalizedRecipe.est_calories_text
+      ? normalizedRecipe.est_calories_text
+      : estimate.est_calories_text,
   };
 }
 
@@ -9077,8 +9087,11 @@ function fillRecipeMacrosWithLocalEstimate(normalizedRecipe) {
 // after the main synthesis passes. Uses a small, cheap model focused solely on
 // estimating per-serving calories/protein/carbs/fat from the finalized ingredient list.
 async function maybeFillMissingMacros(normalizedRecipe) {
+  // Non-positive calories means the macro block is missing/bogus (no real food is
+  // 0 kcal), so treat it the same as absent and re-estimate.
   const missingAny =
     !isFiniteMacroValue(normalizedRecipe.calories_kcal)
+    || Number(normalizedRecipe.calories_kcal) <= 0
     || !isFiniteMacroValue(normalizedRecipe.protein_g)
     || !isFiniteMacroValue(normalizedRecipe.carbs_g)
     || !isFiniteMacroValue(normalizedRecipe.fat_g);
@@ -9087,7 +9100,12 @@ async function maybeFillMissingMacros(normalizedRecipe) {
 }
 
 function hasCompleteDisplayMacros(recipe) {
-  return ["calories_kcal", "protein_g", "carbs_g", "fat_g"].every((field) => {
+  // Calories must be a positive number — a stored 0 kcal means "no macro data",
+  // not a real value, and should not count as complete.
+  if (!(Number.isFinite(Number(recipe?.calories_kcal)) && Number(recipe.calories_kcal) > 0)) {
+    return false;
+  }
+  return ["protein_g", "carbs_g", "fat_g"].every((field) => {
     const value = recipe?.[field];
     return value !== null
       && value !== undefined
@@ -9528,8 +9546,13 @@ async function guaranteeRecipeDisplayMacros(normalizedRecipe) {
 function missingDisplayMacroPatch(existingRecipe, candidateRecipe) {
   const patch = {};
   const displayCandidate = normalizeRecipeDisplayFields(candidateRecipe ?? {});
+  // Non-positive calories => the existing macro block is untrustworthy, so accept the
+  // candidate's whole block rather than treating the stored zeros as already-present.
+  const existingCaloriesUsable = isFiniteMacroValue(existingRecipe?.calories_kcal)
+    && Number(existingRecipe.calories_kcal) > 0;
   for (const field of ["calories_kcal", "protein_g", "carbs_g", "fat_g"]) {
-    if (!isFiniteMacroValue(existingRecipe?.[field]) && isFiniteMacroValue(candidateRecipe?.[field])) {
+    const existingFieldUsable = existingCaloriesUsable && isFiniteMacroValue(existingRecipe?.[field]);
+    if (!existingFieldUsable && isFiniteMacroValue(candidateRecipe?.[field])) {
       patch[field] = Number(candidateRecipe[field]);
     }
   }
