@@ -2703,6 +2703,42 @@ enum RecipeAlterationIntent: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    // Per-serving macro multipliers (calories, protein, carbs, fat) applied to a base
+    // recipe when this inspiration is selected — so "More protein" actually raises the
+    // protein number, "Lighter"/"Low calories" lowers kcal, "Keto" drops carbs and
+    // raises fat, etc. Used to keep the onboarding edit demo's macros honest with the edit.
+    var macroMultipliers: (calories: Double, protein: Double, carbs: Double, fat: Double) {
+        switch self {
+        case .healthier:      return (0.88, 1.05, 0.90, 0.70)
+        case .spicy:          return (1.00, 1.00, 1.00, 1.00)
+        case .quick:          return (1.00, 1.00, 1.00, 1.00)
+        case .moreProtein:    return (1.10, 1.55, 0.92, 1.00)
+        case .extraVeggies:   return (0.95, 1.03, 1.06, 0.92)
+        case .lessSugar:      return (0.90, 1.03, 0.76, 0.98)
+        case .kidFriendly:    return (1.00, 1.00, 1.04, 1.00)
+        case .sweeter:        return (1.12, 0.98, 1.20, 1.03)
+        case .budgetFriendly: return (1.00, 1.00, 1.00, 1.00)
+        case .mealPrep:       return (1.00, 1.00, 1.00, 1.00)
+        case .lighter:        return (0.72, 1.05, 0.85, 0.60)
+        case .lowCalories:    return (0.62, 1.06, 0.80, 0.55)
+        case .dairyFree:      return (0.96, 0.98, 1.00, 0.88)
+        case .vegetarian:     return (0.97, 0.85, 1.08, 0.95)
+        case .keto:           return (1.00, 1.20, 0.22, 1.55)
+        case .glutenFree:     return (1.00, 1.00, 0.98, 1.00)
+        case .lowCarb:        return (0.92, 1.15, 0.42, 1.22)
+        case .saucy:          return (1.06, 1.00, 1.02, 1.12)
+        case .crispy:         return (1.08, 1.00, 1.02, 1.18)
+        }
+    }
+
+    // Applies macroMultipliers to a base value, rounding to a clean integer and never
+    // returning a negative. Calories floor at 1; the others can hit 0 legitimately.
+    func adaptedMacro(_ base: Double?, _ keyPath: KeyPath<(calories: Double, protein: Double, carbs: Double, fat: Double), Double>, minimum: Double = 0) -> Double? {
+        guard let base else { return nil }
+        let scaled = (base * macroMultipliers[keyPath: keyPath]).rounded()
+        return max(minimum, scaled)
+    }
+
     var intentKey: String {
         switch self {
         case .healthier: return "healthier"
@@ -3112,6 +3148,13 @@ struct RecipeAdaptationRecipe: Decodable, Identifiable {
     let substitutions: [String]
     let pairingNotes: [String]
     let dietaryFit: [String]
+    // Optional per-variant macros. When present (e.g. the onboarding demo's adapted
+    // recipes) they override the base recipe's macros so an edit like "more protein"
+    // actually reflects in the numbers; when nil the detail inherits the base macros.
+    let caloriesKcal: Double?
+    let proteinG: Double?
+    let carbsG: Double?
+    let fatG: Double?
 
     var id: String { title }
 
@@ -3123,7 +3166,11 @@ struct RecipeAdaptationRecipe: Decodable, Identifiable {
         steps: [String],
         substitutions: [String],
         pairingNotes: [String],
-        dietaryFit: [String]
+        dietaryFit: [String],
+        caloriesKcal: Double? = nil,
+        proteinG: Double? = nil,
+        carbsG: Double? = nil,
+        fatG: Double? = nil
     ) {
         self.title = title
         self.summary = summary
@@ -3133,6 +3180,10 @@ struct RecipeAdaptationRecipe: Decodable, Identifiable {
         self.substitutions = substitutions
         self.pairingNotes = pairingNotes
         self.dietaryFit = dietaryFit
+        self.caloriesKcal = caloriesKcal
+        self.proteinG = proteinG
+        self.carbsG = carbsG
+        self.fatG = fatG
     }
 
     enum CodingKeys: String, CodingKey {
@@ -3144,6 +3195,10 @@ struct RecipeAdaptationRecipe: Decodable, Identifiable {
         case substitutions
         case pairingNotes = "pairing_notes"
         case dietaryFit = "dietary_fit"
+        case caloriesKcal = "calories_kcal"
+        case proteinG = "protein_g"
+        case carbsG = "carbs_g"
+        case fatG = "fat_g"
     }
 
     init(from decoder: Decoder) throws {
@@ -3161,6 +3216,10 @@ struct RecipeAdaptationRecipe: Decodable, Identifiable {
         substitutions = try container.decode([String].self, forKey: .substitutions)
         pairingNotes = try container.decode([String].self, forKey: .pairingNotes)
         dietaryFit = try container.decode([String].self, forKey: .dietaryFit)
+        caloriesKcal = try container.decodeIfPresent(Double.self, forKey: .caloriesKcal)
+        proteinG = try container.decodeIfPresent(Double.self, forKey: .proteinG)
+        carbsG = try container.decodeIfPresent(Double.self, forKey: .carbsG)
+        fatG = try container.decodeIfPresent(Double.self, forKey: .fatG)
     }
 }
 

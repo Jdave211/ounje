@@ -84,7 +84,7 @@ struct OunjePaywallHostView: View {
                             .fill(OunjePalette.accent)
                             .frame(width: 42, height: 10)
 
-                        Text("3 days free")
+                        Text("7 days free")
                             .font(.custom("Slee_handwritting-Regular", size: compact ? 20 : 26))
                             .foregroundStyle(.white.opacity(0.92))
                             .lineLimit(1)
@@ -129,7 +129,7 @@ struct OunjePaywallHostView: View {
                             }
                             .frame(width: contentWidth * 0.92)
 
-                            Text(introTrialAvailable(for: selectedPlan) ? "Try 3 days free. Cancel anytime." : "Cancel anytime.")
+                            Text(introTrialAvailable(for: selectedPlan) ? "Try 7 days free. Cancel anytime." : "Cancel anytime.")
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                                 .foregroundStyle(Color.white.opacity(0.82))
                                 .frame(maxWidth: .infinity, alignment: .center)

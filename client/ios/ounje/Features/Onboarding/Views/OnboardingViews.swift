@@ -994,7 +994,7 @@ struct FirstLoginOnboardingView: View {
         case .solution:
             solutionStepContent
         case .solutionWays:
-            solutionWaysStepContent
+            OnboardingTestimonialsPage(accent: currentStepAccent)
         case .recipeStyle:
             recipeStyleStepContent
         case .allergies:
@@ -3857,6 +3857,146 @@ private struct OnboardingTrialInvitationPage: View {
     }
 }
 
+private struct OnboardingTestimonialsPage: View {
+    let accent: Color
+    @State private var revealed = 0
+    @State private var titleRevealed = false
+
+    private struct Testimonial: Identifiable {
+        let id = UUID()
+        let headline: String
+        let body: String
+        let handle: String
+    }
+
+    private let testimonials: [Testimonial] = [
+        .init(
+            headline: "Finally making all those TikTok recipes",
+            body: "I stopped saving food and forgetting it. Ounje turns videos into real ingredients, steps, and prep.",
+            handle: "@fitbytay_"
+        ),
+        .init(
+            headline: "Changed how I prepare for marathons",
+            body: "I can still eat food I enjoy if I use Ounje to tweak some ingredients a bit.",
+            handle: "@miles4breakfast"
+        ),
+        .init(
+            headline: "Meal planning finally feels lighter",
+            body: "My prep and grocery list stay connected, so weeknights stop feeling chaotic.",
+            handle: "@jane.cooks.quick"
+        ),
+    ]
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            // Social-proof background photo, centered and filling the screen behind the cards.
+            Image("OnboardingTestimonialsBackground")
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
+            // Scrim keeps the title + cards legible over the photo (darker at the top
+            // where the title sits, easing off toward the middle/bottom).
+            LinearGradient(
+                colors: [OunjePalette.background, OunjePalette.background.opacity(0.45), OunjePalette.background.opacity(0.15)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            // Everything fits on one screen — no scrolling. Cards cascade left/right
+            // (matching the design) and slide in on appear.
+            GeometryReader { proxy in
+                let cardWidth = min(proxy.size.width * 0.84, 360)
+                VStack(spacing: 0) {
+                    Text("+500 people have already achieved their food goals with Ounje")
+                        .font(.system(size: 28, weight: .black, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.72)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 12)
+                        .opacity(titleRevealed ? 1 : 0)
+                        .offset(y: titleRevealed ? 0 : -16)
+
+                    Spacer(minLength: 18)
+
+                    VStack(spacing: -8) {
+                        ForEach(Array(testimonials.enumerated()), id: \.element.id) { index, testimonial in
+                            HStack(spacing: 0) {
+                                if !index.isMultiple(of: 2) { Spacer(minLength: 0) }
+                                card(testimonial)
+                                    .frame(width: cardWidth)
+                                if index.isMultiple(of: 2) { Spacer(minLength: 0) }
+                            }
+                            .zIndex(Double(index))
+                            .opacity(revealed > index ? 1 : 0)
+                            .scaleEffect(
+                                revealed > index ? 1 : 0.94,
+                                anchor: index.isMultiple(of: 2) ? .leading : .trailing
+                            )
+                            .offset(
+                                x: revealed > index ? 0 : (index.isMultiple(of: 2) ? -48 : 48),
+                                y: revealed > index ? 0 : 20
+                            )
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            }
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
+                titleRevealed = true
+            }
+            for index in testimonials.indices {
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.8).delay(0.16 + 0.13 * Double(index))) {
+                    revealed = index + 1
+                }
+            }
+        }
+    }
+
+    private func card(_ testimonial: Testimonial) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 3) {
+                ForEach(0..<5, id: \.self) { _ in
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color(red: 0.96, green: 0.71, blue: 0.20))
+                }
+            }
+            Text(testimonial.headline)
+                .font(.system(size: 19, weight: .black, design: .rounded))
+                .foregroundStyle(Color(red: 0.11, green: 0.12, blue: 0.10))
+                .fixedSize(horizontal: false, vertical: true)
+            Text(testimonial.body)
+                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .foregroundStyle(Color(red: 0.30, green: 0.32, blue: 0.30))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(testimonial.handle)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(Color(red: 0.20, green: 0.55, blue: 0.36))
+                .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(red: 0.97, green: 0.96, blue: 0.91))
+                .shadow(color: .black.opacity(0.28), radius: 16, y: 9)
+        )
+    }
+}
+
 private struct OnboardingTrialControlPage: View {
     let accent: Color
 
@@ -3866,7 +4006,7 @@ private struct OnboardingTrialControlPage: View {
                 (
                     Text("You'll get a reminder\n")
                         .foregroundColor(OunjePalette.primaryText) +
-                    Text("1 day before\n")
+                    Text("2 days before\n")
                         .foregroundColor(accent) +
                     Text("your trial ends")
                         .foregroundColor(OunjePalette.primaryText) +

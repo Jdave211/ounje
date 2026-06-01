@@ -159,7 +159,12 @@
           ]
         }
       ],
-      "servings_count": 8
+      "servings_count": 8,
+      "est_calories_text": "380 kcal per serving",
+      "calories_kcal": 380,
+      "protein_g": 12,
+      "carbs_g": 44,
+      "fat_g": 17
     },
     {
       "id": "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7",
@@ -354,7 +359,12 @@
           "ingredient_refs": []
         }
       ],
-      "servings_count": 6
+      "servings_count": 6,
+      "est_calories_text": "520 kcal per serving",
+      "calories_kcal": 520,
+      "protein_g": 30,
+      "carbs_g": 58,
+      "fat_g": 16
     },
     {
       "id": "eaa85ffd-1a66-44e9-84e7-2c7d4b950390",
@@ -471,7 +481,12 @@
           ]
         }
       ],
-      "servings_count": 4
+      "servings_count": 4,
+      "est_calories_text": "470 kcal per serving",
+      "calories_kcal": 470,
+      "protein_g": 16,
+      "carbs_g": 70,
+      "fat_g": 13
     },
     {
       "id": "4bcf072c-b95d-49fa-9997-d2749a118a15",
@@ -631,7 +646,12 @@
           ]
         }
       ],
-      "servings_count": 12
+      "servings_count": 12,
+      "est_calories_text": "240 kcal per serving",
+      "calories_kcal": 240,
+      "protein_g": 3,
+      "carbs_g": 36,
+      "fat_g": 10
     }
   ],
   "fixtures": [
@@ -674,7 +694,12 @@
         "dietary_fit": [
           "vegetarian",
           "high-protein"
-        ]
+        ],
+        "est_calories_text": "420 kcal per serving",
+        "calories_kcal": 420,
+        "protein_g": 24,
+        "carbs_g": 40,
+        "fat_g": 16
       },
       "change_summary": "Increased protein by adding Greek yogurt and adjusting the egg quantity; reduced powdered sugar to balance sweetness.",
       "edit_summary": {
@@ -748,7 +773,12 @@
         "pairing_notes": [],
         "dietary_fit": [
           "vegetarian"
-        ]
+        ],
+        "est_calories_text": "350 kcal per serving",
+        "calories_kcal": 350,
+        "protein_g": 12,
+        "carbs_g": 38,
+        "fat_g": 16
       },
       "change_summary": "Reduced powdered sugar from 8 tbsp to 4 tbsp, reduced granulated sugar from 2 tbsp to 1 tbsp, updated steps to reflect these changes.",
       "edit_summary": {
@@ -815,7 +845,12 @@
         "pairing_notes": [],
         "dietary_fit": [
           "vegetarian"
-        ]
+        ],
+        "est_calories_text": "380 kcal per serving",
+        "calories_kcal": 380,
+        "protein_g": 12,
+        "carbs_g": 44,
+        "fat_g": 17
       },
       "change_summary": "Reduced prep and cook time by simplifying steps, eliminating the overnight refrigeration and reducing the baking time. Adjusted ingredient quantities to streamline the recipe.",
       "edit_summary": {
@@ -1377,7 +1412,12 @@
         "pairing_notes": [],
         "dietary_fit": [
           "high-protein"
-        ]
+        ],
+        "est_calories_text": "520 kcal per serving",
+        "calories_kcal": 520,
+        "protein_g": 30,
+        "carbs_g": 60,
+        "fat_g": 15
       },
       "change_summary": "Increased protein by adding 2 cups of shredded cooked chicken and ½ cup of Greek yogurt. Adjusted the amount of Parmesan cheese to maintain balance. Updated cooking steps to incorporate these changes.",
       "edit_summary": {
@@ -1439,7 +1479,12 @@
         "dietary_fit": [
           "Keto",
           "Low-Carb"
-        ]
+        ],
+        "est_calories_text": "430 kcal per serving",
+        "calories_kcal": 430,
+        "protein_g": 26,
+        "carbs_g": 12,
+        "fat_g": 30
       },
       "change_summary": "Replaced pasta with fresh spinach, reduced cheese quantity, and added lemon juice for flavor. Adjusted cooking steps to reflect these changes.",
       "edit_summary": {
@@ -1518,7 +1563,12 @@
           "light",
           "healthy",
           "Italian"
-        ]
+        ],
+        "est_calories_text": "360 kcal per serving",
+        "calories_kcal": 360,
+        "protein_g": 15,
+        "carbs_g": 52,
+        "fat_g": 9
       },
       "change_summary": "Reduced olive oil from 2 tbsp to 1 tbsp, decreased grated Parmesan from 13 tbsp to 6 tbsp, added fresh basil for brightness.",
       "edit_summary": {
@@ -1592,7 +1642,12 @@
         ],
         "substitutions": [],
         "pairing_notes": [],
-        "dietary_fit": []
+        "dietary_fit": [],
+        "est_calories_text": "200 kcal per serving",
+        "calories_kcal": 200,
+        "protein_g": 3,
+        "carbs_g": 28,
+        "fat_g": 9
       },
       "change_summary": "Reduced the amount of powdered sugar from 13 tablespoons to 5 tablespoons, and granulated sugar from 1 cup to ½ cup. Adjusted the steps to reflect these changes.",
       "edit_summary": {
@@ -1660,7 +1715,12 @@
         "pairing_notes": [],
         "dietary_fit": [
           "Gluten-Free"
-        ]
+        ],
+        "est_calories_text": "240 kcal per serving",
+        "calories_kcal": 240,
+        "protein_g": 3,
+        "carbs_g": 36,
+        "fat_g": 10
       },
       "change_summary": "Replaced all-purpose flour with gluten-free all-purpose flour to make the recipe gluten-free. Updated steps to reflect this change. No other ingredients were altered.",
       "edit_summary": {
@@ -1726,7 +1786,12 @@
         ],
         "substitutions": [],
         "pairing_notes": [],
-        "dietary_fit": []
+        "dietary_fit": [],
+        "est_calories_text": "175 kcal per serving",
+        "calories_kcal": 175,
+        "protein_g": 2,
+        "carbs_g": 26,
+        "fat_g": 7
       },
       "change_summary": "Reduced butter and sugar, replaced with coconut oil and less granulated sugar, adjusted flour quantity for a lighter crust, and decreased guava puree amount to balance the filling.",
       "edit_summary": {

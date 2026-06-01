@@ -1196,8 +1196,14 @@ final class MealPlanningAppStore: ObservableObject {
                 return
             }
 
-            let cachedCompleted = isOnboarded && profile != nil
-            let persistedOnboarded = remoteState.onboarded || cachedCompleted
+            // The server is authoritative for onboarding status on a CONFIRMED read.
+            // We deliberately do NOT OR in local "already onboarded" cache here: doing so
+            // (a) ignored an explicit server reset (onboarded=false never re-triggered
+            // onboarding) and (b) caused the write-back below to overwrite that server
+            // false back to true. The pre-bootstrap flash for returning users is already
+            // handled by requiresProfileOnboarding's own guards, which run before
+            // bootstrapDidConfirmOnboardingState is set — so trusting the server here is safe.
+            let persistedOnboarded = remoteState.onboarded
             let resolvedOnboarded = shouldForceOnboardingIncomplete ? false : persistedOnboarded
             let recoveredProfile = remoteState.profile ?? profile
             let recoveredStep = shouldForceOnboardingIncomplete
@@ -1208,7 +1214,9 @@ final class MealPlanningAppStore: ObservableObject {
                             remoteState.lastOnboardingStep,
                             FirstLoginOnboardingView.SetupStep.completedRawValue
                         )
-                        : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(remoteState.lastOnboardingStep, lastOnboardingStep)
+                        // Not onboarded per the server → trust the server's step (clamped),
+                        // not a stale local "completed" step, so a reset restarts cleanly.
+                        : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(remoteState.lastOnboardingStep, 0)
                 )
 
             authSession = AuthSession(
@@ -2174,6 +2182,23 @@ final class MealPlanningAppStore: ObservableObject {
         return true
     }
 
+    private func notifyFounderOnboardingComplete(session: AuthSession) {
+        let userID = session.userID
+        let accessToken = session.accessToken
+        Task.detached(priority: .utility) {
+            guard let url = URL(string: "\(BackendEndpoint.primaryBaseURL)/v1/account/onboarding-complete") else { return }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 20
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(userID, forHTTPHeaderField: "X-User-ID")
+            if let accessToken, !accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            }
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
     private func finalizeCompletedOnboarding(with profile: UserProfile, lastStep: Int) async {
         // Persist the completed profile first — the server must have the latest state
         // before we fire the plan generation (which uses the profile on the backend).
@@ -2183,6 +2208,10 @@ final class MealPlanningAppStore: ObservableObject {
                 lastStep: lastStep,
                 session: session
             )
+            // Ping the backend so the founder gets a Slack notification for the new
+            // signup. Fire-and-forget — the endpoint is idempotent, so it never
+            // double-pings, and onboarding must never block on it.
+            notifyFounderOnboardingComplete(session: session)
         }
 
         // Run plan generation and membership refresh concurrently.

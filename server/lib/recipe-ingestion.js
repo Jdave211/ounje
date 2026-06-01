@@ -6882,6 +6882,104 @@ async function runPhotoVisualAnalysis(imageInput, mealGate, photoContext = {}) {
   };
 }
 
+// Single vision call that performs BOTH the meal gate and the visual analysis on the
+// same image. Previously these were two separate vision round-trips (re-uploading and
+// re-inferring the same photo); merging saves one round-trip (~3-5s) on real-food
+// photos. Trade-off: a non-food image now also pays for the analysis portion, but those
+// are the rare case. Output mirrors runPhotoMealGate + runPhotoVisualAnalysis exactly.
+async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) {
+  const emptyVisual = (uncertainty = null) => ({
+    dish_candidates: [],
+    visible_ingredients: [],
+    likely_hidden_ingredients: [],
+    cooking_methods: [],
+    cuisine_hints: [],
+    plating_context: null,
+    uncertainty,
+  });
+  const imagePart = openai ? photoImageContentPart(imageInput) : null;
+  if (!openai || !imagePart) {
+    const reason = !openai ? "OpenAI vision is unavailable." : "No readable photo was provided.";
+    return {
+      meal_gate: { is_meal: false, confidence: 0, visible_food_components: [], likely_meal_type: null, reject_reason: reason },
+      visual_analysis: emptyVisual(reason),
+    };
+  }
+
+  const response = await withRecipeAIStage("recipe_import.photo_gate_and_analysis", () => openai.chat.completions.create({
+    model: PHOTO_RECIPE_VISION_MODEL,
+    ...chatCompletionTemperatureParams(PHOTO_RECIPE_VISION_MODEL, 0.05),
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "Do TWO things for this image in one pass.",
+          "1) MEAL GATE: decide whether the image contains any food — a prepared meal, dish, raw ingredients, baked goods, snack, beverage, or any edible item that could be the basis of a recipe. Accept homemade/restaurant food, raw ingredients, baked goods, snacks, drinks, and any real food even if imperfectly plated, lit, or photographed. Reject ONLY images with no food at all (pure scenery, text-only images, menus/receipts/screenshots, packaged products with no visible food, non-food objects). When in doubt, accept.",
+          "2) VISUAL ANALYSIS (only meaningful when it is food): identify the most likely recipe/dish name a normal cook would search for, then extract visual evidence (sauce texture, garnish, plating, noodle/rice shape, browning, coating). Prefer a common canonical dish name over a literal inventory. Include likely hidden ingredients only when normal for the candidate dish. If uncertain, return multiple ranked dish_candidates. Avoid unsupported broad cuisine labels.",
+          "Do not write the final recipe. Return strict JSON only.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              "Optional context:",
+              JSON.stringify({ dish_hint: photoContext?.dish_hint ?? null, coarse_place_context: photoContext?.coarse_place_context ?? null }),
+              "Return JSON with this exact shape:",
+              JSON.stringify({
+                is_meal: true,
+                confidence: 0.0,
+                visible_food_components: ["string"],
+                likely_meal_type: "string|null",
+                reject_reason: "string|null (set only when is_meal is false)",
+                dish_candidates: [{ name: "spaghetti bolognese", confidence: 0.0, reasoning: "short visual reason" }],
+                visible_ingredients: ["string"],
+                likely_hidden_ingredients: ["string"],
+                cooking_methods: ["string"],
+                cuisine_hints: ["string"],
+                plating_context: "string|null",
+                uncertainty: "string|null",
+              }),
+            ].join("\n"),
+          },
+          imagePart,
+        ],
+      },
+    ],
+  }));
+
+  const parsed = JSON.parse(response.choices?.[0]?.message?.content ?? "{}");
+
+  // Meal gate — mirrors runPhotoMealGate, including the conservative-override heuristic.
+  const isMeal = Boolean(parsed?.is_meal);
+  const confidence = Number.isFinite(Number(parsed?.confidence)) ? Number(parsed.confidence) : 0.5;
+  const visibleFoodComponents = uniqueStrings(Array.isArray(parsed?.visible_food_components) ? parsed.visible_food_components : []);
+  const confidenceOverride = !isMeal && confidence >= 0.35 && visibleFoodComponents.length > 0;
+  const meal_gate = {
+    is_meal: isMeal || confidenceOverride,
+    confidence,
+    visible_food_components: visibleFoodComponents,
+    likely_meal_type: normalizeText(parsed?.likely_meal_type ?? "") || null,
+    reject_reason: (isMeal || confidenceOverride) ? null : (normalizeText(parsed?.reject_reason ?? "") || null),
+  };
+
+  // Visual analysis — mirrors runPhotoVisualAnalysis.
+  const visual_analysis = {
+    dish_candidates: Array.isArray(parsed?.dish_candidates) ? parsed.dish_candidates.slice(0, 5) : [],
+    visible_ingredients: uniqueStrings(Array.isArray(parsed?.visible_ingredients) ? parsed.visible_ingredients : visibleFoodComponents),
+    likely_hidden_ingredients: uniqueStrings(Array.isArray(parsed?.likely_hidden_ingredients) ? parsed.likely_hidden_ingredients : []),
+    cooking_methods: uniqueStrings(Array.isArray(parsed?.cooking_methods) ? parsed.cooking_methods : []),
+    cuisine_hints: uniqueStrings(Array.isArray(parsed?.cuisine_hints) ? parsed.cuisine_hints : []),
+    plating_context: normalizeText(parsed?.plating_context ?? "", 500) || null,
+    uncertainty: normalizeText(parsed?.uncertainty ?? "", 700) || null,
+  };
+
+  return { meal_gate, visual_analysis };
+}
+
 function photoRecipeSearchQuery(visualAnalysis = {}, photoContext = {}) {
   return photoRecipeSearchQueries(visualAnalysis, photoContext)[0] ?? "plated dish recipe";
 }
@@ -7073,29 +7171,20 @@ async function extractPhotoRecipeSource(request) {
       source_provenance_json: { source_type: "media_image", photo_context: photoContext, error: "missing_photo_attachment" },
     };
   }
-  const mealGate = await runPhotoMealGate(primaryImage, photoContext);
-
-  let visualAnalysis = null;
-  let heroImageURL = null;
-
-  if (mealGate.is_meal) {
-    // Run visual analysis and image upload in parallel — the upload doesn't
-    // depend on analysis output; only sonar (next step) needs visualAnalysis.
-    const earlyRecipeKey = photoContext?.dish_hint ?? "photo-recipe";
-    [visualAnalysis, heroImageURL] = await Promise.all([
-      runPhotoVisualAnalysis(primaryImage, mealGate, photoContext),
-      persistPhotoRecipeHeroImage(primaryImage, {
-        recipeKey: earlyRecipeKey,
-        accessToken: request.access_token ?? null,
-      }),
-    ]);
-    heroImageURL = heroImageURL ?? sourceURL ?? null;
-  } else {
-    heroImageURL = await persistPhotoRecipeHeroImage(primaryImage, {
-      recipeKey: photoContext?.dish_hint ?? "photo-recipe",
+  // One vision call does the meal gate AND the visual analysis; run it in parallel with
+  // the hero-image upload (the upload never depends on the analysis output). This drops
+  // a whole vision round-trip versus the previous gate-then-analyze sequence.
+  const earlyRecipeKey = photoContext?.dish_hint ?? "photo-recipe";
+  const [gateAndAnalysis, uploadedHeroURL] = await Promise.all([
+    runPhotoMealGateAndVisualAnalysis(primaryImage, photoContext),
+    persistPhotoRecipeHeroImage(primaryImage, {
+      recipeKey: earlyRecipeKey,
       accessToken: request.access_token ?? null,
-    }).catch(() => null) ?? sourceURL ?? null;
-  }
+    }).catch(() => null),
+  ]);
+  const mealGate = gateAndAnalysis.meal_gate;
+  let visualAnalysis = mealGate.is_meal ? gateAndAnalysis.visual_analysis : null;
+  let heroImageURL = uploadedHeroURL ?? sourceURL ?? null;
 
   const sonarContext = mealGate.is_meal
     ? await runPhotoSonarContext(visualAnalysis, photoContext, {

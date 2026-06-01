@@ -280,10 +280,13 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
             carbsText: baseDetail.carbsText,
             proteinText: baseDetail.proteinText,
             fatsText: baseDetail.fatsText,
-            caloriesKcal: baseDetail.caloriesKcal,
-            proteinG: baseDetail.proteinG,
-            carbsG: baseDetail.carbsG,
-            fatG: baseDetail.fatG,
+            // Macros follow the selected inspiration: an explicit per-variant macro wins
+            // (curated fixtures), otherwise the intent transforms the base macro so e.g.
+            // "More protein" raises protein and "Lighter"/"Low calories" lowers kcal.
+            caloriesKcal: adaptedRecipe.caloriesKcal ?? intent.adaptedMacro(baseDetail.caloriesKcal, \.calories, minimum: 1),
+            proteinG: adaptedRecipe.proteinG ?? intent.adaptedMacro(baseDetail.proteinG, \.protein),
+            carbsG: adaptedRecipe.carbsG ?? intent.adaptedMacro(baseDetail.carbsG, \.carbs),
+            fatG: adaptedRecipe.fatG ?? intent.adaptedMacro(baseDetail.fatG, \.fat),
             prepTimeMinutes: baseDetail.prepTimeMinutes,
             cookTimeMinutes: Self.extractCookTimeMinutes(from: adaptedRecipe.cookTimeText) ?? baseDetail.cookTimeMinutes,
             heroImageURLString: baseDetail.heroImageURLString,
@@ -960,6 +963,10 @@ private struct OnboardingRecipeEditDemoBaseRecipePayload: Decodable {
     let ingredients: [OnboardingRecipeEditDemoIngredientPayload]
     let steps: [OnboardingRecipeEditDemoStepPayload]
     let servingsCount: Int?
+    let caloriesKcal: Double?
+    let proteinG: Double?
+    let carbsG: Double?
+    let fatG: Double?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -983,6 +990,10 @@ private struct OnboardingRecipeEditDemoBaseRecipePayload: Decodable {
         case ingredients
         case steps
         case servingsCount = "servings_count"
+        case caloriesKcal = "calories_kcal"
+        case proteinG = "protein_g"
+        case carbsG = "carbs_g"
+        case fatG = "fat_g"
     }
 
     func makeRecipe(fixtures: [OnboardingRecipeEditDemoOptionFixture]) -> OnboardingRecipeEditDemoRecipe {
@@ -1044,14 +1055,14 @@ private struct OnboardingRecipeEditDemoBaseRecipePayload: Decodable {
             servingSizeText: nil,
             dailyDietText: dietaryTags.first,
             estCostText: nil,
-            estCaloriesText: nil,
+            estCaloriesText: caloriesKcal.map { "\(Int($0.rounded())) kcal per serving" },
             carbsText: nil,
             proteinText: nil,
             fatsText: nil,
-            caloriesKcal: nil,
-            proteinG: nil,
-            carbsG: nil,
-            fatG: nil,
+            caloriesKcal: caloriesKcal,
+            proteinG: proteinG,
+            carbsG: carbsG,
+            fatG: fatG,
             prepTimeMinutes: nil,
             cookTimeMinutes: cookTimeMinutes,
             heroImageURLString: heroImageURLString,

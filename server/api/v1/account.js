@@ -3,6 +3,7 @@ import { resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
 import { broadcastUserInvalidation } from "../../lib/realtime-invalidation.js";
 import { invalidateUserBootstrapCache } from "../../lib/user-bootstrap-cache.js";
 import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
+import { sendFounderSlackMessage } from "../../lib/founder-slack.js";
 
 const router = express.Router();
 
@@ -137,6 +138,56 @@ router.post("/account/deactivate", async (req, res) => {
       return sendAuthError(res, error, "account/deactivate");
     }
     console.error("[account/deactivate] error:", error.message);
+    return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
+  }
+});
+
+// Fired by the client right after a user finishes onboarding. Posts a founder Slack
+// ping. Idempotent: the founder_onboarding_notified_at stamp is set atomically and
+// the row is only returned when it was previously null, so retries / double-calls
+// (or two devices) never produce duplicate pings.
+router.post("/account/onboarding-complete", async (req, res) => {
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const supabase = getServiceSupabase();
+    const now = new Date().toISOString();
+
+    const { data: rows, error } = await supabase
+      .from("profiles")
+      .update({ founder_onboarding_notified_at: now })
+      .eq("id", userID)
+      .is("founder_onboarding_notified_at", null)
+      .select("email,display_name,preferred_name,cadence,food_persona,created_at");
+    if (error) throw error;
+
+    if (!Array.isArray(rows) || !rows.length) {
+      // Already notified (or no profile row) — nothing to do.
+      return res.json({ ok: true, notified: false });
+    }
+
+    const profile = rows[0];
+    const name = profile.preferred_name || profile.display_name || "(no name)";
+    const result = await sendFounderSlackMessage({
+      heading: ":tada: *New user finished onboarding*",
+      fields: [
+        { label: "Name", value: name },
+        { label: "Email", value: profile.email || "(no email)" },
+        { label: "Cadence", value: profile.cadence },
+        { label: "Persona", value: profile.food_persona },
+        { label: "User", value: userID },
+      ],
+      context: profile.created_at ? `Joined ${profile.created_at}` : null,
+    });
+
+    if (!result.sent) {
+      console.warn("[account/onboarding-complete] slack not sent:", result.reason);
+    }
+    return res.json({ ok: true, notified: result.sent, reason: result.reason ?? null });
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "account/onboarding-complete");
+    }
+    console.error("[account/onboarding-complete] error:", error.message);
     return res.status(Number(error?.statusCode) || 500).json({ error: error.message });
   }
 });
