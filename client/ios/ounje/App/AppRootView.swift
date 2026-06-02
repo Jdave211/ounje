@@ -8194,17 +8194,21 @@ private struct SharedRecipeImportQueueRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            // Elapsed clock: ticks every second while the import is in-flight.
-            // Always periodic — stops visually updating once isLiveQueueState = false
-            // because elapsedText then returns the final fixed duration.
-            TimelineView(.periodic(from: importStartDate, by: 1)) { _ in
-                HStack(spacing: 8) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 11))
-                    Text(elapsedText)
+            // Elapsed clock: only shown while the import is actually in-flight. A
+            // failed/retry-needed import isn't timing anything — and because its
+            // createdAt can be hours/days old (e.g. it was queued before the app was
+            // last closed), an elapsed clock there renders nonsense like "1093m". The
+            // "Retry needed" label + error message already convey that state.
+            if item.isLiveQueueState {
+                TimelineView(.periodic(from: importStartDate, by: 1)) { _ in
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 11))
+                        Text(elapsedText)
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
                 }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(OunjePalette.secondaryText)
             }
         }
         .padding(16)
