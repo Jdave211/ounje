@@ -1059,6 +1059,49 @@ async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole =
   }
 }
 
+// Uploads a downloaded social/short-form video file (mp4) to public storage so the
+// app can play it natively with AVPlayer instead of the janky TikTok/IG web embed.
+// Returns the public MP4 URL, or null if upload is skipped (too large / unavailable).
+const PERSISTED_VIDEO_MAX_BYTES = 45 * 1024 * 1024; // 45MB cap
+async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", accessToken = null } = {}) {
+  if (!videoPath || !SUPABASE_URL || !RECIPE_IMAGE_BUCKET) return null;
+  const storageBearer = (normalizeText(accessToken ?? "") || SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim();
+  if (!storageBearer) return null;
+
+  let buffer;
+  try {
+    buffer = await fsp.readFile(videoPath);
+  } catch {
+    return null;
+  }
+  if (!buffer?.length || buffer.length > PERSISTED_VIDEO_MAX_BYTES) return null;
+
+  const keyHash = crypto.createHash("sha1").update(`${recipeKey}:video`).digest("hex").slice(0, 20);
+  const storagePath = `recipe-videos/${keyHash}.mp4`;
+  const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_IMAGE_BUCKET)}/${storagePath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+
+  try {
+    await ensureRecipeImageBucket();
+    const uploadResponse = await fetch(uploadURL, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_ANON_KEY || storageBearer,
+        Authorization: `Bearer ${storageBearer}`,
+        "Content-Type": "video/mp4",
+        "x-upsert": "true",
+      },
+      body: buffer,
+    });
+    if (!uploadResponse.ok) return null;
+    return `${SUPABASE_URL}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/${storagePath}`;
+  } catch {
+    return null;
+  }
+}
+
 function ingredientDisplayNameFromKey(value) {
   const normalized = normalizeKey(value);
   if (!normalized) return null;
@@ -1071,6 +1114,32 @@ function ingredientDisplayNameFromKey(value) {
       return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
     })
     .join(" ");
+}
+
+// Descriptor / prep words that don't change which trusted ingredient image applies.
+// Stripping them lets "boneless skinless chicken thighs" reuse the image for
+// "chicken thighs" without changing the displayed ingredient text.
+const INGREDIENT_DESCRIPTOR_WORDS = new Set([
+  "fresh", "dried", "ground", "whole", "large", "medium", "small", "extra", "ripe",
+  "raw", "cooked", "boneless", "skinless", "chopped", "minced", "diced", "sliced",
+  "shredded", "grated", "crushed", "peeled", "halved", "quartered", "frozen",
+  "canned", "jarred", "organic", "unsalted", "salted", "reduced", "light", "lean",
+  "fine", "finely", "roughly", "coarsely", "thinly", "thickly", "freshly", "toasted",
+  "roasted", "softened", "melted", "packed", "warm", "cold", "hot", "room",
+  "temperature", "optional", "divided", "drained", "rinsed", "trimmed", "cubed",
+  "mashed", "beaten", "room-temperature", "low-fat", "low", "fat", "free", "boiled",
+]);
+
+// Builds a descriptor-stripped "core" key for relaxed ingredient-image matching.
+// Conservative: only removes known modifier words, never depluralizes (so it can't
+// mangle words like "hummus" or "molasses"). Returns "" when nothing meaningful remains.
+function simplifyIngredientKey(value) {
+  const normalized = normalizeKey(value);
+  if (!normalized) return "";
+  const words = normalized
+    .split(" ")
+    .filter((word) => word && !INGREDIENT_DESCRIPTOR_WORDS.has(word));
+  return words.join(" ").trim();
 }
 
 function isUtilityIngredient(name) {
@@ -5353,6 +5422,81 @@ async function resolveTrustedIngredientImageLookup(catalog, ingredients) {
     }
   }
 
+  // Relaxed fallback for ingredients that still have no image: match a descriptor-
+  // stripped "core" name against the catalog (e.g. "boneless skinless chicken thighs"
+  // -> "chicken thighs") and reuse that ingredient's trusted image. Stays fully batched
+  // (at most two more set-based queries) so it never adds per-ingredient latency.
+  const stillMissing = [];
+  const seenCoreKeys = new Set();
+  for (const ingredient of ingredients ?? []) {
+    const key = normalizeKey(ingredient.display_name);
+    if (!key || isUtilityIngredient(key) || lookup.has(key)) continue;
+    const core = simplifyIngredientKey(ingredient.display_name);
+    if (!core || core === key) continue;
+    stillMissing.push({ key, core });
+    seenCoreKeys.add(core);
+  }
+
+  if (seenCoreKeys.size) {
+    const coreRows = await fetchRows(
+      "ingredients",
+      "id,normalized_name,default_image_url",
+      {
+        filters: [`normalized_name=in.${buildInClause([...seenCoreKeys])}`],
+        limit: 200,
+      }
+    ).catch(() => []);
+
+    const coreImageByKey = new Map();
+    const coreIDByKey = new Map();
+    for (const row of coreRows) {
+      const rowKey = normalizeKey(row?.normalized_name ?? row?.display_name);
+      if (!rowKey) continue;
+      const img = cleanURL(row?.default_image_url ?? null);
+      if (img && !coreImageByKey.has(rowKey)) coreImageByKey.set(rowKey, img);
+      const id = normalizeText(row?.id ?? "");
+      if (id && !coreIDByKey.has(rowKey)) coreIDByKey.set(rowKey, id);
+    }
+
+    const needRecipeLookup = [];
+    for (const entry of stillMissing) {
+      const directImage = coreImageByKey.get(entry.core);
+      if (directImage) {
+        if (!lookup.has(entry.key)) lookup.set(entry.key, directImage);
+        continue;
+      }
+      const coreID = coreIDByKey.get(entry.core);
+      if (coreID) needRecipeLookup.push({ ...entry, ingredientID: coreID });
+    }
+
+    if (needRecipeLookup.length) {
+      const coreIDs = uniqueStrings(needRecipeLookup.map((entry) => entry.ingredientID));
+      const reuseRows = await fetchRows(
+        "recipe_ingredients",
+        "ingredient_id,image_url",
+        {
+          filters: [
+            `ingredient_id=in.${buildInClause(coreIDs)}`,
+            "image_url=not.is.null",
+          ],
+          order: ["ingredient_id.asc"],
+          limit: 1000,
+        }
+      ).catch(() => []);
+
+      const reuseImageByID = new Map();
+      for (const row of reuseRows) {
+        const id = normalizeText(row?.ingredient_id ?? "");
+        const img = cleanURL(row?.image_url ?? null);
+        if (id && img && !reuseImageByID.has(id)) reuseImageByID.set(id, img);
+      }
+      for (const entry of needRecipeLookup) {
+        const img = reuseImageByID.get(entry.ingredientID);
+        if (img && !lookup.has(entry.key)) lookup.set(entry.key, img);
+      }
+    }
+  }
+
   return lookup;
 }
 
@@ -5580,6 +5724,16 @@ async function persistNormalizedRecipe(
     }
   }
 
+  // Safety net: never present an empty recipe as a successful import. This catches the
+  // case where dedupe matched a pre-existing blank recipe (e.g. one produced by an older
+  // pipeline before content guards existed) — without this, the user gets a "saved"
+  // recipe that opens to no ingredients and no steps.
+  const persistedIngredientCount = Array.isArray(normalized.ingredients) ? normalized.ingredients.length : 0;
+  const persistedStepCount = Array.isArray(normalized.steps) ? normalized.steps.length : 0;
+  if (persistedIngredientCount === 0 && persistedStepCount === 0) {
+    throw new Error("Imported recipe had no ingredients or steps after persistence.");
+  }
+
   const recipeCard = await fetchRecipeCardProjection(recipeID);
   const recipeDetail = recipeCard
     ? {
@@ -5775,6 +5929,42 @@ function pickBestSchemaRecipe(jsonLdRecipes) {
     .sort((left, right) => right.score - left.score)[0]?.recipe ?? null;
 }
 
+// Resolves the best image URL from a schema.org Recipe.image field. The field may be
+// a string, an array of strings, an ImageObject ({url,width,height}), or an array of
+// ImageObjects (often multiple crop ratios). We pick the largest by declared width,
+// falling back to the last entry (commonly the highest-res), so the recipe card gets
+// a clean hero image instead of a cropped thumbnail.
+function pickStructuredRecipeImageURL(imageField) {
+  if (!imageField) return null;
+
+  const toCandidate = (entry) => {
+    if (!entry) return null;
+    if (typeof entry === "string") {
+      const url = normalizeText(entry);
+      return url ? { url, width: 0 } : null;
+    }
+    if (typeof entry === "object") {
+      const url = normalizeText(entry.url ?? entry.contentUrl ?? entry["@id"] ?? "");
+      if (!url) return null;
+      const width = Number.parseFloat(String(entry.width ?? "").replace(/[^\d.]+/g, "")) || 0;
+      return { url, width };
+    }
+    return null;
+  };
+
+  const candidates = (Array.isArray(imageField) ? imageField : [imageField])
+    .map(toCandidate)
+    .filter((candidate) => candidate && /^https?:\/\//i.test(candidate.url));
+  if (!candidates.length) return null;
+
+  const withWidth = candidates.filter((candidate) => candidate.width > 0);
+  if (withWidth.length) {
+    return withWidth.sort((left, right) => right.width - left.width)[0].url;
+  }
+  // No declared dimensions — array order usually runs small→large, so take the last.
+  return candidates[candidates.length - 1].url;
+}
+
 async function loadPlaywright() {
   try {
     const localModule = await import(PLAYWRIGHT_FALLBACK_PATH);
@@ -5900,7 +6090,13 @@ async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } =
     || htmlMetaContent(html, ["og:title", "twitter:title"])
     || stripHTML(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
   const pageImageURLs = extractImageURLsFromHTML(html, response.url || sourceURL);
-  const metaImageURL = htmlMetaContent(html, ["og:image", "twitter:image"]);
+  // Prefer the schema.org Recipe image (usually the full-res hero) over og:image,
+  // which is frequently a smaller social-share crop. Fall back to og/twitter, then
+  // the first inline page image.
+  const structuredImageURL = pickStructuredRecipeImageURL(structuredRecipe?.image);
+  const metaImageURL = structuredImageURL
+    || htmlMetaContent(html, ["og:image", "twitter:image"])
+    || (Array.isArray(pageImageURLs) ? pageImageURLs[0] : null);
   const bodyText = stripHTML(html).slice(0, 120000);
 
   // Extract YouTube video from iframe embeds — recipe blogs typically embed a
@@ -5918,7 +6114,6 @@ async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } =
     meta_title: htmlMetaContent(html, ["og:title", "twitter:title"]) || null,
     meta_description: htmlMetaContent(html, ["description", "og:description", "twitter:description"]) || null,
     hero_image_url: cleanURL(absoluteURLFrom(response.url || sourceURL, metaImageURL)),
-    attached_video_url: cleanURL(htmlMetaContent(html, ["og:video", "og:video:url"])),
     site_name: htmlMetaContent(html, ["og:site_name"]) || hostForURL(response.url || sourceURL),
     author_name: htmlMetaContent(html, ["author"]) || null,
     attached_video_url: attachedVideoURL,
@@ -6084,6 +6279,10 @@ async function extractWebSourceWithPlaywright(sourceURL) {
 
     const structuredRecipe = pickBestSchemaRecipe(pageData.json_ld);
     const instructions = parseSchemaRecipeInstructions(structuredRecipe?.recipeInstructions);
+    // Prefer the full-res schema.org Recipe image over og:image's social-share crop.
+    const heroImageURL = pickStructuredRecipeImageURL(structuredRecipe?.image)
+      || pageData.meta_image_url
+      || (Array.isArray(pageData.page_image_urls) ? pageData.page_image_urls[0] : null);
 
     return {
       source_type: "web",
@@ -6093,7 +6292,7 @@ async function extractWebSourceWithPlaywright(sourceURL) {
       title: pageData.title || pageData.meta_title || null,
       meta_title: pageData.meta_title || null,
       meta_description: pageData.meta_description || null,
-      hero_image_url: cleanURL(pageData.meta_image_url),
+      hero_image_url: cleanURL(absoluteURLFrom(pageData.source_url, heroImageURL)),
       attached_video_url: cleanURL(pageData.meta_video_url),
       site_name: pageData.site_name || hostForURL(sourceURL),
       author_name: pageData.author_name || null,
@@ -6414,9 +6613,12 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
       };
     }
 
-    const [transcriptText, frameDataURLs] = await Promise.all([
+    const [transcriptText, frameDataURLs, persistedVideoURL] = await Promise.all([
       transcribeShortVideo(videoPath),
       sampleVideoFrames(videoPath, MAX_SOCIAL_FRAME_COUNT),
+      // Persist the MP4 so the app can play it natively (with the scrubber) instead
+      // of the TikTok/IG web embed. Best-effort — null if too large/unavailable.
+      persistRecipeVideoToStorage(videoPath, { recipeKey: metadata?.id ?? sourceURL }),
     ]);
     const frameOCRTexts = await ocrFrameDataURLs(frameDataURLs);
 
@@ -6424,6 +6626,7 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
       transcript_text: transcriptText,
       frame_data_urls: frameDataURLs,
       frame_ocr_texts: frameOCRTexts,
+      persisted_video_url: persistedVideoURL,
       downloaded_video: true,
       metadata_preview: compactJSON({
         id: metadata?.id ?? null,
@@ -6488,7 +6691,9 @@ async function extractYouTubeSource(sourceURL) {
     author_url: cleanURL(info.channel_url ?? info.uploader_url ?? null),
     hero_image_url: thumbnailURL,
     thumbnail_url: thumbnailURL,
-    attached_video_url: cleanURL(info.webpage_url ?? sourceURL),
+    // Prefer the persisted MP4 so the app plays it natively with the scrubber;
+    // fall back to the original page URL (web embed) when the download/upload failed.
+    attached_video_url: cleanURL(downloadedSignals.persisted_video_url ?? info.webpage_url ?? sourceURL),
     transcript_text: resolvedTranscript || null,
     frame_data_urls: downloadedSignals.frame_data_urls ?? [],
     frame_ocr_texts: downloadedSignals.frame_ocr_texts ?? [],
@@ -6630,7 +6835,9 @@ async function extractSocialSource(sourceURL, platform) {
     author_url: cleanURL(metadata?.uploader_url ?? metadata?.channel_url ?? null),
     hero_image_url: thumbnailURL,
     thumbnail_url: thumbnailURL,
-    attached_video_url: cleanURL(metadata?.webpage_url ?? sourceURL),
+    // Prefer the persisted MP4 for native AVPlayer playback (+ scrubber); fall back
+    // to the original page URL (web embed) when the download/upload was unavailable.
+    attached_video_url: cleanURL(downloadedSignals.persisted_video_url ?? metadata?.webpage_url ?? sourceURL),
     transcript_text: resolvedTranscript || null,
     frame_data_urls: effectiveFrameDataURLs,
     frame_ocr_texts: effectiveFrameOCRTexts,
@@ -9870,11 +10077,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
           prep_time_iso: source.structured_recipe.prepTime,
           cook_time_iso: source.structured_recipe.cookTime,
           total_time_iso: source.structured_recipe.totalTime,
-          hero_image_url: Array.isArray(source.structured_recipe.image)
-            ? source.structured_recipe.image[0]
-            : typeof source.structured_recipe.image === "string"
-              ? source.structured_recipe.image
-              : source.hero_image_url,
+          hero_image_url: pickStructuredRecipeImageURL(source.structured_recipe.image) ?? source.hero_image_url,
           recipe_url: source.source_url,
           original_recipe_url: source.canonical_url,
           attached_video_url: source.attached_video_url,
@@ -10232,10 +10435,21 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     // the API service itself, which auto-deploys and therefore always runs the latest
     // parsing fixes — instead of handing them to the separately-deployed VM worker
     // (which can lag behind on code). Social/video imports still queue to the VM.
-    const inlineThisJob = processInline || shouldInlineWebImport(request);
+    const inlineWebImport = !processInline && shouldInlineWebImport(request);
 
-    if (inlineThisJob) {
+    if (processInline) {
+      // Explicit synchronous inline (dev/test harness): block until done.
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
+    } else if (inlineWebImport) {
+      // Website imports run inline on THIS API service, but in the background — so the
+      // client gets an immediate queued job it can poll (and returns to the regular
+      // route with a progress card) instead of blocking on the web-import screen until
+      // processing completes. The dyno stays alive to finish the work.
+      void processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null })
+        .catch((error) => {
+          console.error(`[recipe-ingestion] inline web import job ${job.id} failed:`, error?.message ?? error);
+        });
+      results.push(formatJobResponse(job, { processing_mode: "queued" }));
     } else {
       let wakePublished = null;
       if (isImportQueuedForWorker(job)) {

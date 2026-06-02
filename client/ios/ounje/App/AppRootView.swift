@@ -2291,6 +2291,9 @@ private struct MealPlannerShellView: View {
     @State private var requestedImportQueueTab: SharedRecipeImportQueueTab?
     @State private var isProcessingSharedImports = false
     @State private var prewarmedCompletedImportIDs = Set<String>()
+    // Recipe IDs of completed "saved" imports we've already inserted into the cookbook,
+    // so we don't re-merge/persist them on every shared-import refresh cycle.
+    @State private var reconciledSavedImportRecipeIDs = Set<String>()
     @State private var lastSharedImportRefreshAt = Date.distantPast
     @State private var previousSelectedTab: AppTab
     @State private var tabTransitionDirection: CGFloat = 1
@@ -2437,6 +2440,7 @@ private struct MealPlannerShellView: View {
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
             prewarmedCompletedImportIDs.removeAll()
+            reconciledSavedImportRecipeIDs.removeAll()
         }
         .task(id: savedStoreAuthKey) {
             await savedStore.bootstrap(authSession: await savedRecipesSession())
@@ -2729,7 +2733,28 @@ private struct MealPlannerShellView: View {
                 await handleCompletedPreppedImport(response)
             }
         )
+        reconcileCompletedSavedImportsIntoCookbook()
         await prewarmCompletedImportDetails()
+    }
+
+    // Insert completed "saved" imports into the cookbook the moment they finish, so the
+    // Saved tab updates live instead of only after the next bulk saved-recipes sync (or
+    // a manual open/close of the import detail). Uses the card the completed-imports feed
+    // already carries — no extra network — and the next remote refresh hydrates full data.
+    @MainActor
+    private func reconcileCompletedSavedImportsIntoCookbook() {
+        for item in recipeImportHistory.completedItems {
+            let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard status == "saved" else { continue }
+            guard let recipeID = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !recipeID.isEmpty,
+                  !reconciledSavedImportRecipeIDs.contains(recipeID) else { continue }
+            reconciledSavedImportRecipeIDs.insert(recipeID)
+            // Already in the cookbook (e.g. saved from Discover) — nothing to insert.
+            if savedStore.savedRecipes.contains(where: { $0.id == recipeID }) { continue }
+            guard let card = item.savedRecipeCard else { continue }
+            savedStore.saveImportedRecipe(card, showToast: false, respectUnsave: true)
+        }
     }
 
     @MainActor
