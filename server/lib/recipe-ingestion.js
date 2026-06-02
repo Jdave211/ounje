@@ -466,13 +466,14 @@ Rules:
 - Return JSON only.
 - Never hallucinate ingredients, quantities, steps, nutrition, or timings that are not supported by the source.
 - Preserve source provenance and media links when available.
-- Prefer explicit quantities exactly as shown in the source.
+- Prefer explicit quantities exactly as shown in the source (e.g. "1/2 cup", "2 and 3/4 tsp") — do not convert fractions to decimals.
 - If a field is unknown, use null, an empty string, or an empty array.
 - If a source is weak or incomplete, keep the recipe partial and set review flags instead of inventing detail.
 - Ingredients must be returned as structured objects with display_name and quantity_text.
 - Never collapse distinct grocery items into a generic bucket label like "spices", "seasoning", "sauce", or "garnish" when the source exposes the individual items.
 - Preserve concrete ingredients such as honey, paprika, chili powder, garlic powder, and similar shoppable items as their own ingredient rows.
-- Steps must be sequential and cookable. If step-linked ingredients are visible, include them under the step.
+- Steps must be SHORT, sequential, and cookable — one distinct action per step. If the source bundles multiple distinct actions into one paragraph (e.g. "Preheat oven. Line pan. Mix flour and butter."), SPLIT them into separate numbered steps. A single step must not exceed ~3 sentences. Never merge steps; only split.
+- If step-linked ingredients are visible, include them under the step.
 - Keep titles and descriptions clean and consumer-facing.
 - Do not include commentary outside the JSON object.`;
 
@@ -4737,9 +4738,16 @@ function coerceIngredientItem(item) {
   if (typeof item === "string") {
     const parsed = parseIngredientObjects(item)[0];
     if (!parsed?.name) return null;
+    // Prefer a quantity_text explicitly set on the parsed object.
+    // Otherwise rebuild from quantity + unit — but use the raw numeric as a last
+    // resort, not a decimal reconstruction (0.5 cup → reconstructed vs "1/2 cup" lost).
+    const quantityText = normalizeText(
+      parsed.quantity_text
+        ?? [parsed.quantity != null ? String(parsed.quantity) : null, parsed.unit].filter(Boolean).join(" ")
+    ) || null;
     return {
       display_name: parsed.name,
-      quantity_text: normalizeText([parsed.quantity != null ? String(parsed.quantity) : null, parsed.unit].filter(Boolean).join(" ")) || null,
+      quantity_text: quantityText,
       image_url: null,
     };
   }

@@ -455,6 +455,7 @@ function parseIngredientLine(line) {
   let quantity = null;
   let unit = null;
   let note = null;
+  let quantityRawTokens = [];   // preserves original text ("1/2", "cup") for quantity_text
 
   const parenMatches = [...normalized.matchAll(/\(([^)]+)\)/g)].map((match) => match[1].trim()).filter(Boolean);
   if (parenMatches.length) {
@@ -471,15 +472,18 @@ function parseIngredientLine(line) {
     if (firstTwo != null) {
       quantity = firstTwo;
       quantityTokens = 2;
+      quantityRawTokens = tokens.slice(0, 2);
     } else if (first != null) {
       quantity = first;
       quantityTokens = 1;
+      quantityRawTokens = tokens.slice(0, 1);
     }
 
     if (quantityTokens > 0) {
       tokens.splice(0, quantityTokens);
       if (tokens.length && UNITS.has(tokens[0].toLowerCase())) {
         unit = tokens.shift();
+        quantityRawTokens.push(unit);
       }
     }
   }
@@ -497,10 +501,15 @@ function parseIngredientLine(line) {
     remainder = lead;
   }
 
+  // quantity_text preserves the original fraction/unit text ("1/2 cup", "1 and 3/4 tsp")
+  // instead of reconstructing from a decimal float, so display shows what the recipe says.
+  const quantity_text = quantityRawTokens.length ? quantityRawTokens.join(" ") : null;
+
   return {
     name: remainder,
     quantity,
     unit,
+    quantity_text,
     note,
     image_hint: remainder.toLowerCase(),
   };

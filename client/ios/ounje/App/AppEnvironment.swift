@@ -799,6 +799,11 @@ final class MealPlanningAppStore: ObservableObject {
             }
             syncProfilePricingTierToEntitlement()
             membershipEntitlementResolved = true
+            // We couldn't reach the server but we've done the best local check we can.
+            // Mark server-confirmed so the paywall gate resolves rather than blocking
+            // forever when the session is in a needsReauthentication state. The paywall
+            // will still show correctly if there's no active entitlement.
+            membershipEntitlementServerConfirmed = true
             onRuntimeProfileStateChanged?(authSession?.userID ?? cachedLiveUserID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
             return
         }
@@ -1226,13 +1231,15 @@ final class MealPlanningAppStore: ObservableObject {
             }
 
             // The server is authoritative for onboarding status on a CONFIRMED read.
-            // We deliberately do NOT OR in local "already onboarded" cache here: doing so
-            // (a) ignored an explicit server reset (onboarded=false never re-triggered
-            // onboarding) and (b) caused the write-back below to overwrite that server
-            // false back to true. The pre-bootstrap flash for returning users is already
-            // handled by requiresProfileOnboarding's own guards, which run before
-            // bootstrapDidConfirmOnboardingState is set — so trusting the server here is safe.
-            let persistedOnboarded = remoteState.onboarded
+            // We OR in the local "already onboarded" cache ONLY as a safety net for
+            // the case where the remote state is missing a profile (network partial read).
+            // When the server explicitly returns onboarded=false AND a profile exists,
+            // the server wins — this is what makes a manual DB reset re-trigger onboarding.
+            // Without remoteState.profile being present, fall back to cached to avoid
+            // a broken token clearing a returning user's onboarding state.
+            let cachedCompleted = isOnboarded && profile != nil
+            let serverExplicitlyNotOnboarded = !remoteState.onboarded && remoteState.profile != nil
+            let persistedOnboarded = serverExplicitlyNotOnboarded ? false : (remoteState.onboarded || cachedCompleted)
             let resolvedOnboarded = shouldForceOnboardingIncomplete ? false : persistedOnboarded
             let recoveredProfile = remoteState.profile ?? profile
             let recoveredStep = shouldForceOnboardingIncomplete
@@ -1243,9 +1250,10 @@ final class MealPlanningAppStore: ObservableObject {
                             remoteState.lastOnboardingStep,
                             FirstLoginOnboardingView.SetupStep.completedRawValue
                         )
-                        // Not onboarded per the server → trust the server's step (clamped),
-                        // not a stale local "completed" step, so a reset restarts cleanly.
-                        : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(remoteState.lastOnboardingStep, 0)
+                        // Not onboarded per the server (with profile confirming it's intentional)
+                        // → trust the server's step so a manual reset restarts cleanly.
+                        // Otherwise keep local step to avoid losing progress on a bad token read.
+                        : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(remoteState.lastOnboardingStep, serverExplicitlyNotOnboarded ? 0 : lastOnboardingStep)
                 )
 
             authSession = AuthSession(

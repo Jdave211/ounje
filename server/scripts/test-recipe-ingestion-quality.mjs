@@ -109,4 +109,27 @@ assert.equal(detectRecipeIngestionSourceType({ sourceText: "make me a high prote
   assert.equal(rejected.method, "photo_meal_gate_reject", "a photo rejection must come from the photo meal gate, not the social recipe gate");
 }
 
+// ---------------------------------------------------------------------------
+// 4. Quantity text preservation — fractions must not be converted to decimals
+// ---------------------------------------------------------------------------
+{
+  const r = parseFirst("1/2 cup unsalted butter");
+  assert.equal(r.quantity_text, "1/2 cup", `quantity_text must preserve the fraction "1/2 cup", got "${r.quantity_text}"`);
+}
+{
+  const r = parseFirst("1 and 1/2 cups mini marshmallows");
+  assert.equal(r.quantity_text, "1 1/2 cups", `compound fraction must collapse to "1 1/2 cups", got "${r.quantity_text}"`);
+}
+{
+  const r = parseFirst("1/4 teaspoon Platinum Yeast from Red Star");
+  assert.equal(r.name, "Platinum Yeast from Red Star");
+  assert.equal(r.quantity_text, "1/4 teaspoon");
+}
+{
+  // Decimal sources (model output) are fine to keep as-is
+  const r = parseFirst("0.25 cup granulated sugar");
+  assert.ok(r.quantity_text != null, "decimal quantities should also be preserved");
+  assert.equal(r.name, "granulated sugar");
+}
+
 console.log("recipe-ingestion-quality: all assertions passed");

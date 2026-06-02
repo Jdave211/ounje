@@ -3434,8 +3434,14 @@ private struct MealPlannerShellView: View {
                     return trimmed.isEmpty ? nil : trimmed
                 }
                 .first
+                // Only fail when the server explicitly says "failed", or when the job is in
+                // needs_review/draft AND has an explicit error message (meaning it truly couldn't
+                // parse). A needs_review without an error just means human review is needed but
+                // the import may still complete — firing a failure notification there was a false
+                // positive that alarmed users even when the import succeeded shortly after.
+                let hasExplicitError = !(response.job.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
                 let shouldFailImport = backendProcessingState == "failed"
-                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe)
+                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe && hasExplicitError)
 
                 if shouldFailImport {
                     let failedEnvelope = SharedRecipeImportEnvelope(
@@ -9210,8 +9216,14 @@ private struct DiscoverComposerSheet: View {
                     return trimmed.isEmpty ? nil : trimmed
                 }
                 .first
+                // Only fail when the server explicitly says "failed", or when the job is in
+                // needs_review/draft AND has an explicit error message (meaning it truly couldn't
+                // parse). A needs_review without an error just means human review is needed but
+                // the import may still complete — firing a failure notification there was a false
+                // positive that alarmed users even when the import succeeded shortly after.
+                let hasExplicitError = !(response.job.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
                 let shouldFailImport = backendProcessingState == "failed"
-                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe)
+                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe && hasExplicitError)
                 let normalizedProcessingState: String = {
                     switch backendProcessingState {
                     case "queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized", "saved":
