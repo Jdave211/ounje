@@ -1981,7 +1981,7 @@ struct RecipeInlineVideoCard: View {
                 if video.supportsNativePlayback, let player {
                     RecipeNativeVideoView(player: player, videoGravity: .resizeAspectFill)
                 } else {
-                    RecipeInlineWebVideoView(video: video, url: url, action: $webAction)
+                    RecipeInlineWebVideoView(video: video, url: url, action: $webAction, currentTime: .constant(0), duration: .constant(0))
                 }
             }
             .allowsHitTesting(false)
@@ -2083,6 +2083,12 @@ struct RecipeFullscreenVideoExperience: View {
 
     @State private var player: AVPlayer?
     @State private var webAction: RecipeWebVideoAction = .none
+    // Scrubber state — updated by the JS bridge (web) or AVPlayer time observer (native)
+    @State private var currentTime: Double = 0
+    @State private var duration: Double = 0
+    @State private var isScrubbing: Bool = false
+    @State private var scrubTime: Double = 0
+    @State private var timeObserverToken: Any?
 
     var body: some View {
         GeometryReader { geometry in
@@ -2111,11 +2117,33 @@ struct RecipeFullscreenVideoExperience: View {
                                 .tint(OunjePalette.softCream)
                         }
                     } else {
-                        RecipeInlineWebVideoView(video: video, url: url, action: $webAction)
+                        RecipeInlineWebVideoView(video: video, url: url, action: $webAction, currentTime: $currentTime, duration: $duration)
                     }
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
                 .ignoresSafeArea()
+
+                // ── Scrubber bar ─────────────────────────────────────────────────
+                if duration > 0 {
+                    VideoScrubberBar(
+                        currentTime: currentTime,
+                        duration: duration,
+                        isScrubbing: $isScrubbing,
+                        scrubTime: $scrubTime,
+                        onScrubbed: { time in
+                            // Native player
+                            player?.seek(to: CMTime(seconds: time, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+                            currentTime = time
+                            // Web player
+                            let delta = time - currentTime
+                            webAction = RecipeWebVideoAction(kind: .seek(seconds: delta))
+                        }
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, geometry.safeAreaInsets.bottom + 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                }
 
                 HStack(spacing: 10) {
                     RecipeDetailTopIconButton(symbolName: "pip.exit") {
@@ -2138,8 +2166,25 @@ struct RecipeFullscreenVideoExperience: View {
             configureRecipeVideoAudioPlayback(for: nextPlayer)
             nextPlayer.play()
             player = nextPlayer
+            // Poll the native player for current time + duration every 0.25s
+            let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+            let token = nextPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak nextPlayer] time in
+                guard let p = nextPlayer else { return }
+                if !isScrubbing {
+                    currentTime = time.seconds
+                }
+                if let item = p.currentItem {
+                    let d = item.duration.seconds
+                    if d.isFinite && d > 0 { duration = d }
+                }
+            }
+            timeObserverToken = token
         }
         .onDisappear {
+            if let token = timeObserverToken {
+                player?.removeTimeObserver(token)
+                timeObserverToken = nil
+            }
             player?.pause()
             webAction = RecipeWebVideoAction(kind: .pause)
         }
@@ -2267,6 +2312,9 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
     let url: URL
     @Binding var action: RecipeWebVideoAction
 
+    @Binding var currentTime: Double
+    @Binding var duration: Double
+
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
@@ -2291,7 +2339,12 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
         context.coordinator.render(video: video, url: url, in: uiView)
-
+        context.coordinator.onTimeUpdate = { t, d in
+            DispatchQueue.main.async {
+                currentTime = t
+                duration = d
+            }
+        }
         if context.coordinator.lastActionID != action.id {
             context.coordinator.lastActionID = action.id
             context.coordinator.apply(action: action)
@@ -2308,7 +2361,17 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
         private var loadedSignature: String?
         private var currentMode: RecipeResolvedVideoData.PlaybackMode = .unavailable
 
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {}
+        var onTimeUpdate: ((Double, Double) -> Void)?
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "ounjeVideoState",
+                  let body = message.body as? [String: Any] else { return }
+            let t = (body["currentTime"] as? Double) ?? 0
+            let d = (body["duration"] as? Double) ?? 0
+            DispatchQueue.main.async { [weak self] in
+                self?.onTimeUpdate?(t, d)
+            }
+        }
 
         func render(video: RecipeResolvedVideoData, url: URL, in webView: WKWebView) {
             let signature = "\(video.mode.rawValue)|\(video.provider ?? "video")|\(url.absoluteString)"
@@ -2509,6 +2572,10 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
                   player.on('timeupdate', function(data) {
                     const next = Number((data && (data.seconds || data.currentTime || data.time)) ?? 0);
                     if (Number.isFinite(next)) currentTime = next;
+                    player.getDuration(function(d) {
+                      window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ounjeVideoState &&
+                        window.webkit.messageHandlers.ounjeVideoState.postMessage({ currentTime: currentTime, duration: Number(d) || 0 });
+                    });
                   });
                 }
 
@@ -2630,17 +2697,108 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
             return true;
           };
 
+          function postTimeState() {
+            if (!window.ounjeVideo) return;
+            window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ounjeVideoState &&
+              window.webkit.messageHandlers.ounjeVideoState.postMessage({
+                currentTime: window.ounjeVideo.currentTime || 0,
+                duration: window.ounjeVideo.duration || 0
+              });
+          }
+
           if (!rebuildIntoVideoOnly()) {
             let attempts = 0;
             const timer = setInterval(function() {
               attempts += 1;
               if (rebuildIntoVideoOnly() || attempts > 120) {
                 clearInterval(timer);
+                if (window.ounjeVideo) {
+                  window.ounjeVideo.addEventListener('timeupdate', postTimeState);
+                  window.ounjeVideo.addEventListener('durationchange', postTimeState);
+                }
               }
             }, 250);
           }
         })();
         """
+    }
+}
+
+// ── Video Scrubber ────────────────────────────────────────────────────────────
+// Shown at the bottom of the fullscreen video experience for both native and
+// web-embedded videos. A drag gesture lets the user scrub to any position.
+private struct VideoScrubberBar: View {
+    let currentTime: Double
+    let duration: Double
+    @Binding var isScrubbing: Bool
+    @Binding var scrubTime: Double
+    let onScrubbed: (Double) -> Void
+
+    @State private var hoverX: CGFloat = 0
+
+    private var displayTime: Double { isScrubbing ? scrubTime : currentTime }
+
+    private func timeString(_ t: Double) -> String {
+        let s = max(0, Int(t))
+        if s >= 3600 {
+            return String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+        }
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            GeometryReader { geo in
+                let progress = duration > 0 ? CGFloat(displayTime / duration) : 0
+
+                ZStack(alignment: .leading) {
+                    // Track
+                    Capsule()
+                        .fill(Color.white.opacity(0.22))
+                        .frame(height: 4)
+
+                    // Fill
+                    Capsule()
+                        .fill(Color.white.opacity(0.9))
+                        .frame(width: max(0, geo.size.width * progress), height: 4)
+
+                    // Thumb
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: isScrubbing ? 16 : 10, height: isScrubbing ? 16 : 10)
+                        .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                        .offset(x: max(0, min(geo.size.width * progress - (isScrubbing ? 8 : 5), geo.size.width - (isScrubbing ? 16 : 10))))
+                        .animation(.spring(response: 0.22, dampingFraction: 0.82), value: isScrubbing)
+                }
+                .frame(height: 20, alignment: .center)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                        .onChanged { value in
+                            isScrubbing = true
+                            let frac = max(0, min(1, value.location.x / geo.size.width))
+                            scrubTime = frac * duration
+                        }
+                        .onEnded { value in
+                            let frac = max(0, min(1, value.location.x / geo.size.width))
+                            let target = frac * duration
+                            scrubTime = target
+                            isScrubbing = false
+                            onScrubbed(target)
+                        }
+                )
+            }
+            .frame(height: 20)
+
+            HStack {
+                Text(timeString(displayTime))
+                Spacer()
+                Text(timeString(duration))
+            }
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(Color.white.opacity(0.72))
+        }
+        .padding(.horizontal, 2)
     }
 }
 

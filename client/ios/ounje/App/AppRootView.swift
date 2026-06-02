@@ -4031,18 +4031,18 @@ private struct CookbookTabView: View {
         combinedSharedImportEnvelopes.filter(\.isLiveQueueState).count
     }
 
+    // Fixed import-source filters — only show a category if at least one saved
+    // recipe belongs to it, so the menu doesn't list empty categories.
     private var filters: [String] {
-        var values = ["All"]
-        for value in savedStore.savedRecipes.compactMap(\.filterChipLabel) where !values.contains(value) {
-            values.append(value)
-        }
-        return Array(values.prefix(8))
+        let allCategories = ["Ounje", "Social", "Website", "Photo"]
+        let present = Set(savedStore.savedRecipes.map(\.importSourceCategory))
+        return ["All"] + allCategories.filter { present.contains($0) }
     }
 
     private var filteredRecipes: [DiscoverRecipeCardData] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return savedStore.savedRecipes.filter { recipe in
-            let matchesFilter = selectedFilter == "All" || recipe.filterChipLabel == selectedFilter
+            let matchesFilter = selectedFilter == "All" || recipe.importSourceCategory == selectedFilter
             let matchesQuery = query.isEmpty ||
                 recipe.title.lowercased().contains(query) ||
                 recipe.authorLabel.lowercased().contains(query) ||
@@ -4464,7 +4464,18 @@ private struct CookbookTabView: View {
                         Button {
                             selectedFilter = filter
                         } label: {
-                            Label(filter, systemImage: selectedFilter == filter ? "checkmark" : "line.3.horizontal.decrease.circle")
+                            Label(
+                                filter == "All" ? "All sources"
+                                : filter == "Ounje" ? "Ounje native"
+                                : filter == "Social" ? "Social media"
+                                : filter,
+                                systemImage: selectedFilter == filter ? "checkmark"
+                                : filter == "Ounje" ? "sparkles"
+                                : filter == "Social" ? "play.rectangle"
+                                : filter == "Website" ? "safari"
+                                : filter == "Photo" ? "camera"
+                                : "line.3.horizontal.decrease.circle"
+                            )
                         }
                     }
                 } label: {
@@ -8085,8 +8096,23 @@ private struct SharedRecipeImportQueueRow: View {
         return "Imported recipe"
     }
 
-    private var stableActivityDate: Date {
-        item.stageStartedAt ?? item.lastAttemptAt ?? item.createdAt
+    // The import start time: fixed at the moment the user triggered the import.
+    // Using createdAt (never changes) as the anchor so the elapsed clock counts
+    // continuously upward and doesn't reset to 0 when lastAttemptAt is updated
+    // with each poll response.
+    private var importStartDate: Date { item.createdAt }
+
+    private var elapsedText: String {
+        // Use updatedAt as the stop-time for completed/failed imports so the
+        // clock shows the final duration rather than counting forever.
+        let endDate: Date = item.isLiveQueueState ? Date() : (item.updatedAt ?? Date())
+        let elapsed = max(0, endDate.timeIntervalSince(importStartDate))
+        if elapsed < 60 {
+            return "\(Int(elapsed))s"
+        }
+        let minutes = Int(elapsed) / 60
+        let seconds = Int(elapsed) % 60
+        return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
     }
 
     var body: some View {
@@ -8143,14 +8169,18 @@ private struct SharedRecipeImportQueueRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(spacing: 8) {
-                if let attemptCount = item.attemptCount {
-                    Text("Attempts: \(attemptCount)")
+            // Elapsed clock: ticks every second while the import is in-flight.
+            // Always periodic — stops visually updating once isLiveQueueState = false
+            // because elapsedText then returns the final fixed duration.
+            TimelineView(.periodic(from: importStartDate, by: 1)) { _ in
+                HStack(spacing: 8) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11))
+                    Text(elapsedText)
                 }
-                Text(stableActivityDate.formatted(.relative(presentation: .named)))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
             }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(OunjePalette.secondaryText)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

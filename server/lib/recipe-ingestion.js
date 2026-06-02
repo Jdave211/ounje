@@ -4970,13 +4970,26 @@ function inferRecipeTimingFromSteps(recipe) {
 
 function coerceStructuredRecipeCandidate(candidate, source) {
   const sourceIngredients = Array.isArray(candidate.ingredients) ? candidate.ingredients : [];
-  const ingredients = uniqueBy(
-    [
-      ...sourceIngredients.map(coerceIngredientItem).filter(Boolean),
-      ...buildFallbackIngredientLines(source).map(coerceIngredientItem).filter(Boolean),
-    ],
-    (ingredient) => normalizeKey(ingredient.display_name)
-  ).map((ingredient, index) => ({
+
+  // Only merge fallback ingredient candidates when the structured data is absent or
+  // very sparse (< 3 items). When we already have good JSON-LD ingredients, the
+  // fallback candidates introduce body-text noise: metric weight fragments like
+  // "113g", page UI strings like "Cook Mode", "Prevent your screen...", and
+  // duplicate quantity-as-ingredient tokens ("heaping cup marshmallow creme") that
+  // share no common key with the structured ingredient name, so deduplication misses
+  // them and they all appear as phantom ingredient tiles.
+  const hasStructuredIngredients = sourceIngredients.length >= 3;
+  const candidateIngredients = hasStructuredIngredients
+    ? sourceIngredients.map(coerceIngredientItem).filter(Boolean)
+    : uniqueBy(
+        [
+          ...sourceIngredients.map(coerceIngredientItem).filter(Boolean),
+          ...buildFallbackIngredientLines(source).map(coerceIngredientItem).filter(Boolean),
+        ],
+        (ingredient) => normalizeKey(ingredient.display_name)
+      );
+
+  const ingredients = candidateIngredients.map((ingredient, index) => ({
     ...ingredient,
     sort_order: index + 1,
   }));
@@ -5798,6 +5811,17 @@ function absoluteURLFrom(baseURL, value) {
   }
 }
 
+// Extract a canonical YouTube watch URL from iframe embeds in raw HTML.
+// Recipe sites typically embed YouTube demos as:
+//   <iframe src="https://www.youtube.com/embed/VIDEO_ID?...">
+// Returns a standard https://www.youtube.com/watch?v=VIDEO_ID URL, or null.
+function extractYouTubeEmbedURL(html) {
+  if (!html) return null;
+  const match = html.match(/(?:src|data-src)=["']https?:\/\/(?:www\.)?youtube(?:-nocookie)?\.com\/embed\/([A-Za-z0-9_-]{11})[^"']*["']/i);
+  if (!match) return null;
+  return `https://www.youtube.com/watch?v=${match[1]}`;
+}
+
 function stripHTML(value) {
   return normalizeText(
     htmlDecode(String(value ?? "")
@@ -5879,6 +5903,12 @@ async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } =
   const metaImageURL = htmlMetaContent(html, ["og:image", "twitter:image"]);
   const bodyText = stripHTML(html).slice(0, 120000);
 
+  // Extract YouTube video from iframe embeds — recipe blogs typically embed a
+  // YouTube demonstration video alongside the recipe using an <iframe> pointing
+  // at https://www.youtube.com/embed/VIDEO_ID. The og:video meta is often absent.
+  const attachedVideoURL = cleanURL(htmlMetaContent(html, ["og:video", "og:video:url"]))
+    || extractYouTubeEmbedURL(html);
+
   return {
     source_type: "web",
     platform: "web",
@@ -5891,6 +5921,7 @@ async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } =
     attached_video_url: cleanURL(htmlMetaContent(html, ["og:video", "og:video:url"])),
     site_name: htmlMetaContent(html, ["og:site_name"]) || hostForURL(response.url || sourceURL),
     author_name: htmlMetaContent(html, ["author"]) || null,
+    attached_video_url: attachedVideoURL,
     ingredient_candidates: Array.isArray(structuredRecipe?.recipeIngredient) ? structuredRecipe.recipeIngredient : [],
     instruction_candidates: instructions,
     page_image_urls: pageImageURLs,
@@ -6033,7 +6064,14 @@ async function extractWebSourceWithPlaywright(sourceURL) {
         meta_title: normalize(meta("og:title") || meta("twitter:title") || document.title),
         meta_description: normalize(meta("description") || meta("og:description") || meta("twitter:description")),
         meta_image_url: meta("og:image") || meta("twitter:image") || null,
-        meta_video_url: meta("og:video") || meta("og:video:url") || null,
+        meta_video_url: meta("og:video") || meta("og:video:url")
+          || (() => {
+              const iframe = document.querySelector('iframe[src*="youtube.com/embed/"], iframe[src*="youtube-nocookie.com/embed/"]');
+              const src = iframe?.getAttribute("src") || iframe?.getAttribute("data-src") || "";
+              const m = src.match(/embed\/([A-Za-z0-9_-]{11})/);
+              return m ? `https://www.youtube.com/watch?v=${m[1]}` : null;
+            })()
+          || null,
         site_name: normalize(meta("og:site_name")),
         author_name: normalize(meta("author")),
         body_text: normalize(document.body?.innerText || "").slice(0, 120000),
@@ -6102,10 +6140,41 @@ async function extractWebSourceWithPlaywright(sourceURL) {
 }
 
 async function extractWebSource(sourceURL) {
+  // Always try the plain HTTP fetch first — it's sub-second and sufficient for
+  // any site that emits JSON-LD structured recipe data (the vast majority of
+  // recipe blogs). Playwright adds 45–105s of Chromium startup + navigation
+  // before we even start parsing, and only helps for JS-rendered pages that
+  // hide their recipes behind client-side rendering.
+  //
+  // Strategy: fetch first, check if we got usable structured data. If yes,
+  // return immediately. If no (JS-rendered, bot-blocked, or too thin),
+  // fall through to Playwright for a proper browser render.
+  let fetchSource;
+  try {
+    fetchSource = await extractWebSourceWithFetch(sourceURL);
+  } catch (fetchError) {
+    // Fetch itself failed (network error, 4xx/5xx) — go straight to Playwright.
+    try {
+      return await extractWebSourceWithPlaywright(sourceURL);
+    } catch {
+      throw fetchError;
+    }
+  }
+
+  const hasStructuredRecipe = fetchSource.structured_recipe?.recipeIngredient?.length >= 2;
+  const hasUsableBodyText = (fetchSource.body_text?.length ?? 0) > 500;
+
+  if (hasStructuredRecipe || hasUsableBodyText) {
+    // Fetch gave us enough — no need to spin up a browser.
+    return fetchSource;
+  }
+
+  // Page likely renders its recipe client-side — use Playwright.
   try {
     return await extractWebSourceWithPlaywright(sourceURL);
-  } catch (error) {
-    return extractWebSourceWithFetch(sourceURL, { playwrightError: error });
+  } catch (playwrightError) {
+    // Playwright also failed; return whatever the fetch got.
+    return { ...fetchSource, artifacts: fetchSource.artifacts ?? [] };
   }
 }
 

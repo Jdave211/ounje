@@ -3583,6 +3583,10 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func repairRemoteCartStateIfNeeded(session: AuthSession) async {
         guard latestPlan?.recipes.isEmpty == false else { return }
+        // Skip immediately when the session is stale — the upsert would fail anyway
+        // and this function runs in a background task that gets cancelled on every
+        // auth-state revision, flooding the log with "cancelled" noise otherwise.
+        guard !authSessionNeedsReauthentication else { return }
 
         if let plan = latestPlan, latestPlanNeedsGroceryRebuild(plan) {
             _ = await rebuildLatestPlanGroceriesIfNeeded(force: true)
@@ -3596,6 +3600,9 @@ final class MealPlanningAppStore: ObservableObject {
                 plan: plan,
                 accessToken: session.accessToken
             )
+        } catch is CancellationError {
+            // Task was cancelled due to an auth-state revision — this is expected
+            // during sign-in and does not need to be logged as a failure.
         } catch {
             print("[MealPlanningAppStore] Failed to repair remote cart state for user \(session.userID): \(error.localizedDescription)")
         }
