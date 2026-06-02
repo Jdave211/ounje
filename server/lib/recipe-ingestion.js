@@ -10226,13 +10226,21 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     };
 
     const job = await createJobRow(queuedRequest);
-    let wakePublished = null;
-    if (isImportQueuedForWorker(job)) {
-      wakePublished = await publishRecipeImportWake(job, { reason: "queued" });
-    }
-    if (processInline) {
+
+    // Website imports are lightweight (HTTP fetch + JSON-LD parse + LLM) and need
+    // none of the VM worker's heavy tooling (yt-dlp/ffmpeg). Process them inline on
+    // the API service itself, which auto-deploys and therefore always runs the latest
+    // parsing fixes — instead of handing them to the separately-deployed VM worker
+    // (which can lag behind on code). Social/video imports still queue to the VM.
+    const inlineThisJob = processInline || shouldInlineWebImport(request);
+
+    if (inlineThisJob) {
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
     } else {
+      let wakePublished = null;
+      if (isImportQueuedForWorker(job)) {
+        wakePublished = await publishRecipeImportWake(job, { reason: "queued" });
+      }
       const status = normalizeText(job.status).toLowerCase();
       const processingMode = ["saved", "draft", "needs_review"].includes(status)
         ? "cached"
@@ -10257,6 +10265,23 @@ function shouldProcessImportInline(payload = {}, options = {}) {
     || payload.processInline === true
     || options.processInline === true;
   return allowInline && requestedInline;
+}
+
+// Website imports run inline on the API service rather than the separately-deployed
+// VM worker, so they always use the latest parsing code that ships with the API's
+// auto-deploy. Gated by OUNJE_INLINE_WEB_IMPORTS (default ON). Only applies to web
+// source URLs — social/video imports need the VM's yt-dlp/ffmpeg/Playwright tooling.
+function shouldInlineWebImport(request = {}) {
+  const enabled = !["0", "false", "no", "off"].includes(
+    String(process.env.OUNJE_INLINE_WEB_IMPORTS ?? "true").trim().toLowerCase()
+  );
+  if (!enabled) return false;
+  const sourceType = detectRecipeIngestionSourceType({
+    sourceUrl: request.source_url ?? null,
+    sourceText: request.source_text ?? "",
+    attachments: request.attachments ?? [],
+  });
+  return sourceType === "web";
 }
 
 export async function fetchRecipeIngestionJob(jobID) {
