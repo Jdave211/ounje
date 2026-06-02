@@ -9,6 +9,31 @@ The VM is private worker infrastructure. It should not serve the public API, ter
 
 The old VM API/nginx path is intentionally out of the production architecture. The app talks to Render only; the VM sleeps on Redis and only performs a sparse safety sweep when no wake event arrives.
 
+## Auto-deploy (CI)
+
+Unlike Render (which auto-deploys the API on push to `main`), the VM worker must be
+re-deployed to pick up new ingestion code. This is automated by
+[.github/workflows/deploy-vm-worker.yml](../.github/workflows/deploy-vm-worker.yml):
+on every push to `main` that touches `server/**`, `package.json`, or the systemd units,
+it SSHes into the VM and runs `git reset --hard origin/main`, `npm install`, and
+`sudo systemctl restart ounje-recipe-ingestion-worker`.
+
+Add these repo secrets (**Settings → Secrets and variables → Actions**) to enable it —
+until they exist the job no-ops cleanly instead of failing:
+
+| Secret | Purpose |
+| --- | --- |
+| `VM_SSH_HOST` | VM hostname or IP |
+| `VM_SSH_USER` | ssh user with sudo for `systemctl` |
+| `VM_SSH_KEY` | the **private** ssh key (PEM) authorized on the VM |
+| `VM_SSH_PORT` | optional, defaults to `22` |
+
+The deploy user needs passwordless sudo for the restart, e.g. a sudoers drop-in:
+`<user> ALL=(root) NOPASSWD: /usr/bin/systemctl restart ounje-recipe-ingestion-worker, /usr/bin/systemctl status ounje-recipe-ingestion-worker, /usr/bin/systemctl is-active ounje-recipe-ingestion-worker`.
+
+You can also trigger it manually from the Actions tab (**workflow_dispatch**). The manual
+fallback remains: `cd /opt/ounje && git pull && YOUTUBE_DL_SKIP_DOWNLOAD=true npm install && sudo systemctl restart ounje-recipe-ingestion-worker`.
+
 ## VM Setup
 
 1. Install Node 22 LTS and clone the repo to `/opt/ounje`.

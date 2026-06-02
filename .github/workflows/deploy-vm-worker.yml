@@ -1,0 +1,67 @@
+name: Deploy VM recipe worker
+
+# The recipe-ingestion VM worker (systemd: ounje-recipe-ingestion-worker) does NOT
+# auto-deploy like the Render API does. This workflow SSHes into the VM on every push
+# to main that touches server code and runs the standard pull/install/restart so the
+# worker stops lagging behind the latest ingestion fixes (social/video imports).
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   VM_SSH_HOST  - the VM's hostname or IP
+#   VM_SSH_USER  - ssh user with sudo for systemctl (e.g. the deploy user)
+#   VM_SSH_KEY   - the PRIVATE ssh key (PEM) authorized on the VM
+#   VM_SSH_PORT  - (optional) ssh port, defaults to 22
+#
+# Until those secrets are set the job no-ops cleanly instead of failing red.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "package.json"
+      - "deploy/systemd/**"
+      - ".github/workflows/deploy-vm-worker.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-vm-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Pull + restart worker on VM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for SSH secrets
+        id: guard
+        env:
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+        run: |
+          if [ -z "$VM_SSH_HOST" ]; then
+            echo "VM_SSH_HOST not configured — skipping VM deploy."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy over SSH
+        if: steps.guard.outputs.configured == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_SSH_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          port: ${{ secrets.VM_SSH_PORT || 22 }}
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /opt/ounje
+            git fetch --all --prune
+            git reset --hard origin/main
+            # Skip yt-dlp binary re-download on install; the VM already has it.
+            YOUTUBE_DL_SKIP_DOWNLOAD=true npm install --no-audit --no-fund
+            sudo systemctl restart ounje-recipe-ingestion-worker
+            sleep 3
+            sudo systemctl is-active ounje-recipe-ingestion-worker
+            sudo systemctl status ounje-recipe-ingestion-worker --no-pager --lines 15 || true
