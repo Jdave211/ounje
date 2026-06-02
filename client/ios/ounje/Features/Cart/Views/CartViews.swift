@@ -178,6 +178,8 @@ struct CartTabView: View {
     @State private var ingredientLoadError: String?
     @StateObject private var instacartRunLogsStore = InstacartRunLogsStore()
     @State private var collapsedRecipeGroupIDs = Set<String>()
+    @State private var isShoppingListMode = false
+    @State private var checkedShoppingItemIDs = Set<String>()
 
     var body: some View {
         GeometryReader { proxy in
@@ -312,6 +314,12 @@ struct CartTabView: View {
         }
         .task(id: cartTrackingReloadKey) {
             await store.refreshLiveTrackingState()
+        }
+        .onAppear {
+            loadShoppingListState()
+        }
+        .onChange(of: shoppingListPersistenceKey) { _ in
+            loadShoppingListState()
         }
     }
 
@@ -589,6 +597,16 @@ struct CartTabView: View {
         return "cart-tracking::\(userKey)::\(tokenKey)"
     }
 
+    private var shoppingListSignature: String {
+        let itemKey = visibleReconciledCartItems.map(\.id).joined(separator: "|")
+        return itemKey.isEmpty ? "empty" : itemKey
+    }
+
+    private var shoppingListPersistenceKey: String {
+        let userKey = store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "signed-out"
+        return "ounje.cart.shopping.v1::\(userKey)::\(shoppingListSignature)"
+    }
+
     private var shouldShowEmptyCartState: Bool {
         activeRecipeIDs.isEmpty && displayGroceryItems.isEmpty && visibleReconciledCartItems.isEmpty
     }
@@ -837,25 +855,44 @@ struct CartTabView: View {
                     Spacer(minLength: 0)
 
                     if displayMode == .reconciled {
-                        Button(action: {
-                            isCartMappingPresented = true
-                        }) {
-                            Label("How grouped", systemImage: "square.stack.3d.up")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule(style: .continuous)
-                                        .fill(OunjePalette.surface.opacity(0.9))
-                                        .overlay(
-                                            Capsule(style: .continuous)
-                                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                                        )
-                                )
+                        HStack(spacing: 8) {
+                            Button(action: toggleShoppingListMode) {
+                                Image(systemName: isShoppingListMode ? "checklist.checked" : "checklist")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(isShoppingListMode ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                                    .frame(width: 32, height: 32)
+                                    .background(
+                                        Circle()
+                                            .fill(isShoppingListMode ? OunjePalette.accent.opacity(0.92) : OunjePalette.surface.opacity(0.9))
+                                            .overlay(
+                                                Circle()
+                                                    .stroke(isShoppingListMode ? OunjePalette.accent.opacity(0.75) : OunjePalette.stroke, lineWidth: 1)
+                                            )
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(isShoppingListMode ? "Turn off shopping list mode" : "Turn on shopping list mode")
+
+                            Button(action: {
+                                isCartMappingPresented = true
+                            }) {
+                                Label("How grouped", systemImage: "square.stack.3d.up")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        Capsule(style: .continuous)
+                                            .fill(OunjePalette.surface.opacity(0.9))
+                                            .overlay(
+                                                Capsule(style: .continuous)
+                                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                                            )
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Show how this shop list was grouped")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Show how this shop list was grouped")
                     }
                 }
 
@@ -884,11 +921,15 @@ struct CartTabView: View {
                             CartGroceryLineItemRow(
                                 item: item,
                                 quantityCount: quantityDisplay.count,
-                                quantityUnitLabel: quantityDisplay.unitLabel
+                                quantityUnitLabel: quantityDisplay.unitLabel,
+                                isShoppingListMode: isShoppingListMode,
+                                isChecked: checkedShoppingItemIDs.contains(item.id)
                             ) {
                                 adjustMainShopQuantity(for: item, delta: -1)
                             } onIncreaseQuantity: {
                                 adjustMainShopQuantity(for: item, delta: 1)
+                            } onToggleChecked: {
+                                toggleCheckedShoppingItem(item)
                             } onRemove: {
                                 removeMainShopItem(item)
                             } onMarkOwned: {
@@ -1103,6 +1144,39 @@ struct CartTabView: View {
             unitLabel: resolvedUnit,
             baseCount: baseCount
         )
+    }
+
+    private func toggleShoppingListMode() {
+        withAnimation(OunjeMotion.quickSpring) {
+            isShoppingListMode.toggle()
+        }
+    }
+
+    private func toggleCheckedShoppingItem(_ item: CartGroceryDisplayItem) {
+        withAnimation(OunjeMotion.quickSpring) {
+            if checkedShoppingItemIDs.contains(item.id) {
+                checkedShoppingItemIDs.remove(item.id)
+            } else {
+                checkedShoppingItemIDs.insert(item.id)
+            }
+        }
+        persistShoppingListState()
+    }
+
+    private func loadShoppingListState() {
+        guard let data = UserDefaults.standard.data(forKey: shoppingListPersistenceKey),
+              let ids = try? JSONDecoder().decode([String].self, from: data) else {
+            checkedShoppingItemIDs = []
+            return
+        }
+        let visibleIDs = Set(visibleReconciledCartItems.map(\.id))
+        checkedShoppingItemIDs = Set(ids).intersection(visibleIDs)
+    }
+
+    private func persistShoppingListState() {
+        let ids = Array(checkedShoppingItemIDs).sorted()
+        guard let data = try? JSONEncoder().encode(ids) else { return }
+        UserDefaults.standard.set(data, forKey: shoppingListPersistenceKey)
     }
 
     private func standardizedMainShopUnitLabel(raw: String, count: Int) -> String {
@@ -4325,8 +4399,11 @@ struct CartGroceryLineItemRow: View {
     let item: CartGroceryDisplayItem
     let quantityCount: Int
     let quantityUnitLabel: String
+    var isShoppingListMode = false
+    var isChecked = false
     var onDecreaseQuantity: (() -> Void)? = nil
     var onIncreaseQuantity: (() -> Void)? = nil
+    var onToggleChecked: (() -> Void)? = nil
     var onRemove: (() -> Void)? = nil
     var onMarkOwned: (() -> Void)? = nil
     @State private var isQuantityAnimating = false
@@ -4349,11 +4426,13 @@ struct CartGroceryLineItemRow: View {
                 }
             }
             .frame(width: 56, height: 56)
+            .opacity(isChecked ? 0.45 : 1)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.name)
                     .sleeDisplayFont(16)
-                    .foregroundStyle(OunjePalette.primaryText)
+                    .foregroundStyle(isChecked ? OunjePalette.secondaryText : OunjePalette.primaryText)
+                    .strikethrough(isChecked, color: OunjePalette.secondaryText.opacity(0.85))
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
                     .truncationMode(.tail)
@@ -4363,6 +4442,7 @@ struct CartGroceryLineItemRow: View {
                     Text(supportingText)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(OunjePalette.secondaryText.opacity(0.82))
+                        .strikethrough(isChecked, color: OunjePalette.secondaryText.opacity(0.7))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -4372,54 +4452,69 @@ struct CartGroceryLineItemRow: View {
             Spacer(minLength: 8)
 
             VStack(alignment: .trailing, spacing: 3) {
-                HStack(spacing: 9) {
-                    Button(action: { onDecreaseQuantity?() }) {
-                        Image(systemName: "minus")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(OunjePalette.primaryText)
-                            .frame(width: 26, height: 26)
-                            .background(
-                                Circle()
-                                    .fill(OunjePalette.panel)
-                            )
+                if isShoppingListMode {
+                    Button(action: { onToggleChecked?() }) {
+                        Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 27, weight: .semibold))
+                            .foregroundStyle(isChecked ? OunjePalette.accent : OunjePalette.secondaryText.opacity(0.72))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(isChecked ? "Mark \(item.name) as not picked" : "Mark \(item.name) as picked")
+                } else {
+                    HStack(spacing: 9) {
+                        Button(action: { onDecreaseQuantity?() }) {
+                            Image(systemName: "minus")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .frame(width: 26, height: 26)
+                                .background(
+                                    Circle()
+                                        .fill(OunjePalette.panel)
+                                )
+                        }
+                        .buttonStyle(.plain)
 
-                    VStack(spacing: 0) {
-                        Text("\(quantityCount)")
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundStyle(OunjePalette.primaryText)
-                            .monospacedDigit()
+                        VStack(spacing: 0) {
+                            Text("\(quantityCount)")
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .monospacedDigit()
 
-                        Text(quantityUnitLabel)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
+                            Text(quantityUnitLabel)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.82)
+                        }
+                        .frame(width: 52)
+                        .scaleEffect(isQuantityAnimating ? 1.08 : 1)
+
+                        Button(action: { onIncreaseQuantity?() }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(OunjePalette.primaryText)
+                                .frame(width: 26, height: 26)
+                                .background(
+                                    Circle()
+                                        .fill(OunjePalette.panel)
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .frame(width: 52)
-                    .scaleEffect(isQuantityAnimating ? 1.08 : 1)
-
-                    Button(action: { onIncreaseQuantity?() }) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(OunjePalette.primaryText)
-                            .frame(width: 26, height: 26)
-                            .background(
-                                Circle()
-                                    .fill(OunjePalette.panel)
-                            )
-                    }
-                    .buttonStyle(.plain)
+                    .frame(width: 122, alignment: .trailing)
                 }
-                .frame(width: 122, alignment: .trailing)
-
             }
             .frame(width: 122, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .contentShape(Rectangle())
+        .onTapGesture {
+            guard isShoppingListMode else { return }
+            onToggleChecked?()
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if let onMarkOwned {
                 Button {

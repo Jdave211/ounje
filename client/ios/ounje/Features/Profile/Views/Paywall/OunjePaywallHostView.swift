@@ -10,6 +10,7 @@ struct OunjePaywallHostView: View {
 
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
+    @EnvironmentObject private var toastCenter: AppToastCenter
     @Environment(\.openURL) private var openURL
     @State private var selectedTier: OunjePricingTier
     @State private var selectedCadence: OunjeMembershipBillingCadence
@@ -135,15 +136,6 @@ struct OunjePaywallHostView: View {
                                 .foregroundStyle(Color.white.opacity(0.82))
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(.top, compact ? 24 : 30)
-
-                            if let error = displayedErrorMessage {
-                                Text(error)
-                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(Color(hex: "FF8E8E"))
-                                    .lineLimit(2)
-                                    .minimumScaleFactor(0.8)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
 
                             PurchasingCTAButton(
                                 title: ctaTitle,
@@ -388,6 +380,21 @@ struct OunjePaywallHostView: View {
         } else {
             purchaseVisualState = .failed
             localErrorMessage = store.billingStatusMessage ?? "Purchase failed."
+            if let error = displayedErrorMessage {
+                toastCenter.show(
+                    title: "Subscription didn’t go through",
+                    subtitle: error,
+                    systemImage: "exclamationmark.circle.fill",
+                    tone: .destructive
+                )
+            } else {
+                toastCenter.show(
+                    title: "Subscription didn’t go through",
+                    subtitle: "Try again.",
+                    systemImage: "exclamationmark.circle.fill",
+                    tone: .destructive
+                )
+            }
             try? await Task.sleep(nanoseconds: 450_000_000)
             purchaseVisualState = .idle
         }

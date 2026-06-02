@@ -362,6 +362,9 @@ final class MealPlanningAppStore: ObservableObject {
         guard hasResolvedInitialState else {
             return false
         }
+        if shouldForceOnboardingIncomplete {
+            return true
+        }
 
         // Require positive confirmation before routing to onboarding. On app reopen,
         // a restored auth session can exist before runtime/server bootstrap has
@@ -905,9 +908,12 @@ final class MealPlanningAppStore: ObservableObject {
             membershipEntitlement = snapshot
             syncProfilePricingTierToEntitlement()
             billingStatusMessage = nil
+            membershipEntitlementResolved = true
+            membershipEntitlementServerConfirmed = false
+            onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
 
             do {
-                _ = try await SupabaseEntitlementService.shared.syncCurrentEntitlement(
+                let syncedEntitlement = try await SupabaseEntitlementService.shared.syncCurrentEntitlement(
                     snapshot: snapshot,
                     userID: session.userID,
                     accessToken: session.accessToken
@@ -916,7 +922,15 @@ final class MealPlanningAppStore: ObservableObject {
                     userID: session.userID,
                     accessToken: session.accessToken
                 )
-                membershipEntitlement = remoteEntitlement ?? snapshot
+                if snapshot.isActive {
+                    membershipEntitlement = syncedEntitlement?.isActive == true
+                        ? syncedEntitlement
+                        : snapshot
+                } else if let syncedEntitlement {
+                    membershipEntitlement = syncedEntitlement
+                } else {
+                    membershipEntitlement = remoteEntitlement ?? snapshot
+                }
                 syncProfilePricingTierToEntitlement()
                 membershipEntitlementServerConfirmed = true
                 onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
@@ -1091,9 +1105,11 @@ final class MealPlanningAppStore: ObservableObject {
         saveOnboardingState()
         saveOnboardingStep()
         onRuntimeProfileStateChanged?(resolvedLiveUserID ?? authSession?.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
-
-        await finalizeCompletedOnboarding(with: profile, lastStep: lastStep)
         isCompletingOnboarding = false
+        Task { [weak self] in
+            guard let self else { return }
+            await self.finalizeCompletedOnboarding(with: profile, lastStep: lastStep)
+        }
     }
 
     func updateProfile(_ updated: UserProfile) {

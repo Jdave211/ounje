@@ -831,6 +831,10 @@ struct FirstLoginOnboardingView: View {
             return ""
         }
 
+        if currentStep == .solutionWays {
+            return "Continue"
+        }
+
         if currentStep == .paywallIntro {
             return paywallWarmupStage < 2 ? "Continue" : ""
         }
@@ -1096,7 +1100,7 @@ struct FirstLoginOnboardingView: View {
         VStack {
             Spacer(minLength: 0)
 
-            Text("Upgrade any recipe to fit you")
+            Text("Upgrade any recipe to fit YOU!")
                 .font(.system(size: 35, weight: .black, design: .rounded))
                 .foregroundStyle(OunjePalette.primaryText)
                 .multilineTextAlignment(.center)
@@ -1188,7 +1192,7 @@ struct FirstLoginOnboardingView: View {
             case 1:
                 OnboardingTrialControlPage(accent: currentStepAccent)
             default:
-                EmptyView()
+                OnboardingTrialControlPage(accent: currentStepAccent)
             }
         }
         .id(paywallWarmupStage)
@@ -1339,6 +1343,18 @@ struct FirstLoginOnboardingView: View {
                         RoundedRectangle(cornerRadius: 26, style: .continuous)
                             .stroke(Color.white.opacity(0.16), lineWidth: 1)
                     )
+                    .overlay(
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.16),
+                                Color.black.opacity(0.05),
+                                Color.black.opacity(0.22)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    )
                     .shadow(color: .black.opacity(0.34), radius: 18, x: 0, y: 14)
 
                 VStack(spacing: 4) {
@@ -1382,23 +1398,14 @@ struct FirstLoginOnboardingView: View {
                         spacing: spacing
                     ) {
                         ForEach(displayedRecipes) { demoRecipe in
-                            ZStack(alignment: .bottom) {
-                                DiscoverRemoteRecipeCard(
-                                    recipe: demoRecipe.card,
-                                    showsSaveAction: false,
-                                    showsTopActions: false,
-                                    showsImageLoadingSkeleton: false,
-                                    layout: layout
-                                ) {
-                                    onSelect(demoRecipe)
-                                }
-                                .frame(width: cardWidth, height: layout.cardHeight)
-
-                                if demoRecipe.detail.hasCompleteDisplayMacros {
-                                    RecipeMacroOverlayStrip(detail: demoRecipe.detail)
-                                        .frame(width: cardWidth)
-                                        .clipShape(RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous))
-                                }
+                            DiscoverRemoteRecipeCard(
+                                recipe: demoRecipe.card,
+                                showsSaveAction: false,
+                                showsTopActions: false,
+                                showsImageLoadingSkeleton: false,
+                                layout: layout
+                            ) {
+                                onSelect(demoRecipe)
                             }
                             .frame(width: cardWidth, height: layout.cardHeight)
                         }
@@ -1416,45 +1423,6 @@ struct FirstLoginOnboardingView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .frame(height: (layout.cardHeight * 2) + spacing)
-        }
-    }
-
-    private struct RecipeMacroOverlayStrip: View {
-        let detail: RecipeDetailData
-
-        var body: some View {
-            HStack(spacing: 5) {
-                if let kcal = detail.caloriesKcal {
-                    Text("~\(Int(kcal.rounded())) kcal")
-                        .font(.system(size: 9.5, weight: .black, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.95))
-                }
-                if let p = detail.proteinG {
-                    macroChip("\(Int(p.rounded()))g P")
-                }
-                if let c = detail.carbsG {
-                    macroChip("\(Int(c.rounded()))g C")
-                }
-                if let f = detail.fatG {
-                    macroChip("\(Int(f.rounded()))g F")
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                LinearGradient(
-                    colors: [.black.opacity(0), .black.opacity(0.72)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-        }
-
-        private func macroChip(_ text: String) -> some View {
-            Text(text)
-                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.72))
         }
     }
 
@@ -2781,7 +2749,7 @@ struct FirstLoginOnboardingView: View {
 
     private func revealSolutionPage() {
         let stepRawValue = currentStep.storedValue
-        let shouldAutoAdvance = stepTransitionDirection >= 0
+        let shouldAutoAdvance = stepTransitionDirection >= 0 && currentStep != .solutionWays
         solutionRevealTask?.cancel()
 
         if completedSolutionAnimationSteps.contains(stepRawValue) {
@@ -2844,7 +2812,7 @@ struct FirstLoginOnboardingView: View {
                 solutionHelpVisibleCount = index
             }
 
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            try? await Task.sleep(nanoseconds: 6_700_000_000)
             guard currentStep == .solutionWays else { return }
             completedSolutionAnimationSteps.insert(stepRawValue)
             if shouldAutoAdvance {
@@ -4041,66 +4009,42 @@ private struct OnboardingTestimonialsPage: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Social-proof background photo, centered and filling the screen behind the cards.
-            Image("OnboardingTestimonialsBackground")
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
+            OunjePalette.background
                 .ignoresSafeArea()
-                .allowsHitTesting(false)
 
-            // Scrim keeps the title + cards legible over the photo (darker at the top
-            // where the title sits, easing off toward the middle/bottom).
-            LinearGradient(
-                colors: [OunjePalette.background, OunjePalette.background.opacity(0.45), OunjePalette.background.opacity(0.15)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-
-            // Everything fits on one screen — no scrolling. Cards cascade left/right
-            // (matching the design) and slide in on appear.
             GeometryReader { proxy in
-                let cardWidth = min(proxy.size.width * 0.84, 360)
-                VStack(spacing: 0) {
+                let titleWidth = min(proxy.size.width - 54, 302)
+                let cardWidth = min(proxy.size.width - 52, 320)
+
+                VStack(spacing: 12) {
                     Text("+500 people have already achieved their food goals with Ounje")
-                        .font(.system(size: 28, weight: .black, design: .rounded))
+                        .font(.system(size: 21, weight: .black, design: .rounded))
                         .foregroundStyle(OunjePalette.primaryText)
                         .multilineTextAlignment(.center)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.72)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 12)
+                        .lineSpacing(-0.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: titleWidth)
                         .opacity(titleRevealed ? 1 : 0)
                         .offset(y: titleRevealed ? 0 : -16)
 
-                    Spacer(minLength: 18)
-
-                    VStack(spacing: -8) {
+                    VStack(spacing: 11) {
                         ForEach(Array(testimonials.enumerated()), id: \.element.id) { index, testimonial in
-                            HStack(spacing: 0) {
-                                if !index.isMultiple(of: 2) { Spacer(minLength: 0) }
-                                card(testimonial)
-                                    .frame(width: cardWidth)
-                                if index.isMultiple(of: 2) { Spacer(minLength: 0) }
-                            }
-                            .zIndex(Double(index))
-                            .opacity(revealed > index ? 1 : 0)
-                            .scaleEffect(
-                                revealed > index ? 1 : 0.94,
-                                anchor: index.isMultiple(of: 2) ? .leading : .trailing
-                            )
-                            .offset(
-                                x: revealed > index ? 0 : (index.isMultiple(of: 2) ? -48 : 48),
-                                y: revealed > index ? 0 : 20
-                            )
+                            card(testimonial)
+                                .frame(width: cardWidth)
+                                .rotationEffect(.degrees(index == 1 ? -0.45 : (index == 2 ? 0.35 : -0.25)))
+                                .opacity(revealed > index ? 1 : 0)
+                                .scaleEffect(revealed > index ? 1 : 0.94)
+                                .offset(
+                                    x: (index == 1 ? 8 : (index == 2 ? -8 : 0)) + (revealed > index ? 0 : (index == 1 ? 22 : -22)),
+                                    y: revealed > index ? 0 : 14
+                                )
                         }
                     }
+                    .frame(width: proxy.size.width, alignment: .top)
 
-                    Spacer(minLength: 0)
+                    Spacer(minLength: max(0, proxy.size.height * 0.08))
                 }
+                .padding(.top, 10)
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             }
         }
@@ -4121,26 +4065,28 @@ private struct OnboardingTestimonialsPage: View {
             HStack(spacing: 3) {
                 ForEach(0..<5, id: \.self) { _ in
                     Image(systemName: "star.fill")
-                        .font(.system(size: 15))
+                        .font(.system(size: 12.5, weight: .bold))
                         .foregroundStyle(Color(red: 0.96, green: 0.71, blue: 0.20))
                 }
             }
             Text(testimonial.headline)
-                .font(.system(size: 19, weight: .black, design: .rounded))
+                .font(.system(size: 15.5, weight: .black, design: .rounded))
                 .foregroundStyle(Color(red: 0.11, green: 0.12, blue: 0.10))
                 .fixedSize(horizontal: false, vertical: true)
             Text(testimonial.body)
-                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .font(.system(size: 12.25, weight: .medium, design: .rounded))
                 .foregroundStyle(Color(red: 0.30, green: 0.32, blue: 0.30))
-                .lineSpacing(2)
+                .lineSpacing(1.2)
+                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
             Text(testimonial.handle)
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(.system(size: 12.75, weight: .bold, design: .rounded))
                 .foregroundStyle(Color(red: 0.20, green: 0.55, blue: 0.36))
                 .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color(red: 0.97, green: 0.96, blue: 0.91))

@@ -3309,6 +3309,7 @@ function summarizeRecipeImportQueueJob(jobRow) {
   const requestPayload = jobRow?.request_payload && typeof jobRow.request_payload === "object"
     ? jobRow.request_payload
     : {};
+  const activeStage = activeRecipeImportStage(jobRow);
   return {
     id: jobRow.id,
     user_id: jobRow.user_id ?? null,
@@ -3326,9 +3327,50 @@ function summarizeRecipeImportQueueJob(jobRow) {
     error_message: jobRow.error_message ?? null,
     attempts: Number.isFinite(Number(jobRow.attempts)) ? Number(jobRow.attempts) : null,
     max_attempts: Number.isFinite(Number(jobRow.max_attempts)) ? Number(jobRow.max_attempts) : null,
+    queued_at: jobRow.queued_at ?? null,
+    fetched_at: jobRow.fetched_at ?? null,
+    parsed_at: jobRow.parsed_at ?? null,
+    normalized_at: jobRow.normalized_at ?? null,
+    saved_at: jobRow.saved_at ?? null,
+    completed_at: jobRow.completed_at ?? null,
+    active_stage: activeStage,
+    stage_started_at: stageStartedAtForRecipeImportJob(jobRow, activeStage),
     created_at: jobRow.created_at ?? null,
     updated_at: jobRow.updated_at ?? null,
   };
+}
+
+function activeRecipeImportStage(jobRow) {
+  const status = normalizeText(jobRow?.status).toLowerCase();
+  if (status === "retryable") return "retryable";
+  if (status === "queued") return "queued";
+  if (status === "processing") return "processing";
+  if (status === "fetching") return "fetching";
+  if (status === "parsing") return "parsing";
+  if (status === "normalized") return "normalized";
+  if (["saved", "draft", "needs_review"].includes(status)) return "completed";
+  if (status === "failed") return "failed";
+  return status || "queued";
+}
+
+function stageStartedAtForRecipeImportJob(jobRow, activeStage = activeRecipeImportStage(jobRow)) {
+  switch (activeStage) {
+    case "completed":
+      return jobRow?.completed_at ?? jobRow?.saved_at ?? jobRow?.updated_at ?? jobRow?.created_at ?? null;
+    case "failed":
+      return jobRow?.updated_at ?? jobRow?.created_at ?? null;
+    case "normalized":
+      return jobRow?.normalized_at ?? jobRow?.parsed_at ?? jobRow?.fetched_at ?? jobRow?.queued_at ?? jobRow?.created_at ?? null;
+    case "parsing":
+      return jobRow?.parsed_at ?? jobRow?.fetched_at ?? jobRow?.queued_at ?? jobRow?.created_at ?? null;
+    case "fetching":
+    case "processing":
+      return jobRow?.fetched_at ?? jobRow?.leased_at ?? jobRow?.queued_at ?? jobRow?.created_at ?? null;
+    case "queued":
+    case "retryable":
+    default:
+      return jobRow?.queued_at ?? jobRow?.created_at ?? null;
+  }
 }
 
 export async function listRecipeImportQueueItems({ userID = null, limit = null } = {}) {
@@ -3353,7 +3395,7 @@ export async function listRecipeImportQueueItems({ userID = null, limit = null }
   // serialize tens of MB of JSON on a small instance.
   const rows = await fetchRows(
     "recipe_ingestion_jobs",
-    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,created_at,updated_at",
+    "id,user_id,target_state,source_type,source_url,canonical_url,input_text,dedupe_key,recipe_id,status,review_state,confidence_score,quality_flags,review_reason,error_message,attempts,max_attempts,worker_id,leased_at,queued_at,fetched_at,parsed_at,normalized_at,saved_at,completed_at,created_at,updated_at",
     {
       filters,
       order: ["updated_at.desc", "created_at.desc"],
@@ -6782,6 +6824,7 @@ async function runPhotoMealGate(imageInput, photoContext = {}) {
         content: [
           "Decide whether this image contains any food — a prepared meal, dish, raw ingredients, baked goods, snack, beverage, or any edible item that could form the basis of a recipe.",
           "Accept: homemade food, restaurant meals, raw ingredients, baked goods, snacks, drinks, and any real food even if imperfectly plated, lit, or photographed.",
+          "Single plated meals, bowls, pasta dishes, rice dishes, desserts, barbecue plates, and mixed dinner plates all count as food photos even when the exact recipe name is uncertain.",
           "Reject ONLY: images with absolutely no food present — pure scenery, text-only images, menus/receipts/screenshots, packaged products with no visible food, non-food objects, or completely unrecognizable images.",
           "When in doubt, lean toward accepting — it is better to attempt a recipe extraction than to reject a real food photo.",
           "Return strict JSON only. Do not invent or describe a recipe.",
@@ -6810,14 +6853,18 @@ async function runPhotoMealGate(imageInput, photoContext = {}) {
   const isMeal = Boolean(parsed?.is_meal);
   const confidence = Number.isFinite(Number(parsed?.confidence)) ? Number(parsed.confidence) : 0.5;
   const visibleFoodComponents = uniqueStrings(Array.isArray(parsed?.visible_food_components) ? parsed.visible_food_components : []);
-  // If the LLM said is_meal=false but has decent confidence AND found food components, override the rejection.
-  // This handles cases where the model is overly conservative about imperfect food photos.
-  const confidenceOverride = !isMeal && confidence >= 0.35 && visibleFoodComponents.length > 0;
+  const likelyMealType = normalizeText(parsed?.likely_meal_type ?? "") || null;
+  // The gate should be conservative about non-food, not conservative about real plated dishes.
+  // If the model surfaced any food evidence or a plausible meal type, allow extraction to continue.
+  const confidenceOverride = !isMeal && (
+    likelyMealType !== null ||
+    (confidence >= 0.18 && visibleFoodComponents.length > 0)
+  );
   return {
     is_meal: isMeal || confidenceOverride,
     confidence,
     visible_food_components: visibleFoodComponents,
-    likely_meal_type: normalizeText(parsed?.likely_meal_type ?? "") || null,
+    likely_meal_type: likelyMealType,
     reject_reason: (isMeal || confidenceOverride) ? null : (normalizeText(parsed?.reject_reason ?? "") || null),
   };
 }
@@ -6935,6 +6982,7 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
         content: [
           "Do TWO things for this image in one pass.",
           "1) MEAL GATE: decide whether the image contains any food — a prepared meal, dish, raw ingredients, baked goods, snack, beverage, or any edible item that could be the basis of a recipe. Accept homemade/restaurant food, raw ingredients, baked goods, snacks, drinks, and any real food even if imperfectly plated, lit, or photographed. Reject ONLY images with no food at all (pure scenery, text-only images, menus/receipts/screenshots, packaged products with no visible food, non-food objects). When in doubt, accept.",
+          "Treat a single plated dish, bowl, tray, dessert, rice dish, noodle dish, or mixed meal as valid food even if exact naming is fuzzy.",
           "2) VISUAL ANALYSIS (only meaningful when it is food): identify the most likely recipe/dish name a normal cook would search for, then extract visual evidence (sauce texture, garnish, plating, noodle/rice shape, browning, coating). Prefer a common canonical dish name over a literal inventory. Include likely hidden ingredients only when normal for the candidate dish. If uncertain, return multiple ranked dish_candidates. Avoid unsupported broad cuisine labels.",
           "Do not write the final recipe. Return strict JSON only.",
         ].join("\n"),
@@ -6976,19 +7024,28 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
   const isMeal = Boolean(parsed?.is_meal);
   const confidence = Number.isFinite(Number(parsed?.confidence)) ? Number(parsed.confidence) : 0.5;
   const visibleFoodComponents = uniqueStrings(Array.isArray(parsed?.visible_food_components) ? parsed.visible_food_components : []);
-  const confidenceOverride = !isMeal && confidence >= 0.35 && visibleFoodComponents.length > 0;
+  const likelyMealType = normalizeText(parsed?.likely_meal_type ?? "") || null;
+  const dishCandidates = Array.isArray(parsed?.dish_candidates) ? parsed.dish_candidates.slice(0, 5) : [];
+  const visibleIngredients = uniqueStrings(Array.isArray(parsed?.visible_ingredients) ? parsed.visible_ingredients : visibleFoodComponents);
+  const confidenceOverride = !isMeal && (
+    likelyMealType !== null ||
+    (
+      confidence >= 0.18
+      && (visibleFoodComponents.length > 0 || visibleIngredients.length > 0 || dishCandidates.length > 0)
+    )
+  );
   const meal_gate = {
     is_meal: isMeal || confidenceOverride,
     confidence,
     visible_food_components: visibleFoodComponents,
-    likely_meal_type: normalizeText(parsed?.likely_meal_type ?? "") || null,
+    likely_meal_type: likelyMealType,
     reject_reason: (isMeal || confidenceOverride) ? null : (normalizeText(parsed?.reject_reason ?? "") || null),
   };
 
   // Visual analysis — mirrors runPhotoVisualAnalysis.
   const visual_analysis = {
-    dish_candidates: Array.isArray(parsed?.dish_candidates) ? parsed.dish_candidates.slice(0, 5) : [],
-    visible_ingredients: uniqueStrings(Array.isArray(parsed?.visible_ingredients) ? parsed.visible_ingredients : visibleFoodComponents),
+    dish_candidates: dishCandidates,
+    visible_ingredients: visibleIngredients,
     likely_hidden_ingredients: uniqueStrings(Array.isArray(parsed?.likely_hidden_ingredients) ? parsed.likely_hidden_ingredients : []),
     cooking_methods: uniqueStrings(Array.isArray(parsed?.cooking_methods) ? parsed.cooking_methods : []),
     cuisine_hints: uniqueStrings(Array.isArray(parsed?.cuisine_hints) ? parsed.cuisine_hints : []),
@@ -9989,6 +10046,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
 }
 
 function formatJobResponse(jobRow, extras = {}) {
+  const activeStage = activeRecipeImportStage(jobRow);
   return {
     job: {
       id: jobRow.id,
@@ -10012,6 +10070,10 @@ function formatJobResponse(jobRow, extras = {}) {
       normalized_at: jobRow.normalized_at ?? null,
       saved_at: jobRow.saved_at ?? null,
       completed_at: jobRow.completed_at ?? null,
+      active_stage: activeStage,
+      stage_started_at: stageStartedAtForRecipeImportJob(jobRow, activeStage),
+      created_at: jobRow.created_at ?? null,
+      updated_at: jobRow.updated_at ?? null,
       event_log: Array.isArray(jobRow.event_log) ? jobRow.event_log : [],
     },
     ...extras,
@@ -10636,10 +10698,12 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       });
     }
 
+    const parsingStartedAt = nowIso();
     job = await appendJobEvent(existingJob.id, "parsing", { worker_id: workerID }, {
       status: "parsing",
       canonical_url: source.canonical_url ?? requestPayload.source_url,
-      fetched_at: existingJob.fetched_at ?? nowIso(),
+      fetched_at: existingJob.fetched_at ?? parsingStartedAt,
+      parsed_at: existingJob.parsed_at ?? parsingStartedAt,
     });
 
     const extraction = hasResumableNormalizedRecipe

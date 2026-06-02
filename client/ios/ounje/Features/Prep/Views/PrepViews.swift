@@ -361,7 +361,11 @@ struct PrepFoodCameraCaptureView: View {
                         } label: {
                             Image(systemName: camera.isTorchOn ? "bolt.fill" : "bolt")
                                 .font(.system(size: 22, weight: .bold))
-                                .foregroundStyle(camera.supportsTorch ? OunjePalette.accent : .white.opacity(0.42))
+                                .foregroundStyle(
+                                    camera.supportsTorch
+                                        ? (camera.isTorchOn ? Color.black.opacity(0.82) : Color.white)
+                                        : .white.opacity(0.42)
+                                )
                                 .frame(width: 54, height: 54)
                                 .background(
                                     Circle()

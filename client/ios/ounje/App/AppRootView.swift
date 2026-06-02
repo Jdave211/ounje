@@ -66,6 +66,9 @@ struct RootView: View {
             if !store.isAuthenticated {
                 AuthenticationView()
                     .id("auth-entry")
+            } else if OunjeLaunchFlags.forceOnboardingIncomplete {
+                FirstLoginOnboardingView()
+                    .id("forced-profile-onboarding")
             } else if store.shouldHoldPlannerSplash || store.shouldShowBootstrapLoadingView {
                 OunjeSplashLoaderView()
                 .id(store.isCompletingOnboarding ? "onboarding-preparation" : "bootstrap-loading")
@@ -1094,7 +1097,9 @@ private final class RecipeImportHistoryStore: ObservableObject {
             return
         }
         if let page = try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID, accessToken: accessToken) {
-            completedItems = page.items
+            completedItems = page.items.sorted { left, right in
+                completedImportSortDate(for: left) > completedImportSortDate(for: right)
+            }
             totalCompletedCount = page.totalCount
         }
         if let page = try? await RecipeImportAPIService.shared.fetchImportQueue(userID: userID, accessToken: accessToken) {
@@ -1106,6 +1111,26 @@ private final class RecipeImportHistoryStore: ObservableObject {
         }
         lastRefreshUserID = userID
         lastRefreshAt = .now
+    }
+
+    private func completedImportSortDate(for item: RecipeImportCompletedItem) -> Date {
+        parseImportDate(item.createdAt)
+            ?? parseImportDate(item.completedAt)
+            ?? .distantPast
+    }
+
+    private func parseImportDate(_ raw: String?) -> Date? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let parsed = fractionalFormatter.date(from: raw) {
+            return parsed
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: raw)
     }
 
     func removeQueuedImportImmediately(_ envelope: SharedRecipeImportEnvelope) {
@@ -4230,6 +4255,9 @@ private struct CookbookTabView: View {
             sectionTransitionDirection = newValue.motionIndex >= previousSection.motionIndex ? 1 : -1
             previousSelectedSection = newValue
         }
+        .onChange(of: filters.joined(separator: "|")) { _ in
+            resetUnavailableSavedFilter()
+        }
     }
 
     @ViewBuilder
@@ -4362,6 +4390,11 @@ private struct CookbookTabView: View {
         hasShownCookbookImportCoachmark = true
     }
 
+    private func resetUnavailableSavedFilter() {
+        guard selectedFilter != "All", !filters.contains(selectedFilter) else { return }
+        selectedFilter = "All"
+    }
+
     @ViewBuilder
     private var activeImportTracker: some View {
         if let activeImportProgressItem {
@@ -4414,26 +4447,36 @@ private struct CookbookTabView: View {
     @ViewBuilder
     private var savedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            CookbookSavedSearchField(
-                text: $searchText,
-                placeholder: "Search saved recipes"
-            )
+            HStack(alignment: .center, spacing: 10) {
+                CookbookSavedSearchField(
+                    text: $searchText,
+                    placeholder: "Search saved recipes"
+                )
 
-            if filters.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 22) {
-                        ForEach(filters, id: \.self) { filter in
-                            DiscoverPresetTextButton(
-                                title: filter,
-                                isSelected: selectedFilter == filter
-                            ) {
-                                selectedFilter = filter
-                            }
+                Menu {
+                    ForEach(filters, id: \.self) { filter in
+                        Button {
+                            selectedFilter = filter
+                        } label: {
+                            Label(filter, systemImage: selectedFilter == filter ? "checkmark" : "line.3.horizontal.decrease.circle")
                         }
                     }
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 2)
+                } label: {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(OunjePalette.surface.opacity(0.96))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                        .overlay {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(selectedFilter == "All" ? OunjePalette.primaryText : OunjePalette.accent)
+                        }
+                        .frame(width: 50, height: 50)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(selectedFilter == "All" ? "Filter saved recipes" : "Filter saved recipes, \(selectedFilter) selected")
             }
 
             if filteredRecipes.isEmpty && savedStore.isSyncingRemote {
@@ -7905,8 +7948,8 @@ private enum RecipeImportProgressStage: Int, CaseIterable {
     var statusWord: String {
         switch self {
         case .fetching: return "queuing"
-        case .readingVideo: return "scraping"
-        case .buildingRecipe: return "parsing"
+        case .readingVideo: return "pulling source"
+        case .buildingRecipe: return "building recipe"
         case .finishing: return "finishing"
         case .saved: return "done"
         }
@@ -8036,6 +8079,10 @@ private struct SharedRecipeImportQueueRow: View {
         return "Imported recipe"
     }
 
+    private var stableActivityDate: Date {
+        item.stageStartedAt ?? item.lastAttemptAt ?? item.createdAt
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
@@ -8094,11 +8141,7 @@ private struct SharedRecipeImportQueueRow: View {
                 if let attemptCount = item.attemptCount {
                     Text("Attempts: \(attemptCount)")
                 }
-                if let attemptAt = item.lastAttemptAt {
-                    Text(attemptAt.formatted(.relative(presentation: .named)))
-                } else {
-                    Text(item.createdAt.formatted(.relative(presentation: .named)))
-                }
+                Text(stableActivityDate.formatted(.relative(presentation: .named)))
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(OunjePalette.secondaryText)
@@ -8506,7 +8549,7 @@ private struct DiscoverComposerSheet: View {
     }
 
     private var helperCopy: String {
-        "Choose one import path. We'll save the result."
+        ""
     }
 
     private var placeholderCopy: String {
@@ -8516,7 +8559,7 @@ private struct DiscoverComposerSheet: View {
                 ? "Write the dish you want to prep. Add notes, cravings, or ingredients."
                 : "Describe a base dish, combo, ingredients, macros, or constraints."
         case .web:
-            return "Paste a TikTok, Instagram, blog, or recipe link."
+            return ""
         case .photo:
             return "Optional: add dish hints, cuisine, or what the photo should become."
         }
@@ -8562,15 +8605,17 @@ private struct DiscoverComposerSheet: View {
                         Spacer(minLength: 12)
 
                         NewRecipeTargetSwitcher(selection: $selectedTargetContext)
-                            .offset(y: -5)
+                            .offset(y: -11)
                     }
 
-                    Text(helperCopy)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(3)
-                        .lineSpacing(1.5)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if !helperCopy.isEmpty {
+                        Text(helperCopy)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .lineLimit(3)
+                            .lineSpacing(1.5)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     newRecipeOptions
 
@@ -8771,7 +8816,7 @@ private struct DiscoverComposerSheet: View {
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(mode.tint)
 
-                    TextField("https://www.tiktok.com/...", text: $draftText, axis: .vertical)
+                    TextField("", text: $draftText, axis: .vertical)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
@@ -8986,10 +9031,10 @@ private struct DiscoverComposerSheet: View {
     private var newRecipeOptions: some View {
         VStack(spacing: 15) {
             Button {
-                openImportPanel(.create, focusText: true)
+                beginPhotoImport()
             } label: {
                 NewRecipeImportOptionRow(
-                    mode: .create,
+                    mode: .photo,
                     isSelected: false
                 )
             }
@@ -9008,10 +9053,10 @@ private struct DiscoverComposerSheet: View {
             .disabled(isSubmitting)
 
             Button {
-                beginPhotoImport()
+                openImportPanel(.create, focusText: true)
             } label: {
                 NewRecipeImportOptionRow(
-                    mode: .photo,
+                    mode: .create,
                     isSelected: false
                 )
             }
@@ -9586,42 +9631,42 @@ private struct DiscoverComposerSheet: View {
 }
 
 private enum NewRecipeImportMode: CaseIterable, Hashable {
-    case create
-    case web
     case photo
+    case web
+    case create
 
     var title: String {
         switch self {
-        case .create: return "Create"
-        case .web: return "Web import"
         case .photo: return "Photo import"
+        case .web: return "Web import"
+        case .create: return "Create"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .create:
-            return "Base dish, combo, or recipe idea"
-        case .web:
-            return "TikTok, Instagram, websites, and blogs"
         case .photo:
             return "Screenshots, cookbooks, and food photos"
+        case .web:
+            return "TikTok, Instagram, websites, and blogs"
+        case .create:
+            return "Base dish, combo, or recipe idea"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .create: return "doc.badge.plus"
-        case .web: return "square.and.arrow.down"
         case .photo: return "photo.on.rectangle.angled"
+        case .web: return "square.and.arrow.down"
+        case .create: return "doc.badge.plus"
         }
     }
 
     var tint: Color {
         switch self {
-        case .create: return Color(hex: "E7A25D")
-        case .web: return Color(hex: "6FA6D9")
         case .photo: return Color(hex: "78B887")
+        case .web: return Color(hex: "6FA6D9")
+        case .create: return Color(hex: "E7A25D")
         }
     }
 }

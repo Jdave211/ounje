@@ -31,7 +31,47 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     let lastAttemptAt: Date?
     let serverSubmittedAt: Date?
     let lastError: String?
+    let activeStage: String?
+    let stageStartedAt: Date?
     let updatedAt: Date?
+
+    init(
+        id: String,
+        createdAt: Date,
+        jobID: String?,
+        targetState: String,
+        sourceText: String?,
+        sourceURLString: String?,
+        canonicalSourceURLString: String?,
+        sourceApp: String?,
+        attachments: [SharedRecipeImportAttachment],
+        processingState: String?,
+        attemptCount: Int?,
+        lastAttemptAt: Date?,
+        serverSubmittedAt: Date?,
+        lastError: String?,
+        activeStage: String? = nil,
+        stageStartedAt: Date? = nil,
+        updatedAt: Date?
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.jobID = jobID
+        self.targetState = targetState
+        self.sourceText = sourceText
+        self.sourceURLString = sourceURLString
+        self.canonicalSourceURLString = canonicalSourceURLString
+        self.sourceApp = sourceApp
+        self.attachments = attachments
+        self.processingState = processingState
+        self.attemptCount = attemptCount
+        self.lastAttemptAt = lastAttemptAt
+        self.serverSubmittedAt = serverSubmittedAt
+        self.lastError = lastError
+        self.activeStage = activeStage
+        self.stageStartedAt = stageStartedAt
+        self.updatedAt = updatedAt
+    }
 
     var resolvedSourceText: String {
         let sourceURLString = sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -44,6 +84,9 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     }
 
     var queueStatusLabel: String {
+        let normalizedActiveStage = String(activeStage ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         switch normalizedProcessingState {
         case "failed":
             return "Retry needed"
@@ -56,9 +99,15 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
         case "processing":
             return "Importing"
         case "fetching":
-            return "Fetching"
+            return "Pulling source"
         case "parsing":
-            return "Parsing"
+            if normalizedActiveStage.contains("reference") || normalizedActiveStage.contains("search") {
+                return "Finding references"
+            }
+            if normalizedActiveStage.contains("validation") {
+                return "Checking recipe"
+            }
+            return "Building recipe"
         case "normalized":
             return "Saving"
         case "saved":

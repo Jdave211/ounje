@@ -17,6 +17,14 @@ struct RecipeImportJobPayload: Decodable {
     let errorMessage: String?
     let attempts: Int?
     let maxAttempts: Int?
+    let queuedAt: String?
+    let fetchedAt: String?
+    let parsedAt: String?
+    let normalizedAt: String?
+    let savedAt: String?
+    let completedAt: String?
+    let activeStage: String?
+    let stageStartedAt: String?
     let createdAt: String?
     let updatedAt: String?
 
@@ -36,6 +44,14 @@ struct RecipeImportJobPayload: Decodable {
         case errorMessage = "error_message"
         case attempts
         case maxAttempts = "max_attempts"
+        case queuedAt = "queued_at"
+        case fetchedAt = "fetched_at"
+        case parsedAt = "parsed_at"
+        case normalizedAt = "normalized_at"
+        case savedAt = "saved_at"
+        case completedAt = "completed_at"
+        case activeStage = "active_stage"
+        case stageStartedAt = "stage_started_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -102,6 +118,12 @@ extension RecipeImportJobPayload {
             lastAttemptAt: Self.importDate(from: updatedAt),
             serverSubmittedAt: Self.importDate(from: createdAt ?? updatedAt),
             lastError: errorMessage ?? reviewReason,
+            activeStage: activeStage,
+            stageStartedAt: Self.importDate(from: stageStartedAt)
+                ?? Self.importDate(from: parsedAt)
+                ?? Self.importDate(from: fetchedAt)
+                ?? Self.importDate(from: queuedAt)
+                ?? Self.importDate(from: createdAt),
             updatedAt: Self.importDate(from: updatedAt) ?? Date()
         )
     }

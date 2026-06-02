@@ -2,11 +2,17 @@ import Foundation
 
 enum OunjeLaunchFlags {
     static let paywallsEnabled = true
-    static let forceOnboardingIncomplete = false
+    static var forceOnboardingIncomplete: Bool {
+#if DEBUG && targetEnvironment(simulator)
+        ProcessInfo.processInfo.environment["OUNJE_FORCE_ONBOARDING_INCOMPLETE"] == "1"
+#else
+        false
+#endif
+    }
 
     static var usesSimulatorBillingBypass: Bool {
 #if DEBUG && targetEnvironment(simulator)
-        true
+        ProcessInfo.processInfo.environment["OUNJE_SIMULATOR_BILLING_BYPASS"] == "1"
 #else
         false
 #endif

@@ -1,11 +1,17 @@
 import SwiftUI
 import Foundation
 
+enum AppToastTone: Equatable {
+    case neutral
+    case destructive
+}
+
 struct AppToast: Identifiable, Equatable {
     let id = UUID()
     let title: String
     let subtitle: String?
     let systemImage: String
+    let tone: AppToastTone
     let thumbnailURLString: String?
     let destination: AppToastDestination?
     let actionTitle: String?
@@ -88,6 +94,7 @@ final class AppToastCenter: ObservableObject {
         title: String,
         subtitle: String? = nil,
         systemImage: String = "checkmark.circle.fill",
+        tone: AppToastTone = .neutral,
         thumbnailURLString: String? = nil,
         destination: AppToastDestination? = nil,
         actionTitle: String? = nil,
@@ -99,6 +106,7 @@ final class AppToastCenter: ObservableObject {
                 title: title,
                 subtitle: subtitle,
                 systemImage: systemImage,
+                tone: tone,
                 thumbnailURLString: thumbnailURLString,
                 destination: destination,
                 actionTitle: actionTitle,
@@ -124,7 +132,8 @@ final class AppToastCenter: ObservableObject {
     func showPersistent(
         title: String,
         subtitle: String? = nil,
-        systemImage: String = "arrow.triangle.2.circlepath"
+        systemImage: String = "arrow.triangle.2.circlepath",
+        tone: AppToastTone = .neutral
     ) {
         dismissTask?.cancel()
         dismissTask = nil
@@ -133,6 +142,7 @@ final class AppToastCenter: ObservableObject {
                 title: title,
                 subtitle: subtitle,
                 systemImage: systemImage,
+                tone: tone,
                 thumbnailURLString: nil,
                 destination: nil,
                 actionTitle: nil,
@@ -149,6 +159,7 @@ final class AppToastCenter: ObservableObject {
                 title: title,
                 subtitle: subtitle,
                 systemImage: systemImage ?? current.systemImage,
+                tone: current.tone,
                 thumbnailURLString: current.thumbnailURLString,
                 destination: current.destination,
                 actionTitle: current.actionTitle,
@@ -206,10 +217,10 @@ struct AppToastBanner: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(OunjePalette.panel.opacity(0.96))
+                .fill(backgroundFillColor)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                        .stroke(borderColor, lineWidth: 1)
                 )
         )
         .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
@@ -240,13 +251,13 @@ struct AppToastBanner: View {
                 Text(toast.title)
                     .font(.custom("Slee_handwritting-Regular", size: 16))
                     .tracking(0.05)
-                    .foregroundStyle(OunjePalette.primaryText)
+                    .foregroundStyle(titleColor)
                     .lineLimit(1)
 
                 if let subtitle = toast.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(OunjePalette.secondaryText)
+                        .foregroundStyle(subtitleColor)
                         .lineLimit(1)
                 }
             }
@@ -264,11 +275,65 @@ struct AppToastBanner: View {
     private var toastFallbackBadge: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.96))
+                .fill(iconBadgeFillColor)
 
             Image(systemName: toast.systemImage)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(OunjePalette.softCream)
+                .foregroundStyle(iconTintColor)
+        }
+    }
+
+    private var backgroundFillColor: Color {
+        switch toast.tone {
+        case .neutral:
+            return OunjePalette.panel.opacity(0.96)
+        case .destructive:
+            return Color(red: 0.24, green: 0.06, blue: 0.08).opacity(0.98)
+        }
+    }
+
+    private var borderColor: Color {
+        switch toast.tone {
+        case .neutral:
+            return Color.white.opacity(0.10)
+        case .destructive:
+            return Color(red: 0.95, green: 0.34, blue: 0.34).opacity(0.42)
+        }
+    }
+
+    private var titleColor: Color {
+        switch toast.tone {
+        case .neutral:
+            return OunjePalette.primaryText
+        case .destructive:
+            return Color.white
+        }
+    }
+
+    private var subtitleColor: Color {
+        switch toast.tone {
+        case .neutral:
+            return OunjePalette.secondaryText
+        case .destructive:
+            return Color.white.opacity(0.82)
+        }
+    }
+
+    private var iconBadgeFillColor: Color {
+        switch toast.tone {
+        case .neutral:
+            return OunjePalette.surface.opacity(0.96)
+        case .destructive:
+            return Color(red: 0.48, green: 0.10, blue: 0.12).opacity(0.95)
+        }
+    }
+
+    private var iconTintColor: Color {
+        switch toast.tone {
+        case .neutral:
+            return OunjePalette.softCream
+        case .destructive:
+            return Color(red: 1.0, green: 0.78, blue: 0.78)
         }
     }
 }
