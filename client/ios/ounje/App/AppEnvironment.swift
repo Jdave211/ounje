@@ -766,8 +766,13 @@ final class MealPlanningAppStore: ObservableObject {
             return
         }
 
-        if OunjeLaunchFlags.usesSimulatorBillingBypass,
-           applySimulatorDevelopmentEntitlement() {
+        if OunjeLaunchFlags.usesSimulatorBillingBypass {
+            // On simulator the bypass always succeeds — even if auth is in a
+            // needsReauthentication loop, the entitlement is faked locally so
+            // the developer is never blocked by the paywall gate.
+            let _ = applySimulatorDevelopmentEntitlement()
+            membershipEntitlementResolved = true
+            membershipEntitlementServerConfirmed = true
             return
         }
 

@@ -1,9 +1,26 @@
-function sanitizeRecipeText(value) {
+// Common named HTML entities that appear in recipe JSON-LD from food blogs.
+const NAMED_HTML_ENTITIES = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",
+  nbsp: " ", ndash: "\u2013", mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019",
+  ldquo: "\u201c", rdquo: "\u201d", times: "\u00d7", frac12: "\u00bd", frac14: "\u00bc",
+  frac34: "\u00be", deg: "\u00b0", reg: "\u00ae", trade: "\u2122", copy: "\u00a9",
+};
+
+function decodeHTMLEntities(value) {
   return String(value ?? "")
+    // numeric decimal: &#8217; \u2192 '
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    // numeric hex: &#x2019; \u2192 '
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    // named: &rsquo; \u2192 '
+    .replace(/&([a-z]+);/gi, (match, name) => NAMED_HTML_ENTITIES[name.toLowerCase()] ?? match);
+}
+
+function sanitizeRecipeText(value) {
+  return decodeHTMLEntities(String(value ?? ""))
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ")
+    .replace(/\r/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -14,7 +31,7 @@ function normalizeText(value) {
 }
 
 function normalizeRecipeLine(value) {
-  return String(value ?? "")
+  return decodeHTMLEntities(String(value ?? ""))
     .replace(/^[-*•\s]+/, "")
     .replace(/\s+/g, " ")
     .trim();

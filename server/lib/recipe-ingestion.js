@@ -649,8 +649,20 @@ function assertSupabaseConfig() {
   }
 }
 
-function normalizeText(value) {
+// Common named HTML entities from recipe JSON-LD (e.g. Sally's Baking Addiction).
+const NAMED_HTML_ENTITIES_INGESTION = {
+  amp:"&",lt:"<",gt:">",quot:'"',apos:"'",nbsp:" ",ndash:"–",mdash:"—",
+  lsquo:"'",rsquo:"'",ldquo:"“",rdquo:"”",times:"×",
+  frac12:"½",frac14:"¼",frac34:"¾",deg:"°",reg:"®",trade:"™",copy:"©",
+};
+function decodeHTMLEntitiesIngestion(value) {
   return String(value ?? "")
+    .replace(/&#(\d+);/g, (_, c) => String.fromCodePoint(Number(c)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, n) => NAMED_HTML_ENTITIES_INGESTION[n.toLowerCase()] ?? m);
+}
+function normalizeText(value) {
+  return decodeHTMLEntitiesIngestion(String(value ?? ""))
     .replace(/\s+/g, " ")
     .trim();
 }

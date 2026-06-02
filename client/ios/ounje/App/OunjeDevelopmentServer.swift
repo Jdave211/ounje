@@ -12,7 +12,11 @@ enum OunjeLaunchFlags {
 
     static var usesSimulatorBillingBypass: Bool {
 #if DEBUG && targetEnvironment(simulator)
-        ProcessInfo.processInfo.environment["OUNJE_SIMULATOR_BILLING_BYPASS"] == "1"
+        // Always bypass on simulator — StoreKit purchases require a real Apple ID
+        // in Simulator Settings and a matching StoreKit config, neither of which
+        // is available in normal dev/testing. The env-var opt-out lets you force
+        // the paywall if you're specifically testing it.
+        ProcessInfo.processInfo.environment["OUNJE_SIMULATOR_BILLING_BYPASS"] != "0"
 #else
         false
 #endif
