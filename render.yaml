@@ -64,6 +64,8 @@ services:
         sync: false
       - key: IFRAMELY_API_KEY
         sync: false
+      - key: OUNJE_RAPIDAPI_SOCIAL_KEY
+        sync: false
       - key: TWO_CAPTCHA_API_KEY
         sync: false
       - key: RECIPE_IMAGE_BUCKET

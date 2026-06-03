@@ -77,6 +77,12 @@ const SOCIAL_FETCH_TIMEOUT_MS = Math.max(
   3_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FETCH_TIMEOUT_MS ?? "10000", 10) || 10_000
 );
+const RAPIDAPI_SOCIAL_KEY = normalizeText(
+  process.env.OUNJE_RAPIDAPI_SOCIAL_KEY
+    ?? process.env.RAPIDAPI_SOCIAL_KEY
+    ?? ""
+);
+const RAPIDAPI_SOCIAL_HOST = "social-media-video-downloader.p.rapidapi.com";
 const SOCIAL_FRAME_PROBE_TIMEOUT_MS = Math.max(
   2_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_PROBE_TIMEOUT_MS ?? "5000", 10) || 5_000
@@ -866,6 +872,42 @@ function cleanURL(raw) {
   }
 }
 
+function extractYouTubeVideoID(raw) {
+  const cleaned = cleanURL(raw);
+  if (!cleaned || !isProbablyURL(cleaned)) return null;
+  try {
+    const url = new URL(cleaned);
+    const host = url.hostname.toLowerCase();
+    if (host === "youtu.be") {
+      return normalizeText(url.pathname.split("/").filter(Boolean)[0] ?? "") || null;
+    }
+    if (host.includes("youtube.com") || host.includes("youtube-nocookie.com")) {
+      const watchID = normalizeText(url.searchParams.get("v") ?? "");
+      if (watchID) return watchID;
+      const shortsMatch = url.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{6,})/i);
+      if (shortsMatch?.[1]) return shortsMatch[1];
+      const embedMatch = url.pathname.match(/^\/embed\/([A-Za-z0-9_-]{6,})/i);
+      if (embedMatch?.[1]) return embedMatch[1];
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function extractInstagramShortcode(raw) {
+  const cleaned = cleanURL(raw);
+  if (!cleaned || !isProbablyURL(cleaned)) return null;
+  try {
+    const url = new URL(cleaned);
+    if (!url.hostname.toLowerCase().includes("instagram.com")) return null;
+    const match = url.pathname.match(/^\/(?:reel|p|tv)\/([^/?#]+)/i);
+    return normalizeText(match?.[1] ?? "") || null;
+  } catch {
+    return null;
+  }
+}
+
 function canonicalImportIdentityForURL(raw) {
   const cleaned = cleanURL(raw);
   if (!cleaned || !isProbablyURL(cleaned)) return null;
@@ -925,6 +967,12 @@ function isRecipeImageStorageURL(raw) {
   const normalized = cleanURL(raw);
   if (!normalized || !SUPABASE_URL) return false;
   return normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/`);
+}
+
+function isRecipeVideoStorageURL(raw) {
+  const normalized = cleanURL(raw);
+  if (!normalized || !SUPABASE_URL) return false;
+  return normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/`);
 }
 
 function guessImageExtension(contentType = "", sourceURL = "") {
@@ -1131,17 +1179,31 @@ async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole =
 // Returns the public MP4 URL, or null if upload is skipped (too large / unavailable).
 const PERSISTED_VIDEO_MAX_BYTES = 45 * 1024 * 1024; // 45MB cap
 async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", accessToken = null } = {}) {
-  if (!videoPath || !SUPABASE_URL || !RECIPE_VIDEO_BUCKET) return null;
+  if (!videoPath || !SUPABASE_URL || !RECIPE_VIDEO_BUCKET) {
+    console.warn("[recipe-ingestion] native video upload skipped: missing video path, Supabase URL, or video bucket");
+    return null;
+  }
   const storageBearer = (normalizeText(accessToken ?? "") || SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim();
-  if (!storageBearer) return null;
+  if (!storageBearer) {
+    console.warn("[recipe-ingestion] native video upload skipped: missing storage bearer");
+    return null;
+  }
 
   let buffer;
   try {
     buffer = await fsp.readFile(videoPath);
-  } catch {
+  } catch (error) {
+    console.warn("[recipe-ingestion] native video upload skipped: could not read video file", error instanceof Error ? error.message : error);
     return null;
   }
-  if (!buffer?.length || buffer.length > PERSISTED_VIDEO_MAX_BYTES) return null;
+  if (!buffer?.length) {
+    console.warn("[recipe-ingestion] native video upload skipped: empty video file");
+    return null;
+  }
+  if (buffer.length > PERSISTED_VIDEO_MAX_BYTES) {
+    console.warn(`[recipe-ingestion] native video upload skipped: file too large (${buffer.length} bytes)`);
+    return null;
+  }
 
   const keyHash = crypto.createHash("sha1").update(`${recipeKey}:video`).digest("hex").slice(0, 20);
   const storagePath = `${keyHash}.mp4`;
@@ -1149,17 +1211,28 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
 
   try {
     const bucketReady = await ensureRecipeVideoBucket();
-    if (!bucketReady) return null;
-    const uploadResponse = await fetch(uploadURL, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_ANON_KEY || storageBearer,
-        Authorization: `Bearer ${storageBearer}`,
-        "Content-Type": "video/mp4",
-        "x-upsert": "true",
-      },
-      body: buffer,
-    });
+    if (!bucketReady) {
+      console.warn("[recipe-ingestion] native video upload skipped: video bucket unavailable");
+      return null;
+    }
+    const storageApiKey = storageBearer === SUPABASE_SERVICE_ROLE_KEY
+      ? SUPABASE_SERVICE_ROLE_KEY
+      : SUPABASE_ANON_KEY || storageBearer;
+    let uploadResponse = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      uploadResponse = await fetch(uploadURL, {
+        method: "POST",
+        headers: {
+          apikey: storageApiKey,
+          Authorization: `Bearer ${storageBearer}`,
+          "Content-Type": "video/mp4",
+          "x-upsert": "true",
+        },
+        body: buffer,
+      });
+      if (uploadResponse.ok || attempt === 2) break;
+      await delay(350 * attempt);
+    }
     if (!uploadResponse.ok) {
       console.warn(`[recipe-ingestion] native video upload failed: HTTP ${uploadResponse.status} ${await uploadResponse.text().catch(() => "")}`.slice(0, 200));
       return null;
@@ -3376,7 +3449,6 @@ function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
     recipeProjection?.title
       ?? requestPayload?.title
       ?? jobRow?.input_text
-      ?? rawSourceURL
       ?? "Imported recipe"
   ) || "Imported recipe";
 
@@ -3635,14 +3707,17 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
   }
 
   const importedSourceJobIDs = new Set(importedRows.map((row) => normalizeText(row?.source_job_id)).filter(Boolean));
+  const importedRecipeIDs = new Set(importedRows.map((row) => normalizeText(row?.id)).filter(Boolean));
   const importedItems = importedRows.map(summarizeCompletedImportedRecipe);
   const jobRows = rows
     .filter((row) => {
       const jobID = normalizeText(row?.id);
+      const recipeID = normalizeText(row?.recipe_id);
       // Hide only the terminal job that produced the canonical imported row.
       // Keep dedupe/cache-hit jobs that reused an existing recipe_id: their
       // source URL is what lets old share-extension envelopes reconcile.
-      return !jobID || !importedSourceJobIDs.has(jobID);
+      return (!jobID || !importedSourceJobIDs.has(jobID))
+        && (!recipeID || !importedRecipeIDs.has(recipeID));
     });
   const projectionByID = await fetchCompletedRecipeProjectionsByID(jobRows.map((row) => row?.recipe_id));
   const jobItems = jobRows.map((row) => summarizeCompletedImportJob(row, projectionByID.get(normalizeText(row?.recipe_id)) ?? null));
@@ -5188,6 +5263,11 @@ function coerceStructuredRecipeCandidate(candidate, source) {
       source.channel_id
     )
   );
+  const sourceAttachedVideoURL = cleanURL(source.attached_video_url ?? null);
+  const candidateAttachedVideoURL = cleanURL(candidate.attached_video_url ?? candidate.attachedVideoUrl ?? null);
+  const attachedVideoURL = isRecipeVideoStorageURL(sourceAttachedVideoURL)
+    ? sourceAttachedVideoURL
+    : candidateAttachedVideoURL ?? sourceAttachedVideoURL;
 
   return {
     title: normalizeText(candidate.title ?? source.title ?? source.meta_title ?? "") || null,
@@ -5215,7 +5295,7 @@ function coerceStructuredRecipeCandidate(candidate, source) {
     discover_card_image_url: cleanURL(candidate.discover_card_image_url ?? candidate.discoverCardImageUrl ?? heroImageURL),
     recipe_url: cleanURL(candidate.recipe_url ?? candidate.recipeURL ?? source.source_url ?? source.canonical_url ?? null),
     original_recipe_url: cleanURL(candidate.original_recipe_url ?? candidate.originalRecipeUrl ?? source.canonical_url ?? source.source_url ?? null),
-    attached_video_url: cleanURL(candidate.attached_video_url ?? candidate.attachedVideoUrl ?? source.attached_video_url ?? null),
+    attached_video_url: attachedVideoURL,
     detail_footnote: normalizeText(candidate.detail_footnote ?? "") || null,
     image_caption: normalizeText(candidate.image_caption ?? "") || null,
     dietary_tags: uniqueStrings(candidate.dietary_tags ?? candidate.dietaryTags ?? []),
@@ -6677,6 +6757,215 @@ async function downloadRemoteVideoToFile(url, destPath) {
   return destPath;
 }
 
+function rapidAPISubtitleBucketFromTracks(...trackGroups) {
+  const bucket = {};
+  for (const tracks of trackGroups) {
+    const list = Array.isArray(tracks) ? tracks : [];
+    for (const track of list) {
+      const url = cleanURL(track?.url ?? track?.Url ?? track?.URL ?? null);
+      if (!url) continue;
+      const language = normalizeText(
+        track?.language
+          ?? track?.LanguageCodeName
+          ?? track?.languageCode
+          ?? track?.LanguageID
+          ?? "en"
+      ) || "en";
+      const ext = normalizeText(track?.ext ?? track?.Format ?? track?.captionFormat ?? "").toLowerCase() || "vtt";
+      if (!bucket[language]) bucket[language] = [];
+      bucket[language].push({ ext, url });
+    }
+  }
+  return bucket;
+}
+
+function rapidAPITranscriptText(payload = null) {
+  const transcript = payload?.metadata?.transcript?.transcript;
+  if (Array.isArray(transcript)) {
+    return uniqueStrings(transcript.map((entry) => normalizeText(
+      entry?.text
+        ?? entry?.utf8
+        ?? entry?.caption
+        ?? entry?.snippet
+        ?? entry
+    ))).join(" ");
+  }
+  return normalizeText(transcript ?? "");
+}
+
+function rapidAPIResponseURL(value) {
+  const url = cleanURL(value);
+  if (!url || !isProbablyURL(url)) return null;
+  return url;
+}
+
+function collectRapidAPIVideoCandidates(payload = null) {
+  const candidates = [];
+  const addCandidate = (value, context = {}) => {
+    const url = rapidAPIResponseURL(value?.url ?? value);
+    if (!url) return;
+    const label = normalizeText(value?.label ?? context.label ?? "");
+    const mimeType = normalizeText(value?.metadata?.mime_type ?? value?.mime_type ?? context.mime_type ?? "");
+    const quality = normalizeText(value?.metadata?.quality_label ?? value?.metadata?.definition ?? value?.definition ?? label);
+    const width = finiteNumberOrNull(value?.metadata?.width ?? value?.width);
+    const height = finiteNumberOrNull(value?.metadata?.height ?? value?.height);
+    const lengthText = normalizeText(value?.metadata?.content_length_text ?? value?.content_length_text ?? "");
+    const lowered = `${label} ${mimeType} ${quality} ${url}`.toLowerCase();
+    let score = 0;
+    if (lowered.includes("video")) score += 30;
+    if (lowered.includes("mp4")) score += 25;
+    if (lowered.includes("720")) score += 8;
+    if (lowered.includes("1080")) score += 10;
+    if (lowered.includes("prox")) score += 2;
+    if (height) score += Math.min(12, height / 90);
+    if (width) score += Math.min(6, width / 160);
+    if (/cover|thumb|avatar|image|jpg|jpeg|png|webp/i.test(lowered)) score -= 60;
+    candidates.push({ url, score, label, mime_type: mimeType, quality, width, height, length_text: lengthText });
+  };
+
+  for (const content of Array.isArray(payload?.contents) ? payload.contents : []) {
+    for (const key of ["videos", "video", "renderableVideos", "media", "medias"]) {
+      const value = content?.[key];
+      if (Array.isArray(value)) {
+        for (const item of value) addCandidate(item, { label: key });
+      } else if (value && typeof value === "object") {
+        addCandidate(value, { label: key });
+      }
+    }
+    addCandidate(content);
+  }
+
+  const nestedVideo = payload?.metadata?.additionalData?.video;
+  if (nestedVideo && typeof nestedVideo === "object") {
+    addCandidate({ url: nestedVideo.playAddr, label: "playAddr", metadata: nestedVideo });
+    addCandidate({ url: nestedVideo.downloadAddr, label: "downloadAddr", metadata: nestedVideo });
+  }
+
+  return candidates
+    .filter((candidate) => candidate.url)
+    .sort((left, right) => right.score - left.score);
+}
+
+function rapidAPIInfoFromPayload(payload, sourceURL, platform) {
+  const metadata = payload?.metadata ?? {};
+  const additional = metadata.additionalData ?? {};
+  const video = additional.video ?? {};
+  const authorUser = metadata.author?.user ?? metadata.author ?? {};
+  const authorStats = metadata.author?.stats ?? null;
+  const title = normalizeText(
+    additional.desc
+      ?? metadata.description
+      ?? metadata.title
+      ?? ""
+  );
+  const thumbnail = cleanURL(metadata.thumbnailUrl ?? video.cover ?? video.originCover ?? video.dynamicCover ?? null);
+  const authorHandle = normalizeText(authorUser.uniqueId ?? authorUser.username ?? authorUser.id ?? "");
+  const authorName = normalizeText(authorUser.nickname ?? authorUser.name ?? metadata.author?.name ?? "");
+  const subtitleBucket = rapidAPISubtitleBucketFromTracks(
+    video.subtitleInfos,
+    video.claInfo?.captionInfos,
+    additional?.video?.subtitleInfos
+  );
+
+  return {
+    id: normalizeText(additional.id ?? video.id ?? metadata.id ?? "") || null,
+    title: title || normalizeText(metadata.title ?? "") || null,
+    description: title || normalizeText(metadata.description ?? "") || null,
+    uploader: authorName || null,
+    uploader_id: authorHandle || null,
+    uploader_url: authorHandle
+      ? platform === "instagram"
+        ? `https://www.instagram.com/${authorHandle.replace(/^@/, "")}/`
+        : platform === "tiktok"
+          ? `https://www.tiktok.com/@${authorHandle.replace(/^@/, "")}`
+          : null
+      : null,
+    channel: normalizeText(metadata.author?.name ?? authorName) || null,
+    channel_url: cleanURL(metadata.author?.url ?? null),
+    webpage_url: cleanURL(sourceURL),
+    original_url: cleanURL(sourceURL),
+    duration: finiteNumberOrNull(video.duration ?? additional.duration ?? metadata.duration),
+    thumbnail,
+    thumbnails: thumbnail ? [{ url: thumbnail }] : [],
+    subtitles: subtitleBucket,
+    automatic_captions: subtitleBucket,
+    _rapidapi_provider: "social-media-video-downloader",
+    _rapidapi_author_stats: authorStats,
+    _rapidapi_transcript_text: rapidAPITranscriptText(payload),
+  };
+}
+
+async function fetchSocialViaRapidAPI(sourceURL, platform) {
+  if (!RAPIDAPI_SOCIAL_KEY) return null;
+  const cleaned = cleanURL(sourceURL);
+  if (!cleaned) return null;
+
+  let endpointPath = null;
+  const params = new URLSearchParams();
+  if (platform === "tiktok") {
+    endpointPath = "/tiktok/v3/post/details";
+    params.set("url", cleaned);
+  } else if (platform === "instagram") {
+    const shortcode = extractInstagramShortcode(cleaned);
+    if (!shortcode) return null;
+    endpointPath = "/instagram/v3/media/post/details";
+    params.set("shortcode", shortcode);
+  } else if (platform === "youtube") {
+    const videoID = extractYouTubeVideoID(cleaned);
+    if (!videoID) return null;
+    endpointPath = "/youtube/v3/video/details";
+    params.set("videoId", videoID);
+    params.set("getTranscript", "true");
+    params.set("urlAccess", "normal");
+  } else {
+    return null;
+  }
+
+  const requestURL = `https://${RAPIDAPI_SOCIAL_HOST}${endpointPath}?${params.toString()}`;
+  let payload;
+  try {
+    const resp = await fetchWithTimeout(
+      requestURL,
+      {
+        headers: {
+          "X-RapidAPI-Key": RAPIDAPI_SOCIAL_KEY,
+          "X-RapidAPI-Host": RAPIDAPI_SOCIAL_HOST,
+          "user-agent": DEFAULT_USER_AGENT,
+          accept: "application/json",
+        },
+      },
+      SOCIAL_METADATA_TIMEOUT_MS,
+      `${platform} rapidapi social downloader`
+    );
+    if (!resp.ok) return null;
+    payload = await resp.json();
+  } catch (error) {
+    console.warn(`[recipe-ingestion] ${platform} rapidapi social downloader failed:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+
+  if (!payload || payload.error) {
+    const message = normalizeText(payload?.error?.message ?? payload?.error ?? "");
+    if (message) console.warn(`[recipe-ingestion] ${platform} rapidapi social downloader error:`, message);
+    return null;
+  }
+
+  const candidates = collectRapidAPIVideoCandidates(payload);
+  const selectedVideo = platform === "youtube"
+    ? candidates.find((candidate) => /mp4a|audio/i.test(candidate.mime_type ?? ""))
+    : candidates[0];
+  const videoURL = selectedVideo?.url ?? null;
+  return {
+    video_url: videoURL,
+    info: rapidAPIInfoFromPayload(payload, cleaned, platform),
+    raw_json: compactJSON({
+      metadata: payload.metadata ?? null,
+      selected_video: selectedVideo ?? null,
+      content_count: Array.isArray(payload.contents) ? payload.contents.length : null,
+    }),
+  };
+}
+
 // TikTok hard-blocks datacenter IPs from yt-dlp. A TikTok extraction API (tikwm-style,
 // configurable via OUNJE_TIKTOK_API_URL) runs the extraction on its own infrastructure
 // and returns video metadata + a no-watermark MP4 URL we can fetch directly. Returns
@@ -6803,15 +7092,21 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
 }
 
 async function extractYouTubeSource(sourceURL) {
-  const info = await fetchYtdlMetadataCached(sourceURL, {
+  const rapidAPIResult = await fetchSocialViaRapidAPI(sourceURL, "youtube");
+  const info = rapidAPIResult?.info ?? await fetchYtdlMetadataCached(sourceURL, {
     label: "youtube metadata resolve",
     cacheKind: "youtube-metadata",
   });
 
   const subtitleTrack = pickSubtitleTrack(info);
-  const transcriptText = await downloadTranscript(subtitleTrack);
+  const transcriptText = normalizeText(rapidAPIResult?.info?._rapidapi_transcript_text ?? "") || await downloadTranscript(subtitleTrack);
   const thumbnailURL = bestThumbnail(info);
-  const downloadedSignals = await enrichDownloadedShortVideoSource(sourceURL, "youtube", info);
+  const downloadedSignals = await enrichDownloadedShortVideoSource(
+    sourceURL,
+    "youtube",
+    info,
+    { directVideoURL: rapidAPIResult?.video_url ?? null }
+  );
   const resolvedTranscript = normalizeText(downloadedSignals.transcript_text || transcriptText);
   const evidenceBundle = buildVideoEvidenceBundle({
     source_type: "youtube",
@@ -6884,6 +7179,7 @@ async function extractYouTubeSource(sourceURL) {
             source_url: cleanURL(info.webpage_url ?? sourceURL),
             raw_json: compactJSON({
               downloaded_video: true,
+              persisted_video_url: downloadedSignals.persisted_video_url ?? null,
               frame_count: downloadedSignals.frame_data_urls?.length ?? 0,
               transcript_excerpt: resolvedTranscript ? resolvedTranscript.slice(0, 2000) : null,
               frame_ocr_texts: downloadedSignals.frame_ocr_texts ?? [],
@@ -6897,6 +7193,14 @@ async function extractYouTubeSource(sourceURL) {
         source_url: cleanURL(info.webpage_url ?? sourceURL),
         raw_json: compactJSON(evidenceBundle),
       },
+      rapidAPIResult
+        ? {
+            artifact_type: "youtube_rapidapi_social_downloader",
+            content_type: "application/json",
+            source_url: cleanURL(info.webpage_url ?? sourceURL),
+            raw_json: rapidAPIResult.raw_json,
+          }
+        : null,
     ].filter(Boolean),
   };
 }
@@ -6905,11 +7209,17 @@ async function extractSocialSource(sourceURL, platform) {
   let metadata = null;
   let blocked = false;
   let apiVideoURL = null;
+  let rapidAPIResult = null;
 
-  // TikTok blocks datacenter IPs from yt-dlp; the extraction API does the work on its
-  // own infra and hands back metadata + a fetchable no-watermark MP4. Prefer it for
-  // TikTok, falling back to yt-dlp (with proxy, if configured) when it's unavailable.
-  if (platform === "tiktok") {
+  rapidAPIResult = await fetchSocialViaRapidAPI(sourceURL, platform);
+  if (rapidAPIResult?.info) {
+    metadata = rapidAPIResult.info;
+    apiVideoURL = rapidAPIResult.video_url ?? null;
+  }
+
+  // TikTok blocks datacenter IPs from yt-dlp; when RapidAPI is unavailable, the
+  // TikTok extraction API can still hand back metadata + a fetchable no-watermark MP4.
+  if (!metadata && platform === "tiktok") {
     const apiResult = await fetchTikTokViaAPI(sourceURL);
     if (apiResult?.video_url) {
       metadata = apiResult.info;
@@ -7054,6 +7364,7 @@ async function extractSocialSource(sourceURL, platform) {
             source_url: cleanURL(metadata?.webpage_url ?? sourceURL),
             raw_json: compactJSON({
               downloaded_video: true,
+              persisted_video_url: downloadedSignals.persisted_video_url ?? null,
               frame_count: downloadedSignals.frame_data_urls?.length ?? 0,
               transcript_excerpt: resolvedTranscript ? resolvedTranscript.slice(0, 2000) : null,
               frame_ocr_texts: downloadedSignals.frame_ocr_texts ?? [],
@@ -7067,6 +7378,14 @@ async function extractSocialSource(sourceURL, platform) {
         source_url: cleanURL(metadata?.webpage_url ?? sourceURL),
         raw_json: compactJSON(evidenceBundle),
       },
+      rapidAPIResult
+        ? {
+            artifact_type: `${platform}_rapidapi_social_downloader`,
+            content_type: "application/json",
+            source_url: cleanURL(metadata?.webpage_url ?? sourceURL),
+            raw_json: rapidAPIResult.raw_json,
+          }
+        : null,
       pageSignals
         ? {
             artifact_type: `${platform}_page_signals`,
