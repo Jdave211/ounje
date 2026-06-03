@@ -1,14 +1,19 @@
 name: Deploy VM recipe worker
 
-# The recipe-ingestion VM worker (systemd: ounje-recipe-ingestion-worker) does NOT
-# auto-deploy like the Render API does. This workflow SSHes into the VM on every push
-# to main that touches server code and runs the standard pull/install/restart so the
-# worker stops lagging behind the latest ingestion fixes (social/video imports).
+# The recipe-ingestion VM worker (a DigitalOcean droplet, systemd service
+# `ounje-recipe-ingestion`) does NOT auto-deploy like the Render API does, so
+# server-side ingestion fixes (social/video) lag behind until a manual deploy.
+# This workflow rsyncs the latest server code to the droplet and restarts the
+# worker on every push to main that touches server code.
+#
+# The droplet's /opt/ounje is a plain file tree (NOT a git checkout), so we copy
+# files with rsync rather than `git pull`.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
-#   VM_SSH_HOST  - the VM's hostname or IP
-#   VM_SSH_USER  - ssh user with sudo for systemctl (e.g. the deploy user)
-#   VM_SSH_KEY   - the PRIVATE ssh key (PEM) authorized on the VM
+#   VM_SSH_HOST  - droplet public IPv4 (e.g. 161.35.129.11)
+#   VM_SSH_USER  - ssh user (root)
+#   VM_SSH_KEY   - the PRIVATE deploy key (PEM) whose public half is in the
+#                  droplet's ~/.ssh/authorized_keys
 #   VM_SSH_PORT  - (optional) ssh port, defaults to 22
 #
 # Until those secrets are set the job no-ops cleanly instead of failing red.
@@ -19,7 +24,6 @@ on:
     paths:
       - "server/**"
       - "package.json"
-      - "deploy/systemd/**"
       - ".github/workflows/deploy-vm-worker.yml"
   workflow_dispatch: {}
 
@@ -27,9 +31,13 @@ concurrency:
   group: deploy-vm-worker
   cancel-in-progress: false
 
+env:
+  REMOTE_DIR: /opt/ounje
+  SERVICE: ounje-recipe-ingestion
+
 jobs:
   deploy:
-    name: Pull + restart worker on VM
+    name: rsync + restart worker on droplet
     runs-on: ubuntu-latest
     steps:
       - name: Check for SSH secrets
@@ -44,24 +52,62 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy over SSH
+      - name: Checkout
         if: steps.guard.outputs.configured == 'true'
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VM_SSH_HOST }}
-          username: ${{ secrets.VM_SSH_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          port: ${{ secrets.VM_SSH_PORT || 22 }}
-          command_timeout: 20m
-          script_stop: true
-          script: |
-            set -euo pipefail
-            cd /opt/ounje
-            git fetch --all --prune
-            git reset --hard origin/main
-            # Skip yt-dlp binary re-download on install; the VM already has it.
-            YOUTUBE_DL_SKIP_DOWNLOAD=true npm install --no-audit --no-fund
-            sudo systemctl restart ounje-recipe-ingestion-worker
-            sleep 3
-            sudo systemctl is-active ounje-recipe-ingestion-worker
-            sudo systemctl status ounje-recipe-ingestion-worker --no-pager --lines 15 || true
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+          VM_SSH_PORT: ${{ secrets.VM_SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${VM_SSH_PORT:-22}"
+          echo "SSH_PORT=$PORT" >> "$GITHUB_ENV"
+          ssh-keyscan -p "$PORT" -H "$VM_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Rsync server code to droplet
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key -p ${SSH_PORT} -o StrictHostKeyChecking=accept-new"
+          # Copy server code + package manifest. No --delete (keeps droplet-local
+          # assets like eng.traineddata/output). Exclude runtime state + deps.
+          rsync -az --human-readable \
+            --exclude '.sessions/' \
+            --exclude 'data/' \
+            --exclude 'node_modules/' \
+            -e "$SSH" \
+            server package.json \
+            "${VM_SSH_USER}@${VM_SSH_HOST}:${REMOTE_DIR}/"
+
+      - name: Install deps + restart worker
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          VM_SSH_USER: ${{ secrets.VM_SSH_USER }}
+          VM_SSH_HOST: ${{ secrets.VM_SSH_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${SSH_PORT}" -o StrictHostKeyChecking=accept-new \
+            "${VM_SSH_USER}@${VM_SSH_HOST}" \
+            "REMOTE_DIR='${REMOTE_DIR}' SERVICE='${SERVICE}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$REMOTE_DIR"
+          # Worker runs as the 'ounje' user; keep synced files owned by it.
+          chown -R ounje:ounje "$REMOTE_DIR/server" "$REMOTE_DIR/package.json" || true
+          # Skip yt-dlp binary re-download; the droplet already has it.
+          YOUTUBE_DL_SKIP_DOWNLOAD=true npm install --no-audit --no-fund
+          systemctl restart "$SERVICE"
+          sleep 3
+          systemctl is-active "$SERVICE"
+          systemctl status "$SERVICE" --no-pager --lines 12 || true
+          REMOTE
+
+      - name: Cleanup key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

@@ -14,25 +14,43 @@ The old VM API/nginx path is intentionally out of the production architecture. T
 Unlike Render (which auto-deploys the API on push to `main`), the VM worker must be
 re-deployed to pick up new ingestion code. This is automated by
 [.github/workflows/deploy-vm-worker.yml](../.github/workflows/deploy-vm-worker.yml):
-on every push to `main` that touches `server/**`, `package.json`, or the systemd units,
-it SSHes into the VM and runs `git reset --hard origin/main`, `npm install`, and
-`sudo systemctl restart ounje-recipe-ingestion-worker`.
+on every push to `main` that touches `server/**` or `package.json`, it **rsyncs**
+`server/` + `package.json` to the droplet, runs `npm install`, and restarts the worker.
+
+> The droplet's `/opt/ounje` is a plain file tree (NOT a git checkout), so deploy
+> copies files with rsync rather than `git pull`. The live systemd unit is
+> **`ounje-recipe-ingestion`** (runs as the `ounje` user) — note the name differs
+> from the sample unit file in `deploy/systemd/`.
+
+Current target (DigitalOcean droplet): `root@161.35.129.11`, NYC3, Ubuntu.
 
 Add these repo secrets (**Settings → Secrets and variables → Actions**) to enable it —
 until they exist the job no-ops cleanly instead of failing:
 
-| Secret | Purpose |
+| Secret | Value |
 | --- | --- |
-| `VM_SSH_HOST` | VM hostname or IP |
-| `VM_SSH_USER` | ssh user with sudo for `systemctl` |
-| `VM_SSH_KEY` | the **private** ssh key (PEM) authorized on the VM |
+| `VM_SSH_HOST` | droplet public IPv4 (`161.35.129.11`) |
+| `VM_SSH_USER` | `root` |
+| `VM_SSH_KEY` | the **private** half of a dedicated deploy key whose public half is in the droplet's `~/.ssh/authorized_keys` |
 | `VM_SSH_PORT` | optional, defaults to `22` |
 
-The deploy user needs passwordless sudo for the restart, e.g. a sudoers drop-in:
-`<user> ALL=(root) NOPASSWD: /usr/bin/systemctl restart ounje-recipe-ingestion-worker, /usr/bin/systemctl status ounje-recipe-ingestion-worker, /usr/bin/systemctl is-active ounje-recipe-ingestion-worker`.
+To mint a dedicated deploy key (recommended over reusing a personal key):
+
+```bash
+ssh-keygen -t ed25519 -N "" -C "ounje-vm-deploy@github-actions" -f ~/.ssh/ounje_vm_deploy
+# add the .pub to the droplet (via DO Web Console or ssh-copy-id), then
+# paste ~/.ssh/ounje_vm_deploy into the VM_SSH_KEY secret.
+```
 
 You can also trigger it manually from the Actions tab (**workflow_dispatch**). The manual
-fallback remains: `cd /opt/ounje && git pull && YOUTUBE_DL_SKIP_DOWNLOAD=true npm install && sudo systemctl restart ounje-recipe-ingestion-worker`.
+fallback (run locally with a key authorized on the droplet):
+
+```bash
+rsync -az --exclude '.sessions/' --exclude 'data/' --exclude 'node_modules/' \
+  -e "ssh -i ~/.ssh/ounje_vm_deploy" server package.json root@161.35.129.11:/opt/ounje/
+ssh -i ~/.ssh/ounje_vm_deploy root@161.35.129.11 \
+  'cd /opt/ounje && chown -R ounje:ounje server package.json && YOUTUBE_DL_SKIP_DOWNLOAD=true npm install && systemctl restart ounje-recipe-ingestion'
+```
 
 ## VM Setup
 
