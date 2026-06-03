@@ -111,6 +111,12 @@ const RECIPE_INGESTION_HEARTBEAT_MS = Math.max(
 const REDIS_DISABLED_FOR_INGESTION_LOCK = ["1", "true", "yes", "on"].includes(
   String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase()
 );
+// Distributed locks (batch + per-job) only mean anything when Redis is configured.
+// Without Redis (e.g. the single-worker droplet), acquireRedisLock always returns null,
+// so we must NOT treat a null lock as "another worker owns this" — otherwise every job
+// early-returns "locked" and is never processed.
+const RECIPE_INGESTION_REDIS_LOCKING_ENABLED =
+  Boolean(process.env.REDIS_URL) && !REDIS_DISABLED_FOR_INGESTION_LOCK;
 const execFile = promisify(execFileCallback);
 
 async function maybeGenerateImportedRecipeImage(recipe = null) {
@@ -166,7 +172,24 @@ async function timeRecipeImportStage(stage, { jobID = null, metadata = null } = 
   }
 }
 
+// Optional outbound proxy for social/video downloads. TikTok hard-blocks datacenter
+// IPs and YouTube bot-checks them, so from a cloud host yt-dlp needs to egress through
+// a residential/rotating proxy. Set OUNJE_SOCIAL_PROXY_URL (or standard HTTPS_PROXY/
+// HTTP_PROXY) on the worker and yt-dlp routes through it. Unset = direct (fine locally).
+function socialDownloadProxyURL() {
+  return normalizeText(
+    process.env.OUNJE_SOCIAL_PROXY_URL
+      ?? process.env.SOCIAL_DOWNLOAD_PROXY_URL
+      ?? process.env.HTTPS_PROXY
+      ?? process.env.https_proxy
+      ?? process.env.HTTP_PROXY
+      ?? process.env.http_proxy
+      ?? ""
+  );
+}
+
 function socialYTDLOptions(overrides = {}) {
+  const proxy = socialDownloadProxyURL();
   return {
     noWarnings: true,
     noCallHome: true,
@@ -176,6 +199,7 @@ function socialYTDLOptions(overrides = {}) {
     retries: 1,
     fragmentRetries: 1,
     extractorRetries: 1,
+    ...(proxy ? { proxy } : {}),
     ...overrides,
   };
 }
@@ -10638,7 +10662,13 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
   }
 
   const isAlreadyComplete = ["saved", "needs_review", "draft"].includes(normalizeText(existingJob.status));
-  const processLockKey = isAlreadyComplete ? null : recipeImportLockKey("process", existingJob.id);
+  // The per-job process lock requires Redis. When Redis isn't configured the lock can't
+  // be acquired (acquireRedisLock returns null) — only enforce the "another worker owns
+  // this" early-return when Redis is actually available, or every job would be stranded
+  // in `processing` without ever running. Mirrors the batch-lock degradation below.
+  const processLockKey = (isAlreadyComplete || !RECIPE_INGESTION_REDIS_LOCKING_ENABLED)
+    ? null
+    : recipeImportLockKey("process", existingJob.id);
   const processLockToken = processLockKey
     ? await acquireRedisLock(processLockKey, IMPORT_PROCESS_LOCK_TTL_SECONDS)
     : null;
