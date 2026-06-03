@@ -10354,7 +10354,15 @@ private func parsedCookMinutes(from text: String?) -> Int? {
 }
 
 func formattedRecipeCookTime(minutes: Int) -> String {
-    minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    guard minutes > 0 else { return "\(minutes) minutes" }
+    if minutes < 60 {
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    }
+    // Over an hour: show hours + minutes (e.g. 190 -> "3 hours, 10 min").
+    let hours = minutes / 60
+    let mins = minutes % 60
+    let hourPart = hours == 1 ? "1 hour" : "\(hours) hours"
+    return mins == 0 ? hourPart : "\(hourPart), \(mins) min"
 }
 
 func recipeDisplayCookMinutes(

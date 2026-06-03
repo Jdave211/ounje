@@ -7,13 +7,24 @@ import WebKit
 
 private let recipeAIEditedGold = Color(red: 0.98, green: 0.72, blue: 0.22)
 
-private func configureRecipeVideoAudioPlayback(for player: AVPlayer) {
+// Forces the shared audio session into `.playback` (which overrides the hardware
+// silent switch) and supersedes the muted `.ambient` session the welcome/onboarding
+// video installs. Call this every time playback starts, not just at player creation —
+// otherwise a recipe video that starts after the welcome video plays silently.
+func activateRecipePlaybackAudioSession() {
+    let session = AVAudioSession.sharedInstance()
     do {
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try AVAudioSession.sharedInstance().setActive(true)
+        if session.category != .playback {
+            try session.setCategory(.playback, mode: .moviePlayback)
+        }
+        try session.setActive(true)
     } catch {
         print("[RecipeDetail] Failed to activate recipe video audio session: \(error.localizedDescription)")
     }
+}
+
+private func configureRecipeVideoAudioPlayback(for player: AVPlayer) {
+    activateRecipePlaybackAudioSession()
     player.isMuted = false
     player.volume = 1
 }
@@ -623,23 +634,12 @@ struct RecipeDetailExperienceView: View {
         }
     }
 
-    private func seekInlineVideo(delta: Double) {
-        if let inlineVideoPlayer {
-            let currentSeconds = inlineVideoPlayer.currentTime().seconds
-            guard currentSeconds.isFinite else { return }
-            let target = max(0, currentSeconds + delta)
-            inlineVideoPlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600))
-            return
-        }
-
-        webVideoAction = RecipeWebVideoAction(kind: .seek(seconds: delta))
-    }
-
     private func togglePlayback() {
         if let player = inlineVideoPlayer {
             if player.timeControlStatus == .playing {
                 player.pause()
             } else {
+                activateRecipePlaybackAudioSession()
                 player.play()
             }
             return
@@ -1007,27 +1007,17 @@ struct RecipeDetailExperienceView: View {
                 .overlay(alignment: .topTrailing) {
                     if showInlineVideo, let resolvedVideo, let resolvedURL = resolvedVideo.url {
                         VStack(alignment: .trailing, spacing: 10) {
-                            VStack(spacing: 8) {
-                                HStack(spacing: 8) {
-                                    RecipeVideoControlButton(symbol: "backward.end.fill") {
-                                        seekInlineVideo(delta: -5)
-                                    }
-
-                                    RecipeVideoControlButton(symbol: "forward.end.fill") {
-                                        seekInlineVideo(delta: 5)
-                                    }
+                            // Seek (fast-forward / rewind) is handled by the tap-to-reveal
+                            // overlay inside the player now — keep only expand + close here.
+                            HStack(spacing: 8) {
+                                RecipeVideoControlButton(symbol: "arrow.up.left.and.arrow.down.right") {
+                                    pauseInlineVideo()
+                                    shouldResumeInlineVideoAfterFullscreen = false
+                                    showInlineVideoFullscreen = true
                                 }
 
-                                HStack(spacing: 8) {
-                                    RecipeVideoControlButton(symbol: "arrow.up.left.and.arrow.down.right") {
-                                        pauseInlineVideo()
-                                        shouldResumeInlineVideoAfterFullscreen = false
-                                        showInlineVideoFullscreen = true
-                                    }
-
-                                    RecipeVideoControlButton(symbol: "xmark") {
-                                        closeInlineVideo()
-                                    }
+                                RecipeVideoControlButton(symbol: "xmark") {
+                                    closeInlineVideo()
                                 }
                             }
 
@@ -2089,6 +2079,61 @@ struct RecipeFullscreenVideoExperience: View {
     @State private var isScrubbing: Bool = false
     @State private var scrubTime: Double = 0
     @State private var timeObserverToken: Any?
+    // Tap-to-reveal transport controls (rewind / play-pause / fast-forward).
+    @State private var controlsVisible = false
+    @State private var isPlaying = true
+    @State private var controlsHideWorkItem: DispatchWorkItem?
+
+    private func revealControls() {
+        withAnimation(.easeOut(duration: 0.18)) { controlsVisible = true }
+        scheduleControlsHide()
+    }
+
+    private func scheduleControlsHide() {
+        controlsHideWorkItem?.cancel()
+        let work = DispatchWorkItem {
+            withAnimation(.easeIn(duration: 0.25)) { controlsVisible = false }
+        }
+        controlsHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+    }
+
+    private func handleVideoTap() {
+        if controlsVisible {
+            controlsHideWorkItem?.cancel()
+            withAnimation(.easeIn(duration: 0.2)) { controlsVisible = false }
+        } else {
+            revealControls()
+        }
+    }
+
+    private func seekBy(_ delta: Double) {
+        if let player {
+            let cur = player.currentTime().seconds
+            let cappedDuration = duration > 0 ? duration : (player.currentItem?.duration.seconds ?? .infinity)
+            let upper = cappedDuration.isFinite ? cappedDuration : cur + delta
+            let target = max(0, min(cur + delta, upper))
+            player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+            currentTime = target
+        } else {
+            webAction = RecipeWebVideoAction(kind: .seek(seconds: delta))
+            currentTime = max(0, currentTime + delta)
+        }
+        scheduleControlsHide()
+    }
+
+    private func togglePlayPause() {
+        guard let player else { return }
+        if player.timeControlStatus == .playing {
+            player.pause()
+            isPlaying = false
+        } else {
+            activateRecipePlaybackAudioSession()
+            player.play()
+            isPlaying = true
+        }
+        scheduleControlsHide()
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -2098,30 +2143,43 @@ struct RecipeFullscreenVideoExperience: View {
                 Group {
                     if video.supportsNativePlayback {
                         if let player {
-                            ZStack {
-                                RecipeNativeVideoView(player: player, videoGravity: .resizeAspect)
-                                    .allowsHitTesting(false)
-
-                                Color.clear
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        if player.timeControlStatus == .playing {
-                                            player.pause()
-                                        } else {
-                                            player.play()
-                                        }
-                                    }
-                            }
+                            RecipeNativeVideoView(player: player, videoGravity: .resizeAspect)
+                                .allowsHitTesting(false)
                         } else {
                             ProgressView()
                                 .tint(OunjePalette.softCream)
                         }
                     } else {
                         RecipeInlineWebVideoView(video: video, url: url, action: $webAction, currentTime: $currentTime, duration: $duration)
+                            .allowsHitTesting(false)
                     }
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
                 .ignoresSafeArea()
+
+                // Tap surface: a tap toggles the transport-controls overlay.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .ignoresSafeArea()
+                    .onTapGesture { handleVideoTap() }
+
+                // ── Transport controls overlay (tap to reveal, auto-hides) ───────
+                if controlsVisible {
+                    Color.black.opacity(0.28)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+
+                    HStack(spacing: 40) {
+                        RecipeVideoControlButton(symbol: "gobackward.10") { seekBy(-10) }
+                        if player != nil {
+                            RecipeVideoControlButton(symbol: isPlaying ? "pause.fill" : "play.fill") { togglePlayPause() }
+                        }
+                        RecipeVideoControlButton(symbol: "goforward.10") { seekBy(10) }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
+                }
 
                 // ── Scrubber bar ─────────────────────────────────────────────────
                 if duration > 0 {
@@ -2177,6 +2235,7 @@ struct RecipeFullscreenVideoExperience: View {
                     let d = item.duration.seconds
                     if d.isFinite && d > 0 { duration = d }
                 }
+                isPlaying = p.timeControlStatus == .playing
             }
             timeObserverToken = token
         }
