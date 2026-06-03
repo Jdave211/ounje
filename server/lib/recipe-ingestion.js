@@ -53,6 +53,9 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const RECIPE_IMAGE_BUCKET = process.env.RECIPE_IMAGE_BUCKET ?? "recipe-images";
 const RECIPE_IMPORT_MEDIA_BUCKET = process.env.RECIPE_IMPORT_MEDIA_BUCKET ?? "recipe-import-media";
+// Persisted social/short-form MP4s live in their own public bucket — the image bucket
+// rejects video/* mime types and caps at 10MB, which silently dropped native videos.
+const RECIPE_VIDEO_BUCKET = process.env.RECIPE_VIDEO_BUCKET ?? "recipe-videos";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY ?? "";
 const PERPLEXITY_API_URL = process.env.PERPLEXITY_API_URL ?? "https://api.perplexity.ai/chat/completions";
@@ -986,6 +989,46 @@ async function ensureRecipeImageBucket() {
   return recipeImageBucketReadyPromise;
 }
 
+let recipeVideoBucketReadyPromise = null;
+async function ensureRecipeVideoBucket() {
+  if (!SUPABASE_URL || !RECIPE_VIDEO_BUCKET || !SUPABASE_SERVICE_ROLE_KEY) return false;
+  if (!recipeVideoBucketReadyPromise) {
+    recipeVideoBucketReadyPromise = (async () => {
+      const headers = {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      };
+      try {
+        const existingResponse = await fetch(
+          `${SUPABASE_URL}/storage/v1/bucket/${encodeURIComponent(RECIPE_VIDEO_BUCKET)}`,
+          { headers }
+        );
+        if (existingResponse.ok) return true;
+        if (existingResponse.status !== 404) return false;
+
+        // Public bucket that actually allows video + a sane size cap (the image bucket
+        // is image-only / 10MB, which silently rejected native MP4 uploads).
+        const createResponse = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            id: RECIPE_VIDEO_BUCKET,
+            name: RECIPE_VIDEO_BUCKET,
+            public: true,
+            allowed_mime_types: ["video/mp4", "video/quicktime", "video/webm"],
+            file_size_limit: 52428800,
+          }),
+        });
+        return createResponse.ok;
+      } catch {
+        return false;
+      }
+    })();
+  }
+  return recipeVideoBucketReadyPromise;
+}
+
 async function persistRecipeImageToStorage(sourceURL, { recipeKey, imageRole = "hero", accessToken = null } = {}) {
   const normalized = cleanURL(sourceURL);
   if (!normalized) return null;
@@ -1088,7 +1131,7 @@ async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole =
 // Returns the public MP4 URL, or null if upload is skipped (too large / unavailable).
 const PERSISTED_VIDEO_MAX_BYTES = 45 * 1024 * 1024; // 45MB cap
 async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", accessToken = null } = {}) {
-  if (!videoPath || !SUPABASE_URL || !RECIPE_IMAGE_BUCKET) return null;
+  if (!videoPath || !SUPABASE_URL || !RECIPE_VIDEO_BUCKET) return null;
   const storageBearer = (normalizeText(accessToken ?? "") || SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim();
   if (!storageBearer) return null;
 
@@ -1101,14 +1144,12 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
   if (!buffer?.length || buffer.length > PERSISTED_VIDEO_MAX_BYTES) return null;
 
   const keyHash = crypto.createHash("sha1").update(`${recipeKey}:video`).digest("hex").slice(0, 20);
-  const storagePath = `recipe-videos/${keyHash}.mp4`;
-  const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_IMAGE_BUCKET)}/${storagePath
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/")}`;
+  const storagePath = `${keyHash}.mp4`;
+  const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_VIDEO_BUCKET)}/${encodeURIComponent(storagePath)}`;
 
   try {
-    await ensureRecipeImageBucket();
+    const bucketReady = await ensureRecipeVideoBucket();
+    if (!bucketReady) return null;
     const uploadResponse = await fetch(uploadURL, {
       method: "POST",
       headers: {
@@ -1119,9 +1160,13 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
       },
       body: buffer,
     });
-    if (!uploadResponse.ok) return null;
-    return `${SUPABASE_URL}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/${storagePath}`;
-  } catch {
+    if (!uploadResponse.ok) {
+      console.warn(`[recipe-ingestion] native video upload failed: HTTP ${uploadResponse.status} ${await uploadResponse.text().catch(() => "")}`.slice(0, 200));
+      return null;
+    }
+    return `${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/${storagePath}`;
+  } catch (error) {
+    console.warn("[recipe-ingestion] native video upload error:", error instanceof Error ? error.message : error);
     return null;
   }
 }
