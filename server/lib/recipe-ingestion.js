@@ -10932,11 +10932,24 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
       // client gets an immediate queued job it can poll (and returns to the regular
       // route with a progress card) instead of blocking on the web-import screen until
       // processing completes. The dyno stays alive to finish the work.
-      void processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null })
+      //
+      // Claim the job for the API up front: the VM worker only claims queued/retryable
+      // jobs, so flipping it to `processing` (with leased_at) before the background
+      // pass starts prevents the worker from also grabbing it and redundantly
+      // re-processing the same web import. leased_at lets the stale-lease reclaim
+      // recover the job if this dyno dies mid-process.
+      const inlineWorkerID = `api_${nanoid(8)}`;
+      await patchRecipeIngestionJobRow(job.id, {
+        status: "processing",
+        worker_id: inlineWorkerID,
+        leased_at: nowIso(),
+        attempts: 1,
+      }).catch(() => {});
+      void processRecipeIngestionJob(job.id, { workerID: inlineWorkerID, accessToken: queuedRequest.access_token ?? null })
         .catch((error) => {
           console.error(`[recipe-ingestion] inline web import job ${job.id} failed:`, error?.message ?? error);
         });
-      results.push(formatJobResponse(job, { processing_mode: "queued" }));
+      results.push(formatJobResponse({ ...job, status: "processing" }, { processing_mode: "queued" }));
     } else {
       let wakePublished = null;
       if (isImportQueuedForWorker(job)) {
