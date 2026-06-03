@@ -6615,18 +6615,102 @@ async function transcribeShortVideo(videoPath) {
   }
 }
 
-async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = null) {
+// Fetches a ready-made remote MP4 (e.g. a TikTok extraction API's no-watermark URL)
+// straight to disk. Capped so a surprise huge file can't blow up the worker.
+async function downloadRemoteVideoToFile(url, destPath) {
+  const resp = await fetchWithTimeout(
+    url,
+    { headers: { "user-agent": DEFAULT_USER_AGENT, accept: "video/mp4,video/*;q=0.9,*/*;q=0.8" } },
+    SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+    "remote video download"
+  );
+  if (!resp.ok) throw new Error(`remote video download failed: HTTP ${resp.status}`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (!buffer.length) throw new Error("remote video download returned an empty body");
+  if (buffer.length > 80 * 1024 * 1024) throw new Error("remote video exceeds size cap");
+  await fsp.writeFile(destPath, buffer);
+  return destPath;
+}
+
+// TikTok hard-blocks datacenter IPs from yt-dlp. A TikTok extraction API (tikwm-style,
+// configurable via OUNJE_TIKTOK_API_URL) runs the extraction on its own infrastructure
+// and returns video metadata + a no-watermark MP4 URL we can fetch directly. Returns
+// { video_url, info } shaped like yt-dlp's metadata, or null when unavailable/disabled.
+const TIKTOK_EXTRACTION_API_URL = normalizeText(process.env.OUNJE_TIKTOK_API_URL || "https://www.tikwm.com/api/");
+const TIKTOK_EXTRACTION_API_ENABLED = !["0", "false", "no", "off"].includes(
+  String(process.env.OUNJE_TIKTOK_API_ENABLED ?? "true").trim().toLowerCase()
+);
+async function fetchTikTokViaAPI(sourceURL) {
+  if (!TIKTOK_EXTRACTION_API_ENABLED || !TIKTOK_EXTRACTION_API_URL) return null;
+  const cleaned = cleanURL(sourceURL);
+  if (!cleaned) return null;
+
+  const base = TIKTOK_EXTRACTION_API_URL;
+  const requestURL = `${base}${base.includes("?") ? "&" : "?"}url=${encodeURIComponent(cleaned)}&hd=1`;
+  let payload;
+  try {
+    const resp = await fetchWithTimeout(
+      requestURL,
+      { headers: { "user-agent": DEFAULT_USER_AGENT, accept: "application/json" } },
+      SOCIAL_METADATA_TIMEOUT_MS,
+      "tiktok extraction api"
+    );
+    if (!resp.ok) return null;
+    payload = await resp.json();
+  } catch (error) {
+    console.warn("[recipe-ingestion] tiktok extraction api failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
+
+  if (!payload || Number(payload.code) !== 0 || !payload.data) return null;
+  const data = payload.data;
+  const videoURL = cleanURL(data.hdplay || data.play || data.wmplay || null);
+  if (!videoURL) return null;
+
+  const author = data.author || {};
+  const handle = normalizeText(author.unique_id || "");
+  const caption = normalizeText(data.title || "");
+  const thumbnail = cleanURL(data.origin_cover || data.cover || null);
+  return {
+    video_url: videoURL,
+    info: {
+      id: normalizeText(data.id || "") || null,
+      title: caption || null,
+      description: caption || null,
+      uploader: normalizeText(author.nickname || "") || null,
+      uploader_id: handle || null,
+      uploader_url: handle ? `https://www.tiktok.com/@${handle}` : null,
+      webpage_url: cleaned,
+      duration: Number(data.duration) || null,
+      thumbnail,
+      thumbnails: thumbnail ? [{ url: thumbnail }] : [],
+      _extraction_provider: "tiktok_api",
+    },
+  };
+}
+
+async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = null, { directVideoURL = null } = {}) {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), `ounje-${platform}-`));
   try {
-    await withTimeout(
-      ytdl(sourceURL, socialYTDLOptions({
-        output: path.join(tempDir, "asset.%(ext)s"),
-        format: "mp4/best",
-        mergeOutputFormat: "mp4",
-      }), ytdlExecOptions(SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS)),
-      SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
-      `${platform} video download`
-    );
+    if (directVideoURL) {
+      // A ready-made MP4 URL (e.g. from the TikTok extraction API) — fetch it straight
+      // to disk instead of running yt-dlp, which the platform blocks from this host.
+      await withTimeout(
+        downloadRemoteVideoToFile(directVideoURL, path.join(tempDir, "asset.mp4")),
+        SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+        `${platform} direct video download`
+      );
+    } else {
+      await withTimeout(
+        ytdl(sourceURL, socialYTDLOptions({
+          output: path.join(tempDir, "asset.%(ext)s"),
+          format: "mp4/best",
+          mergeOutputFormat: "mp4",
+        }), ytdlExecOptions(SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS)),
+        SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+        `${platform} video download`
+      );
+    }
 
     const videoPath = await findDownloadedVideoPath(tempDir);
     if (!videoPath) {
@@ -6775,21 +6859,36 @@ async function extractYouTubeSource(sourceURL) {
 async function extractSocialSource(sourceURL, platform) {
   let metadata = null;
   let blocked = false;
-  try {
-    metadata = await fetchYtdlMetadataCached(sourceURL, {
-      label: `${platform} metadata resolve`,
-      cacheKind: `${platform}-metadata`,
-    });
-  } catch (error) {
-    blocked = true;
-    console.warn(`[recipe-ingestion] ${platform} metadata skipped:`, error instanceof Error ? error.message : error);
+  let apiVideoURL = null;
+
+  // TikTok blocks datacenter IPs from yt-dlp; the extraction API does the work on its
+  // own infra and hands back metadata + a fetchable no-watermark MP4. Prefer it for
+  // TikTok, falling back to yt-dlp (with proxy, if configured) when it's unavailable.
+  if (platform === "tiktok") {
+    const apiResult = await fetchTikTokViaAPI(sourceURL);
+    if (apiResult?.video_url) {
+      metadata = apiResult.info;
+      apiVideoURL = apiResult.video_url;
+    }
+  }
+
+  if (!metadata) {
+    try {
+      metadata = await fetchYtdlMetadataCached(sourceURL, {
+        label: `${platform} metadata resolve`,
+        cacheKind: `${platform}-metadata`,
+      });
+    } catch (error) {
+      blocked = true;
+      console.warn(`[recipe-ingestion] ${platform} metadata skipped:`, error instanceof Error ? error.message : error);
+    }
   }
 
   const transcriptTrack = metadata ? pickSubtitleTrack(metadata) : null;
   const [pageSignals, transcriptText, downloadedSignals] = await Promise.all([
     extractSocialPageSignals(sourceURL, platform),
     downloadTranscript(transcriptTrack),
-    enrichDownloadedShortVideoSource(sourceURL, platform, metadata),
+    enrichDownloadedShortVideoSource(sourceURL, platform, metadata, { directVideoURL: apiVideoURL }),
   ]);
   const mediaMode = inferSocialMediaMode({
     downloadedVideo: downloadedSignals.downloaded_video,
