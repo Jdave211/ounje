@@ -15,7 +15,11 @@ const DEFAULT_BATCH_SIZE = 3;
 const DEFAULT_IDLE_SLEEP_MS = 20_000;
 const DEFAULT_WAKE_TIMEOUT_MS = 60_000;
 const MAX_WAKE_TIMEOUT_MS = 60_000;
-const MAX_EMPTY_QUEUE_SLEEP_MS = 10 * 60 * 1000;
+// In poll mode (no Redis wake), the idle sleep backs off exponentially. Cap it low so
+// a freshly-queued import is claimed within seconds instead of waiting out a multi-minute
+// backoff (which looked like imports being "stuck on queuing"). One claim RPC every ~15s
+// while idle is negligible load; correctness/latency wins.
+const MAX_EMPTY_QUEUE_SLEEP_MS = 15 * 1000;
 
 function parseArgs(argv) {
   const args = {
