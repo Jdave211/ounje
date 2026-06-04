@@ -324,6 +324,13 @@ function recipeHasAnySourceURL(recipe = {}) {
 
 function recipeDetailPayloadIsDisplayReady(payload = {}) {
   const recipe = payload?.recipe ?? payload;
+  // A detail with no ingredients or no steps (e.g. one cached mid-import before the
+  // relational/json content landed) is NOT display-ready — treating it as ready makes
+  // the API keep serving a blank/half-done recipe until the cache TTL expires. Reject
+  // it so the route re-reads the complete recipe from the DB.
+  const ingredientCount = Array.isArray(recipe?.ingredients) ? recipe.ingredients.length : 0;
+  const stepCount = Array.isArray(recipe?.steps) ? recipe.steps.length : 0;
+  if (ingredientCount === 0 || stepCount === 0) return false;
   if (!hasCompleteDisplayMacros(recipe)) return false;
   if (recipeHasVideoSourceHint(recipe) && !recipeHasAnySourceURL(recipe)) return false;
   const description = trimString(recipe?.description);
