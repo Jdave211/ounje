@@ -4039,7 +4039,7 @@ private struct CookbookTabView: View {
     @EnvironmentObject private var savedStore: SavedRecipesStore
     @EnvironmentObject private var store: MealPlanningAppStore
 
-    @State private var selectedSection: CookbookSection = .prepped
+    @State private var selectedSection: CookbookSection = .saved
     @State private var selectedFilter: String = "All"
     @State private var isComposerPresented = false
     @State private var composerContext: CookbookComposerContext = .saved
@@ -4047,7 +4047,7 @@ private struct CookbookTabView: View {
     @State private var selectedCycle: CookbookPreppedCycle?
     @State private var isImportQueuePresented = false
     @State private var importQueueInitialTab: SharedRecipeImportQueueTab?
-    @State private var previousSelectedSection: CookbookSection = .prepped
+    @State private var previousSelectedSection: CookbookSection = .saved
     @State private var sectionTransitionDirection: CGFloat = 1
     @State private var isNewCookbookPrepPromptPresented = false
     @State private var newCookbookPrepName = ""
