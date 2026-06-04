@@ -1447,9 +1447,12 @@ actor RecipeDetailService {
     private func shouldUseCachedDetail(_ detail: RecipeDetailData, accessToken: String?) -> Bool {
         guard !detail.shouldRefreshDisplayMacros else { return false }
 
-        // Lightweight card previews are intentionally sparse. Do not let them
-        // satisfy a detail fetch, or source/video fields can stay missing.
-        guard !detail.ingredients.isEmpty || !detail.steps.isEmpty else { return false }
+        // Require BOTH ingredients and steps before trusting the cache. A lightweight
+        // card preview has neither, and a detail cached mid-import can have one but not
+        // the other (ingredients populated, steps not yet) — showing that stale/partial
+        // copy is the "half-done recipe" bug. When either side is missing, refetch from
+        // the server (the authoritative source), which has the complete recipe.
+        guard !detail.ingredients.isEmpty, !detail.steps.isEmpty else { return false }
 
         if hasVideoSourceHint(detail), !hasAnySourceURL(detail) {
             return false
