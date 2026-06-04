@@ -903,6 +903,17 @@ function buildStructuredSteps(stepRows, stepIngredientRows, ingredients) {
     .sort((a, b) => a.number - b.number);
 }
 
+// A cook time that resolves to zero ("0 minutes", "0 min", "0 hr 0 min", "0") isn't a
+// real time — it's the extractor's fallback when none was stated. Drop it so the recipe
+// shows no time rather than a broken-looking "0 minutes".
+function sanitizeCookTimeText(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const digits = text.match(/\d+/g);
+  if (digits && digits.length > 0 && digits.every((d) => Number(d) === 0)) return null;
+  return text;
+}
+
 export function normalizeRecipeDetail(recipe, related = {}) {
   const sourceURLs = resolveRecipeSourceURLs(recipe);
   const structuredIngredients = Array.isArray(related.recipeIngredients)
@@ -960,7 +971,7 @@ export function normalizeRecipeDetail(recipe, related = {}) {
     subcategory: recipe.subcategory ?? null,
     recipe_type: recipe.recipe_type ?? null,
     skill_level: recipe.skill_level ?? null,
-    cook_time_text: recipe.cook_time_text ?? null,
+    cook_time_text: sanitizeCookTimeText(recipe.cook_time_text),
     servings_text: recipe.servings_text ?? null,
     serving_size_text: recipe.serving_size_text ?? null,
     daily_diet_text: recipe.daily_diet_text ?? null,
