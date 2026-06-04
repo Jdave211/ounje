@@ -715,7 +715,9 @@ struct RecipeDetailExperienceView: View {
             let heroTopBleed = safeTop + (isImportedRecipe ? -16 : 18)
             let heroHeight = max(isImportedRecipe ? 216 : 198, heroSize - heroTopCrop + (isImportedRecipe ? 44 : 18))
             let topControlTop = max(safeTop + 26, 72)
-            let recipeToastTop = max(safeTop + 66, topControlTop + 48)
+            // Sit just below the safe area, matching the app-wide toast position
+            // (was ~133pt down, well below the top controls — too low on recipe pages).
+            let recipeToastTop = safeTop + 12
             let videoButtonTop = topControlTop + 82
             let ingredientGrid = Self.ingredientGridSpec(for: pageWidth)
             ScrollViewReader { proxy in
