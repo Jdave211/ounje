@@ -431,10 +431,21 @@ struct RecipeDetailExperienceView: View {
 
     private static func isDisplayableOriginalURL(_ url: URL) -> Bool {
         guard !isJulienneURL(url) else { return false }
+        // Never offer our own hosted copy (the persisted MP4 in Supabase storage) as the
+        // "original" link — the original must point at the real source (TikTok/IG/YT/site).
+        guard !isOwnHostedMediaURL(url) else { return false }
         if isSocialPlatformURL(url) {
             return isWatchableSocialVideoURL(url)
         }
         return true
+    }
+
+    // True for media we persisted ourselves (e.g. the downloaded native MP4 in Supabase
+    // storage). These are playable copies, never the source-of-record "original" link.
+    private static func isOwnHostedMediaURL(_ url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        let path = url.path.lowercased()
+        return host.hasSuffix(".supabase.co") && path.contains("/storage/v1/object/")
     }
 
     private static func isUsableVideoSourceURL(_ url: URL) -> Bool {
@@ -659,6 +670,17 @@ struct RecipeDetailExperienceView: View {
         }
 
         guard let videoSourceURL else { return nil }
+
+        // A directly-playable file (our persisted native MP4) needs no resolution —
+        // build the native player locally instead of round-tripping to /video/resolve,
+        // which is for social-embed URLs and would hand back a web embed. This is why
+        // imported TikTok/IG recipes were still showing the inline web player instead of
+        // the MP4 we downloaded.
+        if RecipeVideoURLResolver.supportsNativePlayback(videoSourceURL) {
+            let native = RecipeVideoURLResolver.fallbackVideo(from: videoSourceURL)
+            await MainActor.run { resolvedVideo = native }
+            return native
+        }
 
         await MainActor.run {
             isResolvingVideo = true
