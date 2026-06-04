@@ -2440,7 +2440,11 @@ private struct MealPlannerShellView: View {
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
             prewarmedCompletedImportIDs.removeAll()
-            reconciledSavedImportRecipeIDs.removeAll()
+            // Load the PERSISTED set of imports we've already auto-added to the cookbook.
+            // Persisting it (instead of resetting per session) means each import is
+            // auto-inserted exactly once — so once the user unsaves an imported recipe it
+            // stays unsaved instead of getting re-added on the next launch/refresh.
+            reconciledSavedImportRecipeIDs = loadReconciledSavedImportIDs(for: store.authSession?.userID)
         }
         .task(id: savedStoreAuthKey) {
             await savedStore.bootstrap(authSession: await savedRecipesSession())
@@ -2743,18 +2747,40 @@ private struct MealPlannerShellView: View {
     // already carries — no extra network — and the next remote refresh hydrates full data.
     @MainActor
     private func reconcileCompletedSavedImportsIntoCookbook() {
+        var didChange = false
         for item in recipeImportHistory.completedItems {
             let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard status == "saved" else { continue }
             guard let recipeID = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !recipeID.isEmpty,
                   !reconciledSavedImportRecipeIDs.contains(recipeID) else { continue }
+            // Mark as auto-reconciled (persisted below) so this import is never auto-added
+            // again — the user's later save/unsave is authoritative from here on.
             reconciledSavedImportRecipeIDs.insert(recipeID)
+            didChange = true
             // Already in the cookbook (e.g. saved from Discover) — nothing to insert.
             if savedStore.savedRecipes.contains(where: { $0.id == recipeID }) { continue }
             guard let card = item.savedRecipeCard else { continue }
             savedStore.saveImportedRecipe(card, showToast: false, respectUnsave: true)
         }
+        if didChange {
+            saveReconciledSavedImportIDs(reconciledSavedImportRecipeIDs, for: store.authSession?.userID)
+        }
+    }
+
+    private func reconciledImportsStorageKey(for userID: String?) -> String {
+        "ounje.reconciledSavedImports.v1.\(userID ?? "guest")"
+    }
+
+    private func loadReconciledSavedImportIDs(for userID: String?) -> Set<String> {
+        let data = UserDefaults.standard.data(forKey: reconciledImportsStorageKey(for: userID))
+        let ids = data.flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
+        return Set(ids)
+    }
+
+    private func saveReconciledSavedImportIDs(_ ids: Set<String>, for userID: String?) {
+        guard let data = try? JSONEncoder().encode(Array(ids)) else { return }
+        UserDefaults.standard.set(data, forKey: reconciledImportsStorageKey(for: userID))
     }
 
     @MainActor
