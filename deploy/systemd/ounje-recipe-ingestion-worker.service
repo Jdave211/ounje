@@ -1,6 +1,14 @@
+# Reference unit for the VM recipe-ingestion worker.
+# NOTE: on the live droplet the installed unit is `ounje-recipe-ingestion.service`
+# (without the `-worker` suffix) — keep them in sync.
+#
+# Redis wake bus: the worker subscribes to the import wake channel and is woken
+# instantly when the API enqueues a job. Requires REDIS_URL in /etc/ounje/ounje.env
+# (the same Redis the Render API publishes to). Without a wake it falls back to a
+# safety poll every --wake-timeout-ms (15s). If REDIS_URL is unset the worker polls.
 [Unit]
 Description=Ounje private recipe ingestion worker
-After=network-online.target
+After=network-online.target redis-server.service
 Wants=network-online.target
 
 [Service]
@@ -10,12 +18,12 @@ WorkingDirectory=/opt/ounje
 Environment=NODE_ENV=production
 Environment=OUNJE_RUNTIME_ENV=production
 Environment=OUNJE_ENABLE_AI_CALL_LOGGING=true
-Environment=RECIPE_INGESTION_WORKER_CONCURRENCY=2
+Environment=RECIPE_INGESTION_WORKER_CONCURRENCY=1
 Environment=RECIPE_INGESTION_WORKER_WAKE_MODE=redis
-Environment=RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS=60000
-Environment=YOUTUBE_DL_BINARY=/usr/local/bin/yt-dlp
+Environment=RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS=15000
+Environment=YOUTUBE_DL_BINARY=/usr/bin/yt-dlp
 EnvironmentFile=-/etc/ounje/ounje.env
-ExecStart=/usr/bin/env node /opt/ounje/server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 2 --wake-mode redis --wake-timeout-ms 60000
+ExecStart=/usr/bin/env node /opt/ounje/server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 1 --idle-sleep-ms 4000 --wake-mode redis --wake-timeout-ms 15000
 Restart=always
 RestartSec=5
 

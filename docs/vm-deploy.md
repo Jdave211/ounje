@@ -9,6 +9,46 @@ The VM is private worker infrastructure. It should not serve the public API, ter
 
 The old VM API/nginx path is intentionally out of the production architecture. The app talks to Render only; the VM sleeps on Redis and only performs a sparse safety sweep when no wake event arrives.
 
+## Redis wake bus (instant job pickup)
+
+The worker finds jobs by polling Supabase. With no wake signal it backs off and a
+freshly-enqueued import can wait seconds–minutes. The wake bus fixes that: the Render
+API publishes to a Redis channel (`ounje:recipe-ingestion:queued`) on enqueue, and the
+worker (`--wake-mode redis`) is woken instantly. It still safety-polls every
+`--wake-timeout-ms` (15s) as a fallback, so a Redis outage degrades to fast polling
+rather than a stall.
+
+Both the API (publisher) and the worker (subscriber) must point at the **same** Redis.
+Render's internal Redis is not reachable from the droplet, so use either a managed Redis
+(Upstash — has TLS, recommended) or the self-hosted Redis on the droplet documented here.
+
+**Self-hosted Redis on the droplet:**
+
+```bash
+apt-get install -y redis-server
+PW=$(openssl rand -hex 24)
+cat >> /etc/redis/redis.conf <<CONF
+bind 0.0.0.0 -::1
+protected-mode yes
+requirepass $PW
+CONF
+systemctl enable --now redis-server && systemctl restart redis-server
+# worker connects locally:
+echo "REDIS_URL=redis://:$PW@127.0.0.1:6379" >> /etc/ounje/ounje.env
+systemctl restart ounje-recipe-ingestion
+```
+
+Then set the **same** Redis on Render so the API publishes wakes — using the droplet's
+**public** IP: `REDIS_URL=redis://:<PW>@<droplet-public-ip>:6379`.
+
+> ⚠️ **Security:** this exposes Redis on `:6379` with a password but **no TLS**. Lock it
+> down with a DigitalOcean Cloud Firewall allowing `6379` only from Render's outbound IPs
+> (Render dashboard → service → *Outbound IPs*), or migrate to **Upstash** (TLS, free
+> tier) and point both `REDIS_URL`s at it. Rotate the password if it's ever exposed.
+
+Setting `REDIS_URL` also re-enables the per-job process lock (prevents double-processing),
+which silently degrades to "no lock" when Redis is absent.
+
 ## Auto-deploy (CI)
 
 Unlike Render (which auto-deploys the API on push to `main`), the VM worker must be
