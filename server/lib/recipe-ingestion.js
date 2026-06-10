@@ -11138,20 +11138,18 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
   }
 
   const isAlreadyComplete = ["saved", "needs_review", "draft"].includes(normalizeText(existingJob.status));
-  // The per-job process lock requires Redis. When Redis isn't configured the lock can't
-  // be acquired (acquireRedisLock returns null) — only enforce the "another worker owns
-  // this" early-return when Redis is actually available, or every job would be stranded
-  // in `processing` without ever running. Mirrors the batch-lock degradation below.
+  // Best-effort per-job lock, acquired only for the release-in-finally below. We do NOT
+  // bail when it can't be acquired: the claim RPC (FOR UPDATE SKIP LOCKED + status flip)
+  // already guarantees a single worker owns this job, and inline web imports flip status
+  // to `processing` up front. Bailing on a failed acquire meant an orphaned lock — left
+  // by a crashed/restarted worker, TTL 30 min — stranded the job in `processing` for up
+  // to half an hour. The lock is a redundant optimization, never a correctness gate.
   const processLockKey = (isAlreadyComplete || !RECIPE_INGESTION_REDIS_LOCKING_ENABLED)
     ? null
     : recipeImportLockKey("process", existingJob.id);
   const processLockToken = processLockKey
     ? await acquireRedisLock(processLockKey, IMPORT_PROCESS_LOCK_TTL_SECONDS)
     : null;
-  if (processLockKey && !processLockToken) {
-    const latestJob = await fetchJobRow(existingJob.id).catch(() => null);
-    return formatJobResponse(latestJob ?? existingJob, { processing_mode: "locked" });
-  }
 
   const stopHeartbeat = startRecipeIngestionHeartbeat(existingJob.id, workerID);
   try {
