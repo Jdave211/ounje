@@ -98,6 +98,24 @@ function displayableOriginalSourceURL(value) {
   return cleaned;
 }
 
+// True for a video file we can play natively in-app — either our own persisted copy
+// (the downloaded MP4 in Supabase storage) or any direct video-file URL. These must take
+// priority over the social source URL so "Watch video" plays our clean MP4 instead of
+// rendering the TikTok/IG embed (with likes, comments, and platform chrome).
+function isNativePlayableVideoURL(value) {
+  const cleaned = cleanSourceURL(value);
+  if (!cleaned) return false;
+  try {
+    const url = new URL(cleaned);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    if (host.endsWith(".supabase.co") && path.includes("/storage/v1/object/")) return true;
+    return /\.(mp4|mov|m3u8|webm)(?:$|\?)/.test(path);
+  } catch (_error) {
+    return false;
+  }
+}
+
 function collectSourceProvenanceURLStrings(provenance) {
   if (!provenance || typeof provenance !== "object") return [];
   const originalSocialSource = provenance.original_social_source && typeof provenance.original_social_source === "object"
@@ -149,10 +167,18 @@ function resolveRecipeSourceURLs(recipe) {
   const firstDisplayable = displayable[0] ?? null;
   const firstVideo = displayable.find(isWatchableSocialVideoURL) ?? null;
 
+  // Prefer our downloaded native MP4 (Supabase storage / direct video file) for playback;
+  // only fall back to the social URL when no native copy exists. Without this, a present
+  // TikTok/IG source URL would override the MP4 and "Watch video" would show the embed.
+  const cleanedAttached = cleanSourceURL(recipe.attached_video_url);
+  const nativeAttachedVideo = isNativePlayableVideoURL(cleanedAttached)
+    ? cleanedAttached
+    : (firstVideo && isNativePlayableVideoURL(firstVideo) ? firstVideo : null);
+
   return {
     recipe_url: firstDisplayable ?? cleanSourceURL(recipe.recipe_url),
     original_recipe_url: firstDisplayable ?? cleanSourceURL(recipe.original_recipe_url),
-    attached_video_url: firstVideo ?? cleanSourceURL(recipe.attached_video_url),
+    attached_video_url: nativeAttachedVideo ?? firstVideo ?? cleanedAttached,
   };
 }
 
