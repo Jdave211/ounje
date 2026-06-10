@@ -1432,7 +1432,7 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
             query_embedding: toPgVector(embedding),
             match_count: Math.min(limit + 2, 6),
             exclude_id: recipeId,
-          }).catch(() => [])
+          }, accessToken).catch(() => [])
         : Promise.resolve([]),
     ]);
 
@@ -5166,12 +5166,16 @@ async function embedTextCached(input, model) {
   return embedding;
 }
 
-async function callRecipeRpc(functionName, payload) {
+async function callRecipeRpc(functionName, payload, accessToken = null) {
+  // Some RPCs (e.g. match_user_import_recipes_basic) are SECURITY DEFINER and gate on
+  // auth.uid() — they MUST be called with the user's JWT or they return nothing. Pass
+  // the access token as the bearer when provided; public RPCs fall back to the anon key.
+  const bearer = (typeof accessToken === "string" && accessToken.trim()) ? accessToken.trim() : SUPABASE_ANON_KEY;
   const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${functionName}`, {
     method: "POST",
     headers: {
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${bearer}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
