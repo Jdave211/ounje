@@ -1335,7 +1335,17 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
       try {
         ({ accessToken, userID: resolvedUserID } = await resolveAuthorizedUserID(req));
       } catch (error) {
-        return sendAuthError(res, error, "recipe/detail/similar");
+        // Don't fail the whole "similar" rail on a flaky session. We can't read the
+        // user's own recipe without auth (RLS), so degrade to latest public recipes
+        // instead of returning an error and showing nothing at the bottom of the page.
+        const latest = await fetchLatestRecipes(Math.max(limit + 1, 12));
+        return res.json({
+          recipes: latest
+            .filter((candidate) => String(candidate.id) !== recipeId)
+            .slice(0, limit)
+            .map(toRecipeCardPayload),
+          rankingMode: "similar_fallback_latest_unauthenticated",
+        });
       }
     } else {
       // Optional auth — allows surfacing the user's own imports as similar results

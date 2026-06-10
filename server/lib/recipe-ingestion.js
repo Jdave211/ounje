@@ -4179,7 +4179,7 @@ async function completeJobByCloningGlobalImportedRecipe(job, cachedJob, { worker
   });
   await markDuplicateFailedImportsSuperseded(completed);
   if (persisted.saved_state === "inserted") {
-    scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: job.id });
+    await scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: job.id });
   }
   invalidateUserBootstrapCache(completed.user_id);
   return formatJobResponse(completed, {
@@ -5911,39 +5911,46 @@ async function persistNormalizedRecipe(
   };
 }
 
-function scheduleUserImportEmbedding(recipeID, recipeDetail, { jobID = null } = {}) {
+// Embeds the imported recipe so it can power semantic "similar recipes" lookups.
+// Awaited (best-effort, timeout-bounded) rather than a detached setTimeout — the old
+// fire-and-forget version was silently killed whenever the worker restarted, leaving
+// most imports without embeddings and degrading the similar-recipes rail. The job is
+// already marked `saved` by the time this runs, so awaiting only delays the worker
+// picking up the NEXT job, never the user seeing their recipe.
+async function scheduleUserImportEmbedding(recipeID, recipeDetail, { jobID = null } = {}) {
   if (!openai || !recipeID || !recipeDetail) return;
+  try {
+    const embeddingInput = [
+      `title: ${normalizeText(recipeDetail.title ?? "", 240)}`,
+      `description: ${normalizeText(recipeDetail.description ?? "", 600)}`,
+      `recipe_type: ${normalizeText(recipeDetail.recipe_type ?? recipeDetail.category ?? "", 80)}`,
+      `main_protein: ${normalizeText(recipeDetail.main_protein ?? "", 80)}`,
+      `cuisine_tags: ${(recipeDetail.cuisine_tags ?? []).join(", ")}`,
+      `dietary_tags: ${(recipeDetail.dietary_tags ?? []).join(", ")}`,
+      `flavor_tags: ${(recipeDetail.flavor_tags ?? []).join(", ")}`,
+      `ingredients: ${normalizeText(recipeDetail.ingredients_text ?? (recipeDetail.ingredients ?? []).map((entry) => [entry.quantity_text, entry.display_name].filter(Boolean).join(" ")).join(", "), 1600)}`,
+    ].join("\n");
 
-  setTimeout(() => {
-    void (async () => {
-      const embeddingInput = [
-        `title: ${normalizeText(recipeDetail.title ?? "", 240)}`,
-        `description: ${normalizeText(recipeDetail.description ?? "", 600)}`,
-        `recipe_type: ${normalizeText(recipeDetail.recipe_type ?? recipeDetail.category ?? "", 80)}`,
-        `main_protein: ${normalizeText(recipeDetail.main_protein ?? "", 80)}`,
-        `cuisine_tags: ${(recipeDetail.cuisine_tags ?? []).join(", ")}`,
-        `dietary_tags: ${(recipeDetail.dietary_tags ?? []).join(", ")}`,
-        `flavor_tags: ${(recipeDetail.flavor_tags ?? []).join(", ")}`,
-        `ingredients: ${normalizeText(recipeDetail.ingredients_text ?? (recipeDetail.ingredients ?? []).map((entry) => [entry.quantity_text, entry.display_name].filter(Boolean).join(" ")).join(", "), 1600)}`,
-      ].join("\n");
-
-      const resp = await timeRecipeImportStage(
+    const resp = await withTimeout(
+      timeRecipeImportStage(
         "post_completion_embedding",
         { jobID, metadata: { recipe_id: recipeID } },
         () => openai.embeddings.create({ model: "text-embedding-3-small", input: embeddingInput })
-      );
-      const vector = resp.data?.[0]?.embedding;
-      if (!Array.isArray(vector) || vector.length === 0) return;
-      await patchRows(
-        USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-        [`id=eq.${encodeURIComponent(recipeID)}`],
-        { embedding_basic: `[${vector.join(",")}]` },
-        { prefer: "return=minimal" }
-      );
-    })().catch((embeddingError) => {
-      console.warn("[recipe-ingestion] user-import embedding failed:", embeddingError.message);
-    });
-  }, 0);
+      ),
+      15_000,
+      "user_import_embedding"
+    );
+    const vector = resp.data?.[0]?.embedding;
+    if (!Array.isArray(vector) || vector.length === 0) return;
+    await patchRows(
+      USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
+      [`id=eq.${encodeURIComponent(recipeID)}`],
+      { embedding_basic: `[${vector.join(",")}]` },
+      { prefer: "return=minimal" }
+    );
+  } catch (embeddingError) {
+    console.warn("[recipe-ingestion] user-import embedding failed:", embeddingError instanceof Error ? embeddingError.message : embeddingError);
+  }
 }
 
 function assessRecipeQuality(normalized, source) {
@@ -11638,7 +11645,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     });
     await markDuplicateFailedImportsSuperseded(job);
     if (existingJob.user_id && persisted.saved_state === "inserted") {
-      scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: existingJob.id });
+      await scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: existingJob.id });
     }
     invalidateUserBootstrapCache(existingJob.user_id);
 
