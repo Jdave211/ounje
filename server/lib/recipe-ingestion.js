@@ -11683,10 +11683,12 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
 
 export async function runRecipeIngestionWorkerBatch({ workerID = `daemon_${nanoid(8)}`, batchSize = 3 } = {}) {
   const lockKey = "recipe-ingestion:worker-batch";
+  // Best-effort batch lock only — do NOT bail when it can't be acquired. The claim RPC
+  // uses `FOR UPDATE SKIP LOCKED`, so two workers can never grab the same job regardless.
+  // Previously, bailing here meant any transient Redis hiccup (a dropped client that
+  // wouldn't reconnect, or stale lock contention) silently stopped the worker from
+  // claiming ANY job — imports sat queued for hours until a manual restart.
   const lockToken = await acquireRedisLock(lockKey, 55);
-  if (!lockToken && process.env.REDIS_URL && !REDIS_DISABLED_FOR_INGESTION_LOCK) {
-    return 0;
-  }
 
   try {
     const claimed = await callRpc("claim_recipe_ingestion_jobs", {

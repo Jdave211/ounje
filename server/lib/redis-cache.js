@@ -65,7 +65,12 @@ export async function getRedisClient() {
     url,
     socket: {
       connectTimeout: redisConnectTimeoutMs(),
-      reconnectStrategy: false,
+      // Auto-reconnect with capped backoff so a dropped connection self-heals (a
+      // long-lived worker would otherwise hold a dead client forever — breaking the
+      // wake bus + lock acquisition until a manual restart). Give up after ~10 tries
+      // so we don't hammer a Redis that's genuinely gone; getRedisClient() then
+      // rebuilds the client on the next call.
+      reconnectStrategy: (retries) => (retries > 10 ? false : Math.min(200 * 2 ** retries, 5000)),
     },
   });
 
