@@ -131,15 +131,17 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
             return isLiveQueueState
         }
 
-        if serverSubmittedAt != nil {
-            return false
+        // No server job ID yet — this import never finished handoff. If a submit was already
+        // started, only suppress re-sending while that POST could still be in flight (it times
+        // out at 90s). Past that window the submit clearly never landed (no job was created), so
+        // re-drive it instead of stranding the import in "submitted" until the stale watchdog.
+        // The server dedupes by source, so a re-send can't create a duplicate even if the
+        // original request eventually arrives.
+        if let serverSubmittedAt {
+            return Date().timeIntervalSince(serverSubmittedAt) >= 100
         }
 
-        if state == "queued" {
-            return true
-        }
-
-        return false
+        return state == "queued"
     }
 
     var isTerminalLocalState: Bool {
