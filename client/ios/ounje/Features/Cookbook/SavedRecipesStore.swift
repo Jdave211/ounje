@@ -6,6 +6,11 @@ import UIKit
 final class SavedRecipesStore: ObservableObject {
     @Published private(set) var savedRecipes: [DiscoverRecipeCardData] = []
     @Published private(set) var isSyncingRemote = false
+    // True once we've pulled the server's unsave tombstones into the local set for the
+    // current user. The completed-imports reconcile waits on this so it never resurrects
+    // a recipe the user unsaved on another device or before a reinstall (local tombstones
+    // live in UserDefaults and are wiped on delete+reinstall).
+    @Published private(set) var didHydrateRemoteTombstones = false
 
     private let legacyKey = "ounje-saved-recipes-v1"
     private let keyPrefix = "ounje-saved-recipes-v2"
@@ -68,11 +73,37 @@ final class SavedRecipesStore: ObservableObject {
         lastRemoteSyncAt = snapshot.updatedAt
     }
 
+    /// Pulls the server's unsave tombstones into `deletedSavedRecipeIDs` and drops any
+    /// now-tombstoned cards from the in-memory cookbook. Idempotent and best-effort: a
+    /// network failure simply leaves `didHydrateRemoteTombstones` false so the reconcile
+    /// stays paused (and the next sync retries) rather than risking a resurrection.
+    private func hydrateRemoteTombstones(authSession: AuthSession) async {
+        do {
+            let tombstones = try await SupabaseSavedRecipesService.shared.fetchSavedRecipeTombstoneIDs(
+                userID: authSession.userID,
+                accessToken: authSession.accessToken
+            )
+            if !tombstones.isEmpty {
+                deletedSavedRecipeIDs.formUnion(tombstones)
+                let filtered = savedRecipes.filter { !tombstones.contains($0.id) }
+                if filtered.count != savedRecipes.count {
+                    savedRecipes = filtered
+                }
+                persist()
+            }
+            didHydrateRemoteTombstones = true
+        } catch {
+            // Leave the flag false; the reconcile waits and the next sync retries.
+            print("[SavedRecipesStore] tombstone hydration failed; reconcile paused:", error.localizedDescription)
+        }
+    }
+
     func bootstrap(authSession: AuthSession?) async {
         let resolvedUserID = authSession?.userID
 
         if activeUserID != resolvedUserID {
             activeUserID = resolvedUserID
+            didHydrateRemoteTombstones = false
             load(for: resolvedUserID, preserveExistingWhenMissing: true)
         }
         activeAccessToken = authSession?.accessToken
@@ -81,6 +112,14 @@ final class SavedRecipesStore: ObservableObject {
             isSyncingRemote = false
             return
         }
+
+        // Hydrate the server's unsave tombstones into the local set BEFORE anything can
+        // re-add recipes. This is the durable record of every unsave; without it a reinstall
+        // (which wipes the UserDefaults tombstones) lets the completed-imports reconcile
+        // resurrect everything the user ever unsaved. Runs even when the bulk sync is
+        // skipped/throttled so respectUnsave is always correct.
+        await hydrateRemoteTombstones(authSession: authSession)
+
         if shouldSkipRemoteSync(for: authSession.userID) {
             isSyncingRemote = false
             return

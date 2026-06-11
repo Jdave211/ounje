@@ -2448,6 +2448,9 @@ private struct MealPlannerShellView: View {
         }
         .task(id: savedStoreAuthKey) {
             await savedStore.bootstrap(authSession: await savedRecipesSession())
+            // Tombstones are now hydrated — run the import reconcile that the guard paused
+            // (the concurrent shared-import task may have early-returned before hydration).
+            reconcileCompletedSavedImportsIntoCookbook()
         }
         .task(id: "fresh-plan::\(store.authSession?.userID ?? "signed-out")") {
             await store.ensureFreshPlanIfNeeded()
@@ -2747,6 +2750,11 @@ private struct MealPlannerShellView: View {
     // already carries — no extra network — and the next remote refresh hydrates full data.
     @MainActor
     private func reconcileCompletedSavedImportsIntoCookbook() {
+        // Wait until the server's unsave tombstones are loaded. Otherwise, right after a
+        // reinstall (local tombstones wiped), respectUnsave sees an empty set and re-adds
+        // every completed import the user ever unsaved. The reconcile re-runs on the next
+        // refreshSharedImportState once hydration completes, so nothing is lost by waiting.
+        guard savedStore.didHydrateRemoteTombstones else { return }
         var didChange = false
         for item in recipeImportHistory.completedItems {
             let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

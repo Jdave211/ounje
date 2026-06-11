@@ -713,7 +713,7 @@ final class SupabaseSavedRecipesService {
         // No Content-Range → assume the delete was processed (HTTP 2xx already confirmed).
     }
 
-    private func fetchSavedRecipeTombstoneIDs(userID: String, accessToken: String? = nil) async throws -> Set<String> {
+    func fetchSavedRecipeTombstoneIDs(userID: String, accessToken: String? = nil) async throws -> Set<String> {
         guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(
                 string: "\(SupabaseConfig.url)/rest/v1/saved_recipe_tombstones?select=recipe_id&user_id=eq.\(encodedUserID)"
