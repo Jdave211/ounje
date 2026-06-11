@@ -2533,8 +2533,20 @@ struct FirstLoginOnboardingView: View {
         onboardingAutoAdvanceTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled, currentStep == .paywallIntro else { return }
-            finishOnboardingOrPresentPaywall()
+            await requestNotificationPermissionThenFinishOnboarding()
         }
+    }
+
+    // Single path out of the paywall-intro step so the system notification prompt fires
+    // exactly once regardless of whether the user tapped through or the auto-advance timer
+    // fired. Previously only the manual tap requested permission, so when the timer won the
+    // race the prompt never showed — and because requestAuthorization was never called, iOS
+    // also never added the Notifications row to the app's Settings page (only Siri & Search).
+    @MainActor
+    private func requestNotificationPermissionThenFinishOnboarding() async {
+        let session = await store.freshUserDataSession()
+        _ = await notificationCenter.requestNotificationPermissionAndRegister(session: session)
+        finishOnboardingOrPresentPaywall()
     }
 
     private func resetPaywallWarmup() {
@@ -2551,10 +2563,9 @@ struct FirstLoginOnboardingView: View {
             }
         } else {
             paywallWarmupStage += 1
+            onboardingAutoAdvanceTask?.cancel()
             Task { @MainActor in
-                let session = await store.freshUserDataSession()
-                _ = await notificationCenter.requestNotificationPermissionAndRegister(session: session)
-                finishOnboardingOrPresentPaywall()
+                await requestNotificationPermissionThenFinishOnboarding()
             }
         }
     }
