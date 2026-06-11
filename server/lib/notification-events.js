@@ -46,6 +46,9 @@ function notificationPreferenceAreaForKind(kind, metadata = {}) {
 
 async function allowsPushForUserPreference(supabase, userId, kind, metadata = {}) {
   const area = notificationPreferenceAreaForKind(kind, metadata);
+  // Item-by-item shopping updates were removed from the app (no longer a user-facing
+  // toggle), so never deliver them — they'd otherwise keep firing with no way to opt out.
+  if (area === "agentShoppingItemUpdates") return false;
   if (!area) return true;
 
   const { data, error } = await supabase
