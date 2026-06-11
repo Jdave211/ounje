@@ -155,6 +155,11 @@ struct RootView: View {
                 await store.refreshLiveTrackingState()
             }
             await notificationCenter.syncForCurrentSession(initialSession)
+            // Past-onboarding users who were never asked (e.g. updated rather than reinstalled)
+            // still get the prompt once. No-op after iOS has a determined status.
+            if store.isOnboarded {
+                await notificationCenter.requestNotificationPermissionIfUndetermined(session: initialSession)
+            }
 
             while !Task.isCancelled {
                 let session = await currentNotificationSession()
@@ -490,6 +495,20 @@ final class AppNotificationCenterManager: ObservableObject {
             lastSyncFailureAt = Date()
             // Back off hard after repeated failures so notification delivery
             // problems don't create unbounded pending-event request churn.
+        }
+    }
+
+    /// Recovers the system permission prompt for users who are already past onboarding but
+    /// were never asked (an app update doesn't replay onboarding, and before the onboarding
+    /// race fix the prompt could be skipped entirely). Prompts exactly once: once iOS has a
+    /// determined status this is a cheap no-op, so it's safe to call on every launch/foreground.
+    /// Callers must gate on `store.isOnboarded` so it never fires mid-onboarding.
+    func requestNotificationPermissionIfUndetermined(session: AuthSession?) async {
+        await refreshAuthorizationStatus()
+        guard authorizationStatus == .notDetermined else { return }
+        await requestAuthorizationIfNeeded()
+        if canPresentLocalNotifications {
+            OunjePushTokenRegistrar.shared.registerCurrentTokenIfPossible(session: session, force: true)
         }
     }
 
