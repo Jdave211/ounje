@@ -160,6 +160,10 @@ struct RootView: View {
             if store.isOnboarded {
                 await notificationCenter.requestNotificationPermissionIfUndetermined(session: initialSession)
             }
+            // Re-assert the local trial-ending reminders (2d + 1d before expiry) every
+            // foreground. Idempotent; recovers reminders lost to a reinstall or to
+            // permission being granted after purchase.
+            _ = await notificationCenter.scheduleTrialEndingReminder(entitlement: store.membershipEntitlement)
 
             while !Task.isCancelled {
                 let session = await currentNotificationSession()
@@ -528,44 +532,57 @@ final class AppNotificationCenterManager: ObservableObject {
         return true
     }
 
+    /// Schedules LOCAL trial-ending reminders (2 days + 1 day before expiry) — no server
+    /// push involved. Idempotent (replaces any pending copies), so it's safe to call on
+    /// every foreground: that self-heals the original fragility where the reminder was
+    /// scheduled exactly once at purchase and silently lost if notification permission
+    /// wasn't granted yet (or the app was reinstalled, which wipes pending locals).
     @discardableResult
     func scheduleTrialEndingReminder(entitlement: AppUserEntitlement?) async -> Bool {
         await refreshAuthorizationStatus()
         guard canPresentLocalNotifications,
-              let expiresAt = entitlement?.expiresAt,
-              expiresAt > Date()
+              let entitlement,
+              let expiresAt = entitlement.expiresAt,
+              expiresAt > Date(),
+              // Only trials get "your trial ends" copy — a regular subscription renews
+              // and would make this notification factually wrong.
+              entitlement.metadata["is_on_trial"] == "true"
         else {
             return false
         }
 
-        let reminderDate = expiresAt.addingTimeInterval(-24 * 60 * 60)
-        guard reminderDate > Date().addingTimeInterval(60) else { return false }
-
-        let identifier = "ounje-trial-ending-reminder"
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
-
-        let content = UNMutableNotificationContent()
-        content.title = "Your Ounje trial ends tomorrow"
-        content.body = "Keep it if it’s helping. You can manage or cancel anytime in App Store subscriptions."
-        content.sound = .default
-        content.categoryIdentifier = "OUNJE_TRIAL_REMINDER"
-        content.threadIdentifier = "membership"
-        content.userInfo = [
-            "kind": "trial_reminder",
-            "actionURL": "ounje://profile/membership",
-            "action_url": "ounje://profile/membership",
-            "deep_link": "ounje://profile/membership",
+        let reminders: [(identifier: String, daysBefore: Double, title: String)] = [
+            ("ounje-trial-ending-reminder-2d", 2, "Your Ounje trial ends in 2 days"),
+            ("ounje-trial-ending-reminder", 1, "Your Ounje trial ends tomorrow"),
         ]
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: reminders.map(\.identifier))
 
-        let interval = max(60, reminderDate.timeIntervalSinceNow)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-        do {
-            try await notificationCenter.add(request)
-            return true
-        } catch {
-            return false
+        var scheduledAny = false
+        for reminder in reminders {
+            let reminderDate = expiresAt.addingTimeInterval(-reminder.daysBefore * 24 * 60 * 60)
+            guard reminderDate > Date().addingTimeInterval(60) else { continue }
+
+            let content = UNMutableNotificationContent()
+            content.title = reminder.title
+            content.body = "Keep it if it’s helping. You can manage or cancel anytime in App Store subscriptions."
+            content.sound = .default
+            content.categoryIdentifier = "OUNJE_TRIAL_REMINDER"
+            content.threadIdentifier = "membership"
+            content.userInfo = [
+                "kind": "trial_reminder",
+                "actionURL": "ounje://profile/membership",
+                "action_url": "ounje://profile/membership",
+                "deep_link": "ounje://profile/membership",
+            ]
+
+            let interval = max(60, reminderDate.timeIntervalSinceNow)
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+            let request = UNNotificationRequest(identifier: reminder.identifier, content: content, trigger: trigger)
+            if (try? await notificationCenter.add(request)) != nil {
+                scheduledAny = true
+            }
         }
+        return scheduledAny
     }
 
     private var currentNotificationFailureRetryInterval: TimeInterval {
