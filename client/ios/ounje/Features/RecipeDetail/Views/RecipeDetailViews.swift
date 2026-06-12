@@ -1995,7 +1995,13 @@ struct RecipeInlineVideoCard: View {
                 if video.supportsNativePlayback, let player {
                     RecipeNativeVideoView(player: player, videoGravity: .resizeAspectFill)
                 } else {
-                    RecipeInlineWebVideoView(video: video, url: url, action: $webAction, currentTime: .constant(0), duration: .constant(0))
+                    // No downloaded copy — show the open-externally card instead of the
+                    // TikTok/IG web embed. Tapping the PiP still expands to fullscreen,
+                    // where the "Watch on …" button is interactive.
+                    RecipeVideoExternalFallbackView(
+                        watchURL: URL(string: video.sourceURLString) ?? url,
+                        compact: true
+                    )
                 }
             }
             .allowsHitTesting(false)
@@ -2042,6 +2048,59 @@ struct RecipeInlineVideoCard: View {
                 showsLoadingOverlay = false
             }
         }
+    }
+}
+
+/// Shown when a recipe has no downloaded (natively playable) video. We no longer fall
+/// back to the inline TikTok/IG web embed — it carries platform chrome (likes, comments,
+/// logo), is slow, and breaks whenever the platform tweaks its markup. Instead the user
+/// gets a clean card that opens the original post in the platform's own app/site.
+struct RecipeVideoExternalFallbackView: View {
+    let watchURL: URL
+    var compact = false
+    @Environment(\.openURL) private var openURL
+
+    private var platformLabel: String {
+        let host = watchURL.host?.lowercased() ?? ""
+        if host.contains("tiktok") { return "TikTok" }
+        if host.contains("instagram") { return "Instagram" }
+        if host.contains("youtu") { return "YouTube" }
+        return "the original site"
+    }
+
+    var body: some View {
+        VStack(spacing: compact ? 8 : 14) {
+            Image(systemName: "play.slash.fill")
+                .font(.system(size: compact ? 18 : 26, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            Text(compact ? "Watch on \(platformLabel)" : "This video isn't saved in Ounje yet")
+                .font(.system(size: compact ? 11.5 : 15, weight: .semibold))
+                .foregroundStyle(compact ? OunjePalette.secondaryText : OunjePalette.primaryText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, compact ? 10 : 32)
+
+            if !compact {
+                Button {
+                    openURL(watchURL)
+                } label: {
+                    Text("Watch on \(platformLabel)")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .padding(.horizontal, 22)
+                        .frame(height: 46)
+                        .background(
+                            Capsule().fill(OunjePalette.surface.opacity(0.96))
+                        )
+                        .overlay(
+                            Capsule().stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(compact ? 0.0 : 0.001))
     }
 }
 
@@ -2174,8 +2233,7 @@ struct RecipeFullscreenVideoExperience: View {
                                 .tint(OunjePalette.softCream)
                         }
                     } else {
-                        RecipeInlineWebVideoView(video: video, url: url, action: $webAction, currentTime: $currentTime, duration: $duration)
-                            .allowsHitTesting(false)
+                        Color.black
                     }
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
@@ -2187,8 +2245,16 @@ struct RecipeFullscreenVideoExperience: View {
                     .ignoresSafeArea()
                     .onTapGesture { handleVideoTap() }
 
+                // No downloaded copy — open-externally card replaces the old TikTok/IG
+                // web embed. Sits above the tap surface so its button stays interactive.
+                if !video.supportsNativePlayback {
+                    RecipeVideoExternalFallbackView(
+                        watchURL: URL(string: video.sourceURLString) ?? url
+                    )
+                }
+
                 // ── Transport controls overlay (tap to reveal, auto-hides) ───────
-                if controlsVisible {
+                if controlsVisible && video.supportsNativePlayback {
                     Color.black.opacity(0.28)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
@@ -3909,6 +3975,11 @@ struct RecipeAskSheet: View {
                 }
                 .padding(.top, 6)
 
+                // Everything between the grab-handle row and the pinned inspiration swiper
+                // scrolls: multiple rewrites stack newest-first in a scrollable column
+                // instead of overflowing the fixed sheet layout off-screen.
+                ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .center) {
                         SleeScriptDisplayText("Ask Ounje", size: 30, color: OunjePalette.primaryText)
@@ -4025,8 +4096,9 @@ struct RecipeAskSheet: View {
                         .foregroundStyle(.red.opacity(0.9))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Spacer(minLength: 0)
+                }
+                }
+                .scrollIndicators(.hidden)
 
                 if isLiveMode {
                     RecipeInspirationSwiper(
