@@ -63,7 +63,12 @@ enum SharedRecipeImportInbox {
                 continue
             }
 
-            let ref = envelope.serverSubmittedAt ?? envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
+            // Measure staleness from the LATEST activity, not the first submit —
+            // serverSubmittedAt is never refreshed on a re-drive, so anchoring on it would
+            // fail an envelope whose retry POST is still legitimately in flight.
+            let ref = [envelope.serverSubmittedAt, envelope.lastAttemptAt, envelope.updatedAt]
+                .compactMap { $0 }
+                .max() ?? envelope.createdAt
             guard now.timeIntervalSince(ref) >= seconds else { continue }
             let failed = SharedRecipeImportEnvelope(
                 id: envelope.id,

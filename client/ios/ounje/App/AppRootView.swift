@@ -2522,7 +2522,11 @@ private struct MealPlannerShellView: View {
                 }
 
                 if hasQueuedWork {
-                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: false)
+                    // allowNewSubmissions so envelopes whose handoff POST died (app suspended
+                    // mid-share, dropped connection) get re-driven here. shouldAutoProcess
+                    // windows + caps the re-sends, and the server dedupes by source, so this
+                    // can't double-import.
+                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
                 }
 
                 let shouldRefreshSharedState = hasLiveImport || Date().timeIntervalSince(lastSharedImportRefreshAt) >= 30
@@ -2559,7 +2563,9 @@ private struct MealPlannerShellView: View {
                 await refreshSharedImportState(force: false)
                 lastSharedImportRefreshAt = .now
                 if hasQueuedSharedImportWork || hasLiveSharedImportWork {
-                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: false)
+                    // allowNewSubmissions: returning to the foreground is exactly when a
+                    // suspended-mid-share handoff needs to be re-sent (see poll loop above).
+                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
                     await refreshSharedImportState(force: true)
                     lastSharedImportRefreshAt = .now
                 }
@@ -3454,7 +3460,11 @@ private struct MealPlannerShellView: View {
                         sourceApp: envelope.sourceApp,
                         attachments: envelope.attachments,
                         processingState: "submitted",
-                        attemptCount: envelope.attemptCount,
+                        // Count this submit attempt (pre-job envelopes only) so the re-drive
+                        // cap in shouldAutoProcess can stop a persistently failing handoff.
+                        attemptCount: previousJobID.isEmpty
+                            ? (envelope.attemptCount ?? 0) + 1
+                            : envelope.attemptCount,
                         lastAttemptAt: Date(),
                         serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
                         lastError: nil,
@@ -3641,6 +3651,19 @@ private struct MealPlannerShellView: View {
                 let shouldKeepServerJobLive = !previousJobID.isEmpty
                     && envelope.isLiveQueueState
                     && Self.isTransientSharedImportNetworkError(error)
+                // A pre-job submit that died for a transient reason (timeout, dropped
+                // connection, or the task getting cancelled when the app was backgrounded
+                // mid-share) goes back to "queued" so the next processing pass re-sends it
+                // immediately — failing it outright forced the user to tap Retry for what
+                // is routine app-switching during a share. The attempt cap keeps a truly
+                // unreachable server from looping; the final attempt falls through to
+                // the failed path below.
+                let isCancelledRequest = error is CancellationError
+                    || ((error as NSError).domain == NSURLErrorDomain
+                        && (error as NSError).code == NSURLErrorCancelled)
+                let shouldRequeueHandoff = previousJobID.isEmpty
+                    && activeAttemptCount < SharedRecipeImportEnvelope.maxHandoffSubmitAttempts
+                    && (isCancelledRequest || Self.isTransientSharedImportNetworkError(error))
                 let errorMessage = (error as? RecipeImportServiceError).map {
                     switch $0 {
                     case .invalidRequest:
@@ -3661,17 +3684,22 @@ private struct MealPlannerShellView: View {
                     canonicalSourceURLString: envelope.canonicalSourceURLString,
                     sourceApp: envelope.sourceApp,
                     attachments: envelope.attachments,
-                    processingState: shouldKeepServerJobLive ? envelope.normalizedProcessingState : "failed",
+                    processingState: shouldKeepServerJobLive
+                        ? envelope.normalizedProcessingState
+                        : (shouldRequeueHandoff ? "queued" : "failed"),
                     attemptCount: activeAttemptCount,
                     lastAttemptAt: Date(),
-                    serverSubmittedAt: envelope.serverSubmittedAt,
+                    // Clearing serverSubmittedAt marks the attempt as definitively over, so
+                    // shouldAutoProcess re-submits on the next pass instead of waiting out
+                    // the 100s in-flight window.
+                    serverSubmittedAt: shouldRequeueHandoff ? nil : envelope.serverSubmittedAt,
                     lastError: errorMessage,
                     updatedAt: Date()
                 )
                 try? SharedRecipeImportInbox.update(failedEnvelope)
                 await sharedImportInbox.refresh()
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
-                if !shouldKeepServerJobLive {
+                if !shouldKeepServerJobLive && !shouldRequeueHandoff {
                     toastCenter.show(
                         title: "Couldn’t import share",
                         subtitle: errorMessage,
