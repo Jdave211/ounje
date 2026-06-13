@@ -4,7 +4,13 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 final class OunjeShareViewController: UIViewController {
-    private static let quickBackendSubmitTimeout: TimeInterval = 6
+    // The extension stays alive through this await, so the FOREGROUND POST reliably creates
+    // the job on the server before the share sheet closes — that's what makes imports land
+    // without ever opening the app. The API responds in ~1-4s; this generous ceiling only
+    // bounds the rare slow-network tail. (Was 6s, which the tail tripped — and the fallback
+    // is a fire-and-forget background upload that iOS drops when it kills the extension, so
+    // a tripped timeout silently lost the import.)
+    private static let foregroundBackendSubmitTimeout: TimeInterval = 20
 
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
@@ -164,7 +170,7 @@ final class OunjeShareViewController: UIViewController {
                             let response = try await self.submitEnvelopeToBackend(
                                 envelope,
                                 authSession: authSession,
-                                timeoutInterval: Self.quickBackendSubmitTimeout
+                                timeoutInterval: Self.foregroundBackendSubmitTimeout
                             )
                             try? SharedRecipeImportInbox.update(
                                 self.reconciledEnvelope(envelope, response: response)
@@ -176,16 +182,14 @@ final class OunjeShareViewController: UIViewController {
                     }
 
                     if !backendJobCreated {
-                        do {
-                            try await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
-                            try? SharedRecipeImportInbox.update(self.submittedEnvelope(envelope))
-                        } catch {
-                            // If the background upload cannot be scheduled, hand off to
-                            // the containing app so the durable local envelope can be sent.
-                            await MainActor.run {
-                                self.openContainingApp(for: envelope.id)
-                            }
-                        }
+                        // Foreground submit failed (slow network, expired token, or a
+                        // media-only share we can't POST synchronously). Fire the background
+                        // upload as a best effort, but LEAVE the envelope "queued" (don't mark
+                        // it "submitted"): the durable local copy then gets cleanly re-driven
+                        // the next time the app opens, instead of the stale watchdog stranding
+                        // it as "could not be matched to a server job". The server dedupes by
+                        // source URL, so a later re-send can never create a duplicate.
+                        try? await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
                     }
 
                     await MainActor.run {
@@ -536,26 +540,6 @@ final class OunjeShareViewController: UIViewController {
         }
 
         return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
-    }
-
-    private func submittedEnvelope(_ envelope: SharedRecipeImportEnvelope) -> SharedRecipeImportEnvelope {
-        SharedRecipeImportEnvelope(
-            id: envelope.id,
-            createdAt: envelope.createdAt,
-            jobID: envelope.jobID,
-            targetState: envelope.targetState,
-            sourceText: envelope.sourceText,
-            sourceURLString: envelope.sourceURLString,
-            canonicalSourceURLString: envelope.canonicalSourceURLString,
-            sourceApp: envelope.sourceApp,
-            attachments: envelope.attachments,
-            processingState: "submitted",
-            attemptCount: max(envelope.attemptCount ?? 0, 1),
-            lastAttemptAt: Date(),
-            serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
-            lastError: nil,
-            updatedAt: Date()
-        )
     }
 
     private func reconciledEnvelope(
