@@ -5,6 +5,10 @@ struct OunjePaywallHostView: View {
     let initialTier: OunjePricingTier?
     let isDismissible: Bool
     let usesDummyTrialFlow: Bool
+    // When true, this is a lapsed member hitting the expiry gate — not a brand-new user.
+    // Swaps the new-user eyebrow/headline for a warmer "welcome back / membership ended"
+    // framing while keeping the same (hard-wall) plan picker and CTA.
+    let isReturningMember: Bool
     let onClose: () -> Void
     let onUpgradeSuccess: (() -> Void)?
 
@@ -22,12 +26,14 @@ struct OunjePaywallHostView: View {
         initialTier: OunjePricingTier?,
         isDismissible: Bool = true,
         usesDummyTrialFlow: Bool = false,
+        isReturningMember: Bool = false,
         onClose: @escaping () -> Void,
         onUpgradeSuccess: (() -> Void)? = nil
     ) {
         self.initialTier = initialTier
         self.isDismissible = isDismissible
         self.usesDummyTrialFlow = usesDummyTrialFlow
+        self.isReturningMember = isReturningMember
         self.onClose = onClose
         self.onUpgradeSuccess = onUpgradeSuccess
         _selectedTier = State(initialValue: Self.defaultTier(from: initialTier))
@@ -86,7 +92,7 @@ struct OunjePaywallHostView: View {
                             .fill(OunjePalette.accent)
                             .frame(width: 42, height: 10)
 
-                        Text("7 days free")
+                        Text(isReturningMember ? "Welcome back" : "7 days free")
                             .font(.custom("Slee_handwritting-Regular", size: compact ? 20 : 26))
                             .foregroundStyle(.white.opacity(0.92))
                             .lineLimit(1)
@@ -267,7 +273,7 @@ struct OunjePaywallHostView: View {
     }
 
     private var paywallTitle: String {
-        "Try Ounje"
+        isReturningMember ? "Your membership ended.\nYour recipes are still here." : "Try Ounje"
     }
 
     private var paywallBullets: [String] {

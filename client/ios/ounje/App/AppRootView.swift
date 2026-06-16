@@ -92,6 +92,7 @@ struct RootView: View {
                             OunjePaywallHostView(
                                 initialTier: .plus,
                                 isDismissible: false,
+                                isReturningMember: isLapsedMemberAtGate,
                                 onClose: { }
                             )
                             .id("subscription-gate")
@@ -227,6 +228,17 @@ struct RootView: View {
             await store.bootstrapFromSupabaseIfNeeded()
         }
         await store.refreshPostRuntimeBootstrapDetails(session: session, runtimeSnapshot: snapshot)
+    }
+
+    // True when the gate is showing to someone who HAD a paid subscription that lapsed
+    // (vs. a brand-new user who never subscribed). Distinguished by an App Store source or
+    // a prior transaction on the (now-inactive) entitlement — so the paywall can greet them
+    // with "welcome back / your membership ended" instead of the cold new-user pitch.
+    private var isLapsedMemberAtGate: Bool {
+        guard let entitlement = store.membershipEntitlement, entitlement.isActive != true else { return false }
+        return entitlement.source == .appStore
+            || entitlement.originalTransactionID?.isEmpty == false
+            || entitlement.transactionID?.isEmpty == false
     }
 
     private var shouldShowSubscriptionGate: Bool {
