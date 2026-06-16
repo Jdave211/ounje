@@ -354,9 +354,21 @@ struct OunjePaywallHostView: View {
     }
 
     private var yearlySavingsBadgeText: String? {
+        // Compute the real annual discount from the LIVE StoreKit prices for this storefront
+        // (1 − annual / 12·monthly). Apple's per-region price tiers don't preserve the US
+        // ratio, so the old hardcoded "27% off" was wrong in other currencies. Fall back to
+        // the static copy only when the products haven't loaded.
+        if let monthly = store.availableMembershipProducts[monthlyPlan],
+           let annual = store.availableMembershipProducts[yearlyPlan],
+           monthly.price > 0 {
+            let twelveMonths = monthly.price * 12
+            guard twelveMonths > 0 else { return nil }
+            let fraction = (twelveMonths - annual.price) / twelveMonths
+            let percent = (fraction * 100 as NSDecimalNumber).intValue
+            return percent >= 5 ? "\(percent)% off" : nil
+        }
         guard let savings = yearlyPlan.savingsText else { return nil }
-        let normalized = savings.replacingOccurrences(of: "Save ", with: "")
-        return "\(normalized) off"
+        return "\(savings.replacingOccurrences(of: "Save ", with: "")) off"
     }
 
     @MainActor
