@@ -1,10 +1,11 @@
-name: Deploy VM recipe worker
+name: Legacy VM recipe worker (manual only)
 
 # The recipe-ingestion VM worker (a DigitalOcean droplet, systemd service
 # `ounje-recipe-ingestion`) does NOT auto-deploy like the Render API does, so
 # server-side ingestion fixes (social/video) lag behind until a manual deploy.
-# This workflow rsyncs the latest server code to the droplet and restarts the
-# worker on every push to main that touches server code.
+# The VM recipe worker is retired from automatic deployment. Keep this workflow
+# manual-only during the final decommissioning window so a server push can never
+# silently restart the legacy worker.
 #
 # The droplet's /opt/ounje is a plain file tree (NOT a git checkout), so we copy
 # files with rsync rather than `git pull`.
@@ -19,12 +20,6 @@ name: Deploy VM recipe worker
 # Until those secrets are set the job no-ops cleanly instead of failing red.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "server/**"
-      - "package.json"
-      - ".github/workflows/deploy-vm-worker.yml"
   workflow_dispatch: {}
 
 concurrency:
