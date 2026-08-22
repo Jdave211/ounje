@@ -4493,7 +4493,8 @@ async function storeEvidenceBundle(jobID, bundle) {
 
   try {
     const [created] = await insertRows("recipe_ingestion_evidence_bundles", [payload], {
-      prefer: "return=minimal",
+      onConflict: "job_id",
+      prefer: "resolution=merge-duplicates,return=representation",
     });
 
     return created ?? payload;
