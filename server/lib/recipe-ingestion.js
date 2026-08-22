@@ -1605,6 +1605,25 @@ export async function heartbeatRecipeIngestionJob({ jobID, workerID } = {}) {
 
 const LIVE_RECIPE_IMPORT_STATUSES = ["processing", "fetching", "parsing", "normalized"];
 
+export function isStaleLiveRecipeImportJob(job, { staleAfterMinutes = 15, queuedStaleAfterMinutes = 3 } = {}) {
+  const status = normalizeText(job?.status).toLowerCase();
+  const isQueued = ["queued", "retryable"].includes(status);
+  if (!isQueued && !LIVE_RECIPE_IMPORT_STATUSES.includes(status)) return false;
+
+  const staleMinutes = isQueued
+    ? Math.max(1, Number.parseInt(String(queuedStaleAfterMinutes), 10) || 3)
+    : Math.max(1, Number.parseInt(String(staleAfterMinutes), 10) || 15);
+  const referenceTime = Date.parse(
+    (isQueued ? job?.queued_at : job?.leased_at)
+      ?? job?.updated_at
+      ?? job?.stage_started_at
+      ?? job?.created_at
+      ?? ""
+  );
+  if (!Number.isFinite(referenceTime)) return false;
+  return Date.now() - referenceTime >= staleMinutes * 60_000;
+}
+
 export async function repairStaleRecipeIngestionJobs({
   staleAfterMinutes = 15,
   limit = 50,
@@ -11088,8 +11107,9 @@ export async function retryRecipeIngestionJob(jobID, { userID = null } = {}) {
   }
 
   const status = normalizeText(job.status).toLowerCase();
-  if (!["failed", "retryable"].includes(status)) {
-    const error = new Error("Only failed or retryable recipe imports can be retried.");
+  const canRetryStaleLiveJob = isStaleLiveRecipeImportJob(job);
+  if (!["failed", "retryable"].includes(status) && !canRetryStaleLiveJob) {
+    const error = new Error("Only failed, retryable, or stale active recipe imports can be retried.");
     error.statusCode = 409;
     throw error;
   }
@@ -11113,6 +11133,7 @@ export async function retryRecipeIngestionJob(jobID, { userID = null } = {}) {
 
   const retried = await appendJobEvent(normalizedJobID, "user_retry_queued", {
     previous_status: status,
+    stale_live_retry: canRetryStaleLiveJob,
   }, {
     status: "retryable",
     review_state: "pending",

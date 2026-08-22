@@ -14,6 +14,7 @@ const {
   hasCompleteDisplayMacros,
   assessRecipeLikelihood,
   detectRecipeIngestionSourceType,
+  isStaleLiveRecipeImportJob,
 } = await import("../lib/recipe-ingestion.js");
 
 // ---------------------------------------------------------------------------
@@ -131,5 +132,18 @@ assert.equal(detectRecipeIngestionSourceType({ sourceText: "make me a high prote
   assert.ok(r.quantity_text != null, "decimal quantities should also be preserved");
   assert.equal(r.name, "granulated sugar");
 }
+
+const fourMinutesAgo = new Date(Date.now() - 4 * 60_000).toISOString();
+const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
+assert.equal(
+  isStaleLiveRecipeImportJob({ status: "queued", queued_at: fourMinutesAgo }),
+  true,
+  "queued imports must become retryable when no worker claims them"
+);
+assert.equal(
+  isStaleLiveRecipeImportJob({ status: "queued", queued_at: oneMinuteAgo }),
+  false,
+  "fresh queued imports must remain live"
+);
 
 console.log("recipe-ingestion-quality: all assertions passed");
