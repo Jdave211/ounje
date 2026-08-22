@@ -15,6 +15,7 @@ const {
   assessRecipeLikelihood,
   detectRecipeIngestionSourceType,
   isStaleLiveRecipeImportJob,
+  normalizeCreatorHandle,
 } = await import("../lib/recipe-ingestion.js");
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,13 @@ assert.equal(detectRecipeIngestionSourceType({ sourceUrl: "https://www.tiktok.co
 assert.equal(detectRecipeIngestionSourceType({ sourceUrl: "https://www.instagram.com/p/abc" }), "instagram");
 assert.equal(detectRecipeIngestionSourceType({ sourceUrl: "https://sallysbakingaddiction.com/recipe" }), "web");
 assert.equal(detectRecipeIngestionSourceType({ sourceText: "make me a high protein dinner" }), "text");
+
+assert.equal(normalizeCreatorHandle("@9resha"), "@9resha");
+assert.equal(
+  normalizeCreatorHandle("MS4wLjABAAAApkyPUHodYpzzuTew33dYjEzer52vag7zyJ6i78LFgMz6l_YI17Xx7hunEXZN9EoC"),
+  null,
+  "TikTok secUid values must never render as public creator handles"
+);
 
 {
   const accepted = await assessRecipeLikelihood({ source_type: "media_image", photo_meal_gate: { is_meal: true, confidence: 0.8 } });

@@ -760,7 +760,7 @@ function firstNormalizedText(...values) {
   return null;
 }
 
-function normalizeCreatorHandle(value) {
+export function normalizeCreatorHandle(value) {
   const normalized = normalizeText(value);
   if (!normalized) return null;
   const withoutURL = normalized
@@ -772,6 +772,10 @@ function normalizeCreatorHandle(value) {
     .replace(/\s+/g, "")
     .trim();
   if (!cleaned) return null;
+  // TikTok's social metadata can expose a long secUid in the same field as the
+  // public username. Public TikTok and Instagram handles are at most 30 chars;
+  // never render an opaque account token as the recipe creator.
+  if (cleaned.length > 30 || /^MS4wLjABAAAA/i.test(cleaned)) return null;
   if (/^\d{8,}$/.test(cleaned)) return null;
   if (!/[a-z_]/i.test(cleaned)) return null;
   return cleaned.startsWith("@") ? cleaned : `@${cleaned}`;
@@ -2378,42 +2382,6 @@ function socialSourceHasFoodIdentity(source) {
 
   if (!text) return false;
   return SOCIAL_RECIPE_IDENTITY_PATTERN.test(text);
-}
-
-function buildReferenceRecipeQueryFromSocialSource(source) {
-  const referenceCandidate = buildReferenceRecipeQueryCandidateFromSocialSource(source);
-  if (referenceCandidate?.query) return referenceCandidate.query;
-
-  const candidates = [
-    source?.caption_text,
-    source?.raw_text,
-    source?.description,
-    source?.meta_description,
-    source?.body_text,
-    source?.transcript_text,
-    summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], { maxFrames: 2, textLimit: 350 }),
-    source?.title,
-  ].map((value) => normalizeText(value)).filter(Boolean);
-
-  const cleaned = candidates
-    .map((value) => value
-      .replace(/https?:\/\/\S+/gi, " ")
-      .replace(/\btiktok\s*[-–—]?\s*make your day\b/gi, " ")
-      .replace(/\btiktok\s*[-–—]?\s*your day\b/gi, " ")
-      .replace(/[@#][\w.-]+/g, " ")
-      .replace(/\b(link in bio|follow for more|full recipe|recipe below|ad|sponsored|promo|promotion|limited time|order now)\b/gi, " ")
-      .replace(/[^\p{L}\p{N}\s'&-]/gu, " ")
-      .replace(/\s+/g, " ")
-      .trim())
-    .find((value) => value.split(/\s+/).length >= 2 && !/^tiktok\b/i.test(value));
-
-  if (!cleaned) return "";
-  const words = cleaned
-    .split(/\s+/)
-    .filter((word) => !/^(the|and|with|for|this|that|from|make|made|easy|best|viral|food|recipe)$/i.test(word))
-    .slice(0, 10);
-  const query = words.join(" ").trim() || cleaned.split(/\s+/).slice(0, 10).join(" ");
-  return normalizeText(`${query} recipe`);
 }
 
 function mergePreviousGateEvidenceIntoSource(source, gateArtifact) {
@@ -11392,109 +11360,26 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       }).catch(() => {});
       if (!recipeGate.is_recipe) {
         if (socialSourceHasFoodIdentity(source)) {
-          const referenceQuery = buildReferenceRecipeQueryFromSocialSource(source);
-          let referenceSource = null;
-          if (referenceQuery) {
-            referenceSource = await extractRecipeSearchSource(referenceQuery, [], {
-              source,
-              jobID: existingJob.id,
-            }).catch((error) => ({
-              source_type: "recipe_search",
-              platform: "web_search_from_social_reference",
-              source_url: null,
-              canonical_url: null,
-              raw_text: referenceQuery,
-              title: referenceQuery.replace(/\s+recipe$/i, ""),
-              description: null,
-              hero_image_url: source.hero_image_url ?? source.thumbnail_url ?? null,
-              discover_card_image_url: source.hero_image_url ?? source.thumbnail_url ?? null,
-              attachments: [],
-              recipe_sources: [],
-              source_provenance_json: buildSourceProvenanceRecord({
-                source_type: "recipe_search",
-                platform: "web_search_from_social_reference",
-                title: referenceQuery,
-              }, {
-                evidenceBundle: {
-                  query: referenceQuery,
-                  original_social_gate: recipeGate,
-                  search_error: errorSummary(error),
-                },
-              }),
-              artifacts: [],
-            }));
-          }
-
-          if (referenceSource) {
-            const originalSocialSource = {
-              source_type: source.source_type ?? null,
-              platform: source.platform ?? null,
-              source_url: source.source_url ?? null,
-              canonical_url: source.canonical_url ?? null,
-              attached_video_url: source.attached_video_url ?? null,
-              title: source.title ?? null,
-              description: source.description ?? source.meta_description ?? null,
-              author_name: source.author_name ?? null,
-              author_handle: source.author_handle ?? null,
-              recipe_gate: recipeGate,
-            };
-            source = {
-              ...referenceSource,
-              source_url: originalSocialSource.source_url ?? originalSocialSource.canonical_url ?? referenceSource.source_url ?? null,
-              canonical_url: originalSocialSource.canonical_url ?? originalSocialSource.source_url ?? referenceSource.canonical_url ?? null,
-              attached_video_url: originalSocialSource.attached_video_url
-                ?? originalSocialSource.canonical_url
-                ?? originalSocialSource.source_url
-                ?? referenceSource.attached_video_url
-                ?? null,
-              platform: originalSocialSource.platform ?? "web_search_from_social_reference",
-              source_platform: originalSocialSource.platform ?? "web_search_from_social_reference",
-              author_name: originalSocialSource.author_name ?? referenceSource.author_name ?? null,
-              author_handle: originalSocialSource.author_handle ?? referenceSource.author_handle ?? null,
-              original_social_source: originalSocialSource,
-              source_provenance_json: {
-                ...(referenceSource.source_provenance_json ?? {}),
-                original_social_source: compactJSON(originalSocialSource),
-              },
-            };
-            job = await appendJobEvent(existingJob.id, "not_recipe_converted_to_reference_recipe", {
-              worker_id: workerID,
-              reason: recipeGate.reason,
-              confidence: recipeGate.confidence,
-              method: recipeGate.method,
-              reference_query: referenceQuery,
-              reference_count: Array.isArray(referenceSource.recipe_sources) ? referenceSource.recipe_sources.length : 0,
-            }, {
-              quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "social_reference_recipe"]),
-            });
-          } else if (shouldContinueRecipeImportDespiteGate(recipeGate, source)) {
-            job = await appendJobEvent(existingJob.id, "not_recipe_gate_overridden", {
-              worker_id: workerID,
-              reason: recipeGate.reason,
-              confidence: recipeGate.confidence,
-              method: recipeGate.method,
-            }, {
-              quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "recipe_lead_gate_override"]),
-            });
-          } else {
-            const completedAt = nowIso();
-            job = await appendJobEvent(existingJob.id, "failed_not_recipe", {
-              worker_id: workerID,
-              reason: recipeGate.reason,
-              confidence: recipeGate.confidence,
-              method: recipeGate.method,
-            }, {
-              status: "failed",
-              canonical_url: source.canonical_url ?? requestPayload.source_url,
-              fetched_at: nowIso(),
-              completed_at: completedAt,
-              error_message: "Source does not appear to be a recipe.",
-              review_state: "needs_review",
-              review_reason: recipeGate.reason,
-              quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "not_recipe"]),
-            });
-            return formatJobResponse(job);
-          }
+          // A recognizable dish name is not evidence for the source's exact recipe.
+          // Never replace a failed TikTok/Instagram extraction with a generic web
+          // recipe and silently save it as the user's import.
+          const completedAt = nowIso();
+          job = await appendJobEvent(existingJob.id, "social_recipe_evidence_incomplete", {
+            worker_id: workerID,
+            reason: recipeGate.reason,
+            confidence: recipeGate.confidence,
+            method: recipeGate.method,
+          }, {
+            status: "needs_review",
+            canonical_url: source.canonical_url ?? requestPayload.source_url,
+            fetched_at: nowIso(),
+            completed_at: completedAt,
+            error_message: "Ounje could not extract the exact recipe from this social post.",
+            review_state: "needs_review",
+            review_reason: recipeGate.reason ?? "The post did not expose enough ingredient or instruction evidence.",
+            quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "social_exact_evidence_missing"]),
+          });
+          return formatJobResponse(job);
         } else if (shouldContinueRecipeImportDespiteGate(recipeGate, source)) {
           job = await appendJobEvent(existingJob.id, "not_recipe_gate_overridden", {
             worker_id: workerID,
