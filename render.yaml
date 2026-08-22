@@ -79,7 +79,7 @@ services:
     runtime: docker
     plan: starter
     dockerfilePath: Dockerfile
-    dockerCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest --batch-size 2 --wake-mode redis --wake-timeout-ms 15000
+    dockerCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest --batch-size 1 --wake-mode redis --wake-timeout-ms 15000
     maxShutdownDelaySeconds: 300
     autoDeploy: true
     buildFilter:
@@ -98,7 +98,7 @@ services:
       - key: OUNJE_ENABLE_AI_CALL_LOGGING
         value: "true"
       - key: RECIPE_INGESTION_WORKER_CONCURRENCY
-        value: "2"
+        value: "1"
       - key: RECIPE_INGESTION_WORKER_WAKE_MODE
         value: redis
       - key: RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS
