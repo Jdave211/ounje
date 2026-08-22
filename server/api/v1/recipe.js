@@ -331,24 +331,7 @@ function recipeDetailPayloadIsDisplayReady(payload = {}) {
   const ingredientCount = Array.isArray(recipe?.ingredients) ? recipe.ingredients.length : 0;
   const stepCount = Array.isArray(recipe?.steps) ? recipe.steps.length : 0;
   if (ingredientCount === 0 || stepCount === 0) return false;
-  if (!hasCompleteDisplayMacros(recipe)) return false;
-  if (recipeHasVideoSourceHint(recipe) && !recipeHasAnySourceURL(recipe)) return false;
-  const description = trimString(recipe?.description);
-  const lowerDescription = description.toLowerCase();
-  if (
-    description.length > 320
-    || (/\bingredients?\b/.test(lowerDescription) && /\b(instructions?|directions?|method)\b/.test(lowerDescription))
-  ) {
-    return false;
-  }
-  const cookText = trimString(recipe?.cook_time_text);
-  if (
-    /\bper\s+(side|batch|piece|donut|doughnut)\b/i.test(cookText)
-    && (!Number.isFinite(Number(recipe?.prep_time_minutes)) || !Number.isFinite(Number(recipe?.cook_time_minutes)))
-  ) {
-    return false;
-  }
-  return true;
+  return Boolean(trimString(recipe?.id) && trimString(recipe?.title));
 }
 
 function missingDisplayMacroPatch(existingRecipe = {}, candidateRecipe = {}) {
@@ -579,12 +562,40 @@ async function prepareRecipeDetailForDisplay(recipeID, detail = {}) {
     .filter(Boolean);
 
   const needsImageHydration = recipeDetailNeedsIngredientImageHydration(detail);
-  const [macroReady, imageLookup] = await Promise.all([
+  const [macroResult, imageLookupResult] = await Promise.allSettled([
     ensureRecipeDetailDisplayMacros(recipeID, detail),
     needsImageHydration ? fetchIngredientImageLookup(ingredientNames) : Promise.resolve(new Map()),
   ]);
 
-  return hydrateRecipeDetailIngredientImages(macroReady, imageLookup.size ? imageLookup : null);
+  if (macroResult.status === "rejected") {
+    console.warn("[recipe/detail] optional macro enrichment failed:", macroResult.reason?.message ?? macroResult.reason);
+  }
+  if (imageLookupResult.status === "rejected") {
+    console.warn("[recipe/detail] optional ingredient image enrichment failed:", imageLookupResult.reason?.message ?? imageLookupResult.reason);
+  }
+
+  const macroReady = macroResult.status === "fulfilled" ? macroResult.value : detail;
+  const imageLookup = imageLookupResult.status === "fulfilled" ? imageLookupResult.value : new Map();
+  try {
+    return await hydrateRecipeDetailIngredientImages(macroReady, imageLookup.size ? imageLookup : null);
+  } catch (error) {
+    console.warn("[recipe/detail] optional ingredient image hydration failed:", error.message);
+    return macroReady;
+  }
+}
+
+function refreshRecipeDetailEnrichmentInBackground(recipeID, detailCacheKey, detail, ttlMs) {
+  void prepareRecipeDetailForDisplay(recipeID, detail)
+    .then((enrichedDetail) => writeSharedTimedCache(
+      recipeDetailCache,
+      detailCacheKey,
+      { recipe: enrichedDetail },
+      ttlMs,
+      "recipe-detail"
+    ))
+    .catch((error) => {
+      console.warn("[recipe/detail] background enrichment failed:", error.message);
+    });
 }
 
 function hasStructuredRecipeJSON(recipe = {}) {
@@ -1152,17 +1163,15 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       "recipe-detail"
     );
     if (cached && recipeDetailPayloadIsDisplayReady(cached)) {
-      if (!recipeDetailNeedsIngredientImageHydration(cached.recipe)) return res.json(cached);
-      const hydratedRecipe = await hydrateRecipeDetailIngredientImages(cached.recipe);
-      const hydratedPayload = { recipe: hydratedRecipe };
-      await writeSharedTimedCache(
-        recipeDetailCache,
-        detailCacheKey,
-        hydratedPayload,
-        recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
-        "recipe-detail"
-      );
-      return res.json(hydratedPayload);
+      if (!hasCompleteDisplayMacros(cached.recipe) || recipeDetailNeedsIngredientImageHydration(cached.recipe)) {
+        refreshRecipeDetailEnrichmentInBackground(
+          recipeId,
+          detailCacheKey,
+          cached.recipe,
+          recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS
+        );
+      }
+      return res.json(cached);
     }
 
     const recipe = recipeId.startsWith("uir_")
@@ -1173,18 +1182,20 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     }
 
     if (hasStructuredRecipeJSON(recipe)) {
-      const recipeDetail = await prepareRecipeDetailForDisplay(recipeId, normalizeRecipeDetail(recipe));
+      const recipeDetail = normalizeRecipeDetail(recipe);
       const payload = {
         recipe: recipeDetail,
       };
 
-      await writeSharedTimedCache(
+      const cacheTTL = recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS;
+      writeSharedTimedCache(
         recipeDetailCache,
         detailCacheKey,
         payload,
-        recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
+        cacheTTL,
         "recipe-detail"
       );
+      refreshRecipeDetailEnrichmentInBackground(recipeId, detailCacheKey, recipeDetail, cacheTTL);
 
       return res.json(payload);
     }
@@ -1201,23 +1212,25 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
         )
       : [];
 
-    const recipeDetail = await prepareRecipeDetailForDisplay(recipeId, normalizeRecipeDetail(recipe, {
+    const recipeDetail = normalizeRecipeDetail(recipe, {
         recipeIngredients,
         recipeSteps,
         stepIngredients,
-      }));
+      });
 
     const payload = {
       recipe: recipeDetail,
     };
 
-    await writeSharedTimedCache(
+    const cacheTTL = recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS;
+    writeSharedTimedCache(
       recipeDetailCache,
       detailCacheKey,
       payload,
-      recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
+      cacheTTL,
       "recipe-detail"
     );
+    refreshRecipeDetailEnrichmentInBackground(recipeId, detailCacheKey, recipeDetail, cacheTTL);
 
     return res.json(payload);
   } catch (error) {

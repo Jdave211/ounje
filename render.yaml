@@ -20,8 +20,8 @@ services:
         value: production
       - key: OUNJE_ENABLE_RECIPE_INGESTION_POLLING
         value: "false"
-      # Website imports run inline on this API service (always latest code) instead of
-      # the separately-deployed VM worker. Social/video still queue to the VM.
+      # Website imports may run inline on the API service. Social/video work remains
+      # owned by the managed Docker worker below.
       - key: OUNJE_INLINE_WEB_IMPORTS
         value: "true"
       - key: YOUTUBE_DL_SKIP_DOWNLOAD

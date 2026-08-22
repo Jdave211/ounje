@@ -4430,6 +4430,7 @@ async function createJobRow(request) {
     },
     dedupe_key: dedupeKey,
     status: "queued",
+    max_attempts: 5,
     review_state: "pending",
     event_log: [
       {
@@ -10988,10 +10989,8 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     const job = await createJobRow(queuedRequest);
 
     // Website imports are lightweight (HTTP fetch + JSON-LD parse + LLM) and need
-    // none of the VM worker's heavy tooling (yt-dlp/ffmpeg). Process them inline on
-    // the API service itself, which auto-deploys and therefore always runs the latest
-    // parsing fixes — instead of handing them to the separately-deployed VM worker
-    // (which can lag behind on code). Social/video imports still queue to the VM.
+    // none of the managed worker's heavy media tooling. They can run on the API when
+    // explicitly enabled; social/video imports always stay worker-owned.
     const inlineWebImport = !processInline && shouldInlineWebImport(request);
 
     if (processInline) {
@@ -11003,7 +11002,7 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
       // route with a progress card) instead of blocking on the web-import screen until
       // processing completes. The dyno stays alive to finish the work.
       //
-      // Claim the job for the API up front: the VM worker only claims queued/retryable
+      // Claim the job for the API up front: the managed worker only claims queued/retryable
       // jobs, so flipping it to `processing` (with leased_at) before the background
       // pass starts prevents the worker from also grabbing it and redundantly
       // re-processing the same web import. leased_at lets the stale-lease reclaim
@@ -11051,10 +11050,8 @@ function shouldProcessImportInline(payload = {}, options = {}) {
   return allowInline && requestedInline;
 }
 
-// Website imports run inline on the API service rather than the separately-deployed
-// VM worker, so they always use the latest parsing code that ships with the API's
-// auto-deploy. Gated by OUNJE_INLINE_WEB_IMPORTS (default ON). Only applies to web
-// source URLs — social/video imports need the VM's yt-dlp/ffmpeg/Playwright tooling.
+// Website imports may run inline on the API service when explicitly enabled. Social
+// and video sources always require the managed worker's yt-dlp/ffmpeg/browser runtime.
 function shouldInlineWebImport(request = {}) {
   const enabled = !["0", "false", "no", "off"].includes(
     String(process.env.OUNJE_INLINE_WEB_IMPORTS ?? "true").trim().toLowerCase()
@@ -11184,6 +11181,7 @@ export async function retryRecipeIngestionJob(jobID, { userID = null } = {}) {
     review_reason: null,
     error_message: null,
     attempts: 0,
+    max_attempts: Math.max(Number(job.max_attempts ?? 0), 5),
     worker_id: null,
     leased_at: null,
     completed_at: null,
@@ -11638,10 +11636,10 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
   } catch (error) {
     const quotaError = isOpenAIQuotaError(error);
     const modelError = isOpenAITerminalModelError(error);
-    const terminal = quotaError || modelError || nextAttempt >= Number(existingJob.max_attempts ?? 3);
-	    job = await appendJobEvent(existingJob.id, terminal ? "failed" : "retry_scheduled", {
-	      worker_id: workerID,
-	      error_message: error.message,
+    const terminal = modelError || nextAttempt >= Number(existingJob.max_attempts ?? 5);
+    job = await appendJobEvent(existingJob.id, terminal ? "failed" : "retry_scheduled", {
+      worker_id: workerID,
+      error_message: error.message,
       terminal_reason: quotaError
         ? "openai_quota_or_rate_limit"
         : modelError
