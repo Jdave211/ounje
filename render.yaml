@@ -74,3 +74,56 @@ services:
         sync: false
       - key: OUNJE_FOUNDER_SLACK_WEBHOOK_URL
         sync: false
+  - name: ounje-recipe-ingestion
+    type: worker
+    runtime: docker
+    plan: starter
+    dockerfilePath: Dockerfile
+    dockerCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest --batch-size 2 --wake-mode redis --wake-timeout-ms 15000
+    maxShutdownDelaySeconds: 300
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - Dockerfile
+        - .dockerignore
+        - package.json
+        - render.yaml
+        - server/**
+        - supabase/migrations/**
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OUNJE_RUNTIME_ENV
+        value: production
+      - key: OUNJE_ENABLE_AI_CALL_LOGGING
+        value: "true"
+      - key: RECIPE_INGESTION_WORKER_CONCURRENCY
+        value: "2"
+      - key: RECIPE_INGESTION_WORKER_WAKE_MODE
+        value: redis
+      - key: RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS
+        value: "15000"
+      - key: RECIPE_INGESTION_STALE_AFTER_MINUTES
+        value: "15"
+      - key: RECIPE_INGESTION_STALE_REPAIR_INTERVAL_MS
+        value: "300000"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: OUNJE_RAPIDAPI_SOCIAL_KEY
+        sync: false
+      - key: RECIPE_IMAGE_BUCKET
+        sync: false
+      - key: RECIPE_IMPORT_MEDIA_BUCKET
+        sync: false
+      - key: RECIPE_VIDEO_BUCKET
+        sync: false
