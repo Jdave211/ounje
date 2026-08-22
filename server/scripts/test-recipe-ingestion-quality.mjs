@@ -17,6 +17,8 @@ const {
   detectRecipeIngestionSourceType,
   isStaleLiveRecipeImportJob,
   normalizeCreatorHandle,
+  selectedSocialHeroFrame,
+  socialFrameTimestamps,
 } = await import("../lib/recipe-ingestion.js");
 
 {
@@ -41,6 +43,25 @@ const {
   assert.equal(content[0].type, "text");
   assert.equal(content[1].image_url.url, frameURL, "social recipe gate must receive visual frame evidence");
   assert.equal(content[1].image_url.detail, "high", "frame text must be sent at readable detail");
+}
+
+{
+  const timestamps = socialFrameTimestamps(34.67, 8);
+  assert.equal(timestamps.length, 8);
+  assert.ok(timestamps[0] <= 0.2, "video evidence must include the creator's opening hero shot");
+  assert.ok(timestamps.at(-1) >= 34.4, "video evidence must include the creator's closing finished-dish shot");
+}
+
+{
+  const frames = Array.from({ length: 10 }, (_, index) => `data:image/jpeg;base64,frame-${index + 1}`);
+  const selected = selectedSocialHeroFrame(
+    { source_type: "tiktok", frame_data_urls: frames },
+    { hero_frame_position: 4 }
+  );
+  const evidenceFrames = [frames[0], frames[1], frames[3], frames[4], frames[5], frames[6], frames[8], frames[9]];
+  assert.equal(selected?.dataURL, evidenceFrames[3], "hero selection must map to the same evenly-spaced frames shown to vision");
+  assert.equal(selectedSocialHeroFrame({ source_type: "web", frame_data_urls: frames }, { hero_frame_position: 1 }), null);
+  assert.equal(selectedSocialHeroFrame({ source_type: "tiktok", frame_data_urls: frames }, { hero_frame_position: 99 }), null);
 }
 
 // ---------------------------------------------------------------------------

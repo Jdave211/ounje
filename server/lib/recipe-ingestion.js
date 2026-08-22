@@ -6661,6 +6661,17 @@ async function findDownloadedVideoPath(directory) {
     .find((filePath) => /\.(mp4|mov|m4v|webm)$/i.test(filePath)) ?? null;
 }
 
+function socialFrameTimestamps(duration, maxFrames) {
+  const safeDuration = Number.isFinite(Number(duration)) && Number(duration) > 0 ? Number(duration) : 12;
+  const safeFrameCount = Math.max(1, Number.parseInt(maxFrames, 10) || 1);
+  const firstFrameAt = Math.min(0.2, Math.max(safeDuration * 0.02, 0.1));
+  const lastFrameAt = Math.max(firstFrameAt, safeDuration - 0.2);
+  return Array.from({ length: safeFrameCount }, (_, index) => {
+    const fraction = safeFrameCount <= 1 ? 0.5 : index / (safeFrameCount - 1);
+    return firstFrameAt + ((lastFrameAt - firstFrameAt) * fraction);
+  });
+}
+
 async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) {
   if (!(await commandExists("ffmpeg")) || !(await commandExists("ffprobe"))) {
     return [];
@@ -6683,11 +6694,7 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
   }
 
   const frameDir = await fsp.mkdtemp(path.join(os.tmpdir(), "ounje-social-frames-"));
-  const timestamps = Array.from({ length: maxFrames }, (_, index) => {
-    const safeDuration = Math.max(duration - 0.4, 1);
-    const fraction = (index + 1) / (maxFrames + 1);
-    return Math.max(0.1, safeDuration * fraction);
-  });
+  const timestamps = socialFrameTimestamps(duration, maxFrames);
 
   const frameDataURLs = [];
   try {
@@ -6698,7 +6705,7 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
         "-ss", seconds.toFixed(2),
         "-i", videoPath,
         "-frames:v", "1",
-        "-vf", "scale='min(720,iw)':-2",
+        "-vf", "scale='min(1080,iw)':-2",
         "-q:v", "2",
         outputPath,
       ], SOCIAL_FRAME_EXTRACT_TIMEOUT_MS);
@@ -6712,6 +6719,30 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
   }
 
   return frameDataURLs;
+}
+
+function selectedSocialHeroFrame(source, modelResult = null) {
+  const sourceType = normalizeText(source?.source_type ?? source?.platform ?? "").toLowerCase();
+  if (!["tiktok", "instagram", "youtube", "media_video"].includes(sourceType)) return null;
+
+  const frames = pickEvenlySpacedItems(
+    Array.isArray(source?.frame_data_urls) ? source.frame_data_urls : [],
+    RECIPE_EXTRACTION_MAX_IMAGE_INPUTS
+  );
+  if (!frames.length) return null;
+
+  const requestedPosition = Number.parseInt(
+    modelResult?.hero_frame_position ?? modelResult?.recipe?.hero_frame_position ?? "",
+    10
+  );
+  if (!Number.isFinite(requestedPosition) || requestedPosition < 1 || requestedPosition > frames.length) {
+    return null;
+  }
+
+  return {
+    dataURL: frames[requestedPosition - 1],
+    position: requestedPosition,
+  };
 }
 
 async function transcribeShortVideo(videoPath) {
@@ -8168,6 +8199,7 @@ async function extractRecipeWithModel(source) {
       text: [
         "Extract a recipe from this source material.",
         "If the source does not provide nutrition but the dish, servings, and ingredient quantities are clear enough, return conservative best-guess per-serving calories_kcal, protein_g, carbs_g, and fat_g. These are rough display estimates for the app.",
+        "For social video, the attached frame images are chronological. Return hero_frame_position as the 1-based position of the sharpest, most appetizing finished-dish frame. Avoid faces, motion blur, transitions, ingredient-only shots, and frames dominated by text. Return null when no frame is suitable.",
         "",
         `source_type: ${source.source_type}`,
         `platform: ${source.platform ?? ""}`,
@@ -8232,6 +8264,7 @@ async function extractRecipeWithModel(source) {
             ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
             steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }]
           },
+          hero_frame_position: "integer|null",
           quality_flags: ["string"],
           review_reason: "string|null"
         }),
@@ -10727,17 +10760,44 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   const normalizedCategory = normalizeText(normalized.category ?? "");
 
   const _imgRecipeKey = normalized.title ?? source.title ?? source.canonical_url ?? source.source_url ?? source.source_type ?? "recipe";
-  const _heroSrc = normalized.hero_image_url ?? normalized.discover_card_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
-  const _cardSrc = normalized.discover_card_image_url ?? normalized.hero_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
+  const socialHeroFrame = selectedSocialHeroFrame(source, modelResult);
+  const isSocialVideoImport = ["tiktok", "instagram", "youtube", "media_video"].includes(
+    normalizeText(source.source_type ?? source.platform ?? "").toLowerCase()
+  );
+  // The model must not invent an image URL for a social import. Prefer a selected
+  // full-resolution frame, then the source provider's own cover image.
+  const _heroSrc = isSocialVideoImport
+    ? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null
+    : normalized.hero_image_url ?? normalized.discover_card_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
+  const _cardSrc = isSocialVideoImport
+    ? _heroSrc
+    : normalized.discover_card_image_url ?? normalized.hero_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
 
   let persistedHeroImageURL, persistedCardImageURL;
-  if (_heroSrc && _cardSrc && _heroSrc !== _cardSrc) {
+  if (socialHeroFrame?.dataURL) {
+    const parsedFrame = imageBufferFromDataURL(socialHeroFrame.dataURL);
+    persistedHeroImageURL = parsedFrame
+      ? await uploadRecipeImageBufferToStorage(parsedFrame.buffer, {
+          recipeKey: _imgRecipeKey,
+          imageRole: "video-frame-hero",
+          accessToken,
+          contentType: parsedFrame.contentType,
+          sourceKey: `${source.canonical_url ?? source.source_url ?? _imgRecipeKey}:frame:${socialHeroFrame.position}`,
+        })
+      : null;
+    persistedCardImageURL = persistedHeroImageURL;
+    if (persistedHeroImageURL) {
+      modelResult.quality_flags = uniqueStrings([...(modelResult.quality_flags ?? []), "video_frame_hero"]);
+    }
+  }
+
+  if (!persistedHeroImageURL && _heroSrc && _cardSrc && _heroSrc !== _cardSrc) {
     // Different source URLs — upload hero and card in parallel.
     [persistedHeroImageURL, persistedCardImageURL] = await Promise.all([
       persistRecipeImageToStorage(_heroSrc, { recipeKey: _imgRecipeKey, imageRole: "hero", accessToken }),
       persistRecipeImageToStorage(_cardSrc, { recipeKey: _imgRecipeKey, imageRole: "card", accessToken }),
     ]);
-  } else {
+  } else if (!persistedHeroImageURL) {
     // Same source URL (or only one exists) — upload once and reuse.
     persistedHeroImageURL = await persistRecipeImageToStorage(_heroSrc, { recipeKey: _imgRecipeKey, imageRole: "hero", accessToken });
     persistedCardImageURL = persistedHeroImageURL;
@@ -11665,6 +11725,8 @@ export {
   assessRecipeLikelihood,
   buildPhotoImportDedupeKey,
   buildRecipeGateUserContent,
+  selectedSocialHeroFrame,
+  socialFrameTimestamps,
   maybeGenerateImportedRecipeImage,
   photoRecipeSearchQueries,
   buildFinalRecipeValidationIssues,
