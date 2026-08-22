@@ -13,12 +13,16 @@ const {
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
   assessRecipeLikelihood,
+  buildFinalRecipeValidationIssues,
   buildRecipeGateUserContent,
   detectRecipeIngestionSourceType,
   isStaleLiveRecipeImportJob,
   normalizeCreatorHandle,
   selectedSocialHeroFrame,
+  selectRecipeEvidenceFrameDataURLs,
+  socialSourceHasPrimaryRecipeEvidence,
   socialFrameTimestamps,
+  SOCIAL_VIDEO_RECIPE_MODEL,
 } = await import("../lib/recipe-ingestion.js");
 
 {
@@ -58,10 +62,51 @@ const {
     { source_type: "tiktok", frame_data_urls: frames },
     { hero_frame_position: 4 }
   );
-  const evidenceFrames = [frames[0], frames[1], frames[3], frames[4], frames[5], frames[6], frames[8], frames[9]];
-  assert.equal(selected?.dataURL, evidenceFrames[3], "hero selection must map to the same evenly-spaced frames shown to vision");
+  assert.equal(selected?.dataURL, frames[3], "hero selection must map to the same frames shown to vision");
   assert.equal(selectedSocialHeroFrame({ source_type: "web", frame_data_urls: frames }, { hero_frame_position: 1 }), null);
   assert.equal(selectedSocialHeroFrame({ source_type: "tiktok", frame_data_urls: frames }, { hero_frame_position: 99 }), null);
+}
+
+{
+  const frames = Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`);
+  const selected = selectRecipeEvidenceFrameDataURLs(frames, [
+    { frame_index: 1, confidence: 90, text: "Finished dish" },
+    { frame_index: 2, confidence: 84, text: "Boil assorted meats with salt Maggi pepper curry" },
+    { frame_index: 5, confidence: 87, text: "Bleach palm oil" },
+    { frame_index: 6, confidence: 91, text: "Blend green bell pepper scotch bonnet onion" },
+    { frame_index: 9, confidence: 86, text: "Add pepper mix salt crayfish Maggi iru" },
+  ], 4);
+  assert.deepEqual(
+    selected,
+    [frames[1], frames[4], frames[5], frames[8]],
+    "vision input must prioritize OCR-rich recipe frames instead of visual spacing alone"
+  );
+}
+
+{
+  const ayamaseVideoEvidence = {
+    source_type: "tiktok",
+    frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+    frame_ocr_texts: [
+      { frame_index: 5, confidence: 87, text: "Bleach palm oil" },
+      { frame_index: 6, confidence: 91, text: "Blend green bell pepper scotch bonnet onion" },
+      { frame_index: 9, confidence: 86, text: "Add pepper mix salt crayfish Maggi iru" },
+    ],
+  };
+  assert.equal(
+    socialSourceHasPrimaryRecipeEvidence(ayamaseVideoEvidence),
+    true,
+    "explicit social frame recipe evidence must survive a weak metadata gate"
+  );
+  assert.match(
+    buildFinalRecipeValidationIssues({
+      ingredients: [{ display_name: "green bell pepper" }],
+      steps: [{ number: 1, text: "Blend the green bell pepper.", ingredients: [{ display_name: "green bell pepper" }] }],
+    }, ayamaseVideoEvidence).join(" "),
+    /source-evidence coverage/i,
+    "final validation must audit the saved recipe against social frame evidence"
+  );
+  assert.equal(SOCIAL_VIDEO_RECIPE_MODEL, "gpt-4.1-mini");
 }
 
 // ---------------------------------------------------------------------------
