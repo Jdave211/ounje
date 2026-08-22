@@ -245,6 +245,9 @@ app.get("/", (req, res) => {
   res.json({ message: "Hello from server" });
 });
 app.get("/healthz", async (req, res) => {
+  const revision = String(process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? "local")
+    .trim()
+    .slice(0, 12);
   const missingEnv = [
     "OPENAI_API_KEY",
     "SUPABASE_URL",
@@ -256,6 +259,7 @@ app.get("/healthz", async (req, res) => {
     return res.status(503).json({
       ok: false,
       service: "ounje-api",
+      revision,
       status: "missing_env",
       missingEnv,
       checkedAt: new Date().toISOString(),
@@ -267,6 +271,7 @@ app.get("/healthz", async (req, res) => {
     return res.status(503).json({
       ok: false,
       service: "ounje-api",
+      revision,
       status: "supabase_unavailable",
       checkedAt: new Date().toISOString(),
     });
@@ -298,6 +303,7 @@ app.get("/healthz", async (req, res) => {
     const payload = {
       ok: true,
       service: "ounje-api",
+      revision,
       status: responseStatus,
       dependencies: {
         supabase: "ok",
@@ -317,6 +323,7 @@ app.get("/healthz", async (req, res) => {
     const payload = {
       ok: false,
       service: "ounje-api",
+      revision,
       status: "dependency_error",
       dependencies: {
         supabase: error.message,
