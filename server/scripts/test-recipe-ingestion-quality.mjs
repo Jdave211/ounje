@@ -13,10 +13,35 @@ const {
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
   assessRecipeLikelihood,
+  buildRecipeGateUserContent,
   detectRecipeIngestionSourceType,
   isStaleLiveRecipeImportJob,
   normalizeCreatorHandle,
 } = await import("../lib/recipe-ingestion.js");
+
+{
+  const frameURL = "data:image/jpeg;base64,ZmFrZS1mcmFtZQ==";
+  const content = buildRecipeGateUserContent({
+    source_type: "tiktok",
+    platform: "tiktok",
+    frame_data_urls: [frameURL],
+    frame_ocr_texts: [],
+  }, {
+    mediaMode: "video",
+    structuredIngredientCount: 0,
+    structuredInstructionCount: 0,
+    ingredientCandidateCount: 0,
+    instructionCandidateCount: 0,
+    transcriptPresent: false,
+    frameOcrCount: 0,
+    pageImageCount: 0,
+    positiveHits: [],
+    negativeHits: [],
+  });
+  assert.equal(content[0].type, "text");
+  assert.equal(content[1].image_url.url, frameURL, "social recipe gate must receive visual frame evidence");
+  assert.equal(content[1].image_url.detail, "high", "frame text must be sent at readable detail");
+}
 
 // ---------------------------------------------------------------------------
 // 1. Ingredient parsing — compound quantities must not leak the fraction into

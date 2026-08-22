@@ -64,7 +64,10 @@ const PLAYWRIGHT_FALLBACK_PATH = "/Users/davejaga/.openclaw/skills/playwright-sc
 const DEFAULT_USER_AGENT =
   process.env.USER_AGENT ||
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
-const MAX_SOCIAL_FRAME_COUNT = Math.max(2, Number.parseInt(process.env.RECIPE_INGESTION_MAX_SOCIAL_FRAMES ?? "4", 10) || 4);
+const MAX_SOCIAL_FRAME_COUNT = Math.max(
+  4,
+  Math.min(Number.parseInt(process.env.RECIPE_INGESTION_MAX_SOCIAL_FRAMES ?? "10", 10) || 10, 16)
+);
 const SOCIAL_METADATA_TIMEOUT_MS = Math.max(
   5_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_METADATA_TIMEOUT_MS ?? "20000", 10) || 20_000
@@ -103,7 +106,7 @@ const RECIPE_SEARCH_MAX_LINKS = Math.max(2, Math.min(Number.parseInt(process.env
 const RECIPE_REFERENCE_MAX_SOURCES = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_REFERENCE_MAX_SOURCES ?? "3", 10) || 3, 3));
 const RECIPE_EXTRACTION_MAX_IMAGE_INPUTS = Math.max(
   1,
-  Math.min(Number.parseInt(process.env.RECIPE_EXTRACTION_MAX_IMAGE_INPUTS ?? "3", 10) || 3, 4)
+  Math.min(Number.parseInt(process.env.RECIPE_EXTRACTION_MAX_IMAGE_INPUTS ?? "8", 10) || 8, 8)
 );
 const OCR_PROMPT_MIN_CONFIDENCE = Math.max(
   0,
@@ -1806,7 +1809,7 @@ function collectRecipeEvidenceImageInputs(source, { maxCount = RECIPE_EXTRACTION
   return pickEvenlySpacedItems(attachments, maxCount)
     .flatMap((attachment) => {
       if (attachment.kind === "frame" && attachment.data_url) {
-        return [{ type: "image_url", image_url: { url: attachment.data_url, detail: "low" } }];
+        return [{ type: "image_url", image_url: { url: attachment.data_url, detail: "high" } }];
       }
       if (attachment.kind === "image" && (attachment.data_url || attachment.source_url)) {
         return [{ type: "image_url", image_url: { url: attachment.data_url ?? attachment.source_url, detail: "low" } }];
@@ -1818,6 +1821,61 @@ function collectRecipeEvidenceImageInputs(source, { maxCount = RECIPE_EXTRACTION
       return [];
     })
     .slice(0, maxCount);
+}
+
+function buildRecipeGateUserContent(source, signals) {
+  const text = [
+    "Decide if this source is actually a recipe.",
+    "For social video, inspect every attached frame. On-screen ingredient lists and cooking directions are primary evidence even when OCR or the caption is weak.",
+    "Do not reject a cooking video only because its caption, audio transcript, or OCR is sparse.",
+    "",
+    "Signals:",
+    JSON.stringify({
+      source_type: source.source_type ?? null,
+      platform: source.platform ?? null,
+      media_mode: signals.mediaMode ?? null,
+      structured_ingredient_count: signals.structuredIngredientCount,
+      structured_instruction_count: signals.structuredInstructionCount,
+      ingredient_candidate_count: signals.ingredientCandidateCount,
+      instruction_candidate_count: signals.instructionCandidateCount,
+      transcript_present: signals.transcriptPresent,
+      frame_count: Array.isArray(source.frame_data_urls) ? source.frame_data_urls.length : 0,
+      frame_ocr_count: signals.frameOcrCount,
+      page_image_count: signals.pageImageCount,
+      positive_hits: signals.positiveHits,
+      negative_hits: signals.negativeHits,
+    }),
+    "",
+    "Title:",
+    source.title ?? "",
+    "",
+    "Description / caption:",
+    source.description ?? source.meta_description ?? "",
+    "",
+    "Ingredient candidates:",
+    JSON.stringify((source.ingredient_candidates ?? []).slice(0, 24)),
+    "",
+    "Instruction candidates:",
+    JSON.stringify((source.instruction_candidates ?? []).slice(0, 18)),
+    "",
+    "Transcript excerpt:",
+    limitText(source.transcript_text ?? "", 3000),
+    "",
+    "Frame OCR excerpt:",
+    limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 8, textLimit: 700 }), 5000),
+    "",
+    "Return JSON like:",
+    JSON.stringify({
+      is_recipe: true,
+      confidence: 0.0,
+      reason: "string",
+    }),
+  ].join("\n");
+
+  return [
+    { type: "text", text },
+    ...collectRecipeEvidenceImageInputs(source, { maxCount: RECIPE_EXTRACTION_MAX_IMAGE_INPUTS }),
+  ];
 }
 
 async function getOCRWorker() {
@@ -2104,50 +2162,7 @@ async function assessRecipeLikelihood(source) {
       { role: "system", content: RECIPE_GATE_SYSTEM_PROMPT },
       {
         role: "user",
-        content: [
-          "Decide if this source is actually a recipe.",
-          "",
-          "Signals:",
-          JSON.stringify({
-            source_type: source.source_type ?? null,
-            platform: source.platform ?? null,
-            media_mode: signals.mediaMode ?? null,
-            structured_ingredient_count: signals.structuredIngredientCount,
-            structured_instruction_count: signals.structuredInstructionCount,
-            ingredient_candidate_count: signals.ingredientCandidateCount,
-            instruction_candidate_count: signals.instructionCandidateCount,
-            transcript_present: signals.transcriptPresent,
-            frame_ocr_count: signals.frameOcrCount,
-            page_image_count: signals.pageImageCount,
-            positive_hits: signals.positiveHits,
-            negative_hits: signals.negativeHits,
-          }),
-          "",
-          "Title:",
-          source.title ?? "",
-          "",
-          "Description / caption:",
-          source.description ?? source.meta_description ?? "",
-          "",
-          "Ingredient candidates:",
-          JSON.stringify((source.ingredient_candidates ?? []).slice(0, 24)),
-          "",
-          "Instruction candidates:",
-          JSON.stringify((source.instruction_candidates ?? []).slice(0, 18)),
-          "",
-          "Transcript excerpt:",
-          limitText(source.transcript_text ?? "", 3000),
-          "",
-          "Frame OCR excerpt:",
-          limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 4, textLimit: 700 }), 3000),
-          "",
-          "Return JSON like:",
-          JSON.stringify({
-            is_recipe: true,
-            confidence: 0.0,
-            reason: "string",
-          }),
-        ].join("\n"),
+        content: buildRecipeGateUserContent(source, signals),
       },
     ],
   }));
@@ -8175,7 +8190,7 @@ async function extractRecipeWithModel(source) {
         limitText(source.raw_text ?? source.body_text ?? "", 20_000),
         "",
         "Frame OCR excerpt (only high-confidence or recipe-like text):",
-        limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 4, textLimit: 700 }), 3_000),
+        limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 8, textLimit: 700 }), 5_000),
         "",
         "Return a JSON object with this shape:",
         JSON.stringify({
@@ -8224,7 +8239,7 @@ async function extractRecipeWithModel(source) {
     },
   ];
 
-  content.push(...collectRecipeEvidenceImageInputs(source, { maxCount: 4 }));
+  content.push(...collectRecipeEvidenceImageInputs(source));
 
   const response = await withRecipeAIStage("recipe_import.extract", () => openai.chat.completions.create({
     model: RECIPE_INGESTION_MODEL,
@@ -11649,6 +11664,7 @@ export {
   PHOTO_MEAL_GATE_MODEL,
   assessRecipeLikelihood,
   buildPhotoImportDedupeKey,
+  buildRecipeGateUserContent,
   maybeGenerateImportedRecipeImage,
   photoRecipeSearchQueries,
   buildFinalRecipeValidationIssues,
