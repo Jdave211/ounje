@@ -10,7 +10,8 @@ LANGUAGE plpgsql
 SET search_path = public, extensions
 AS $$
 BEGIN
-  IF lower(coalesce(p_worker_id, '')) NOT LIKE 'render_recipe_ingest%' THEN
+  IF lower(coalesce(p_worker_id, '')) NOT LIKE 'render_recipe_ingest%'
+    OR lower(coalesce(p_worker_id, '')) LIKE 'render_recipe_ingest_api%' THEN
     RETURN;
   END IF;
 

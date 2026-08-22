@@ -351,7 +351,8 @@ const ENABLE_RECIPE_INGESTION_POLLING = ["1", "true", "yes", "on"].includes(
 );
 const CAN_CLAIM_RECIPE_INGESTION_JOBS = RECIPE_INGESTION_WORKER_ID
   .toLowerCase()
-  .startsWith("render_recipe_ingest");
+  .startsWith("render_recipe_ingest")
+  && !RECIPE_INGESTION_WORKER_ID.toLowerCase().startsWith("render_recipe_ingest_api");
 const RECIPE_INGESTION_ROLE = CAN_CLAIM_RECIPE_INGESTION_JOBS
   ? "worker_claims_enabled"
   : "enqueue_only";
