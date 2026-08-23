@@ -20,6 +20,9 @@ function argValue(name, fallback = null) {
 
 async function checkRedis() {
   const status = redisConfigStatus();
+  if (status.disabled) {
+    return { configured: false, disabled: true, ok: true, reason: "Redis is intentionally disabled; worker uses Supabase polling" };
+  }
   if (!status.configured) {
     return { configured: false, ok: false, reason: "REDIS_URL is not configured" };
   }
