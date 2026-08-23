@@ -691,6 +691,7 @@ Rules:
 - Prefer not to add non-shopping pantry liquids like water unless the recipe would be confusing without it.
 - Replace vague or technically wrong cooking verbs with practical cooking actions.
 - Keep steps concise, sequential, and cookable.
+- Use short snake_case identifiers for quality_flags, never prose sentences.
 - Keep ingredient quantities practical for the stated servings.
 - Return compact repairs only: include full ingredients or steps arrays only when those arrays need changes, and omit unchanged fields.
 - Do not include commentary outside the JSON object.`;
@@ -8951,6 +8952,7 @@ function isGenericCompletionIngredientName(value) {
   const name = normalizeText(value).toLowerCase();
   if (!name) return true;
   return /^(?:oil[- ]based |red pepper[- ]based )?(?:seasoning|spice mix|spices|sauce|garnish)$/i.test(name)
+    || /^(?:red )?pepper(?:[- ]based)? seasoning$/i.test(name)
     || /^(?:mixed|assorted|preferred|favorite) seasonings?$/i.test(name);
 }
 
@@ -9855,17 +9857,15 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
     for (const ingredientName of ingredientNames) {
       const key = normalizeKey(ingredientName);
       if (!key || /^(salt|pepper|water)$/i.test(ingredientName)) continue;
-      if (!normalizeKey(stepText).includes(key)) {
-        const compactName = ingredientName.split(/\s+/).slice(-2).join(" ");
-        if (compactName && !normalizeKey(stepText).includes(normalizeKey(compactName))) {
-          issues.push(`Ingredient "${ingredientName}" is listed but not clearly used in the steps.`);
-          if (issues.length >= 6) break;
-        }
+      if (!ingredientNameMatchesText(ingredientName, stepText)) {
+        issues.push(`Ingredient "${ingredientName}" is listed but not clearly used in the steps.`);
+        if (issues.length >= 6) break;
       }
     }
   }
 
   const linkedIngredientIssues = [];
+  const missingTopLevelLinkedNames = new Set();
   for (const step of steps) {
     const currentStepText = normalizeText(step?.text ?? "");
     const linkedNames = Array.isArray(step?.ingredients)
@@ -9881,6 +9881,9 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
         || ingredientNameMatchesText(ingredientName, linkedName)
       ));
       if (!isTopLevelIngredient) {
+        const missingKey = normalizeKey(linkedName);
+        if (missingTopLevelLinkedNames.has(missingKey)) continue;
+        missingTopLevelLinkedNames.add(missingKey);
         const stepNumber = step.number ?? step.step_number ?? "?";
         linkedIngredientIssues.push(`Step ${stepNumber} uses "${linkedName}", but it is missing from the top-level ingredient list.`);
         break;
@@ -9995,10 +9998,13 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     const repairedMetrics = recipeCoreMetrics(repaired);
     const originalMetrics = recipeCoreMetrics(recipe);
     const repairedIssues = buildFinalRecipeValidationIssues(repaired, source);
+    const issueCountImproved = validationIssues.length === 0
+      ? repairedIssues.length === 0
+      : repairedIssues.length < validationIssues.length;
     const shouldUseRepair =
       repairedMetrics.ingredientCount >= Math.max(1, originalMetrics.ingredientCount - 1)
       && repairedMetrics.stepCount >= Math.max(1, originalMetrics.stepCount - 1)
-      && repairedIssues.length <= validationIssues.length;
+      && issueCountImproved;
 
     const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(recipe);
     const validationNotes = uniqueStrings([

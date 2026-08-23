@@ -335,8 +335,8 @@ const {
       { text: "Score the cleaned whole tilapia, then rub it with vegetable oil." },
       {
         number: 2,
-        text: "Coat the tilapia with the prepared red pepper-based seasoning.",
-        ingredients: [{ display_name: "red pepper-based seasoning", quantity_text: null }],
+        text: "Coat the tilapia with the prepared red pepper seasoning.",
+        ingredients: [{ display_name: "red pepper seasoning", quantity_text: null }],
       },
     ],
   });
@@ -345,7 +345,7 @@ const {
     "validator must recognize a distinctive ingredient name used without its generic suffix"
   );
   assert.ok(
-    !preparedComponentIssues.some((issue) => issue.includes("red pepper-based seasoning")),
+    !preparedComponentIssues.some((issue) => issue.includes("red pepper seasoning")),
     "prepared component labels must not be forced back into the shopping ingredient list"
   );
 
