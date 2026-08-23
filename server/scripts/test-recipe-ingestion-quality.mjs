@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 process.env.OPENAI_API_KEY = "";
 process.env.SUPABASE_URL = "";
 process.env.SUPABASE_ANON_KEY = "";
+process.env.PERPLEXITY_API_KEY = "test-perplexity-key";
 
 const { parseIngredientObjects } = await import("../lib/recipe-detail-utils.js");
 const { redisConfigStatus } = await import("../lib/redis-cache.js");
@@ -23,6 +24,11 @@ const {
   selectedSocialHeroFrame,
   selectRecipeEvidenceFrameDataURLs,
   socialSourceHasPrimaryRecipeEvidence,
+  socialImportNeedsGroundedCompletion,
+  shouldRunGroundedRecipeCompletion,
+  mergeGroundedSocialCompletion,
+  calibrateSocialRecipeAssessment,
+  runSocialRecipeCompletionContext,
   socialFrameTimestamps,
   SOCIAL_VIDEO_RECIPE_MODEL,
 } = await import("../lib/recipe-ingestion.js");
@@ -172,6 +178,127 @@ const {
     false,
     "generic social captions must not bypass the recipe evidence gate"
   );
+}
+
+{
+  const pepperFishRecipe = {
+    title: "Pepper Grilled Fish",
+    author_handle: "@chefttk",
+    ingredients: [
+      "tilapia",
+      "oil-based seasoning",
+      "red pepper-based seasoning",
+      "plantain",
+      "fried yam",
+      "pop pepper sauce",
+    ].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: Array.from({ length: 8 }, (_, index) => ({ text: `Broad step ${index + 1}` })),
+  };
+  const sparsePepperFishSource = {
+    source_type: "tiktok",
+    canonical_url: "https://www.tiktok.com/@chefttk/video/7270184253428600097",
+    transcript_text: "Let's make pepper grilled fish. Use tilapia, oil-based seasoning and red pepper-based seasoning. Serve with yam or plantain.",
+    frame_data_urls: [],
+    frame_ocr_texts: [],
+    ingredient_candidates: ["tilapia", "oil-based seasoning", "red pepper-based seasoning"],
+    instruction_candidates: [],
+  };
+  assert.equal(
+    socialImportNeedsGroundedCompletion(
+      pepperFishRecipe,
+      sparsePepperFishSource,
+      ["incomplete", "missing_steps"]
+    ),
+    true,
+    "a broad social recipe with no frame evidence must receive grounded completion even when its generated shape looks complete"
+  );
+  assert.equal(
+    shouldRunGroundedRecipeCompletion(
+      pepperFishRecipe,
+      {
+        source_type: "tiktok",
+        frame_data_urls: ["frame-1", "frame-2", "frame-3"],
+        frame_ocr_texts: [
+          { frame_index: 1, text: "Blend green pepper onion and scotch bonnet" },
+          { frame_index: 2, text: "Bleach palm oil then add pepper mix" },
+          { frame_index: 3, text: "Season with salt crayfish Maggi and iru" },
+        ],
+        ingredient_candidates: ["palm oil", "pepper", "onion", "crayfish"],
+        instruction_candidates: ["Blend peppers", "Bleach oil", "Cook sauce"],
+      },
+      []
+    ),
+    false,
+    "rich creator-provided frame evidence must remain the primary recipe instead of paying for a needless web completion"
+  );
+
+  const unsafeReplacement = {
+    ...pepperFishRecipe,
+    ingredients: ["tilapia", "garlic", "paprika", "lemon"].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: Array.from({ length: 6 }, (_, index) => ({ text: `Replacement step ${index + 1}` })),
+  };
+  const guarded = mergeGroundedSocialCompletion(pepperFishRecipe, unsafeReplacement);
+  assert.deepEqual(
+    guarded.ingredients.map((ingredient) => ingredient.display_name),
+    pepperFishRecipe.ingredients.map((ingredient) => ingredient.display_name),
+    "grounded completion must not replace source-specific sides or sauces with a generic fish recipe"
+  );
+  assert.equal(guarded.author_handle, "@chefttk", "completion must preserve the creator");
+
+  const inferredContextSource = {
+    ...sparsePepperFishSource,
+    social_completion_context: {
+      exact_match_supported: false,
+      completion_ingredients: ["garlic, ginger, paprika and salt for the pepper seasoning"],
+      completion_steps: ["Blend the pepper seasoning and marinate the tilapia before grilling"],
+    },
+  };
+  const calibrated = calibrateSocialRecipeAssessment(
+    { confidence_score: 0.93, quality_flags: [], review_state: "approved", review_reason: null },
+    pepperFishRecipe,
+    inferredContextSource,
+    ["incomplete", "missing_steps"]
+  );
+  assert.equal(calibrated.confidence_score, 0.82, "inferred completion must not masquerade as 0.93 creator-source confidence");
+  assert.ok(calibrated.quality_flags.includes("grounded_completion_inferred"));
+
+  const originalFetch = globalThis.fetch;
+  let capturedPerplexityPayload = null;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(String(url), "https://api.perplexity.ai/chat/completions");
+    capturedPerplexityPayload = JSON.parse(String(options?.body ?? "{}"));
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            exact_match_supported: false,
+            match_confidence: 0.61,
+            matched_creator_or_source: "Temi Tyrese pepper grilled fish",
+            reference_urls: ["https://example.com/pepper-grilled-fish"],
+            source_supported_ingredients: ["tilapia", "plantain", "fried yam", "pepper sauce"],
+            source_supported_steps: ["grill the seasoned tilapia"],
+            completion_ingredients: ["garlic, ginger and paprika can complete the pepper seasoning"],
+            completion_steps: ["marinate before grilling and baste while cooking"],
+            quantity_guidance: ["use conservative amounts for four tilapia fillets"],
+            cautions: ["No exact written creator recipe was found"],
+          }),
+        },
+      }],
+      citations: ["https://example.com/pepper-grilled-fish"],
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const context = await runSocialRecipeCompletionContext(pepperFishRecipe, sparsePepperFishSource);
+    assert.equal(context.exact_match_supported, false);
+    assert.equal(context.match_confidence, 0.61);
+    assert.ok(context.completion_ingredients.some((item) => item.includes("paprika")));
+    assert.equal(capturedPerplexityPayload.model, "sonar-pro");
+    assert.match(capturedPerplexityPayload.messages[0].content, /research context, not a replacement recipe/i);
+    assert.match(capturedPerplexityPayload.messages[1].content, /chefttk/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 // ---------------------------------------------------------------------------
