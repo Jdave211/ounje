@@ -17,6 +17,7 @@ const {
   hasUsableRecipeShape,
   assessRecipeLikelihood,
   buildFinalRecipeValidationIssues,
+  shouldRunFinalRecipeValidation,
   buildRecipeGateUserContent,
   detectRecipeIngestionSourceType,
   isStaleLiveRecipeImportJob,
@@ -129,12 +130,12 @@ const {
     true,
     "explicit social frame recipe evidence must survive a weak metadata gate"
   );
-  assert.match(
-    buildFinalRecipeValidationIssues({
+  assert.equal(
+    shouldRunFinalRecipeValidation({
       ingredients: [{ display_name: "green bell pepper" }],
       steps: [{ number: 1, text: "Blend the green bell pepper.", ingredients: [{ display_name: "green bell pepper" }] }],
-    }, ayamaseVideoEvidence).join(" "),
-    /source-evidence coverage/i,
+    }, ayamaseVideoEvidence),
+    true,
     "final validation must audit the saved recipe against social frame evidence"
   );
   assert.equal(SOCIAL_VIDEO_RECIPE_MODEL, "gpt-4.1-mini");
@@ -322,6 +323,30 @@ const {
   assert.ok(
     normalizationIssues.some((issue) => issue.includes("Consolidate repeated ingredient rows")),
     "validator must catch role-suffixed duplicate ingredient rows before they reach cart"
+  );
+
+  const preparedComponentIssues = buildFinalRecipeValidationIssues({
+    ingredients: [
+      { display_name: "whole tilapia fish", quantity_text: "1 whole" },
+      { display_name: "red bell pepper", quantity_text: "2" },
+      { display_name: "vegetable oil", quantity_text: "2 tablespoons" },
+    ],
+    steps: [
+      { text: "Score the cleaned whole tilapia, then rub it with vegetable oil." },
+      {
+        number: 2,
+        text: "Coat the tilapia with the prepared red pepper-based seasoning.",
+        ingredients: [{ display_name: "red pepper-based seasoning", quantity_text: null }],
+      },
+    ],
+  });
+  assert.ok(
+    !preparedComponentIssues.some((issue) => issue.includes('Ingredient "whole tilapia fish" is listed but not clearly used')),
+    "validator must recognize a distinctive ingredient name used without its generic suffix"
+  );
+  assert.ok(
+    !preparedComponentIssues.some((issue) => issue.includes("red pepper-based seasoning")),
+    "prepared component labels must not be forced back into the shopping ingredient list"
   );
 
   const inferredContextSource = {

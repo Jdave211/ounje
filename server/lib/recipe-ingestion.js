@@ -5104,11 +5104,16 @@ function coerceIngredientItem(item) {
     };
   }
   if (!item || typeof item !== "object") return null;
-  const displayName = normalizeText(item.display_name ?? item.displayName ?? item.name ?? item.ingredient ?? "");
+  let displayName = normalizeText(item.display_name ?? item.displayName ?? item.name ?? item.ingredient ?? "");
   if (!displayName) return null;
+  const quantityText = firstNormalizedText(item.quantity_text, item.quantityText, item.amount_text, item.amountText, item.quantity, item.measure);
+  const duplicatedDescriptor = normalizeText(quantityText).match(/(?:^|\s)(whole|large|medium|small)\s*$/i)?.[1];
+  if (duplicatedDescriptor && new RegExp(`^${duplicatedDescriptor}\\s+`, "i").test(displayName)) {
+    displayName = displayName.replace(new RegExp(`^${duplicatedDescriptor}\\s+`, "i"), "");
+  }
   return {
     display_name: displayName,
-    quantity_text: firstNormalizedText(item.quantity_text, item.quantityText, item.amount_text, item.amountText, item.quantity, item.measure),
+    quantity_text: quantityText,
     image_url: cleanURL(item.image_url ?? item.imageUrl ?? null),
   };
 }
@@ -9752,17 +9757,22 @@ function ingredientNameMatchesText(ingredientName, text) {
   if (!key || !haystack) return false;
   if (haystack.includes(key)) return true;
   const compactName = normalizeKey(String(ingredientName ?? "").split(/\s+/).slice(-2).join(" "));
-  return Boolean(compactName && compactName.length >= 5 && haystack.includes(compactName));
+  if (compactName && compactName.length >= 5 && haystack.includes(compactName)) return true;
+  const genericTokens = new Set([
+    "fresh", "dried", "ground", "whole", "large", "medium", "small",
+    "pepper", "sauce", "seasoning", "powder", "optional", "divided",
+  ]);
+  const distinctiveTokens = key
+    .split(" ")
+    .filter((token) => token.length >= 5 && !genericTokens.has(token));
+  const haystackTokens = new Set(haystack.split(" "));
+  return distinctiveTokens.some((token) => haystackTokens.has(token));
 }
 
 function buildFinalRecipeValidationIssues(recipe, source = null) {
   const issues = [];
   const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
   const stepText = normalizeText(steps.map((step) => step.text ?? "").join("\n"));
-
-  if (socialSourceHasPrimaryRecipeEvidence(source)) {
-    issues.push("Check source-evidence coverage: every concrete ingredient explicitly named in the social video's frame OCR, caption, transcript, or ingredient candidates must appear in the final ingredient list and relevant steps. Do not add ingredients based only on what is common for the dish.");
-  }
 
   if (/\bwater\b/i.test(stepText) && !recipeHasIngredientNamed(recipe, ["water"])) {
     issues.push("Steps mention water, but water is not listed. Either remove the water reference by using a listed liquid, or add water only if the recipe needs it.");
@@ -9842,6 +9852,7 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
 
     for (const linkedName of linkedNames) {
       if (!linkedName || /^(salt|pepper|water)$/i.test(linkedName)) continue;
+      if (isGenericCompletionIngredientName(linkedName)) continue;
       const isTopLevelIngredient = ingredientNames.some((ingredientName) => (
         ingredientNameMatchesText(linkedName, ingredientName)
         || ingredientNameMatchesText(ingredientName, linkedName)
@@ -9869,9 +9880,14 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
   return uniqueStrings(issues).slice(0, 8);
 }
 
+function shouldRunFinalRecipeValidation(recipe, source = null) {
+  return socialSourceHasPrimaryRecipeEvidence(source)
+    || buildFinalRecipeValidationIssues(recipe, source).length > 0;
+}
+
 async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } = {}) {
   const validationIssues = buildFinalRecipeValidationIssues(recipe, source);
-  if (!validationIssues.length) {
+  if (!shouldRunFinalRecipeValidation(recipe, source)) {
     return {
       recipe,
       quality_flags: [],
@@ -12419,6 +12435,7 @@ export {
   maybeGenerateImportedRecipeImage,
   photoRecipeSearchQueries,
   buildFinalRecipeValidationIssues,
+  shouldRunFinalRecipeValidation,
   buildDedupeKey,
   canonicalImportIdentityForURL,
   estimateRecipeMacrosLocally,
