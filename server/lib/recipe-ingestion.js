@@ -7181,6 +7181,10 @@ async function fetchTikTokViaAPI(sourceURL) {
   };
 }
 
+function needsTikTokVideoFallback(platform, videoURL) {
+  return platform === "tiktok" && !cleanURL(videoURL);
+}
+
 async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = null, { directVideoURL = null } = {}) {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), `ounje-${platform}-`));
   try {
@@ -7378,12 +7382,13 @@ async function extractSocialSource(sourceURL, platform) {
     apiVideoURL = rapidAPIResult.video_url ?? null;
   }
 
-  // TikTok blocks datacenter IPs from yt-dlp; when RapidAPI is unavailable, the
-  // TikTok extraction API can still hand back metadata + a fetchable no-watermark MP4.
-  if (!metadata && platform === "tiktok") {
+  // Metadata alone is not enough. Some providers return a caption/author but no
+  // downloadable asset; in that case TikTok's blocked yt-dlp path would run and
+  // the recipe model would receive no frames or speech.
+  if (needsTikTokVideoFallback(platform, apiVideoURL)) {
     const apiResult = await fetchTikTokViaAPI(sourceURL);
     if (apiResult?.video_url) {
-      metadata = apiResult.info;
+      metadata = metadata ?? apiResult.info;
       apiVideoURL = apiResult.video_url;
     }
   }
@@ -11934,4 +11939,5 @@ export {
   isCanonicalCacheableSource,
   isOpenAITerminalModelError,
   isResumableIngestionJob,
+  needsTikTokVideoFallback,
 };
