@@ -300,6 +300,7 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
         }
       }
       workingName = tokens.join(" ").trim();
+      workingName = workingName.replace(/^of\s+/i, "").trim();
     }
   }
 

@@ -2466,7 +2466,24 @@ function socialSourceHasPrimaryRecipeEvidence(source) {
   const hasFrames = Array.isArray(source?.frame_data_urls) && source.frame_data_urls.length > 0;
   const hasRecipeAction = /\b(?:recipe|ingredients?|add|blend|boil|bake|cook|fry|simmer|season|serve|bleach)\b/i.test(frameText);
   const hasIngredientIdentity = /\b(?:oil|salt|pepper|onion|garlic|rice|meat|chicken|beef|fish|egg|crayfish|curry|beans?|flour|sugar|cream|butter)\b/i.test(frameText);
-  return hasFrames && hasRecipeAction && hasIngredientIdentity;
+  if (hasFrames && hasRecipeAction && hasIngredientIdentity) return true;
+
+  const spokenOrCaptionedText = [
+    source?.caption_text,
+    source?.description,
+    source?.transcript_text,
+  ].map((value) => normalizeText(value)).filter(Boolean).join("\n");
+  if (!hasFrames || spokenOrCaptionedText.length < 80) return false;
+
+  const actionMatches = spokenOrCaptionedText.match(
+    /\b(?:add|blend|boil|bake|cook|fry|simmer|season|serve|mix|stir|flip|marinat\w*|air\s+fry|grill|roast)\b/gi
+  ) ?? [];
+  const ingredientMatches = spokenOrCaptionedText.match(
+    /\b(?:oil|salt|pepper|onion|garlic|rice|meat|chicken|beef|fish|egg|crayfish|curry|beans?|flour|sugar|cream|butter|lemon|paprika|tomato|cheese|milk|potato)\b/gi
+  ) ?? [];
+  const distinctIngredients = new Set(ingredientMatches.map((value) => normalizeKey(value)));
+
+  return actionMatches.length >= 2 && distinctIngredients.size >= 3;
 }
 
 function mergePreviousGateEvidenceIntoSource(source, gateArtifact) {

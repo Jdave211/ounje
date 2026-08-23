@@ -109,6 +109,31 @@ const {
   assert.equal(SOCIAL_VIDEO_RECIPE_MODEL, "gpt-4.1-mini");
 }
 
+{
+  const captionRichVideoEvidence = {
+    source_type: "tiktok",
+    frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+    frame_ocr_texts: [{ frame_index: 1, confidence: 28, text: "unreadable frame noise" }],
+    caption_text: "Lemon pepper chicken skewers. Season chicken with salt, pepper, garlic, lemon zest, onion powder, paprika and olive oil. Air fry for 12 minutes, flip, then cook for 10 minutes. Mix butter with lemon juice and serve.",
+    transcript_text: "Add the seasonings to the chicken and mix well. Put the skewers in the air fryer, flip them, then brush on the butter sauce.",
+  };
+  assert.equal(
+    socialSourceHasPrimaryRecipeEvidence(captionRichVideoEvidence),
+    true,
+    "detailed caption and transcript evidence must not be discarded when local frame OCR is noisy"
+  );
+  assert.equal(
+    socialSourceHasPrimaryRecipeEvidence({
+      source_type: "tiktok",
+      frame_data_urls: ["frame-1"],
+      caption_text: "This was so good. You have to try it.",
+      transcript_text: "Follow for more easy recipes.",
+    }),
+    false,
+    "generic social captions must not bypass the recipe evidence gate"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 1. Ingredient parsing — compound quantities must not leak the fraction into
 //    the name. Covers both parser entry points (string + object paths).
@@ -230,6 +255,11 @@ assert.equal(
   const r = parseFirst("0.25 cup granulated sugar");
   assert.ok(r.quantity_text != null, "decimal quantities should also be preserved");
   assert.equal(r.name, "granulated sugar");
+}
+{
+  const [r] = parseIngredientObjects([{ display_name: "Pinch of sugar", quantity_text: "pinch" }]);
+  assert.equal(r.name, "sugar", "word-based quantity prefixes must not leave a leading 'of' in the ingredient name");
+  assert.equal(r.quantity_text, "pinch");
 }
 
 const fourMinutesAgo = new Date(Date.now() - 4 * 60_000).toISOString();
