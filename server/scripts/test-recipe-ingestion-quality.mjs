@@ -34,6 +34,7 @@ const {
   assessSocialCompletionContext,
   recipeSemanticCompleteness,
   reconcileResolvedRecipeQualityFlags,
+  recipeImportTargetActions,
   isRecipeEquipmentIngredientName,
   normalizeRecipeDisplayFields,
   runSocialRecipeCompletionContext,
@@ -41,6 +42,17 @@ const {
   SOCIAL_VIDEO_RECIPE_MODEL,
   RECIPE_IMPORT_HARD_COMPLETION_MODEL,
 } = await import("../lib/recipe-ingestion.js");
+
+assert.deepEqual(
+  recipeImportTargetActions("saved"),
+  { saveToRecipes: true, addToPrep: false },
+  "a saved import must appear in Recipes without being added to prep"
+);
+assert.deepEqual(
+  recipeImportTargetActions("prepped"),
+  { saveToRecipes: true, addToPrep: true },
+  "a prepped import must still appear in Recipes and additionally enter prep"
+);
 
 {
   const previousRuntime = process.env.OUNJE_RUNTIME_ENV;

@@ -3963,7 +3963,11 @@ async function maybeEmitRecipeImportNotification(job, eventName) {
   // → push-tokens → recipe-ingestion would loop on import resolution).
   const { createNotificationEvent } = await import("./notification-events.js");
 
-  const title = pickRecipeTitle(job);
+  let title = pickRecipeTitle(job);
+  if (!title && job?.recipe_id) {
+    const recipe = await fetchRecipeCardProjection(job.recipe_id).catch(() => null);
+    title = normalizeText(recipe?.title) || null;
+  }
 
   if (status === "queued" && eventName === "queued") {
     return;
@@ -4292,11 +4296,10 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
   });
   const recipe = await fetchRecipeCardProjection(cachedJob.recipe_id).catch(() => null);
   const recipeDetail = await ensurePersistedRecipeDisplayMacros(cachedJob.recipe_id, rawRecipeDetail).catch(() => rawRecipeDetail);
-  if (normalizeText(job.target_state).toLowerCase() === "saved") {
-    await upsertSavedRecipeForUser(completed.user_id, recipeDetail ?? recipe, {
-      restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
-    }).catch(() => false);
-  }
+  await persistRecipeTargetStateForUser(completed.user_id, recipeDetail ?? recipe, {
+    targetState: job.target_state,
+    restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
+  }).catch(() => ({ saved: false, prepped: false }));
   await warmRecipeDetailCache({
     userID: completed.user_id,
     recipeID: cachedJob.recipe_id,
@@ -4396,11 +4399,10 @@ async function completeJobFromExistingImportedRecipe(job, recipeRow, { workerID,
   const recipe = await fetchRecipeCardProjection(recipeID).catch(() => null);
   const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
   const recipeDetail = await ensurePersistedRecipeDisplayMacros(recipeID, rawRecipeDetail).catch(() => rawRecipeDetail);
-  if (normalizeText(job.target_state).toLowerCase() === "saved") {
-    await upsertSavedRecipeForUser(completed.user_id, recipeDetail ?? recipe, {
-      restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
-    }).catch(() => false);
-  }
+  await persistRecipeTargetStateForUser(completed.user_id, recipeDetail ?? recipe, {
+    targetState: job.target_state,
+    restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
+  }).catch(() => ({ saved: false, prepped: false }));
   await warmRecipeDetailCache({
     userID: completed.user_id,
     recipeID,
@@ -4996,23 +4998,44 @@ async function upsertSavedRecipeForUser(userID, recipeDetail, { restoreTombstone
   return true;
 }
 
-async function restoreSavedRecipeForExplicitImport(userID, recipeID, { requestedAt = null } = {}) {
+function recipeImportTargetActions(targetState) {
+  const normalizedTarget = normalizeText(targetState).toLowerCase();
+  return {
+    saveToRecipes: true,
+    addToPrep: normalizedTarget === "prepped",
+  };
+}
+
+async function persistRecipeTargetStateForUser(
+  userID,
+  recipeDetail,
+  { targetState = "saved", restoreTombstoneAfter = null } = {}
+) {
   const normalizedUserID = normalizeText(userID);
-  const normalizedRecipeID = normalizeText(recipeID);
-  if (!normalizedUserID || !normalizedRecipeID) return false;
-  const recipeDetail = await fetchCanonicalRecipeDetailByID(normalizedRecipeID).catch(() => null);
-  if (!recipeDetail) return false;
-  return upsertSavedRecipeForUser(normalizedUserID, recipeDetail, {
-    restoreTombstoneAfter: requestedAt ?? nowIso(),
-  });
+  if (!normalizedUserID || !recipeDetail?.id) {
+    return { saved: false, prepped: false };
+  }
+
+  const actions = recipeImportTargetActions(targetState);
+  const saved = actions.saveToRecipes
+    ? await upsertSavedRecipeForUser(normalizedUserID, recipeDetail, { restoreTombstoneAfter })
+    : false;
+  if (actions.addToPrep) {
+    await upsertPrepOverrideForUser(normalizedUserID, recipeDetail);
+  }
+  return { saved, prepped: actions.addToPrep };
 }
 
 async function restoreSavedRecipeForImportRequest(request, jobOrRecipe, { requestedAt = null } = {}) {
-  if (normalizeText(request?.target_state).toLowerCase() !== "saved") return false;
   const userID = normalizeText(request?.user_id);
   const recipeID = normalizeText(jobOrRecipe?.recipe_id ?? jobOrRecipe?.id);
   if (!userID || !recipeID) return false;
-  return restoreSavedRecipeForExplicitImport(userID, recipeID, { requestedAt });
+  const recipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
+  if (!recipeDetail) return false;
+  return persistRecipeTargetStateForUser(userID, recipeDetail, {
+    targetState: request?.target_state,
+    restoreTombstoneAfter: requestedAt ?? nowIso(),
+  });
 }
 
 function normalizeCuisinePreference(rawValue) {
@@ -6110,12 +6133,11 @@ async function persistNormalizedRecipe(
         id: recipeID,
       };
 
-  if (userID && String(targetState ?? "").trim() === "saved") {
-    await upsertSavedRecipeForUser(userID, recipeDetail, { restoreTombstoneAfter });
-  }
-
-  if (userID && String(targetState ?? "").trim() === "prepped") {
-    await upsertPrepOverrideForUser(userID, recipeDetail);
+  if (userID) {
+    await persistRecipeTargetStateForUser(userID, recipeDetail, {
+      targetState,
+      restoreTombstoneAfter,
+    });
   }
 
   return {
@@ -12868,6 +12890,7 @@ export {
   isRecipeTeaserText,
   recipeSemanticCompleteness,
   reconcileResolvedRecipeQualityFlags,
+  recipeImportTargetActions,
   assessSocialCompletionContext,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
