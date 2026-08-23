@@ -16,7 +16,7 @@ import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
-import { acquireRedisLock, publishRedisJSON, readRedisJSON, redisConfigStatus, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
+import { acquireRedisLock, deleteRedisKey, publishRedisJSON, readRedisJSON, redisConfigStatus, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
 import { importQueueBusyError, recordDbOperation } from "./db-guardrails.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
@@ -455,6 +455,13 @@ async function _getCanonicalImportCache(userID, canonicalURL, dedupeKey) {
   if (!redisJob) return null;
   _canonicalImportCache.set(key, { job: redisJob, cachedAt: Date.now() });
   return redisJob;
+}
+
+async function _deleteCanonicalImportCache(userID, canonicalURL, dedupeKey) {
+  const key = _canonicalImportCacheKey(userID, canonicalURL, dedupeKey);
+  if (!key) return;
+  _canonicalImportCache.delete(key);
+  await deleteRedisKey(_canonicalImportRedisCacheKey(key)).catch(() => {});
 }
 
 function withRecipeAIStage(operation, fn) {
@@ -4027,7 +4034,8 @@ async function findExistingJobForRequest(request, dedupeKey) {
   const existing = rows[0] ?? null;
   if (!existing) return null;
 
-  return isReusableExistingImportJob(existing) ? existing : null;
+  if (!isReusableExistingImportJob(existing)) return null;
+  return await completedImportJobHasLiveRecipe(existing) ? existing : null;
 }
 
 function isReusableExistingImportJob(job) {
@@ -4038,6 +4046,14 @@ function isReusableExistingImportJob(job) {
   const timestamp = Date.parse(job.completed_at ?? job.updated_at ?? job.created_at ?? "");
   if (!Number.isFinite(timestamp)) return false;
   return Date.now() - timestamp <= FAILED_IMPORT_DEDUPE_REUSE_TTL_MS;
+}
+
+async function completedImportJobHasLiveRecipe(job) {
+  const status = normalizeText(job?.status).toLowerCase();
+  if (!["saved", "draft", "needs_review"].includes(status)) return true;
+  const recipeID = normalizeText(job?.recipe_id ?? "");
+  if (!recipeID) return false;
+  return Boolean(await fetchRecipeRowByID(recipeID).catch(() => null));
 }
 
 async function markDuplicateFailedImportsSuperseded(job, { reason = "Superseded by a successful import of the same source." } = {}) {
@@ -4108,7 +4124,11 @@ async function findExistingJobForRequestSource(request, dedupeKey = null) {
     }
   );
 
-  return rows.find((row) => isReusableExistingImportJob(row)) ?? null;
+  for (const row of rows) {
+    if (!isReusableExistingImportJob(row)) continue;
+    if (await completedImportJobHasLiveRecipe(row)) return row;
+  }
+  return null;
 }
 
 async function countActiveImportsForUser(userID) {
@@ -4143,7 +4163,10 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
   // Fast path: in-memory cache hit (avoids DB round-trip for repeated URLs).
   const cacheUserID = scope === "global" ? GLOBAL_IMPORT_CACHE_NAMESPACE : request.user_id;
   const memCached = await _getCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey);
-  if (memCached && (!excludeJobID || memCached.id !== excludeJobID)) return memCached;
+  if (memCached && (!excludeJobID || memCached.id !== excludeJobID)) {
+    if (await completedImportJobHasLiveRecipe(memCached)) return memCached;
+    await _deleteCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey);
+  }
 
   const sourceFilters = [];
   const candidateURLs = urlLookupVariants(
@@ -4184,7 +4207,8 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
     }
   );
 
-  const result = rows[0] ?? null;
+  const candidate = rows[0] ?? null;
+  const result = candidate && await completedImportJobHasLiveRecipe(candidate) ? candidate : null;
   if (result) {
     _setCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey, result);
   }
@@ -4239,6 +4263,15 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
 
 async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, canonicalURL = null } = {}) {
   if (!cachedJob?.recipe_id) return null;
+  const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
+  if (!rawRecipeDetail) {
+    await _deleteCanonicalImportCache(
+      job.user_id,
+      canonicalURL ?? cachedJob.canonical_url ?? cachedJob.source_url ?? null,
+      cachedJob.dedupe_key ?? job.dedupe_key ?? null
+    );
+    return null;
+  }
   const now = nowIso();
   const completed = await appendJobEvent(job.id, "canonical_cache_hit", {
     worker_id: workerID,
@@ -4258,7 +4291,6 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
     completed_at: now,
   });
   const recipe = await fetchRecipeCardProjection(cachedJob.recipe_id).catch(() => null);
-  const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
   const recipeDetail = await ensurePersistedRecipeDisplayMacros(cachedJob.recipe_id, rawRecipeDetail).catch(() => rawRecipeDetail);
   if (normalizeText(job.target_state).toLowerCase() === "saved") {
     await upsertSavedRecipeForUser(completed.user_id, recipeDetail ?? recipe, {
@@ -12333,10 +12365,11 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
         excludeJobID: existingJob.id,
       });
       if (cachedCanonical) {
-        return await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
+        const cachedResult = await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
           workerID,
           canonicalURL: requestPayload.source_url,
         });
+        if (cachedResult) return cachedResult;
       }
 
       const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(lookupRequest, {
@@ -12360,10 +12393,11 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       if (globalCachedCanonical) {
         const sameUser = normalizeText(globalCachedCanonical.user_id) === normalizeText(existingJob.user_id);
         if (sameUser) {
-          return await completeJobFromCachedCanonicalImport(existingJob, globalCachedCanonical, {
+          const globalCachedResult = await completeJobFromCachedCanonicalImport(existingJob, globalCachedCanonical, {
             workerID,
             canonicalURL: requestPayload.source_url,
           });
+          if (globalCachedResult) return globalCachedResult;
         }
         const cloned = await completeJobByCloningGlobalImportedRecipe(existingJob, globalCachedCanonical, {
           workerID,
