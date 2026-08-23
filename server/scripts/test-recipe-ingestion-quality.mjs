@@ -213,6 +213,22 @@ const {
     "a broad social recipe with no frame evidence must receive grounded completion even when its generated shape looks complete"
   );
   assert.equal(
+    socialImportNeedsGroundedCompletion(
+      pepperFishRecipe,
+      {
+        ...sparsePepperFishSource,
+        frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+        frame_ocr_texts: Array.from({ length: 12 }, (_, index) => ({
+          frame_index: index + 1,
+          text: "unusable visual OCR noise",
+        })),
+      },
+      ["partial_ingredients", "partial_steps"]
+    ),
+    true,
+    "production partial flags must trigger Sonar even when frame sampling and generated recipe shape look complete"
+  );
+  assert.equal(
     shouldRunGroundedRecipeCompletion(
       pepperFishRecipe,
       {

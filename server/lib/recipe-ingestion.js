@@ -6147,14 +6147,11 @@ function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlag
   if (!isSocialRecipeMaterial(source)) return assessment;
 
   const flags = uniqueStrings(qualityFlags).map((flag) => normalizeText(flag).toLowerCase());
-  const startedIncomplete = [
-    "incomplete",
-    "missing_steps",
-    "missing_ingredients",
-    "low_step_count",
-    "low_ingredient_count",
-    "many_missing_quantities",
-  ].some((flag) => flags.includes(flag));
+  const startedIncomplete = flags.some((flag) => (
+    /(?:incomplete|partial|sparse|thin|broad)/.test(flag)
+    || /missing[_ -]?(?:steps?|ingredients?|quantit)/.test(flag)
+    || /low[_ -]?(?:step|ingredient|detail)/.test(flag)
+  ));
   const coverage = socialRecipeEvidenceCoverage(source);
   const thinSourceEvidence = startedIncomplete || (
     !coverage.hasPrimaryRecipeEvidence
@@ -8887,16 +8884,13 @@ function socialImportNeedsGroundedCompletion(recipe, source, qualityFlags = []) 
 
   const metrics = recipeCoreMetrics(recipe);
   const coverage = socialRecipeEvidenceCoverage(source);
-  const flags = new Set(uniqueStrings(qualityFlags).map((flag) => normalizeText(flag).toLowerCase()));
-  const hasExplicitIncompletenessFlag = [
-    "incomplete",
-    "missing_steps",
-    "missing_ingredients",
-    "low_step_count",
-    "low_ingredient_count",
-    "many_missing_quantities",
-    "social_source_without_transcript",
-  ].some((flag) => flags.has(flag));
+  const flags = uniqueStrings(qualityFlags).map((flag) => normalizeText(flag).toLowerCase());
+  const hasExplicitIncompletenessFlag = flags.some((flag) => (
+    /(?:incomplete|partial|sparse|thin|broad)/.test(flag)
+    || /missing[_ -]?(?:steps?|ingredients?|quantit)/.test(flag)
+    || /low[_ -]?(?:step|ingredient|detail)/.test(flag)
+    || flag === "social_source_without_transcript"
+  ));
   const genericIngredientCount = (recipe?.ingredients ?? []).filter((ingredient) => (
     isGenericCompletionIngredientName(ingredient?.display_name ?? ingredient?.name ?? ingredient)
   )).length;
@@ -9311,6 +9305,14 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     ? await runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID })
     : null;
   const hasSocialCompletionContext = socialCompletionContextHasDetails(socialCompletionContext);
+  if (isSocialRecipeMaterial(source) && !hasSocialCompletionContext) {
+    return {
+      recipe: normalizedRecipe,
+      quality_flags: ["grounded_completion_context_unavailable"],
+      review_reason: "The social source was incomplete and grounded Sonar context was unavailable.",
+      applied: false,
+    };
+  }
   let lookupSource = null;
   if (!hasSocialCompletionContext) {
     try {
