@@ -33,6 +33,7 @@ const {
   calibrateSocialRecipeAssessment,
   assessSocialCompletionContext,
   recipeSemanticCompleteness,
+  reconcileResolvedRecipeQualityFlags,
   isRecipeEquipmentIngredientName,
   normalizeRecipeDisplayFields,
   runSocialRecipeCompletionContext,
@@ -492,6 +493,20 @@ const {
     equipmentFreeMerge.ingredients.some((ingredient) => ingredient.display_name === "foil"),
     false,
     "source equipment must not prevent a complete hard-retry recipe from replacing placeholder structure"
+  );
+  const reconciledFlags = reconcileResolvedRecipeQualityFlags(completePepperFishRecipe, [
+    "grounded_completion_incomplete",
+    "unresolved_ingredient_components",
+    "final_validator_review_needed",
+    "final_validator_applied",
+  ]);
+  assert.ok(reconciledFlags.includes("final_validator_applied"));
+  assert.ok(!reconciledFlags.includes("grounded_completion_incomplete"));
+  assert.ok(!reconciledFlags.includes("final_validator_review_needed"));
+  assert.ok(
+    reconcileResolvedRecipeQualityFlags(malformedRecipe, ["grounded_completion_incomplete", "final_validator_applied"])
+      .includes("grounded_completion_incomplete"),
+    "historical blocker flags may clear only when the final recipe is semantically complete"
   );
 
   const originalFetch = globalThis.fetch;

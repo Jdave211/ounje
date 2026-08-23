@@ -6254,9 +6254,8 @@ function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlag
   const hasBlockingValidatorFlag = flags.some((flag) => [
     "final_validator_review_needed",
     "final_validator_failed",
-    "grounded_completion_incomplete",
     "grounded_completion_context_unavailable",
-  ].includes(flag));
+  ].includes(flag)) || (flags.includes("grounded_completion_incomplete") && semanticQuality.blockingIssues.length > 0);
   const startedIncomplete = flags.some((flag) => (
     /(?:incomplete|partial|sparse|thin|broad)/.test(flag)
     || /missing[_ -]?(?:steps?|ingredients?|quantit)/.test(flag)
@@ -9097,6 +9096,20 @@ function recipeSemanticCompleteness(recipe) {
   };
 }
 
+function reconcileResolvedRecipeQualityFlags(recipe, qualityFlags = []) {
+  const flags = uniqueStrings(qualityFlags);
+  const semantics = recipeSemanticCompleteness(recipe);
+  if (semantics.blockingIssues.length > 0 || !flags.includes("final_validator_applied")) return flags;
+  const resolvedFlags = new Set([
+    "grounded_completion_incomplete",
+    "unresolved_ingredient_components",
+    "equipment_listed_as_ingredient",
+    "source_teaser_text",
+    "final_validator_review_needed",
+  ]);
+  return flags.filter((flag) => !resolvedFlags.has(normalizeText(flag).toLowerCase()));
+}
+
 function socialImportNeedsGroundedCompletion(recipe, source, qualityFlags = []) {
   if (!isSocialRecipeMaterial(source)) return false;
 
@@ -11903,6 +11916,15 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     throw new Error("Could not extract ingredients or steps from this source.");
   }
 
+  modelResult.quality_flags = reconcileResolvedRecipeQualityFlags(normalized, modelResult.quality_flags ?? []);
+  if (
+    modelResult.quality_flags.includes("final_validator_applied")
+    && recipeSemanticCompleteness(normalized).blockingIssues.length === 0
+    && /unresolved component ingredients|equipment is listed as ingredients|source teaser/i.test(normalizeText(modelResult.review_reason ?? ""))
+  ) {
+    modelResult.review_reason = null;
+  }
+
   const assessment = calibrateSocialRecipeAssessment(
     assessRecipeQuality(
       normalized,
@@ -12845,6 +12867,7 @@ export {
   isRecipeEquipmentIngredientName,
   isRecipeTeaserText,
   recipeSemanticCompleteness,
+  reconcileResolvedRecipeQualityFlags,
   assessSocialCompletionContext,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
