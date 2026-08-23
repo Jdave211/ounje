@@ -64,7 +64,7 @@ const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY ?? "";
 const PERPLEXITY_API_URL = process.env.PERPLEXITY_API_URL ?? "https://api.perplexity.ai/chat/completions";
 const RECIPE_COMPLETION_SONAR_TIMEOUT_MS = Math.max(
   10_000,
-  Number.parseInt(process.env.RECIPE_COMPLETION_SONAR_TIMEOUT_MS ?? "45000", 10) || 45_000
+  Number.parseInt(process.env.RECIPE_COMPLETION_SONAR_TIMEOUT_MS ?? "60000", 10) || 60_000
 );
 const ENABLE_AI_WEB_REFERENCE_SEARCH = !["0", "false", "no", "off"].includes(String(process.env.RECIPE_ENABLE_AI_WEB_REFERENCE_SEARCH ?? "1").trim().toLowerCase());
 const PLAYWRIGHT_FALLBACK_PATH = "/Users/davejaga/.openclaw/skills/playwright-scraper-skill/node_modules/playwright/index.js";
@@ -6250,6 +6250,7 @@ function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlag
 
   const flags = uniqueStrings(qualityFlags).map((flag) => normalizeText(flag).toLowerCase());
   const semanticQuality = recipeSemanticCompleteness(recipe);
+  const missingGroundedContextFlag = flags.includes("grounded_completion_context_unavailable");
   const hasBlockingValidatorFlag = flags.some((flag) => [
     "final_validator_review_needed",
     "final_validator_failed",
@@ -6295,6 +6296,7 @@ function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlag
     quality_flags: calibratedFlags,
     review_state: reviewState,
     review_reason: semanticQuality.blockingIssues[0]
+      ?? (missingGroundedContextFlag ? "Grounded web context was unavailable, so this complete reconstruction remains a draft." : null)
       ?? (hasBlockingValidatorFlag ? "The final validator still found unresolved recipe details." : null)
       ?? (hasGroundedContext
       ? context.exact_match_supported
@@ -9223,7 +9225,7 @@ function socialCompletionContextHasDetails(context) {
   return assessSocialCompletionContext(context).hasDetails;
 }
 
-async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID = null } = {}) {
+async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID = null, attempt = 1 } = {}) {
   if (!PERPLEXITY_API_KEY || !isSocialRecipeMaterial(source)) return null;
 
   const query = buildSocialRecipeCompletionQuery(normalizedRecipe, source);
@@ -9294,8 +9296,11 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
             author_name: source?.author_name ?? null,
             author_handle: source?.author_handle ?? null,
             description: source?.description ?? source?.meta_description ?? null,
-            transcript_text: limitText(source?.transcript_text ?? "", 6_000),
-            frame_ocr_text: summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], { maxFrames: 12, textLimit: 900 }),
+            transcript_text: limitText(source?.transcript_text ?? "", attempt > 1 ? 4_500 : 6_000),
+            frame_ocr_text: summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], {
+              maxFrames: attempt > 1 ? 6 : 12,
+              textLimit: attempt > 1 ? 400 : 900,
+            }),
             ingredient_candidates: source?.ingredient_candidates ?? [],
             instruction_candidates: source?.instruction_candidates ?? [],
           }),
@@ -9332,7 +9337,7 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
       inputTokens: responsePayload?.usage?.prompt_tokens ?? responsePayload?.usage?.input_tokens ?? null,
       outputTokens: responsePayload?.usage?.completion_tokens ?? responsePayload?.usage?.output_tokens ?? null,
       totalTokens: responsePayload?.usage?.total_tokens ?? null,
-      metadata: { job_id: jobID, search_query: query },
+      metadata: { job_id: jobID, search_query: query, attempt },
       error: response.ok ? null : new Error(responsePayload?.error?.message ?? `Perplexity returned HTTP ${response.status}`),
     }).catch(() => {});
     if (!response.ok) {
@@ -9372,6 +9377,7 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
           exact_match_supported: context.exact_match_supported,
           match_confidence: context.match_confidence,
           reference_count: context.reference_urls.length,
+          attempt,
         },
       }).catch(() => {});
     }
@@ -9388,9 +9394,17 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
         durationMS: Date.now() - startedAt,
         inputPayload: payload,
         outputPayload: responsePayload,
-        metadata: { job_id: jobID, search_query: query },
+        metadata: { job_id: jobID, search_query: query, attempt },
         error,
       }).catch(() => {});
+    }
+    const retryableStatus = Number(response?.status ?? 0);
+    const retryable = [408, 409, 425, 429].includes(retryableStatus)
+      || retryableStatus >= 500
+      || /timed out|timeout|fetch failed|http 408|http 409|http 425|http 429|http 5\d\d/i.test(errorSummary(error)?.message ?? "");
+    if (attempt < 2 && retryable) {
+      await delay(750);
+      return await runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID, attempt: attempt + 1 });
     }
     if (jobID) {
       await storeArtifact(jobID, {
@@ -9398,7 +9412,7 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
         content_type: "application/json",
         source_url: source?.canonical_url ?? source?.source_url ?? null,
         raw_json: compactJSON({ query, error: errorSummary(error) }),
-        metadata: { provider: "perplexity", status: "failed" },
+        metadata: { provider: "perplexity", status: "failed", attempts: attempt },
       }).catch(() => {});
     }
     return null;
@@ -9570,14 +9584,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     && socialContextAssessment.referenceCount > 0
     && (socialContextAssessment.concreteIngredientCount > 0 || socialContextAssessment.usefulStepCount > 0)
   );
-  if (isSocialRecipeMaterial(source) && !hasSocialCompletionContext) {
-    return {
-      recipe: normalizedRecipe,
-      quality_flags: ["grounded_completion_context_unavailable"],
-      review_reason: "The social source was incomplete and grounded Sonar context was unavailable.",
-      applied: false,
-    };
-  }
+  const isSocialCompletion = isSocialRecipeMaterial(source);
   let lookupSource = null;
   if (!hasSocialCompletionContext) {
     try {
@@ -9589,14 +9596,14 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
         error,
         status: "failed",
       });
-      return {
-        recipe: normalizedRecipe,
-        quality_flags: [
-          isSocialRecipeMaterial(source) ? "grounded_completion_context_unavailable" : "web_completion_lookup_failed",
-        ],
-        review_reason: "Grounded web context was unavailable before recipe completion.",
-        applied: false,
-      };
+      if (!isSocialCompletion) {
+        return {
+          recipe: normalizedRecipe,
+          quality_flags: ["web_completion_lookup_failed"],
+          review_reason: "Grounded web context was unavailable before recipe completion.",
+          applied: false,
+        };
+      }
     }
   }
 
@@ -9610,7 +9617,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     recipeSources,
     status: hasSocialCompletionContext ? "perplexity_context" : (recipeSources.length ? "ok" : "empty"),
   });
-  if (!recipeSources.length && !hasSocialCompletionContext) {
+  if (!recipeSources.length && !hasSocialCompletionContext && !isSocialCompletion) {
     return {
       recipe: normalizedRecipe,
       quality_flags: ["web_completion_no_references"],
@@ -9618,6 +9625,10 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
       applied: false,
     };
   }
+
+  const initialCompletionModel = isSocialCompletion && !hasSocialCompletionContext
+    ? RECIPE_IMPORT_HARD_COMPLETION_MODEL
+    : RECIPE_IMPORT_COMPLETION_MODEL;
 
   const response = await timeRecipeImportStage(
     "web_completion",
@@ -9630,8 +9641,8 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
       },
     },
     () => withRecipeAIStage("recipe_import.web_completion", () => openai.chat.completions.create({
-      model: RECIPE_IMPORT_COMPLETION_MODEL,
-      ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.08),
+      model: initialCompletionModel,
+      ...chatCompletionTemperatureParams(initialCompletionModel, 0.08),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT },
@@ -9720,10 +9731,10 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
   let parsed = JSON.parse(rawContent);
   let completedRecipe = coerceStructuredRecipeCandidate(parsed.recipe ?? parsed, source);
-  let mergedRecipe = hasSocialCompletionContext
+  let mergedRecipe = isSocialCompletion
     ? mergeGroundedSocialCompletion(normalizedRecipe, completedRecipe)
     : mergeCompletedRecipe(normalizedRecipe, completedRecipe);
-  let selectedCompletionModel = RECIPE_IMPORT_COMPLETION_MODEL;
+  let selectedCompletionModel = initialCompletionModel;
   let hardRetryApplied = false;
   let completionSemantics = recipeSemanticCompleteness(mergedRecipe);
 
@@ -9734,7 +9745,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
         {
           jobID,
           metadata: {
-            initial_model: RECIPE_IMPORT_COMPLETION_MODEL,
+          initial_model: initialCompletionModel,
             retry_model: RECIPE_IMPORT_HARD_COMPLETION_MODEL,
             blocking_issue_count: completionSemantics.blockingIssues.length,
           },
@@ -9819,6 +9830,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
   const qualityFlags = uniqueStrings([
     ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
     ...(hasSocialCompletionContext ? ["perplexity_completion_context"] : []),
+    ...(isSocialCompletion && !hasSocialCompletionContext ? ["grounded_completion_context_unavailable"] : []),
     ...(hasSocialCompletionContext && !hasGroundedSocialCompletionContext ? ["perplexity_completion_context_thin"] : []),
     ...(hasSocialCompletionContext && !socialCompletionContext.exact_match_supported ? ["grounded_completion_inferred"] : []),
     ...(filledQuantities.length ? ["quantities_inferred"] : []),
@@ -9841,7 +9853,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
       }),
       metadata: {
         model: selectedCompletionModel,
-        initial_model: RECIPE_IMPORT_COMPLETION_MODEL,
+        initial_model: initialCompletionModel,
         hard_retry_applied: hardRetryApplied,
         semantic_blocking_issue_count: completionSemantics.blockingIssues.length,
         filled_quantity_count: filledQuantities.length,

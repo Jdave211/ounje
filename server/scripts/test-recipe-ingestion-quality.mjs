@@ -496,9 +496,17 @@ const {
 
   const originalFetch = globalThis.fetch;
   let capturedPerplexityPayload = null;
+  let perplexityAttempts = 0;
   globalThis.fetch = async (url, options) => {
     assert.equal(String(url), "https://api.perplexity.ai/chat/completions");
+    perplexityAttempts += 1;
     capturedPerplexityPayload = JSON.parse(String(options?.body ?? "{}"));
+    if (perplexityAttempts === 1) {
+      return new Response(JSON.stringify({ error: { message: "temporary upstream failure" } }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return new Response(JSON.stringify({
       choices: [{
         message: {
@@ -524,6 +532,7 @@ const {
     const context = await runSocialRecipeCompletionContext(pepperFishRecipe, sparsePepperFishSource);
     assert.equal(context.exact_match_supported, false);
     assert.equal(context.match_confidence, 0.61);
+    assert.equal(perplexityAttempts, 2, "transient Perplexity failures must receive one bounded retry");
     assert.ok(context.completion_ingredients.some((item) => item.includes("paprika")));
     assert.equal(capturedPerplexityPayload.model, "sonar-pro");
     assert.match(capturedPerplexityPayload.messages[0].content, /research context, not a replacement recipe/i);
