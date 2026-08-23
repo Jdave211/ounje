@@ -189,6 +189,7 @@ export async function createNotificationEvent({
         recipe_id: normalizeString(recipeId) || null,
         order_id: normalizeString(orderId) || null,
         plan_id: normalizeString(planId) || null,
+        job_id: normalizeString(payload.metadata?.job_id) || null,
       },
     }).catch((cause) => {
       console.warn("[notifications] APNs push failed:", cause.message);
