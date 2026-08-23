@@ -1204,19 +1204,19 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
     return null;
   }
 
-  let buffer;
+  let videoStat;
   try {
-    buffer = await fsp.readFile(videoPath);
+    videoStat = await fsp.stat(videoPath);
   } catch (error) {
-    console.warn("[recipe-ingestion] native video upload skipped: could not read video file", error instanceof Error ? error.message : error);
+    console.warn("[recipe-ingestion] native video upload skipped: could not inspect video file", error instanceof Error ? error.message : error);
     return null;
   }
-  if (!buffer?.length) {
+  if (!videoStat?.isFile() || videoStat.size <= 0) {
     console.warn("[recipe-ingestion] native video upload skipped: empty video file");
     return null;
   }
-  if (buffer.length > PERSISTED_VIDEO_MAX_BYTES) {
-    console.warn(`[recipe-ingestion] native video upload skipped: file too large (${buffer.length} bytes)`);
+  if (videoStat.size > PERSISTED_VIDEO_MAX_BYTES) {
+    console.warn(`[recipe-ingestion] native video upload skipped: file too large (${videoStat.size} bytes)`);
     return null;
   }
 
@@ -1241,9 +1241,11 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
           apikey: storageApiKey,
           Authorization: `Bearer ${storageBearer}`,
           "Content-Type": "video/mp4",
+          "Content-Length": String(videoStat.size),
           "x-upsert": "true",
         },
-        body: buffer,
+        body: fs.createReadStream(videoPath),
+        duplex: "half",
       });
       if (uploadResponse.ok || attempt === 2) break;
       await delay(350 * attempt);
@@ -1917,8 +1919,9 @@ async function getOCRWorker() {
 async function ocrFrameDataURLs(frameDataURLs = []) {
   if (!Array.isArray(frameDataURLs) || !frameDataURLs.length) return [];
 
+  let worker = null;
   try {
-    const worker = await getOCRWorker();
+    worker = await getOCRWorker();
     const results = [];
 
     for (const [index, dataURL] of frameDataURLs.entries()) {
@@ -1945,6 +1948,11 @@ async function ocrFrameDataURLs(frameDataURLs = []) {
     return results;
   } catch {
     return [];
+  } finally {
+    if (worker) {
+      await worker.terminate().catch(() => {});
+      ocrWorkerPromise = null;
+    }
   }
 }
 
@@ -7164,13 +7172,16 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
       };
     }
 
-    const [transcriptText, frameDataURLs, persistedVideoURL] = await Promise.all([
-      transcribeShortVideo(videoPath),
-      sampleVideoFrames(videoPath, MAX_SOCIAL_FRAME_COUNT),
-      // Persist the MP4 so the app can play it natively (with the scrubber) instead
-      // of the TikTok/IG web embed. Best-effort — null if too large/unavailable.
-      persistRecipeVideoToStorage(videoPath, { recipeKey: metadata?.id ?? sourceURL }),
-    ]);
+    // Render Starter has a 512 MB memory limit. Keep the rich video path, but do
+    // not overlap FFmpeg, transcription, and the native-video upload. The frame
+    // sampler still extracts every evidence frame in one FFmpeg process.
+    const frameDataURLs = await sampleVideoFrames(videoPath, MAX_SOCIAL_FRAME_COUNT);
+    const transcriptText = await transcribeShortVideo(videoPath);
+    // Persist the MP4 so the app can play it natively (with the scrubber) instead
+    // of the TikTok/IG web embed. Best-effort — null if too large/unavailable.
+    const persistedVideoURL = await persistRecipeVideoToStorage(videoPath, {
+      recipeKey: metadata?.id ?? sourceURL,
+    });
     const frameOCRTexts = await ocrFrameDataURLs(frameDataURLs);
 
     return {
