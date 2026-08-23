@@ -187,6 +187,7 @@ export async function createNotificationEvent({
         action_url: normalizedActionUrl,
         deep_link: normalizedActionUrl,
         recipe_id: normalizeString(recipeId) || null,
+        job_id: normalizeString(metadata?.job_id) || null,
         order_id: normalizeString(orderId) || null,
         plan_id: normalizeString(planId) || null,
         job_id: normalizeString(payload.metadata?.job_id) || null,
