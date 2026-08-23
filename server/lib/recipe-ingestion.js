@@ -81,6 +81,10 @@ const SOCIAL_FETCH_TIMEOUT_MS = Math.max(
   3_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FETCH_TIMEOUT_MS ?? "10000", 10) || 10_000
 );
+const TIKTOK_CANONICAL_RESOLVE_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_TIKTOK_CANONICAL_RESOLVE_TIMEOUT_MS ?? "5000", 10) || 5_000
+);
 const RAPIDAPI_SOCIAL_KEY = normalizeText(
   process.env.OUNJE_RAPIDAPI_SOCIAL_KEY
     ?? process.env.RAPIDAPI_SOCIAL_KEY
@@ -91,9 +95,9 @@ const SOCIAL_FRAME_PROBE_TIMEOUT_MS = Math.max(
   2_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_PROBE_TIMEOUT_MS ?? "5000", 10) || 5_000
 );
-const SOCIAL_FRAME_EXTRACT_TIMEOUT_MS = Math.max(
-  3_000,
-  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_EXTRACT_TIMEOUT_MS ?? "7000", 10) || 7_000
+const SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS = Math.max(
+  15_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS ?? "45000", 10) || 45_000
 );
 const SOCIAL_AUDIO_EXTRACT_TIMEOUT_MS = Math.max(
   3_000,
@@ -201,7 +205,6 @@ function socialYTDLOptions(overrides = {}) {
   const proxy = socialDownloadProxyURL();
   return {
     noWarnings: true,
-    noCallHome: true,
     noCheckCertificates: true,
     preferFreeFormats: true,
     socketTimeout: 15,
@@ -1320,11 +1323,13 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   const loweredSourceType = normalizeText(sourceType).toLowerCase();
   const isTikTok = loweredSourceType === "tiktok" || host.includes("tiktok.com");
   if (!isTikTok) return normalized;
-
-  const canonicalCacheKey = sourceMetadataCacheKey("canonical-url", normalized);
-  const cachedCanonical = await readRedisJSON(canonicalCacheKey);
-  if (cachedCanonical?.canonical_url) {
-    return cachedCanonical.canonical_url;
+  try {
+    const url = new URL(normalized);
+    if (/^\/@[^/]+\/video\/\d+$/i.test(url.pathname)) {
+      return normalized;
+    }
+  } catch {
+    return normalized;
   }
 
   try {
@@ -1333,41 +1338,14 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
       headers: {
         "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       },
-    }, SOCIAL_FETCH_TIMEOUT_MS, "TikTok redirect resolve");
+    }, TIKTOK_CANONICAL_RESOLVE_TIMEOUT_MS, "TikTok redirect resolve");
 
     const redirected = cleanURL(response.url ?? normalized);
     if (redirected && redirected !== normalized) {
-      void writeRedisJSON(canonicalCacheKey, { canonical_url: redirected }, SOURCE_METADATA_CACHE_TTL_SECONDS);
       return redirected;
     }
   } catch {
-    // Try alternate resolvers below.
-  }
-
-  try {
-    const info = await fetchYtdlMetadataCached(normalized, {
-      label: "TikTok canonical metadata resolve",
-      cacheKind: "tiktok-canonical",
-    });
-
-    const resolved = cleanURL(info?.webpage_url ?? info?.original_url ?? info?.url ?? info?.webpage_url_basename ?? null);
-    if (resolved) {
-      void writeRedisJSON(canonicalCacheKey, { canonical_url: resolved }, SOURCE_METADATA_CACHE_TTL_SECONDS);
-      return resolved;
-    }
-  } catch {
-    // Try browser fallback below.
-  }
-
-  try {
-    const pageSignals = await extractWebSource(normalized);
-    const resolved = cleanURL(pageSignals?.canonical_url ?? pageSignals?.source_url ?? null);
-    if (resolved) {
-      void writeRedisJSON(canonicalCacheKey, { canonical_url: resolved }, SOURCE_METADATA_CACHE_TTL_SECONDS);
-      return resolved;
-    }
-  } catch {
-    // Final fallback below.
+    // URL cleanup is optional. The media extractor can use the shared URL directly.
   }
 
   return normalized;
@@ -1382,13 +1360,7 @@ async function expandCanonicalSourceURLForEnqueue(sourceURL, sourceType = null) 
   const isTikTok = loweredSourceType === "tiktok" || host.includes("tiktok.com");
   if (!isTikTok) return normalized;
 
-  const canonicalCacheKey = sourceMetadataCacheKey("canonical-url", normalized);
-  const cachedCanonical = await readRedisJSON(canonicalCacheKey);
-  if (cachedCanonical?.canonical_url) {
-    return cachedCanonical.canonical_url;
-  }
-
-  // Enqueue must not depend on TikTok or any external redirect resolving.
+  // Enqueue must not depend on Redis, TikTok, or any external redirect resolving.
   // The worker expands canonical URLs after the job is durably stored.
   return normalized;
 }
@@ -6780,30 +6752,41 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
 
   const frameDir = await fsp.mkdtemp(path.join(os.tmpdir(), "ounje-social-frames-"));
   const timestamps = socialFrameTimestamps(duration, maxFrames);
+  const frameCount = timestamps.length;
 
-  const frameDataURLs = [];
   try {
-    for (const [index, seconds] of timestamps.entries()) {
-      const outputPath = path.join(frameDir, `frame-${index + 1}.jpg`);
-      await execFileWithTimeout("ffmpeg", [
-        "-y",
-        "-ss", seconds.toFixed(2),
-        "-i", videoPath,
+    const splitOutputs = timestamps.map((_, index) => `[sample${index}]`).join("");
+    const frameFilters = timestamps.map((seconds, index) => (
+      `[sample${index}]trim=start=${seconds.toFixed(3)},select='eq(n\\,0)',scale='min(1080,iw)':-2[frame${index}]`
+    ));
+    const ffmpegArgs = [
+      "-y",
+      "-i", videoPath,
+      "-filter_complex", [`[0:v]split=${frameCount}${splitOutputs}`, ...frameFilters].join(";"),
+    ];
+    for (let index = 0; index < frameCount; index += 1) {
+      ffmpegArgs.push(
+        "-map", `[frame${index}]`,
         "-frames:v", "1",
-        "-vf", "scale='min(1080,iw)':-2",
         "-q:v", "2",
-        outputPath,
-      ], SOCIAL_FRAME_EXTRACT_TIMEOUT_MS);
-      const buffer = await fsp.readFile(outputPath);
-      frameDataURLs.push(toDataURL(buffer, "image/jpeg"));
+        path.join(frameDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`)
+      );
     }
+    await execFileWithTimeout("ffmpeg", ffmpegArgs, SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS);
+
+    const framePaths = (await fsp.readdir(frameDir))
+      .filter((entry) => /^frame-\d+\.jpg$/i.test(entry))
+      .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+      .slice(0, frameCount);
+    return await Promise.all(framePaths.map(async (entry) => {
+      const buffer = await fsp.readFile(path.join(frameDir, entry));
+      return toDataURL(buffer, "image/jpeg");
+    }));
   } catch {
-    // Best effort.
+    return [];
   } finally {
     await fsp.rm(frameDir, { recursive: true, force: true }).catch(() => {});
   }
-
-  return frameDataURLs;
 }
 
 function selectedSocialHeroFrame(source, modelResult = null) {
@@ -8247,7 +8230,8 @@ async function extractPhotoRecipeSource(request) {
 
 async function extractSourceMaterial(request) {
   const sourceType = request.source_type;
-  const resolvedSourceURL = await expandCanonicalSourceURL(request.source_url, sourceType);
+  // processRecipeIngestionJob resolves TikTok share redirects before this point.
+  const resolvedSourceURL = request.source_url;
   if (sourceType === "youtube") return extractYouTubeSource(resolvedSourceURL);
   if (sourceType === "tiktok") return extractSocialSource(resolvedSourceURL, "tiktok");
   if (sourceType === "instagram") return extractSocialSource(resolvedSourceURL, "instagram");
@@ -11861,6 +11845,8 @@ export {
   buildRecipeGateUserContent,
   selectedSocialHeroFrame,
   socialFrameTimestamps,
+  sampleVideoFrames,
+  expandCanonicalSourceURL,
   maybeGenerateImportedRecipeImage,
   photoRecipeSearchQueries,
   buildFinalRecipeValidationIssues,

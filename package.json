@@ -28,6 +28,7 @@
     "db:guardrails-smoke": "node server/scripts/test-db-guardrails.mjs",
     "recipes:repair-display-macros": "node server/scripts/repair_recipe_display_macros.mjs",
     "recipes:ingestion-smoke-ai-logging": "node server/scripts/smoke-recipe-ingestion-ai-logging.mjs",
+    "recipes:video-pipeline-test": "node server/scripts/test-recipe-video-pipeline.mjs",
     "recipes:backfill-sparse-imports": "node server/scripts/backfill_sparse_user_import_recipes.mjs",
     "recipes:adaptation-contracts": "node server/scripts/test-recipe-adaptation-contracts.mjs",
     "recipes:adaptation-smoke": "node server/scripts/smoke-recipe-adaptation-live.mjs",
