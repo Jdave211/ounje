@@ -12,10 +12,13 @@ function redisURL() {
 
 function redisDisabled() {
   const explicitValue = String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase();
-  if (explicitValue) {
-    return ["1", "true", "yes", "on"].includes(explicitValue);
-  }
-  return String(process.env.OUNJE_RUNTIME_ENV ?? "").trim().toLowerCase() === "production";
+  if (["1", "true", "yes", "on"].includes(explicitValue)) return true;
+
+  const isProduction = String(process.env.OUNJE_RUNTIME_ENV ?? "").trim().toLowerCase() === "production";
+  const productionRedisEnabled = ["1", "true", "yes", "on"].includes(
+    String(process.env.OUNJE_ENABLE_PRODUCTION_REDIS ?? "").trim().toLowerCase()
+  );
+  return isProduction && !productionRedisEnabled;
 }
 
 function redisConnectTimeoutMs() {
