@@ -229,6 +229,25 @@ const {
     "production partial flags must trigger Sonar even when frame sampling and generated recipe shape look complete"
   );
   assert.equal(
+    socialImportNeedsGroundedCompletion(
+      pepperFishRecipe,
+      {
+        ...sparsePepperFishSource,
+        transcript_text: "Serve grilled tilapia with yam, plantain and pepper sauce.",
+        frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+        frame_ocr_texts: Array.from({ length: 12 }, (_, index) => ({
+          frame_index: index + 1,
+          text: "unusable visual OCR noise",
+        })),
+        ingredient_candidates: [],
+        instruction_candidates: [],
+      },
+      []
+    ),
+    true,
+    "nonempty OCR noise must not count as detailed frame recipe evidence"
+  );
+  assert.equal(
     shouldRunGroundedRecipeCompletion(
       pepperFishRecipe,
       {

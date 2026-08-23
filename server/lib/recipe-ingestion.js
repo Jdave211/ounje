@@ -6154,9 +6154,9 @@ function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlag
   ));
   const coverage = socialRecipeEvidenceCoverage(source);
   const thinSourceEvidence = startedIncomplete || (
-    !coverage.hasPrimaryRecipeEvidence
-    && coverage.frameOCRCount < 2
+    coverage.usableFrameOCRCount < 2
     && (coverage.ingredientCandidateCount < 4 || coverage.instructionCandidateCount < 3)
+    && !coverage.hasStrongTranscriptRecipeEvidence
   );
   if (!thinSourceEvidence) return assessment;
 
@@ -8852,9 +8852,44 @@ function isSocialRecipeMaterial(source) {
 
 function socialRecipeEvidenceCoverage(source) {
   const frameCount = Array.isArray(source?.frame_data_urls) ? source.frame_data_urls.length : 0;
-  const frameOCRCount = Array.isArray(source?.frame_ocr_texts)
-    ? source.frame_ocr_texts.filter((frame) => normalizeText(frame?.text)).length
-    : 0;
+  const frameOCRTexts = Array.isArray(source?.frame_ocr_texts)
+    ? source.frame_ocr_texts.map((frame) => normalizeText(frame?.text)).filter(Boolean)
+    : [];
+  const recipeSignalCounts = (text) => {
+    const actionSignals = [
+      /\badd\b/i,
+      /\bblend\w*\b/i,
+      /\bboil\w*\b/i,
+      /\bbak\w*\b/i,
+      /\bcook\w*\b/i,
+      /\bfry\w*\b/i,
+      /\bsimmer\w*\b/i,
+      /\bseason\w*\b/i,
+      /\bserv\w*\b/i,
+      /\bmix\w*\b/i,
+      /\bstir\w*\b/i,
+      /\bflip\w*\b/i,
+      /\bmarinat\w*\b/i,
+      /\bgrill\w*\b/i,
+      /\broast\w*\b/i,
+    ].filter((pattern) => pattern.test(text)).length;
+    const ingredientSignals = [
+      /\b(?:fish|tilapia|salmon|cod)\b/i,
+      /\b(?:chicken|beef|pork|lamb|meat)\b/i,
+      /\b(?:rice|yam|plantain|potato|beans?)\b/i,
+      /\b(?:pepper|onion|garlic|ginger|tomato)\b/i,
+      /\b(?:oil|butter|cream|milk|cheese)\b/i,
+      /\b(?:salt|paprika|curry|seasoning|spices?)\b/i,
+      /\b(?:flour|sugar|egg|baking soda|baking powder)\b/i,
+    ].filter((pattern) => pattern.test(text)).length;
+    return { actionSignals, ingredientSignals };
+  };
+  const usableFrameOCRCount = frameOCRTexts.filter((text) => {
+    const signals = recipeSignalCounts(text);
+    const hasMeasurement = /\b\d+(?:[./]\d+)?\s*(?:g|kg|ml|l|tsp|tbsp|cups?|oz|lb)\b/i.test(text);
+    return (signals.actionSignals > 0 && signals.ingredientSignals > 0)
+      || (hasMeasurement && signals.ingredientSignals > 0);
+  }).length;
   const ingredientCandidateCount = Array.isArray(source?.ingredient_candidates)
     ? source.ingredient_candidates.filter((item) => normalizeText(item?.display_name ?? item?.name ?? item)).length
     : 0;
@@ -8862,12 +8897,19 @@ function socialRecipeEvidenceCoverage(source) {
     ? source.instruction_candidates.filter((item) => normalizeText(item?.text ?? item)).length
     : 0;
   const transcriptChars = normalizeText(source?.transcript_text ?? "").length;
+  const transcriptSignals = recipeSignalCounts(normalizeText(source?.transcript_text ?? ""));
   return {
     frameCount,
-    frameOCRCount,
+    frameOCRCount: frameOCRTexts.length,
+    usableFrameOCRCount,
     ingredientCandidateCount,
     instructionCandidateCount,
     transcriptChars,
+    transcriptActionSignals: transcriptSignals.actionSignals,
+    transcriptIngredientSignals: transcriptSignals.ingredientSignals,
+    hasStrongTranscriptRecipeEvidence:
+      transcriptSignals.actionSignals >= 4
+      && transcriptSignals.ingredientSignals >= 4,
     hasPrimaryRecipeEvidence: socialSourceHasPrimaryRecipeEvidence(source),
   };
 }
@@ -8894,10 +8936,9 @@ function socialImportNeedsGroundedCompletion(recipe, source, qualityFlags = []) 
   const genericIngredientCount = (recipe?.ingredients ?? []).filter((ingredient) => (
     isGenericCompletionIngredientName(ingredient?.display_name ?? ingredient?.name ?? ingredient)
   )).length;
-  const sourceCoverageIsThin = coverage.frameOCRCount < 2
-    && coverage.ingredientCandidateCount < 4
-    && coverage.instructionCandidateCount < 3
-    && !coverage.hasPrimaryRecipeEvidence;
+  const sourceCoverageIsThin = coverage.usableFrameOCRCount < 2
+    && (coverage.ingredientCandidateCount < 4 || coverage.instructionCandidateCount < 3)
+    && !coverage.hasStrongTranscriptRecipeEvidence;
 
   return hasExplicitIncompletenessFlag
     || metrics.needsRepair
