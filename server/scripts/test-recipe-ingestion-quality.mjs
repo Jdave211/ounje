@@ -30,10 +30,14 @@ const {
   shouldRunGroundedRecipeCompletion,
   mergeGroundedSocialCompletion,
   calibrateSocialRecipeAssessment,
+  assessSocialCompletionContext,
+  recipeSemanticCompleteness,
+  isRecipeEquipmentIngredientName,
   normalizeRecipeDisplayFields,
   runSocialRecipeCompletionContext,
   socialFrameTimestamps,
   SOCIAL_VIDEO_RECIPE_MODEL,
+  RECIPE_IMPORT_HARD_COMPLETION_MODEL,
 } = await import("../lib/recipe-ingestion.js");
 
 {
@@ -141,6 +145,7 @@ const {
     "final validation must audit the saved recipe against social frame evidence"
   );
   assert.equal(SOCIAL_VIDEO_RECIPE_MODEL, "gpt-4.1-mini");
+  assert.equal(RECIPE_IMPORT_HARD_COMPLETION_MODEL, "gpt-4.1-mini");
 }
 
 {
@@ -398,8 +403,85 @@ const {
     inferredContextSource,
     ["incomplete", "missing_steps"]
   );
-  assert.equal(calibrated.confidence_score, 0.82, "inferred completion must not masquerade as 0.93 creator-source confidence");
-  assert.ok(calibrated.quality_flags.includes("grounded_completion_inferred"));
+  assert.equal(calibrated.confidence_score, 0.68, "thin completion context must not masquerade as creator-source confidence");
+  assert.equal(calibrated.review_state, "draft", "generic component ingredients must block approval");
+  assert.ok(calibrated.quality_flags.includes("grounded_web_completion_missing"));
+  assert.ok(calibrated.quality_flags.includes("unresolved_ingredient_components"));
+
+  const malformedRecipe = {
+    ...pepperFishRecipe,
+    detail_footnote: "Exact ingredient quantities and full recipe details to be released soon.",
+    ingredients: [
+      ...pepperFishRecipe.ingredients,
+      { display_name: "foil", quantity_text: "1 sheet" },
+    ],
+    steps: [
+      { text: "Blend the red peppers and onion until finely chopped." },
+      { text: "Rub the fish with the oil-based seasoning and marinate for 20 minutes." },
+      { text: "Grill the fish over medium heat until cooked through." },
+    ],
+  };
+  const malformedSemantics = recipeSemanticCompleteness(malformedRecipe);
+  assert.ok(malformedSemantics.genericIngredients.includes("oil-based seasoning"));
+  assert.ok(malformedSemantics.equipmentIngredients.includes("foil"));
+  assert.ok(malformedSemantics.teaserFieldCount > 0);
+  assert.equal(isRecipeEquipmentIngredientName("1 sheet foil"), true);
+  assert.ok(
+    buildFinalRecipeValidationIssues(malformedRecipe).some((issue) => issue.includes("Unresolved component ingredients")),
+    "final validation must treat umbrella seasonings as blocking issues"
+  );
+
+  const cleanedMalformedRecipe = normalizeRecipeDisplayFields(malformedRecipe);
+  assert.equal(
+    cleanedMalformedRecipe.ingredients.some((ingredient) => ingredient.display_name === "foil"),
+    false,
+    "equipment must be removed from the shopping ingredient list"
+  );
+  assert.equal(cleanedMalformedRecipe.detail_footnote, null, "coming-soon source copy must not reach the recipe page");
+  assert.ok(cleanedMalformedRecipe.quality_flags.includes("equipment_removed_from_ingredients"));
+  assert.ok(cleanedMalformedRecipe.quality_flags.includes("source_teaser_removed"));
+
+  const groundedInferredContext = {
+    exact_match_supported: false,
+    match_confidence: 0.68,
+    reference_urls: ["https://example.com/pepper-grilled-fish"],
+    source_supported_ingredients: ["1 whole tilapia", "2 red bell peppers", "1 onion", "2 tablespoons neutral oil"],
+    source_supported_steps: ["Score and season the cleaned tilapia, then marinate it for 20 minutes."],
+    completion_ingredients: ["3 garlic cloves", "1 tablespoon grated ginger", "1 teaspoon paprika", "1 teaspoon salt"],
+    completion_steps: [
+      "Blend the peppers, onion, garlic, and ginger into a coarse paste.",
+      "Cook the pepper paste over medium heat for 8 to 10 minutes until reduced.",
+      "Grill the marinated fish over medium-high heat, basting and turning until cooked through.",
+    ],
+  };
+  assert.equal(assessSocialCompletionContext(groundedInferredContext).hasDetails, true);
+  const completePepperFishRecipe = {
+    ...pepperFishRecipe,
+    ingredients: [
+      "tilapia", "neutral oil", "red bell pepper", "onion", "garlic", "ginger", "paprika", "salt", "black pepper", "plantain", "fried yam", "pop pepper sauce",
+    ].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: [
+      { text: "Score the cleaned tilapia, season it all over, and marinate for 20 minutes." },
+      { text: "Blend the peppers, onion, garlic, and ginger into a coarse paste." },
+      { text: "Cook the pepper paste over medium heat for 8 to 10 minutes until reduced." },
+      { text: "Grill the fish over medium-high heat, basting and turning until cooked through." },
+    ],
+  };
+  const approvedInferred = calibrateSocialRecipeAssessment(
+    { confidence_score: 0.93, quality_flags: [], review_state: "approved", review_reason: null },
+    completePepperFishRecipe,
+    { ...sparsePepperFishSource, social_completion_context: groundedInferredContext },
+    ["incomplete", "hard_completion_retry_applied"]
+  );
+  assert.equal(approvedInferred.confidence_score, 0.82);
+  assert.equal(approvedInferred.review_state, "approved", "a concrete grounded reconstruction may be approved as inferred");
+  assert.ok(approvedInferred.quality_flags.includes("grounded_completion_inferred"));
+  const equipmentFreeMerge = mergeGroundedSocialCompletion(malformedRecipe, completePepperFishRecipe);
+  assert.equal(
+    equipmentFreeMerge.ingredients.some((ingredient) => ingredient.display_name === "foil"),
+    false,
+    "source equipment must not prevent a complete hard-retry recipe from replacing placeholder structure"
+  );
 
   const originalFetch = globalThis.fetch;
   let capturedPerplexityPayload = null;
