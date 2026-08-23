@@ -280,6 +280,30 @@ const {
   );
   assert.equal(guarded.author_handle, "@chefttk", "completion must preserve the creator");
 
+  const concreteGroundedCompletion = {
+    ...pepperFishRecipe,
+    ingredients: [
+      "tilapia",
+      "neutral oil",
+      "red bell pepper",
+      "onion",
+      "garlic",
+      "ginger",
+      "paprika",
+      "plantain",
+      "fried yam",
+      "pop pepper sauce",
+    ].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: Array.from({ length: 6 }, (_, index) => ({ text: `Grounded completion step ${index + 1}` })),
+  };
+  const expanded = mergeGroundedSocialCompletion(pepperFishRecipe, concreteGroundedCompletion);
+  assert.deepEqual(
+    expanded.ingredients.map((ingredient) => ingredient.display_name),
+    concreteGroundedCompletion.ingredients.map((ingredient) => ingredient.display_name),
+    "grounded completion may expand generic seasoning labels when it preserves source-specific protein and sides"
+  );
+  assert.equal(expanded.author_handle, "@chefttk", "constituent expansion must preserve the creator");
+
   const inferredContextSource = {
     ...sparsePepperFishSource,
     social_completion_context: {
@@ -330,6 +354,8 @@ const {
     assert.ok(context.completion_ingredients.some((item) => item.includes("paprika")));
     assert.equal(capturedPerplexityPayload.model, "sonar-pro");
     assert.match(capturedPerplexityPayload.messages[0].content, /research context, not a replacement recipe/i);
+    assert.match(capturedPerplexityPayload.messages[0].content, /one concrete shoppable ingredient per completion_ingredients entry/i);
+    assert.match(capturedPerplexityPayload.messages[0].content, /must not mean unusably broad/i);
     assert.match(capturedPerplexityPayload.messages[1].content, /chefttk/);
   } finally {
     globalThis.fetch = originalFetch;

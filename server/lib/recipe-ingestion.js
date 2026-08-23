@@ -653,7 +653,8 @@ Rules:
 - The current imported recipe is the base. Expand and clarify it; never replace it with a fresh or adjacent recipe.
 - Treat original source evidence as highest priority, then exact creator/cross-post evidence from Perplexity, then mainstream completion context.
 - Keep every non-generic source-supported ingredient and technique. Generic placeholders such as "oil-based seasoning" may be replaced by their researched constituent ingredients when the completion context supports that expansion.
-- When Perplexity marks exact_match_supported=false, add only conservative details that make the existing dish cookable and add a grounded_completion_inferred quality flag.
+- When Perplexity marks exact_match_supported=false, add conservative, concrete details that make the existing dish fully cookable and add a grounded_completion_inferred quality flag. Non-exact means the additions are inferred; it does not justify leaving unusable component placeholders in the recipe.
+- Expand broad source labels such as "seasoning blend", "pepper seasoning", "marinade", or "sauce base" into individual shoppable ingredients when the grounded context provides a practical composition. Preserve the source label in the relevant step text when useful, but do not keep it as a separate ingredient row beside its constituents.
 - Use web recipe references only to complete weak or missing structure, not to replace the dish with something adjacent.
 - Improve ingredient sizing, timings, servings, nutrition text, and missing or sparse steps when the imported recipe is clearly incomplete.
 - For short social videos with weak/no transcript, infer useful mainstream ingredient quantities when the dish identity is clear and web references support a plausible common range.
@@ -9062,7 +9063,11 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
           "Return research context, not a replacement recipe.",
           "Separate details supported by the creator or an exact cross-post from conservative gap-fill details inferred from closely matching recipes.",
           "Never change the dish identity, main protein, sides, cuisine, or creator-specific named components.",
-          "When an exact recipe cannot be found, set exact_match_supported=false and keep completion details mainstream, minimal, and clearly cautioned.",
+          "When an exact written recipe cannot be found, set exact_match_supported=false, research closely matching recipes from the same cuisine and cooking method, and return a conservative but complete inferred version of the missing details.",
+          "Non-exact must not mean unusably broad: expand labels such as seasoning blend, pepper seasoning, marinade, or sauce base into practical constituent ingredients when comparable sources support the composition.",
+          "Write one concrete shoppable ingredient per completion_ingredients entry, include a conservative quantity or range when supportable, and never return another umbrella label in place of a usable breakdown.",
+          "Write completion_steps as specific cooking actions with useful timings, heat levels, and doneness cues when the references support them.",
+          "Put uncertainty and the basis for inferred additions in cautions; do not weaken the usable recipe itself into placeholders.",
         ].join("\n"),
       },
       {
@@ -9086,7 +9091,7 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
             instruction_candidates: source?.instruction_candidates ?? [],
           }),
           "",
-          "Return only the requested JSON research context. Preserve uncertainty instead of fabricating an exact match.",
+          "Return only the requested JSON research context. Preserve uncertainty in exact_match_supported, match_confidence, and cautions instead of fabricating creator support, while still providing a complete grounded gap-fill.",
         ].join("\n"),
       },
     ],
