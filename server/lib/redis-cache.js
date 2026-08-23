@@ -14,7 +14,8 @@ function redisDisabled() {
   const explicitValue = String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(explicitValue)) return true;
 
-  const isProduction = String(process.env.OUNJE_RUNTIME_ENV ?? "").trim().toLowerCase() === "production";
+  const isProduction = [process.env.OUNJE_RUNTIME_ENV, process.env.NODE_ENV]
+    .some((value) => String(value ?? "").trim().toLowerCase() === "production");
   const productionRedisEnabled = ["1", "true", "yes", "on"].includes(
     String(process.env.OUNJE_ENABLE_PRODUCTION_REDIS ?? "").trim().toLowerCase()
   );

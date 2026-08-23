@@ -29,10 +29,12 @@ const {
 
 {
   const previousRuntime = process.env.OUNJE_RUNTIME_ENV;
+  const previousNodeEnv = process.env.NODE_ENV;
   const previousDisabled = process.env.REDIS_DISABLED;
   const previousProductionRedis = process.env.OUNJE_ENABLE_PRODUCTION_REDIS;
   const previousURL = process.env.REDIS_URL;
-  process.env.OUNJE_RUNTIME_ENV = "production";
+  delete process.env.OUNJE_RUNTIME_ENV;
+  process.env.NODE_ENV = "production";
   delete process.env.REDIS_DISABLED;
   process.env.REDIS_URL = "redis://legacy.example:6379";
   assert.equal(redisConfigStatus().disabled, true, "production must not contact a legacy Redis service by default");
@@ -42,6 +44,7 @@ const {
   process.env.OUNJE_ENABLE_PRODUCTION_REDIS = "true";
   assert.equal(redisConfigStatus().configured, true, "a future managed Redis service can be explicitly enabled");
   if (previousRuntime == null) delete process.env.OUNJE_RUNTIME_ENV; else process.env.OUNJE_RUNTIME_ENV = previousRuntime;
+  if (previousNodeEnv == null) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
   if (previousDisabled == null) delete process.env.REDIS_DISABLED; else process.env.REDIS_DISABLED = previousDisabled;
   if (previousProductionRedis == null) delete process.env.OUNJE_ENABLE_PRODUCTION_REDIS; else process.env.OUNJE_ENABLE_PRODUCTION_REDIS = previousProductionRedis;
   if (previousURL == null) delete process.env.REDIS_URL; else process.env.REDIS_URL = previousURL;
