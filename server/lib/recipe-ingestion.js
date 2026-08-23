@@ -3302,6 +3302,8 @@ function normalizeImportPayload(payload = {}) {
     target_state: targetState,
     access_token: accessToken,
     photo_context: photoContext,
+    force_reprocess: payload.force_reprocess === true,
+    suppress_notifications: payload.suppress_notifications === true,
     source_type: detectRecipeIngestionSourceType({
       sourceUrl: directSourceURL || (directSourceText && isProbablyURL(directSourceText) ? directSourceText : null),
       sourceText: directSourceText,
@@ -3894,6 +3896,7 @@ async function broadcastRecipeImportInvalidation(job, eventName) {
 async function maybeEmitRecipeImportNotification(job, eventName) {
   const userID = normalizeText(job?.user_id);
   if (!userID) return;
+  if (job?.request_payload?.suppress_notifications === true) return;
   const status = normalizeText(job?.status);
   const jobID = normalizeText(job?.id);
   if (!jobID) return;
@@ -4439,7 +4442,8 @@ async function createJobRow(request) {
         sourceText: request.source_text,
       });
 
-  const enqueueLockKey = dedupeKey
+  const forceReprocess = request.force_reprocess === true;
+  const enqueueLockKey = dedupeKey && !forceReprocess
     ? recipeImportLockKey("enqueue", `${request.user_id ?? "anon"}:${dedupeKey}`)
     : null;
   const enqueueLockToken = enqueueLockKey
@@ -4461,44 +4465,46 @@ async function createJobRow(request) {
   }
 
   try {
-  const existing = await findExistingJobForRequest(request, dedupeKey);
-  if (existing) {
-    await restoreSavedRecipeForImportRequest(request, existing, { requestedAt: nowIso() }).catch(() => false);
-    return existing;
-  }
+  if (!forceReprocess) {
+    const existing = await findExistingJobForRequest(request, dedupeKey);
+    if (existing) {
+      await restoreSavedRecipeForImportRequest(request, existing, { requestedAt: nowIso() }).catch(() => false);
+      return existing;
+    }
 
-  const existingForSource = await findExistingJobForRequestSource(request, dedupeKey);
-  if (existingForSource) {
-    await restoreSavedRecipeForImportRequest(request, existingForSource, { requestedAt: nowIso() }).catch(() => false);
-    _setCanonicalImportCache(
-      request.user_id,
-      existingForSource.canonical_url ?? existingForSource.source_url ?? request.source_url ?? null,
-      existingForSource.dedupe_key ?? dedupeKey ?? null,
-      existingForSource
-    );
-    return existingForSource;
-  }
+    const existingForSource = await findExistingJobForRequestSource(request, dedupeKey);
+    if (existingForSource) {
+      await restoreSavedRecipeForImportRequest(request, existingForSource, { requestedAt: nowIso() }).catch(() => false);
+      _setCanonicalImportCache(
+        request.user_id,
+        existingForSource.canonical_url ?? existingForSource.source_url ?? request.source_url ?? null,
+        existingForSource.dedupe_key ?? dedupeKey ?? null,
+        existingForSource
+      );
+      return existingForSource;
+    }
 
-  const completedCanonical = await findCompletedCanonicalImportForRequest(request, {
-    canonicalURL: request.canonical_url ?? request.source_url ?? null,
-    dedupeKey,
-  });
-  if (completedCanonical) {
-    await restoreSavedRecipeForImportRequest(request, completedCanonical, { requestedAt: nowIso() }).catch(() => false);
-    return completedCanonical;
-  }
-
-  const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(request, {
-    canonicalURL: request.canonical_url ?? request.source_url ?? null,
-    dedupeKey,
-  });
-  if (existingImportedRecipe) {
-    await restoreSavedRecipeForImportRequest(request, existingImportedRecipe, { requestedAt: nowIso() }).catch(() => false);
-    const completed = await createCompletedJobRowFromExistingImportedRecipe(request, existingImportedRecipe, {
-      dedupeKey,
+    const completedCanonical = await findCompletedCanonicalImportForRequest(request, {
       canonicalURL: request.canonical_url ?? request.source_url ?? null,
+      dedupeKey,
     });
-    if (completed) return completed;
+    if (completedCanonical) {
+      await restoreSavedRecipeForImportRequest(request, completedCanonical, { requestedAt: nowIso() }).catch(() => false);
+      return completedCanonical;
+    }
+
+    const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(request, {
+      canonicalURL: request.canonical_url ?? request.source_url ?? null,
+      dedupeKey,
+    });
+    if (existingImportedRecipe) {
+      await restoreSavedRecipeForImportRequest(request, existingImportedRecipe, { requestedAt: nowIso() }).catch(() => false);
+      const completed = await createCompletedJobRowFromExistingImportedRecipe(request, existingImportedRecipe, {
+        dedupeKey,
+        canonicalURL: request.canonical_url ?? request.source_url ?? null,
+      });
+      if (completed) return completed;
+    }
   }
 
   const activeImportCount = await countActiveImportsForUser(request.user_id);
@@ -4522,6 +4528,8 @@ async function createJobRow(request) {
       attachments: request.attachments ?? [],
       photo_context: request.photo_context ?? null,
       target_state: request.target_state,
+      force_reprocess: forceReprocess,
+      suppress_notifications: request.suppress_notifications === true,
     },
     dedupe_key: dedupeKey,
     status: "queued",
@@ -11114,9 +11122,18 @@ async function publishRecipeImportWake(jobRow, { reason = "queued" } = {}) {
 }
 
 export async function queueRecipeIngestion(payload = {}, options = {}) {
-  const requests = Array.isArray(payload.sources)
+  const forceReprocess = options.forceReprocess === true;
+  const suppressNotifications = options.suppressNotifications === true;
+  const normalizedRequests = Array.isArray(payload.sources)
     ? payload.sources.map((entry) => normalizeImportPayload({ ...payload, ...entry }))
     : [normalizeImportPayload(payload)];
+  const requests = normalizedRequests.map((request) => ({
+    ...request,
+    // These controls are accepted only through server-side options. Request-body
+    // fields cannot bypass normal duplicate protection or suppress notifications.
+    force_reprocess: forceReprocess,
+    suppress_notifications: suppressNotifications,
+  }));
 
   const processInline = shouldProcessImportInline(payload, options);
   const results = [];
@@ -11416,6 +11433,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     ...requestPayload,
     access_token: accessToken ?? requestPayload.access_token ?? null,
   };
+  const forceReprocess = requestPayload.force_reprocess === true;
   if (!requestPayload.user_id
     && requiresUserScopedRecipeImport(requestPayload)
     && !allowsPublicCatalogRecipeImport(existingJob.request_payload ?? requestPayload)) {
@@ -11457,50 +11475,52 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       }).catch(() => {});
     }
 
-    const cachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
-      canonicalURL: requestPayload.source_url,
-      dedupeKey: canonicalDedupeKey,
-      excludeJobID: existingJob.id,
-    });
-    if (cachedCanonical) {
-      return await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
-        workerID,
-        canonicalURL: requestPayload.source_url,
-      });
-    }
-
-    const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(lookupRequest, {
-      canonicalURL: requestPayload.source_url,
-      dedupeKey: canonicalDedupeKey,
-    });
-    if (existingImportedRecipe) {
-      return await completeJobFromExistingImportedRecipe(existingJob, existingImportedRecipe, {
-        workerID,
+    if (!forceReprocess) {
+      const cachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
         canonicalURL: requestPayload.source_url,
         dedupeKey: canonicalDedupeKey,
+        excludeJobID: existingJob.id,
       });
-    }
-
-    const globalCachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
-      canonicalURL: requestPayload.source_url,
-      dedupeKey: canonicalDedupeKey,
-      excludeJobID: existingJob.id,
-      scope: "global",
-    });
-    if (globalCachedCanonical) {
-      const sameUser = normalizeText(globalCachedCanonical.user_id) === normalizeText(existingJob.user_id);
-      if (sameUser) {
-        return await completeJobFromCachedCanonicalImport(existingJob, globalCachedCanonical, {
+      if (cachedCanonical) {
+        return await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
           workerID,
           canonicalURL: requestPayload.source_url,
         });
       }
-      const cloned = await completeJobByCloningGlobalImportedRecipe(existingJob, globalCachedCanonical, {
-        workerID,
+
+      const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(lookupRequest, {
         canonicalURL: requestPayload.source_url,
         dedupeKey: canonicalDedupeKey,
       });
-      if (cloned) return cloned;
+      if (existingImportedRecipe) {
+        return await completeJobFromExistingImportedRecipe(existingJob, existingImportedRecipe, {
+          workerID,
+          canonicalURL: requestPayload.source_url,
+          dedupeKey: canonicalDedupeKey,
+        });
+      }
+
+      const globalCachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
+        canonicalURL: requestPayload.source_url,
+        dedupeKey: canonicalDedupeKey,
+        excludeJobID: existingJob.id,
+        scope: "global",
+      });
+      if (globalCachedCanonical) {
+        const sameUser = normalizeText(globalCachedCanonical.user_id) === normalizeText(existingJob.user_id);
+        if (sameUser) {
+          return await completeJobFromCachedCanonicalImport(existingJob, globalCachedCanonical, {
+            workerID,
+            canonicalURL: requestPayload.source_url,
+          });
+        }
+        const cloned = await completeJobByCloningGlobalImportedRecipe(existingJob, globalCachedCanonical, {
+          workerID,
+          canonicalURL: requestPayload.source_url,
+          dedupeKey: canonicalDedupeKey,
+        });
+        if (cloned) return cloned;
+      }
     }
 
     const resumedSourceArtifact = await fetchLatestJobArtifact(existingJob.id, "source_evidence_bundle").catch(() => null);
