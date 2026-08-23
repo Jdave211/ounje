@@ -3764,6 +3764,11 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
   const resolvedLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
     ? Math.min(parsedLimit, 500)
     : null;
+  // Completed imports come from both the job table and the canonical imported
+  // recipe table. Read their bounded metadata sets first, merge/dedupe them,
+  // then apply the requested page limit once. Limiting each source separately
+  // can otherwise return more rows than requested and makes the modal stutter.
+  const sourceScanLimit = 500;
 
   for (const select of selectVariants) {
     try {
@@ -3776,7 +3781,7 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
           // (same-second imports, or null completed_at) come back in a stable order
           // instead of Postgres' arbitrary physical order.
           order: ["completed_at.desc", "updated_at.desc", "created_at.desc", "id.desc"],
-          limit: resolvedLimit,
+          limit: sourceScanLimit,
         }
       );
       lastError = null;
@@ -3798,7 +3803,7 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
       {
         filters: importedFilters,
         order: ["updated_at.desc", "created_at.desc", "id.desc"],
-        limit: resolvedLimit,
+        limit: sourceScanLimit,
       }
     );
   } catch {
@@ -3833,8 +3838,9 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
       // is not deterministic).
       return String(right?.id ?? "").localeCompare(String(left?.id ?? ""));
     });
+  const visibleItems = resolvedLimit == null ? items : items.slice(0, resolvedLimit);
   return {
-    items,
+    items: visibleItems,
     totalCount: items.length,
   };
 }
