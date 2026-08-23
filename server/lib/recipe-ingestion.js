@@ -8681,6 +8681,17 @@ function hasUsableRecipeCore(recipe) {
   return ingredientCount >= 4 && stepCount >= 3 && quantifiedIngredientCount >= 2;
 }
 
+function hasUsableRecipeShape(recipe) {
+  if (!recipe || typeof recipe !== "object") return false;
+  const ingredientCount = Array.isArray(recipe.ingredients)
+    ? recipe.ingredients.filter((item) => normalizeText(item?.display_name ?? item?.name ?? item)).length
+    : 0;
+  const stepCount = Array.isArray(recipe.steps)
+    ? recipe.steps.filter((item) => normalizeText(item?.text ?? item)).length
+    : 0;
+  return ingredientCount >= 4 && stepCount >= 3;
+}
+
 function recipeCoreMetrics(recipe) {
   const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
   const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
@@ -11864,6 +11875,7 @@ export {
   fillRecipeMacrosWithDisplayFallback,
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
+  hasUsableRecipeShape,
   normalizeRecipeDisplayFields,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,

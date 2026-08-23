@@ -12,6 +12,7 @@ const { parseIngredientObjects } = await import("../lib/recipe-detail-utils.js")
 const {
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
+  hasUsableRecipeShape,
   assessRecipeLikelihood,
   buildFinalRecipeValidationIssues,
   buildRecipeGateUserContent,
@@ -107,6 +108,21 @@ const {
     "final validation must audit the saved recipe against social frame evidence"
   );
   assert.equal(SOCIAL_VIDEO_RECIPE_MODEL, "gpt-4.1-mini");
+}
+
+{
+  assert.equal(
+    hasUsableRecipeShape({
+      ingredients: ["chicken", "salt", "pepper", "lemon"].map((display_name) => ({ display_name, quantity_text: null })),
+      steps: ["Season the chicken.", "Air fry until cooked.", "Brush with lemon butter."].map((text) => ({ text })),
+    }),
+    true,
+    "a source-faithful social recipe with missing quantities must still bypass generic web completion"
+  );
+  assert.equal(
+    hasUsableRecipeShape({ ingredients: [{ display_name: "chicken" }], steps: [{ text: "Cook it." }] }),
+    false
+  );
 }
 
 {
