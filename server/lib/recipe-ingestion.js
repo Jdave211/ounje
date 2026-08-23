@@ -667,6 +667,7 @@ Rules:
 - Do not collapse distinct grocery items into generic buckets. If the source or web references expose individual ingredients, keep them as individual shoppable rows instead of "spices", "seasoning", "sauce", or similar umbrella labels.
 - Never list equipment or disposables such as foil, baking sheets, trays, pans, bowls, or blenders as ingredients. Equipment may appear only in the method.
 - Never carry source teaser copy such as "full recipe coming soon" or "details to be released soon" into the description, footnote, ingredients, or steps.
+- Do not list several interchangeable serving suggestions as ingredients the user must buy. Keep creator-shown sides, choose one sensible default when alternatives are offered, and move the remaining alternatives to a serving note.
 - Preserve ingredients like honey, paprika, chili powder, garlic powder, fresh herbs, and other concrete grocery items explicitly when the source supports them.
 - Keep display_name to the ingredient name only. Put amounts, package sizes, preparation notes, and ranges in quantity_text or the method instead of embedding them in display_name.
 - List the same ingredient only once even when it is used in multiple components. Sum compatible quantities and mark quantity_text as "divided" when needed; do not create role-suffixed duplicates such as "vegetable oil" and "vegetable oil (for sauce)".
@@ -9171,7 +9172,9 @@ function assessSocialCompletionContext(context) {
   const matchConfidence = Number(context.match_confidence ?? 0);
   const minimumIngredients = context.exact_match_supported ? 3 : 4;
   const minimumSteps = context.exact_match_supported ? 2 : 3;
-  const minimumConfidence = context.exact_match_supported ? 0.45 : 0.5;
+  // For non-exact completion this score measures creator-match confidence, not
+  // whether the researched reconstruction itself is detailed enough to cook.
+  const minimumConfidence = context.exact_match_supported ? 0.45 : 0.25;
   return {
     hasDetails:
       concreteIngredientCount >= minimumIngredients
@@ -10163,9 +10166,18 @@ function shouldRunFinalRecipeValidation(recipe, source = null) {
     || buildFinalRecipeValidationIssues(recipe, source).length > 0;
 }
 
+function isBlockingFinalRecipeValidationIssue(issue) {
+  const text = normalizeText(issue).toLowerCase();
+  if (!text) return false;
+  return /unresolved component ingredients|equipment is listed as ingredients|source teaser|missing from the top-level ingredient list|missing quantities|consolidate repeated ingredient rows|listed but not clearly used|steps mention water/.test(text);
+}
+
 async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } = {}) {
   const validationBaseRecipe = normalizeRecipeDisplayFields(recipe);
   const validationIssues = buildFinalRecipeValidationIssues(validationBaseRecipe, source);
+  const finalValidatorModel = isSocialRecipeMaterial(source)
+    ? RECIPE_IMPORT_HARD_COMPLETION_MODEL
+    : RECIPE_FINAL_VALIDATOR_MODEL;
   if (!shouldRunFinalRecipeValidation(validationBaseRecipe, source)) {
     return {
       recipe: validationBaseRecipe,
@@ -10191,9 +10203,9 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       "final_validation",
       { jobID, metadata: { issue_count: validationIssues.length } },
       () => withRecipeAIStage("recipe_import.final_validator", () => openai.chat.completions.create({
-        model: RECIPE_FINAL_VALIDATOR_MODEL,
-        ...chatCompletionTemperatureParams(RECIPE_FINAL_VALIDATOR_MODEL, 0.02),
-        ...chatCompletionLatencyParams(RECIPE_FINAL_VALIDATOR_MODEL, 5200),
+        model: finalValidatorModel,
+        ...chatCompletionTemperatureParams(finalValidatorModel, 0.02),
+        ...chatCompletionLatencyParams(finalValidatorModel, 5200),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
@@ -10260,6 +10272,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       && issueCountImproved;
 
     const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(validationBaseRecipe);
+    const remainingBlockingIssues = repairedIssues.filter(isBlockingFinalRecipeValidationIssue);
     const validationNotes = uniqueStrings([
       ...validationIssues,
       ...(Array.isArray(parsed.validation_notes) ? parsed.validation_notes : []),
@@ -10268,9 +10281,11 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     const qualityFlags = uniqueStrings([
       ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
       ...(applied
-        ? ["final_validator_applied", ...(repairedIssues.length ? ["final_validator_review_needed"] : [])]
-        : repairedIssues.length
+        ? ["final_validator_applied", ...(remainingBlockingIssues.length ? ["final_validator_review_needed"] : repairedIssues.length ? ["final_validator_advisory"] : [])]
+        : remainingBlockingIssues.length
           ? ["final_validator_review_needed"]
+          : repairedIssues.length
+            ? ["final_validator_advisory"]
           : ["final_validator_checked"]),
     ]);
 
@@ -10287,9 +10302,10 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
           applied,
         }),
         metadata: {
-          model: RECIPE_FINAL_VALIDATOR_MODEL,
+          model: finalValidatorModel,
           issue_count: validationIssues.length,
           remaining_issue_count: repairedIssues.length,
+          remaining_blocking_issue_count: remainingBlockingIssues.length,
           applied,
         },
       }).catch(() => {});
@@ -10298,8 +10314,8 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     return {
       recipe: applied ? repaired : validationBaseRecipe,
       quality_flags: qualityFlags,
-      review_reason: repairedIssues.length
-        ? normalizeText(parsed.review_reason ?? "") || repairedIssues.join(" ")
+      review_reason: remainingBlockingIssues.length
+        ? normalizeText(parsed.review_reason ?? "") || remainingBlockingIssues.join(" ")
         : null,
       validation_notes: validationNotes,
       applied,
@@ -10316,7 +10332,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
           applied: false,
         }),
         metadata: {
-          model: RECIPE_FINAL_VALIDATOR_MODEL,
+          model: finalValidatorModel,
           issue_count: validationIssues.length,
           applied: false,
           failed: true,
@@ -12767,6 +12783,7 @@ export {
   maybeGenerateImportedRecipeImage,
   photoRecipeSearchQueries,
   buildFinalRecipeValidationIssues,
+  isBlockingFinalRecipeValidationIssue,
   cleanIngredientQuantityText,
   shouldRunFinalRecipeValidation,
   buildDedupeKey,

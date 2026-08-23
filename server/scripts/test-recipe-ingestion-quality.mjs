@@ -17,6 +17,7 @@ const {
   hasUsableRecipeShape,
   assessRecipeLikelihood,
   buildFinalRecipeValidationIssues,
+  isBlockingFinalRecipeValidationIssue,
   cleanIngredientQuantityText,
   shouldRunFinalRecipeValidation,
   buildRecipeGateUserContent,
@@ -443,7 +444,7 @@ const {
 
   const groundedInferredContext = {
     exact_match_supported: false,
-    match_confidence: 0.68,
+    match_confidence: 0.39,
     reference_urls: ["https://example.com/pepper-grilled-fish"],
     source_supported_ingredients: ["1 whole tilapia", "2 red bell peppers", "1 onion", "2 tablespoons neutral oil"],
     source_supported_steps: ["Score and season the cleaned tilapia, then marinate it for 20 minutes."],
@@ -455,6 +456,16 @@ const {
     ],
   };
   assert.equal(assessSocialCompletionContext(groundedInferredContext).hasDetails, true);
+  assert.equal(
+    isBlockingFinalRecipeValidationIssue("A liquid amount is vague in the method."),
+    false,
+    "a small wording advisory must not demote an otherwise complete recipe"
+  );
+  assert.equal(
+    isBlockingFinalRecipeValidationIssue("Unresolved component ingredients: oil-based seasoning."),
+    true,
+    "semantic incompleteness must remain blocking"
+  );
   const completePepperFishRecipe = {
     ...pepperFishRecipe,
     ingredients: [
