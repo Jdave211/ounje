@@ -28,6 +28,10 @@ services:
         value: "true"
       - key: OUNJE_ENABLE_AI_CALL_LOGGING
         value: "true"
+      # Supabase is the durable import queue. Keep production independent of the
+      # retired DigitalOcean Redis instance; in-process caches remain available.
+      - key: REDIS_DISABLED
+        value: "true"
       - key: AUTOSHOP_MANUAL_BETA_ONLY
         value: "true"
       - key: OUNJE_AI_DAILY_SPEND_LIMIT_USD
@@ -49,8 +53,6 @@ services:
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: REDIS_URL
         sync: false
       - key: KROGER_CLIENT_ID
         sync: false
@@ -79,7 +81,7 @@ services:
     runtime: docker
     plan: starter
     dockerfilePath: Dockerfile
-    dockerCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest --batch-size 1 --wake-mode redis --wake-timeout-ms 15000
+    dockerCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest --batch-size 1 --wake-mode poll --wake-timeout-ms 15000
     maxShutdownDelaySeconds: 300
     autoDeploy: true
     buildFilter:
@@ -100,20 +102,20 @@ services:
       - key: RECIPE_INGESTION_WORKER_CONCURRENCY
         value: "1"
       - key: RECIPE_INGESTION_WORKER_WAKE_MODE
-        value: redis
+        value: poll
       - key: RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS
         value: "15000"
       - key: RECIPE_INGESTION_STALE_AFTER_MINUTES
         value: "15"
       - key: RECIPE_INGESTION_STALE_REPAIR_INTERVAL_MS
         value: "300000"
+      - key: REDIS_DISABLED
+        value: "true"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: REDIS_URL
         sync: false
       - key: OPENAI_API_KEY
         sync: false
