@@ -4539,12 +4539,14 @@ async function createJobRow(request) {
     const lockedExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
     if (lockedExisting) {
+      await restoreSavedRecipeForImportRequest(request, lockedExisting, { requestedAt: nowIso() }).catch(() => false);
       return lockedExisting;
     }
     await delay(200);
     const settledExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
     if (settledExisting) {
+      await restoreSavedRecipeForImportRequest(request, settledExisting, { requestedAt: nowIso() }).catch(() => false);
       return settledExisting;
     }
   }
@@ -5026,9 +5028,16 @@ async function persistRecipeTargetStateForUser(
   return { saved, prepped: actions.addToPrep };
 }
 
+function recipeIDForImportRestore(jobOrRecipe) {
+  const linkedRecipeID = normalizeText(jobOrRecipe?.recipe_id);
+  if (linkedRecipeID) return linkedRecipeID;
+  const candidateID = normalizeText(jobOrRecipe?.id);
+  return candidateID && !candidateID.startsWith("ri_") ? candidateID : null;
+}
+
 async function restoreSavedRecipeForImportRequest(request, jobOrRecipe, { requestedAt = null } = {}) {
   const userID = normalizeText(request?.user_id);
-  const recipeID = normalizeText(jobOrRecipe?.recipe_id ?? jobOrRecipe?.id);
+  const recipeID = recipeIDForImportRestore(jobOrRecipe);
   if (!userID || !recipeID) return false;
   const recipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
   if (!recipeDetail) return false;
@@ -12890,6 +12899,7 @@ export {
   isRecipeTeaserText,
   recipeSemanticCompleteness,
   reconcileResolvedRecipeQualityFlags,
+  recipeIDForImportRestore,
   recipeImportTargetActions,
   assessSocialCompletionContext,
   normalizeNutritionEstimateFields,

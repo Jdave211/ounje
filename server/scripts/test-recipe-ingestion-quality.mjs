@@ -34,6 +34,7 @@ const {
   assessSocialCompletionContext,
   recipeSemanticCompleteness,
   reconcileResolvedRecipeQualityFlags,
+  recipeIDForImportRestore,
   recipeImportTargetActions,
   isRecipeEquipmentIngredientName,
   normalizeRecipeDisplayFields,
@@ -52,6 +53,16 @@ assert.deepEqual(
   recipeImportTargetActions("prepped"),
   { saveToRecipes: true, addToPrep: true },
   "a prepped import must still appear in Recipes and additionally enter prep"
+);
+assert.equal(
+  recipeIDForImportRestore({ id: "ri_pending_job", status: "fetching", recipe_id: null }),
+  null,
+  "an active import job must not be mistaken for a persisted recipe"
+);
+assert.equal(
+  recipeIDForImportRestore({ id: "uir_saved_recipe" }),
+  "uir_saved_recipe",
+  "an existing imported recipe row remains restorable"
 );
 
 {
