@@ -9912,10 +9912,11 @@ function shouldRunFinalRecipeValidation(recipe, source = null) {
 }
 
 async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } = {}) {
-  const validationIssues = buildFinalRecipeValidationIssues(recipe, source);
-  if (!shouldRunFinalRecipeValidation(recipe, source)) {
+  const validationBaseRecipe = normalizeRecipeDisplayFields(recipe);
+  const validationIssues = buildFinalRecipeValidationIssues(validationBaseRecipe, source);
+  if (!shouldRunFinalRecipeValidation(validationBaseRecipe, source)) {
     return {
-      recipe,
+      recipe: validationBaseRecipe,
       quality_flags: [],
       review_reason: null,
       validation_notes: [],
@@ -9925,7 +9926,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
 
   if (!openai) {
     return {
-      recipe,
+      recipe: validationBaseRecipe,
       quality_flags: ["final_validator_issues"],
       review_reason: validationIssues.join(" "),
       validation_notes: validationIssues,
@@ -9951,7 +9952,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
               JSON.stringify(validationIssues),
               "",
               "Recipe:",
-              JSON.stringify(recipe),
+              JSON.stringify(validationBaseRecipe),
               "",
               "Source hints:",
               JSON.stringify({
@@ -9989,14 +9990,14 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     const parsed = JSON.parse(rawContent);
     const repairPatch = parsed.recipe && typeof parsed.recipe === "object" ? parsed.recipe : parsed;
     const repairedInput = {
-      ...recipe,
+      ...validationBaseRecipe,
       ...repairPatch,
-      ingredients: Array.isArray(repairPatch.ingredients) ? repairPatch.ingredients : recipe.ingredients,
-      steps: Array.isArray(repairPatch.steps) ? repairPatch.steps : recipe.steps,
+      ingredients: Array.isArray(repairPatch.ingredients) ? repairPatch.ingredients : validationBaseRecipe.ingredients,
+      steps: Array.isArray(repairPatch.steps) ? repairPatch.steps : validationBaseRecipe.steps,
     };
-    const repaired = coerceStructuredRecipeCandidate(repairedInput, source);
+    const repaired = normalizeRecipeDisplayFields(coerceStructuredRecipeCandidate(repairedInput, source));
     const repairedMetrics = recipeCoreMetrics(repaired);
-    const originalMetrics = recipeCoreMetrics(recipe);
+    const originalMetrics = recipeCoreMetrics(validationBaseRecipe);
     const repairedIssues = buildFinalRecipeValidationIssues(repaired, source);
     const issueCountImproved = validationIssues.length === 0
       ? repairedIssues.length === 0
@@ -10006,7 +10007,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       && repairedMetrics.stepCount >= Math.max(1, originalMetrics.stepCount - 1)
       && issueCountImproved;
 
-    const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(recipe);
+    const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(validationBaseRecipe);
     const validationNotes = uniqueStrings([
       ...validationIssues,
       ...(Array.isArray(parsed.validation_notes) ? parsed.validation_notes : []),
@@ -10014,7 +10015,11 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     ]);
     const qualityFlags = uniqueStrings([
       ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
-      ...(applied ? ["final_validator_applied"] : ["final_validator_review_needed"]),
+      ...(applied
+        ? ["final_validator_applied"]
+        : repairedIssues.length
+          ? ["final_validator_review_needed"]
+          : ["final_validator_checked"]),
     ]);
 
     if (jobID) {
@@ -10039,9 +10044,11 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     }
 
     return {
-      recipe: applied ? repaired : recipe,
+      recipe: applied ? repaired : validationBaseRecipe,
       quality_flags: qualityFlags,
-      review_reason: normalizeText(parsed.review_reason ?? "") || (repairedIssues.length ? repairedIssues.join(" ") : null),
+      review_reason: repairedIssues.length
+        ? normalizeText(parsed.review_reason ?? "") || repairedIssues.join(" ")
+        : null,
       validation_notes: validationNotes,
       applied,
     };
@@ -10065,7 +10072,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       }).catch(() => {});
     }
     return {
-      recipe,
+      recipe: validationBaseRecipe,
       quality_flags: ["final_validator_failed"],
       review_reason: validationIssues.join(" "),
       validation_notes: validationIssues,
@@ -11142,7 +11149,11 @@ function cleanupStepIngredientReferences(steps = [], ingredients = [], replaceme
       const replacementName = replacements.get(normalizeKey(rawName)) ?? rawName;
       const matchedIngredient = ingredientByNameKey.get(normalizeKey(replacementName))
         ?? ingredientByDedupeKey.get(recipeIngredientDisplayDedupeKey(replacementName));
-      const displayName = normalizeText(matchedIngredient?.display_name ?? replacementName);
+      if (!matchedIngredient) {
+        changed = true;
+        continue;
+      }
+      const displayName = normalizeText(matchedIngredient.display_name);
       if (!displayName) continue;
       const refKey = normalizeKey(displayName);
       if (seen.has(refKey)) {
@@ -11157,6 +11168,32 @@ function cleanupStepIngredientReferences(steps = [], ingredients = [], replaceme
         display_name: displayName,
         quantity_text: normalizeText(baseRef.quantity_text ?? baseRef.quantity ?? matchedIngredient?.quantity_text ?? "") || null,
       });
+    }
+    const stepTextKey = normalizeKey(step?.text ?? "");
+    const mentionCandidates = ingredients
+      .map((ingredient) => ({
+        ingredient,
+        displayName: normalizeText(ingredient?.display_name ?? ingredient?.name ?? ""),
+      }))
+      .filter((candidate) => candidate.displayName && ingredientNameMatchesText(candidate.displayName, stepTextKey))
+      .map((candidate) => ({ ...candidate, key: normalizeKey(candidate.displayName) }))
+      .sort((left, right) => {
+        const leftExact = stepTextKey.includes(left.key) ? 1 : 0;
+        const rightExact = stepTextKey.includes(right.key) ? 1 : 0;
+        return rightExact - leftExact || right.key.length - left.key.length;
+      });
+    const selectedMentionKeys = [];
+    for (const { ingredient, displayName, key } of mentionCandidates) {
+      if (selectedMentionKeys.some((selectedKey) => selectedKey.includes(key) || key.includes(selectedKey))) continue;
+      selectedMentionKeys.push(key);
+      const refKey = normalizeKey(displayName);
+      if (!refKey || seen.has(refKey)) continue;
+      seen.add(refKey);
+      cleanedRefs.push({
+        display_name: displayName,
+        quantity_text: normalizeText(ingredient?.quantity_text ?? ingredient?.quantity ?? "") || null,
+      });
+      changed = true;
     }
     if (cleanedRefs.length !== step.ingredients.length) changed = true;
     return {

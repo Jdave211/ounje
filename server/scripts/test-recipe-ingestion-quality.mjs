@@ -29,6 +29,7 @@ const {
   shouldRunGroundedRecipeCompletion,
   mergeGroundedSocialCompletion,
   calibrateSocialRecipeAssessment,
+  normalizeRecipeDisplayFields,
   runSocialRecipeCompletionContext,
   socialFrameTimestamps,
   SOCIAL_VIDEO_RECIPE_MODEL,
@@ -347,6 +348,34 @@ const {
   assert.ok(
     !preparedComponentIssues.some((issue) => issue.includes("red pepper seasoning")),
     "prepared component labels must not be forced back into the shopping ingredient list"
+  );
+
+  const cleanedStepLinks = normalizeRecipeDisplayFields({
+    title: "Pepper Grilled Tilapia",
+    ingredients: [{ display_name: "tilapia fish", quantity_text: "1 whole" }],
+    steps: [{
+      text: "Grill the tilapia, then serve with fried yam if desired.",
+      ingredients: [{ display_name: "fried yam", quantity_text: null }],
+    }],
+  });
+  assert.deepEqual(
+    cleanedStepLinks.steps[0].ingredients.map((ingredient) => ingredient.display_name),
+    ["tilapia fish"],
+    "step links must keep referenced shopping ingredients and discard optional prepared sides that are not top-level ingredients"
+  );
+
+  const specificPowderLink = normalizeRecipeDisplayFields({
+    title: "Seasoned fish",
+    ingredients: [
+      { display_name: "onion", quantity_text: "1" },
+      { display_name: "onion powder", quantity_text: "1 teaspoon" },
+    ],
+    steps: [{ text: "Rub the fish with onion powder.", ingredients: [] }],
+  });
+  assert.deepEqual(
+    specificPowderLink.steps[0].ingredients.map((ingredient) => ingredient.display_name),
+    ["onion powder"],
+    "step-link inference must prefer the explicitly named ingredient over a shorter overlapping ingredient"
   );
 
   const inferredContextSource = {
