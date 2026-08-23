@@ -1919,6 +1919,38 @@ async function getOCRWorker() {
 async function ocrFrameDataURLs(frameDataURLs = []) {
   if (!Array.isArray(frameDataURLs) || !frameDataURLs.length) return [];
 
+  if (await commandExists("tesseract")) {
+    const ocrDir = await fsp.mkdtemp(path.join(os.tmpdir(), "ounje-frame-ocr-"));
+    const results = [];
+    try {
+      for (const [index, dataURL] of frameDataURLs.entries()) {
+        const image = imageBufferFromDataURL(dataURL);
+        if (!image) continue;
+        const imagePath = path.join(ocrDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`);
+        try {
+          await fsp.writeFile(imagePath, image.buffer);
+          const { stdout } = await execFileWithTimeout("tesseract", [
+            imagePath,
+            "stdout",
+            "-l", "eng",
+            "--psm", "6",
+          ], SOCIAL_OCR_FRAME_TIMEOUT_MS);
+          const text = normalizeText(stdout ?? "");
+          if (text) {
+            results.push({ frame_index: index + 1, text, confidence: null });
+          }
+        } catch {
+          continue;
+        } finally {
+          await fsp.rm(imagePath, { force: true }).catch(() => {});
+        }
+      }
+      return results;
+    } finally {
+      await fsp.rm(ocrDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   let worker = null;
   try {
     worker = await getOCRWorker();
@@ -6763,33 +6795,34 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
   const frameCount = timestamps.length;
 
   try {
-    const splitOutputs = timestamps.map((_, index) => `[sample${index}]`).join("");
-    const frameFilters = timestamps.map((seconds, index) => (
-      `[sample${index}]trim=start=${seconds.toFixed(3)},select='eq(n\\,0)',scale='min(1080,iw)':-2[frame${index}]`
-    ));
+    const firstFrameAt = timestamps[0] ?? 0;
+    const lastFrameAt = timestamps[timestamps.length - 1] ?? duration;
+    const sampleDuration = Math.max(0.1, lastFrameAt - firstFrameAt);
     const ffmpegArgs = [
       "-y",
+      "-ss", firstFrameAt.toFixed(3),
       "-i", videoPath,
-      "-filter_complex", [`[0:v]split=${frameCount}${splitOutputs}`, ...frameFilters].join(";"),
+      "-t", sampleDuration.toFixed(3),
+      "-vf", `fps=${frameCount}/${sampleDuration.toFixed(3)}:round=up,scale='min(1080,iw)':-2`,
+      "-frames:v", String(frameCount),
+      "-q:v", "2",
+      path.join(frameDir, "frame-%03d.jpg"),
     ];
-    for (let index = 0; index < frameCount; index += 1) {
-      ffmpegArgs.push(
-        "-map", `[frame${index}]`,
-        "-frames:v", "1",
-        "-q:v", "2",
-        path.join(frameDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`)
-      );
-    }
     await execFileWithTimeout("ffmpeg", ffmpegArgs, SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS);
 
     const framePaths = (await fsp.readdir(frameDir))
       .filter((entry) => /^frame-\d+\.jpg$/i.test(entry))
       .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
       .slice(0, frameCount);
-    return await Promise.all(framePaths.map(async (entry) => {
+    const frames = [];
+    for (const entry of framePaths) {
       const buffer = await fsp.readFile(path.join(frameDir, entry));
-      return toDataURL(buffer, "image/jpeg");
-    }));
+      frames.push(toDataURL(buffer, "image/jpeg"));
+    }
+    while (frames.length > 0 && frames.length < frameCount) {
+      frames.push(frames[frames.length - 1]);
+    }
+    return frames;
   } catch {
     return [];
   } finally {
