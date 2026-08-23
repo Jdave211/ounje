@@ -6803,31 +6803,34 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
   const frameCount = timestamps.length;
 
   try {
-    const ffmpegArgs = [
-      "-y",
-      "-hide_banner",
-      "-loglevel", "error",
-    ];
-    // Keep one FFmpeg process, but seek each input directly to its timestamp.
-    // The previous fps filter decoded the entire video and timed out on Render's
-    // small CPU before it emitted any frames.
-    for (const timestamp of timestamps) {
-      ffmpegArgs.push(
-        "-threads", "1",
-        "-ss", timestamp.toFixed(3),
-        "-i", videoPath,
-      );
+    // Seek directly to each timestamp, but run the decoders sequentially. One
+    // multi-input FFmpeg process is quick on a laptop but holds every decoder in
+    // memory at once and can exceed Render Starter's 512 MB limit.
+    const perFrameTimeoutMs = Math.max(
+      8_000,
+      Math.ceil(SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS / Math.max(1, frameCount)),
+    );
+    for (const [index, timestamp] of timestamps.entries()) {
+      try {
+        await execFileWithTimeout("ffmpeg", [
+          "-y",
+          "-hide_banner",
+          "-loglevel", "error",
+          "-threads", "1",
+          "-ss", timestamp.toFixed(3),
+          "-i", videoPath,
+          "-frames:v", "1",
+          "-vf", "scale='min(720,iw)':-2",
+          "-q:v", "4",
+          path.join(frameDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`),
+        ], perFrameTimeoutMs);
+      } catch (error) {
+        console.warn(
+          `[recipe-ingestion] frame ${index + 1}/${frameCount} extraction failed:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
-    for (let index = 0; index < frameCount; index += 1) {
-      ffmpegArgs.push(
-        "-map", `${index}:v:0`,
-        "-frames:v", "1",
-        "-vf", "scale='min(720,iw)':-2",
-        "-q:v", "4",
-        path.join(frameDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`),
-      );
-    }
-    await execFileWithTimeout("ffmpeg", ffmpegArgs, SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS);
 
     const framePaths = (await fsp.readdir(frameDir))
       .filter((entry) => /^frame-\d+\.jpg$/i.test(entry))
