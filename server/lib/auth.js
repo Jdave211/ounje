@@ -1,4 +1,8 @@
 import { resolveAuthenticatedUserID } from "./instacart-run-logs.js";
+import {
+  isShareImportCreateRequest,
+  verifyShareImportAuthorization,
+} from "./share-import-authorization.js";
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -41,6 +45,24 @@ export function collectRequestedUserIDs(req, extraValues = []) {
 }
 
 export async function resolveAuthorizedUserID(req, { extraUserIDValues = [], allowBodyAccessToken = false } = {}) {
+  const shareImportAuthorization = normalizeText(req?.headers?.["x-ounje-share-authorization"]);
+  if (shareImportAuthorization) {
+    if (!isShareImportCreateRequest(req)) {
+      const error = new Error("Share import authorization is not valid for this request");
+      error.statusCode = 403;
+      throw error;
+    }
+    const authorization = verifyShareImportAuthorization(shareImportAuthorization);
+    const requestedUserIDs = collectRequestedUserIDs(req, extraUserIDValues);
+    const mismatchedUserID = requestedUserIDs.find((candidate) => candidate !== authorization.userID);
+    if (mismatchedUserID) {
+      const error = new Error("User mismatch");
+      error.statusCode = 403;
+      throw error;
+    }
+    return { userID: authorization.userID, accessToken: null };
+  }
+
   const accessToken = extractBearerToken(req?.headers?.authorization)
     || (allowBodyAccessToken ? extractBodyAccessToken(req) : null);
   if (!accessToken) {
