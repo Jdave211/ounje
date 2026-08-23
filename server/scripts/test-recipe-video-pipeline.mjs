@@ -16,7 +16,6 @@ process.env.RECIPE_INGESTION_TIKTOK_CANONICAL_RESOLVE_TIMEOUT_MS = "1000";
 const execFileAsync = promisify(execFile);
 const {
   expandCanonicalSourceURL,
-  needsTikTokVideoFallback,
   sampleVideoFrames,
 } = await import("../lib/recipe-ingestion.js");
 
@@ -24,11 +23,6 @@ const stalledServer = createServer(() => {});
 await new Promise((resolve) => stalledServer.listen(0, "127.0.0.1", resolve));
 
 try {
-  assert.equal(needsTikTokVideoFallback("tiktok", null), true);
-  assert.equal(needsTikTokVideoFallback("tiktok", ""), true);
-  assert.equal(needsTikTokVideoFallback("tiktok", "https://cdn.example.com/video.mp4"), false);
-  assert.equal(needsTikTokVideoFallback("instagram", null), false);
-
   const canonicalURL = "https://www.tiktok.com/@ounje/video/7616089987406368022";
   const canonicalStartedAt = performance.now();
   assert.equal(await expandCanonicalSourceURL(canonicalURL, "tiktok"), canonicalURL);

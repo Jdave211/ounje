@@ -7181,10 +7181,6 @@ async function fetchTikTokViaAPI(sourceURL) {
   };
 }
 
-function needsTikTokVideoFallback(platform, videoURL) {
-  return platform === "tiktok" && !cleanURL(videoURL);
-}
-
 async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = null, { directVideoURL = null } = {}) {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), `ounje-${platform}-`));
   try {
@@ -7382,10 +7378,10 @@ async function extractSocialSource(sourceURL, platform) {
     apiVideoURL = rapidAPIResult.video_url ?? null;
   }
 
-  // Metadata alone is not enough. Some providers return a caption/author but no
-  // downloadable asset; in that case TikTok's blocked yt-dlp path would run and
-  // the recipe model would receive no frames or speech.
-  if (needsTikTokVideoFallback(platform, apiVideoURL)) {
+  // Always resolve TikTok's fetchable MP4 through the dedicated extractor. A
+  // metadata provider may return a media-looking URL that later responds with a
+  // block page or 403 from Render, which is no better than returning no URL.
+  if (platform === "tiktok") {
     const apiResult = await fetchTikTokViaAPI(sourceURL);
     if (apiResult?.video_url) {
       metadata = metadata ?? apiResult.info;
@@ -11550,6 +11546,21 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     const resumedNormalizedArtifact = await fetchLatestJobArtifact(existingJob.id, "normalized_recipe").catch(() => null);
     const hasResumableNormalizedRecipe = Boolean(resumedNormalizedArtifact?.raw_json && existingJob.normalized_at);
 
+    const sourceEvidenceSummary = source.source_provenance_json?.evidence_summary ?? {};
+    job = await appendJobEvent(existingJob.id, "source_evidence_ready", {
+      worker_id: workerID,
+      media_mode: source.media_mode ?? source.source_provenance_json?.media_mode ?? null,
+      downloaded_video: Boolean(sourceEvidenceSummary.downloaded_video),
+      frame_count: Number(sourceEvidenceSummary.frame_count ?? source.frame_data_urls?.length ?? 0),
+      frame_ocr_count: Number(sourceEvidenceSummary.frame_ocr_count ?? source.frame_ocr_texts?.length ?? 0),
+      transcript_chars: normalizeText(source.transcript_text ?? "").length,
+      native_video_ready: Boolean(
+        cleanURL(source.attached_video_url)
+          && cleanURL(source.attached_video_url) !== cleanURL(source.canonical_url)
+          && cleanURL(source.attached_video_url) !== cleanURL(source.source_url)
+      ),
+    });
+
     if (!hasResumableNormalizedRecipe && source.source_type === "media_image" && source.photo_meal_gate && !source.photo_meal_gate.is_meal) {
       const evidenceBundle = await storeEvidenceBundle(existingJob.id, source.source_provenance_json ?? buildSourceProvenanceRecord(source));
       for (const artifact of source.artifacts ?? []) {
@@ -11939,5 +11950,4 @@ export {
   isCanonicalCacheableSource,
   isOpenAITerminalModelError,
   isResumableIngestionJob,
-  needsTikTokVideoFallback,
 };
