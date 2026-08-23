@@ -17,6 +17,7 @@ const {
   hasUsableRecipeShape,
   assessRecipeLikelihood,
   buildFinalRecipeValidationIssues,
+  cleanIngredientQuantityText,
   shouldRunFinalRecipeValidation,
   buildRecipeGateUserContent,
   detectRecipeIngestionSourceType,
@@ -376,6 +377,11 @@ const {
     specificPowderLink.steps[0].ingredients.map((ingredient) => ingredient.display_name),
     ["onion powder"],
     "step-link inference must prefer the explicitly named ingredient over a shorter overlapping ingredient"
+  );
+  assert.equal(
+    cleanIngredientQuantityText("1 whole tilapia (about 1.2–1.5 kg)", "tilapia fish"),
+    "1 whole (about 1.2–1.5 kg)",
+    "ingredient names must not leak into quantity text and render twice"
   );
 
   const inferredContextSource = {

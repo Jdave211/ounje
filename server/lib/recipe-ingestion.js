@@ -5110,6 +5110,25 @@ async function upsertPrepOverrideForUser(userID, recipeDetail) {
   );
 }
 
+function cleanIngredientQuantityText(quantityText, displayName) {
+  let cleaned = normalizeText(quantityText);
+  if (!cleaned || !/\d/.test(cleaned)) return cleaned || null;
+  const ignoredNameTokens = new Set([
+    "whole", "fresh", "dried", "ground", "large", "medium", "small", "fine",
+    "ripe", "chopped", "minced", "grated", "sliced", "optional", "divided",
+  ]);
+  const nameTokens = normalizeKey(displayName)
+    .split(" ")
+    .filter((token) => token.length >= 4 && !ignoredNameTokens.has(token));
+  for (const token of nameTokens) {
+    cleaned = cleaned.replace(new RegExp(`\\b${token}\\b`, "gi"), " ");
+  }
+  return normalizeText(cleaned)
+    .replace(/\s+([,)])/g, "$1")
+    .replace(/\(\s+/g, "(")
+    || null;
+}
+
 function coerceIngredientItem(item) {
   if (typeof item === "string") {
     const parsed = parseIngredientObjects(item)[0];
@@ -5130,11 +5149,12 @@ function coerceIngredientItem(item) {
   if (!item || typeof item !== "object") return null;
   let displayName = normalizeText(item.display_name ?? item.displayName ?? item.name ?? item.ingredient ?? "");
   if (!displayName) return null;
-  const quantityText = firstNormalizedText(item.quantity_text, item.quantityText, item.amount_text, item.amountText, item.quantity, item.measure);
+  let quantityText = firstNormalizedText(item.quantity_text, item.quantityText, item.amount_text, item.amountText, item.quantity, item.measure);
   const duplicatedDescriptor = normalizeText(quantityText).match(/(?:^|\s)(whole|large|medium|small)\s*$/i)?.[1];
   if (duplicatedDescriptor && new RegExp(`^${duplicatedDescriptor}\\s+`, "i").test(displayName)) {
     displayName = displayName.replace(new RegExp(`^${duplicatedDescriptor}\\s+`, "i"), "");
   }
+  quantityText = cleanIngredientQuantityText(quantityText, displayName);
   return {
     display_name: displayName,
     quantity_text: quantityText,
@@ -12501,6 +12521,7 @@ export {
   maybeGenerateImportedRecipeImage,
   photoRecipeSearchQueries,
   buildFinalRecipeValidationIssues,
+  cleanIngredientQuantityText,
   shouldRunFinalRecipeValidation,
   buildDedupeKey,
   canonicalImportIdentityForURL,
