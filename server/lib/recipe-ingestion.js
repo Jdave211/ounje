@@ -82,6 +82,10 @@ const SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS = Math.max(
   5_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS ?? "45000", 10) || 45_000
 );
+const SOCIAL_VIDEO_UPLOAD_TIMEOUT_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_VIDEO_UPLOAD_TIMEOUT_MS ?? "45000", 10) || 45_000
+);
 const SOCIAL_FETCH_TIMEOUT_MS = Math.max(
   3_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FETCH_TIMEOUT_MS ?? "10000", 10) || 10_000
@@ -1077,16 +1081,18 @@ async function ensureRecipeVideoBucket() {
         "Content-Type": "application/json",
       };
       try {
-        const existingResponse = await fetch(
+        const existingResponse = await fetchWithTimeout(
           `${SUPABASE_URL}/storage/v1/bucket/${encodeURIComponent(RECIPE_VIDEO_BUCKET)}`,
-          { headers }
+          { headers },
+          SOCIAL_FETCH_TIMEOUT_MS,
+          "recipe video bucket check"
         );
         if (existingResponse.ok) return true;
         if (existingResponse.status !== 404) return false;
 
         // Public bucket that actually allows video + a sane size cap (the image bucket
         // is image-only / 10MB, which silently rejected native MP4 uploads).
-        const createResponse = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
+        const createResponse = await fetchWithTimeout(`${SUPABASE_URL}/storage/v1/bucket`, {
           method: "POST",
           headers,
           body: JSON.stringify({
@@ -1096,7 +1102,7 @@ async function ensureRecipeVideoBucket() {
             allowed_mime_types: ["video/mp4", "video/quicktime", "video/webm"],
             file_size_limit: 52428800,
           }),
-        });
+        }, SOCIAL_FETCH_TIMEOUT_MS, "recipe video bucket creation");
         return createResponse.ok;
       } catch {
         return false;
@@ -1237,6 +1243,7 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
   const keyHash = crypto.createHash("sha1").update(`${recipeKey}:video`).digest("hex").slice(0, 20);
   const storagePath = `${keyHash}.mp4`;
   const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_VIDEO_BUCKET)}/${encodeURIComponent(storagePath)}`;
+  const publicVideoURL = `${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/${storagePath}`;
 
   try {
     const bucketReady = await ensureRecipeVideoBucket();
@@ -1244,23 +1251,39 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
       console.warn("[recipe-ingestion] native video upload skipped: video bucket unavailable");
       return null;
     }
+    const existingVideo = await fetchWithTimeout(
+      publicVideoURL,
+      { method: "HEAD" },
+      SOCIAL_FETCH_TIMEOUT_MS,
+      "existing recipe video check"
+    ).catch(() => null);
+    if (existingVideo?.ok) return publicVideoURL;
+
     const storageApiKey = storageBearer === SUPABASE_SERVICE_ROLE_KEY
       ? SUPABASE_SERVICE_ROLE_KEY
       : SUPABASE_ANON_KEY || storageBearer;
     let uploadResponse = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      uploadResponse = await fetch(uploadURL, {
-        method: "POST",
-        headers: {
-          apikey: storageApiKey,
-          Authorization: `Bearer ${storageBearer}`,
-          "Content-Type": "video/mp4",
-          "Content-Length": String(videoStat.size),
-          "x-upsert": "true",
-        },
-        body: fs.createReadStream(videoPath),
-        duplex: "half",
-      });
+      const body = fs.createReadStream(videoPath);
+      try {
+        uploadResponse = await fetchWithTimeout(uploadURL, {
+          method: "POST",
+          headers: {
+            apikey: storageApiKey,
+            Authorization: `Bearer ${storageBearer}`,
+            "Content-Type": "video/mp4",
+            "Content-Length": String(videoStat.size),
+            "x-upsert": "true",
+          },
+          body,
+          duplex: "half",
+        }, SOCIAL_VIDEO_UPLOAD_TIMEOUT_MS, "native recipe video upload");
+      } catch (error) {
+        body.destroy();
+        if (attempt === 2) throw error;
+        await delay(350 * attempt);
+        continue;
+      }
       if (uploadResponse.ok || attempt === 2) break;
       await delay(350 * attempt);
     }
@@ -1268,7 +1291,7 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
       console.warn(`[recipe-ingestion] native video upload failed: HTTP ${uploadResponse.status} ${await uploadResponse.text().catch(() => "")}`.slice(0, 200));
       return null;
     }
-    return `${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/${storagePath}`;
+    return publicVideoURL;
   } catch (error) {
     console.warn("[recipe-ingestion] native video upload error:", error instanceof Error ? error.message : error);
     return null;
