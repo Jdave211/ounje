@@ -6803,19 +6803,30 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
   const frameCount = timestamps.length;
 
   try {
-    const firstFrameAt = timestamps[0] ?? 0;
-    const lastFrameAt = timestamps[timestamps.length - 1] ?? duration;
-    const sampleDuration = Math.max(0.1, lastFrameAt - firstFrameAt);
     const ffmpegArgs = [
       "-y",
-      "-ss", firstFrameAt.toFixed(3),
-      "-i", videoPath,
-      "-t", sampleDuration.toFixed(3),
-      "-vf", `fps=${frameCount}/${sampleDuration.toFixed(3)}:round=up,scale='min(1080,iw)':-2`,
-      "-frames:v", String(frameCount),
-      "-q:v", "2",
-      path.join(frameDir, "frame-%03d.jpg"),
+      "-hide_banner",
+      "-loglevel", "error",
     ];
+    // Keep one FFmpeg process, but seek each input directly to its timestamp.
+    // The previous fps filter decoded the entire video and timed out on Render's
+    // small CPU before it emitted any frames.
+    for (const timestamp of timestamps) {
+      ffmpegArgs.push(
+        "-threads", "1",
+        "-ss", timestamp.toFixed(3),
+        "-i", videoPath,
+      );
+    }
+    for (let index = 0; index < frameCount; index += 1) {
+      ffmpegArgs.push(
+        "-map", `${index}:v:0`,
+        "-frames:v", "1",
+        "-vf", "scale='min(720,iw)':-2",
+        "-q:v", "4",
+        path.join(frameDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`),
+      );
+    }
     await execFileWithTimeout("ffmpeg", ffmpegArgs, SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS);
 
     const framePaths = (await fsp.readdir(frameDir))
@@ -6831,7 +6842,8 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
       frames.push(frames[frames.length - 1]);
     }
     return frames;
-  } catch {
+  } catch (error) {
+    console.warn("[recipe-ingestion] frame extraction failed:", error instanceof Error ? error.message : error);
     return [];
   } finally {
     await fsp.rm(frameDir, { recursive: true, force: true }).catch(() => {});
