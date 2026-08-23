@@ -23,6 +23,7 @@
     "recipes:ingestion-worker:vm": "node server/scripts/recipe_ingestion_worker.mjs --worker-id vm_recipe_ingest --batch-size 1 --wake-mode redis --wake-timeout-ms 60000",
     "recipes:ingestion-once": "node server/scripts/recipe_ingestion_worker.mjs --once --worker-id render_recipe_ingest_manual",
     "recipes:ingestion-health": "node server/scripts/check_recipe_ingestion_worker_health.mjs",
+    "recipes:diagnostic-fresh": "node server/scripts/queue_fresh_recipe_diagnostic.mjs",
     "recipes:ingestion-repair-stale": "node server/scripts/repair_stale_recipe_ingestion_jobs.mjs",
     "db:audit-hot-paths": "node server/scripts/audit_db_hot_paths.mjs",
     "db:guardrails-smoke": "node server/scripts/test-db-guardrails.mjs",
