@@ -9,6 +9,7 @@ process.env.SUPABASE_URL = "";
 process.env.SUPABASE_ANON_KEY = "";
 
 const { parseIngredientObjects } = await import("../lib/recipe-detail-utils.js");
+const { redisConfigStatus } = await import("../lib/redis-cache.js");
 const {
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
@@ -25,6 +26,22 @@ const {
   socialFrameTimestamps,
   SOCIAL_VIDEO_RECIPE_MODEL,
 } = await import("../lib/recipe-ingestion.js");
+
+{
+  const previousRuntime = process.env.OUNJE_RUNTIME_ENV;
+  const previousDisabled = process.env.REDIS_DISABLED;
+  const previousURL = process.env.REDIS_URL;
+  process.env.OUNJE_RUNTIME_ENV = "production";
+  delete process.env.REDIS_DISABLED;
+  process.env.REDIS_URL = "redis://legacy.example:6379";
+  assert.equal(redisConfigStatus().disabled, true, "production must not contact a legacy Redis service by default");
+  assert.equal(redisConfigStatus().configured, false);
+  process.env.REDIS_DISABLED = "false";
+  assert.equal(redisConfigStatus().configured, true, "a future managed Redis service can be explicitly enabled");
+  if (previousRuntime == null) delete process.env.OUNJE_RUNTIME_ENV; else process.env.OUNJE_RUNTIME_ENV = previousRuntime;
+  if (previousDisabled == null) delete process.env.REDIS_DISABLED; else process.env.REDIS_DISABLED = previousDisabled;
+  if (previousURL == null) delete process.env.REDIS_URL; else process.env.REDIS_URL = previousURL;
+}
 
 {
   const frameURL = "data:image/jpeg;base64,ZmFrZS1mcmFtZQ==";

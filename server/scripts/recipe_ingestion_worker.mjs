@@ -138,7 +138,7 @@ async function main() {
   const workerID = args.workerID ?? `recipe_ingest_${process.pid}`;
   let emptyQueueSleepMs = args.idleSleepMs;
   let lastStaleRepairAt = 0;
-  const wakeMode = args.wakeMode === "redis" ? "redis" : "poll";
+  const wakeMode = args.wakeMode === "redis" && redisConfigStatus().configured ? "redis" : "poll";
   console.log(`[recipe-ingestion-worker] started worker=${workerID} wakeMode=${wakeMode}`);
 
   const requestShutdown = (signal) => {

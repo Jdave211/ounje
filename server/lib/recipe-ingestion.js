@@ -16,7 +16,7 @@ import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
-import { acquireRedisLock, publishRedisJSON, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
+import { acquireRedisLock, publishRedisJSON, readRedisJSON, redisConfigStatus, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
 import { importQueueBusyError, recordDbOperation } from "./db-guardrails.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
@@ -121,15 +121,11 @@ const RECIPE_INGESTION_HEARTBEAT_MS = Math.max(
   15_000,
   Number.parseInt(process.env.RECIPE_INGESTION_HEARTBEAT_MS ?? "60000", 10) || 60_000
 );
-const REDIS_DISABLED_FOR_INGESTION_LOCK = ["1", "true", "yes", "on"].includes(
-  String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase()
-);
 // Distributed locks (batch + per-job) only mean anything when Redis is configured.
 // Without Redis (e.g. the single-worker droplet), acquireRedisLock always returns null,
 // so we must NOT treat a null lock as "another worker owns this" — otherwise every job
 // early-returns "locked" and is never processed.
-const RECIPE_INGESTION_REDIS_LOCKING_ENABLED =
-  Boolean(process.env.REDIS_URL) && !REDIS_DISABLED_FOR_INGESTION_LOCK;
+const RECIPE_INGESTION_REDIS_LOCKING_ENABLED = redisConfigStatus().configured;
 const execFile = promisify(execFileCallback);
 
 async function maybeGenerateImportedRecipeImage(recipe = null) {
