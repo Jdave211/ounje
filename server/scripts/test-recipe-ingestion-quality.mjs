@@ -304,6 +304,26 @@ const {
   );
   assert.equal(expanded.author_handle, "@chefttk", "constituent expansion must preserve the creator");
 
+  const normalizationIssues = buildFinalRecipeValidationIssues({
+    ingredients: [
+      { display_name: "1 whole tilapia fish (700–900 g), scaled and gutted", quantity_text: "1 whole" },
+      { display_name: "vegetable oil", quantity_text: "2 tablespoons" },
+      { display_name: "vegetable oil (for pepper sauce)", quantity_text: "2 tablespoons" },
+    ],
+    steps: [
+      { text: "Rub the tilapia with vegetable oil." },
+      { text: "Cook the pepper sauce with the remaining vegetable oil." },
+    ],
+  });
+  assert.ok(
+    normalizationIssues.some((issue) => issue.includes("Move quantities and size ranges")),
+    "validator must catch quantity text leaking into ingredient names"
+  );
+  assert.ok(
+    normalizationIssues.some((issue) => issue.includes("Consolidate repeated ingredient rows")),
+    "validator must catch role-suffixed duplicate ingredient rows before they reach cart"
+  );
+
   const inferredContextSource = {
     ...sparsePepperFishSource,
     social_completion_context: {

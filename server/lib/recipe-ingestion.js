@@ -661,6 +661,8 @@ Rules:
 - Best-guess quantities are allowed for common dishes, but keep them conservative and ordinary for the stated serving size.
 - Do not collapse distinct grocery items into generic buckets. If the source or web references expose individual ingredients, keep them as individual shoppable rows instead of "spices", "seasoning", "sauce", or similar umbrella labels.
 - Preserve ingredients like honey, paprika, chili powder, garlic powder, fresh herbs, and other concrete grocery items explicitly when the source supports them.
+- Keep display_name to the ingredient name only. Put amounts, package sizes, preparation notes, and ranges in quantity_text or the method instead of embedding them in display_name.
+- List the same ingredient only once even when it is used in multiple components. Sum compatible quantities and mark quantity_text as "divided" when needed; do not create role-suffixed duplicates such as "vegetable oil" and "vegetable oil (for sauce)".
 - Do not include both a component label and its underlying ingredients. For example, do not list "meat sauce" if ground meat, tomato, onion, garlic, and seasonings are already listed; do not list both "parmesan cheese" and "parmesan cheese, grated".
 - If web references disagree, prefer the most mainstream consensus version that still matches the original source.
 - Never add niche embellishments that are not needed to make the recipe cookable.
@@ -676,6 +678,8 @@ Rules:
 - Fix only concrete consistency issues in the provided recipe. Do not rewrite for style alone.
 - Preserve source-supported dish identity, title, cuisine, and author/source metadata.
 - Ensure ingredients, quantities, and steps agree with each other.
+- Keep display_name to the ingredient name only. Move amounts, size ranges, and preparation notes into quantity_text or the method.
+- Consolidate repeated ingredient rows across recipe components. Sum compatible quantities and use "divided" in quantity_text when appropriate instead of role suffixes such as "for sauce" in display_name.
 - If a step mentions an ingredient that is not listed, either add a conservative ingredient only when clearly necessary, or rewrite the step to use an already listed equivalent.
 - Never add duplicate alias ingredients just to satisfy a step. Prefer rewriting step wording to use the existing listed ingredient name.
 - Do not list both a prepared component and its sub-ingredients unless the prepared component is actually bought as an ingredient.
@@ -9772,6 +9776,35 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
     issues.push("A liquid amount is vague in the method. Make it practical for the serving size or refer to the listed quantity.");
   }
 
+  const ingredientRows = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const ingredientNamesWithEmbeddedQuantity = ingredientRows
+    .map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name ?? ""))
+    .filter((name) => /^(?:\d+(?:[./–-]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])\s+(?:whole\s+)?/i.test(name));
+  if (ingredientNamesWithEmbeddedQuantity.length) {
+    issues.push(`Move quantities and size ranges out of ingredient display names: ${ingredientNamesWithEmbeddedQuantity.slice(0, 4).join(", ")}.`);
+  }
+
+  const ingredientRoleKey = (value) => normalizeKey(
+    normalizeText(value)
+      .replace(/\s*\((?:for|to)\s+[^)]*\)\s*$/i, "")
+      .replace(/,?\s+(?:for|to)\s+(?:the\s+)?(?:sauce|marinade|seasoning|garnish|grill|pan|tray|serving)\s*$/i, "")
+  );
+  const duplicateIngredientGroups = new Map();
+  for (const ingredient of ingredientRows) {
+    const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
+    const key = ingredientRoleKey(name);
+    if (!name || !key) continue;
+    const names = duplicateIngredientGroups.get(key) ?? [];
+    names.push(name);
+    duplicateIngredientGroups.set(key, names);
+  }
+  const repeatedIngredientNames = [...duplicateIngredientGroups.values()]
+    .filter((names) => names.length > 1)
+    .flat();
+  if (repeatedIngredientNames.length) {
+    issues.push(`Consolidate repeated ingredient rows and total compatible quantities: ${repeatedIngredientNames.slice(0, 8).join(", ")}.`);
+  }
+
   const missingQuantityIngredients = (recipe?.ingredients ?? []).filter((ingredient) => {
     const quantityText = normalizeText(ingredient.quantity_text ?? ingredient.quantityText ?? "");
     const name = normalizeText(ingredient.display_name ?? ingredient.name ?? "");
@@ -9865,7 +9898,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       () => withRecipeAIStage("recipe_import.final_validator", () => openai.chat.completions.create({
         model: RECIPE_FINAL_VALIDATOR_MODEL,
         ...chatCompletionTemperatureParams(RECIPE_FINAL_VALIDATOR_MODEL, 0.02),
-        ...chatCompletionLatencyParams(RECIPE_FINAL_VALIDATOR_MODEL, 1800),
+        ...chatCompletionLatencyParams(RECIPE_FINAL_VALIDATOR_MODEL, 5200),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
