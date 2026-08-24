@@ -975,6 +975,15 @@ struct RecipeDetailRelatedResponse: Decodable {
     let recipes: [DiscoverRecipeCardData]
 }
 
+private enum RecipeShareWebsite {
+    static let host = "ounje-recipe.vercel.app"
+
+    static func url(for shareID: String) -> URL? {
+        let encodedShareID = shareID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? shareID
+        return URL(string: "https://\(host)/r/\(encodedShareID)")
+    }
+}
+
 struct RecipeShareLinkResponse: Decodable {
     let shareID: String
     let recipeID: String?
@@ -991,7 +1000,7 @@ struct RecipeShareLinkResponse: Decodable {
     }
 
     var shareURL: URL? {
-        URL(string: webURLString ?? urlString)
+        RecipeShareWebsite.url(for: shareID) ?? URL(string: webURLString ?? urlString)
     }
 }
 
@@ -1623,6 +1632,7 @@ actor RecipeDetailService {
                 .compactMap { URL(string: $0)?.host?.lowercased() }
         )
         guard configuredHosts.contains(host)
+            || host == RecipeShareWebsite.host
             || host == "ounje.com"
             || host.hasSuffix(".ounje.com")
             || host == "ounje.app"

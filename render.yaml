@@ -18,6 +18,8 @@ services:
         value: production
       - key: OUNJE_RUNTIME_ENV
         value: production
+      - key: OUNJE_PUBLIC_BASE_URL
+        value: https://ounje-recipe.vercel.app
       - key: OUNJE_ENABLE_RECIPE_INGESTION_POLLING
         value: "false"
       # Website imports may run inline on the API service. Social/video work remains

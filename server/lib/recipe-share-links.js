@@ -5,7 +5,7 @@ dotenv.config({ path: new URL("../.env", import.meta.url).pathname });
 
 const SUPABASE_URL = String(process.env.SUPABASE_URL ?? "").trim();
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
-const PUBLIC_BASE_URL = String(process.env.OUNJE_PUBLIC_BASE_URL ?? "https://ounje-idbl.onrender.com").replace(/\/+$/, "");
+const PUBLIC_BASE_URL = String(process.env.OUNJE_PUBLIC_BASE_URL ?? "https://ounje-recipe.vercel.app").replace(/\/+$/, "");
 const APP_DOWNLOAD_URL = String(process.env.OUNJE_APP_DOWNLOAD_URL ?? PUBLIC_BASE_URL).trim();
 
 function requireShareLinkConfig() {
