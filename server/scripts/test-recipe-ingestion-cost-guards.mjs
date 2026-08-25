@@ -294,7 +294,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   dedupedPhotoIngredients.steps[0].ingredients.map((ingredient) => ingredient.display_name),
-  ["ground beef", "fresh basil", "parmesan cheese, grated"]
+  ["ground beef", "fresh basil", "parmesan cheese, grated", "canned tomatoes"]
 );
 
 console.log("recipe ingestion cost guard tests passed");

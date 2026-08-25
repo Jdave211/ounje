@@ -22,9 +22,17 @@ services:
         value: https://ounje-recipe.vercel.app
       - key: OUNJE_ENABLE_RECIPE_INGESTION_POLLING
         value: "false"
+      # Website imports may run inline on the API service. Social/video work remains
+      # owned by the managed Docker worker below.
+      - key: OUNJE_INLINE_WEB_IMPORTS
+        value: "true"
       - key: YOUTUBE_DL_SKIP_DOWNLOAD
         value: "true"
       - key: OUNJE_ENABLE_AI_CALL_LOGGING
+        value: "true"
+      # Supabase is the durable import queue. Keep production independent of the
+      # retired DigitalOcean Redis instance; in-process caches remain available.
+      - key: REDIS_DISABLED
         value: "true"
       - key: AUTOSHOP_MANUAL_BETA_ONLY
         value: "true"
@@ -48,8 +56,6 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: REDIS_URL
-        sync: false
       - key: KROGER_CLIENT_ID
         sync: false
       - key: KROGER_CLIENT_SECRET
@@ -61,6 +67,8 @@ services:
       - key: AGENTSIM_API_KEY
         sync: false
       - key: IFRAMELY_API_KEY
+        sync: false
+      - key: OUNJE_RAPIDAPI_SOCIAL_KEY
         sync: false
       - key: TWO_CAPTCHA_API_KEY
         sync: false
@@ -75,7 +83,7 @@ services:
     runtime: docker
     plan: starter
     dockerfilePath: Dockerfile
-    dockerCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest --batch-size 2 --wake-mode redis --wake-timeout-ms 15000
+    dockerCommand: node server/scripts/recipe_ingestion_worker.mjs --worker-id render_recipe_ingest --batch-size 1 --wake-mode poll --wake-timeout-ms 15000
     maxShutdownDelaySeconds: 300
     autoDeploy: true
     buildFilter:
@@ -94,54 +102,16 @@ services:
       - key: OUNJE_ENABLE_AI_CALL_LOGGING
         value: "true"
       - key: RECIPE_INGESTION_WORKER_CONCURRENCY
-        value: "2"
+        value: "1"
       - key: RECIPE_INGESTION_WORKER_WAKE_MODE
-        value: redis
+        value: poll
       - key: RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS
         value: "15000"
       - key: RECIPE_INGESTION_STALE_AFTER_MINUTES
         value: "15"
       - key: RECIPE_INGESTION_STALE_REPAIR_INTERVAL_MS
         value: "300000"
-      - key: RECIPE_INGESTION_SOCIAL_VIDEO_EAGER
-        value: "false"
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: PERPLEXITY_API_KEY
-        sync: false
-      - key: RECIPE_IMAGE_BUCKET
-        sync: false
-      - key: RECIPE_IMPORT_MEDIA_BUCKET
-        sync: false
-  - name: ounje-automation
-    type: worker
-    runtime: docker
-    plan: starter
-    dockerfilePath: Dockerfile
-    dockerCommand: node server/scripts/automation_worker.mjs --worker-id render_automation_worker --lock-seconds 900 --idle-sleep-ms 15000
-    maxShutdownDelaySeconds: 300
-    autoDeploy: true
-    buildFilter:
-      paths:
-        - Dockerfile
-        - .dockerignore
-        - package.json
-        - render.yaml
-        - server/**
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: OUNJE_RUNTIME_ENV
-        value: production
-      - key: AUTOSHOP_MANUAL_BETA_ONLY
+      - key: REDIS_DISABLED
         value: "true"
       - key: SUPABASE_URL
         sync: false
@@ -149,47 +119,15 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: REDIS_URL
-        sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: KROGER_CLIENT_ID
+      - key: PERPLEXITY_API_KEY
         sync: false
-      - key: KROGER_CLIENT_SECRET
+      - key: OUNJE_RAPIDAPI_SOCIAL_KEY
         sync: false
-      - key: BROWSER_USE_API_KEY
+      - key: RECIPE_IMAGE_BUCKET
         sync: false
-      - key: LUMBOX_API_KEY
+      - key: RECIPE_IMPORT_MEDIA_BUCKET
         sync: false
-      - key: AGENTSIM_API_KEY
-        sync: false
-      - key: TWO_CAPTCHA_API_KEY
-        sync: false
-  - name: ounje-recipe-ingestion-health
-    type: cron
-    runtime: docker
-    plan: starter
-    schedule: "* * * * *"
-    dockerfilePath: Dockerfile
-    dockerCommand: node server/scripts/check_recipe_ingestion_worker_health.mjs --max-queued-age-seconds 90
-    autoDeploy: true
-    buildFilter:
-      paths:
-        - Dockerfile
-        - .dockerignore
-        - package.json
-        - render.yaml
-        - server/**
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: OUNJE_RUNTIME_ENV
-        value: production
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: REDIS_URL
+      - key: RECIPE_VIDEO_BUCKET
         sync: false

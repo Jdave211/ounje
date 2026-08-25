@@ -1514,7 +1514,57 @@ actor RecipeDetailService {
     }
 
     private func shouldUseCachedDetail(_ detail: RecipeDetailData) -> Bool {
-        detail.hasCoreRecipeContent
+        guard !detail.shouldRefreshDisplayMacros else { return false }
+
+        // Require BOTH ingredients and steps before trusting the cache. A lightweight
+        // card preview has neither, and a detail cached mid-import can have one but not
+        // the other (ingredients populated, steps not yet) — showing that stale/partial
+        // copy is the "half-done recipe" bug. When either side is missing, refetch from
+        // the server (the authoritative source), which has the complete recipe.
+        guard !detail.ingredients.isEmpty, !detail.steps.isEmpty else { return false }
+
+        if hasVideoSourceHint(detail), !hasAnySourceURL(detail) {
+            return false
+        }
+
+        return true
+    }
+
+    private func hasAnySourceURL(_ detail: RecipeDetailData) -> Bool {
+        let directValues = [
+            detail.attachedVideoURLString,
+            detail.originalRecipeURLString,
+            detail.recipeURLString,
+            detail.authorURLString
+        ]
+
+        let provenanceValues = (detail.sourceProvenance?.originalSourceURLStrings ?? []).map(Optional.some)
+
+        return (directValues + provenanceValues)
+            .contains { value in
+                guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+                    return false
+                }
+                return URL(string: value) != nil
+            }
+    }
+
+    private func hasVideoSourceHint(_ detail: RecipeDetailData) -> Bool {
+        let haystack = [
+            detail.sourcePlatform,
+            detail.source,
+            detail.authorURLString,
+            detail.originalRecipeURLString,
+            detail.attachedVideoURLString,
+            detail.recipeURLString
+        ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+
+        return haystack.contains("tiktok")
+            || haystack.contains("instagram")
+            || haystack.contains("youtube")
+            || haystack.contains("youtu.be")
     }
 
     private func fetchRecipeDetailUncached(id: String, accessToken: String? = nil) async throws -> RecipeDetailData {

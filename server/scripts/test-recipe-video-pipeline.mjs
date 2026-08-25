@@ -23,6 +23,11 @@ const stalledServer = createServer(() => {});
 await new Promise((resolve) => stalledServer.listen(0, "127.0.0.1", resolve));
 
 try {
+  const canonicalURL = "https://www.tiktok.com/@ounje/video/7616089987406368022";
+  const canonicalStartedAt = performance.now();
+  assert.equal(await expandCanonicalSourceURL(canonicalURL, "tiktok"), canonicalURL);
+  assert.ok(performance.now() - canonicalStartedAt < 100, "a canonical TikTok URL must bypass redirect cleanup");
+
   const address = stalledServer.address();
   const sharedURL = `http://127.0.0.1:${address.port}/shared-tiktok-link`;
   const resolveStartedAt = performance.now();

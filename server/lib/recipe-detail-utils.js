@@ -1,9 +1,26 @@
-function sanitizeRecipeText(value) {
+// Common named HTML entities that appear in recipe JSON-LD from food blogs.
+const NAMED_HTML_ENTITIES = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",
+  nbsp: " ", ndash: "\u2013", mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019",
+  ldquo: "\u201c", rdquo: "\u201d", times: "\u00d7", frac12: "\u00bd", frac14: "\u00bc",
+  frac34: "\u00be", deg: "\u00b0", reg: "\u00ae", trade: "\u2122", copy: "\u00a9",
+};
+
+function decodeHTMLEntities(value) {
   return String(value ?? "")
+    // numeric decimal: &#8217; \u2192 '
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    // numeric hex: &#x2019; \u2192 '
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    // named: &rsquo; \u2192 '
+    .replace(/&([a-z]+);/gi, (match, name) => NAMED_HTML_ENTITIES[name.toLowerCase()] ?? match);
+}
+
+function sanitizeRecipeText(value) {
+  return decodeHTMLEntities(String(value ?? ""))
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ")
+    .replace(/\r/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -14,7 +31,7 @@ function normalizeText(value) {
 }
 
 function normalizeRecipeLine(value) {
-  return String(value ?? "")
+  return decodeHTMLEntities(String(value ?? ""))
     .replace(/^[-*•\s]+/, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -81,6 +98,24 @@ function displayableOriginalSourceURL(value) {
   return cleaned;
 }
 
+// True for a video file we can play natively in-app — either our own persisted copy
+// (the downloaded MP4 in Supabase storage) or any direct video-file URL. These must take
+// priority over the social source URL so "Watch video" plays our clean MP4 instead of
+// rendering the TikTok/IG embed (with likes, comments, and platform chrome).
+function isNativePlayableVideoURL(value) {
+  const cleaned = cleanSourceURL(value);
+  if (!cleaned) return false;
+  try {
+    const url = new URL(cleaned);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    if (host.endsWith(".supabase.co") && path.includes("/storage/v1/object/")) return true;
+    return /\.(mp4|mov|m3u8|webm)(?:$|\?)/.test(path);
+  } catch (_error) {
+    return false;
+  }
+}
+
 function collectSourceProvenanceURLStrings(provenance) {
   if (!provenance || typeof provenance !== "object") return [];
   const originalSocialSource = provenance.original_social_source && typeof provenance.original_social_source === "object"
@@ -132,10 +167,18 @@ function resolveRecipeSourceURLs(recipe) {
   const firstDisplayable = displayable[0] ?? null;
   const firstVideo = displayable.find(isWatchableSocialVideoURL) ?? null;
 
+  // Prefer our downloaded native MP4 (Supabase storage / direct video file) for playback;
+  // only fall back to the social URL when no native copy exists. Without this, a present
+  // TikTok/IG source URL would override the MP4 and "Watch video" would show the embed.
+  const cleanedAttached = cleanSourceURL(recipe.attached_video_url);
+  const nativeAttachedVideo = isNativePlayableVideoURL(cleanedAttached)
+    ? cleanedAttached
+    : (firstVideo && isNativePlayableVideoURL(firstVideo) ? firstVideo : null);
+
   return {
     recipe_url: firstDisplayable ?? cleanSourceURL(recipe.recipe_url),
     original_recipe_url: firstDisplayable ?? cleanSourceURL(recipe.original_recipe_url),
-    attached_video_url: firstVideo ?? cleanSourceURL(recipe.attached_video_url),
+    attached_video_url: nativeAttachedVideo ?? firstVideo ?? cleanedAttached,
   };
 }
 
@@ -257,6 +300,7 @@ function splitIngredientQuantityPrefix(displayName, quantityText = null) {
         }
       }
       workingName = tokens.join(" ").trim();
+      workingName = workingName.replace(/^of\s+/i, "").trim();
     }
   }
 
@@ -455,6 +499,7 @@ function parseIngredientLine(line) {
   let quantity = null;
   let unit = null;
   let note = null;
+  let quantityRawTokens = [];   // preserves original text ("1/2", "cup") for quantity_text
 
   const parenMatches = [...normalized.matchAll(/\(([^)]+)\)/g)].map((match) => match[1].trim()).filter(Boolean);
   if (parenMatches.length) {
@@ -471,15 +516,18 @@ function parseIngredientLine(line) {
     if (firstTwo != null) {
       quantity = firstTwo;
       quantityTokens = 2;
+      quantityRawTokens = tokens.slice(0, 2);
     } else if (first != null) {
       quantity = first;
       quantityTokens = 1;
+      quantityRawTokens = tokens.slice(0, 1);
     }
 
     if (quantityTokens > 0) {
       tokens.splice(0, quantityTokens);
       if (tokens.length && UNITS.has(tokens[0].toLowerCase())) {
         unit = tokens.shift();
+        quantityRawTokens.push(unit);
       }
     }
   }
@@ -497,10 +545,15 @@ function parseIngredientLine(line) {
     remainder = lead;
   }
 
+  // quantity_text preserves the original fraction/unit text ("1/2 cup", "1 and 3/4 tsp")
+  // instead of reconstructing from a decimal float, so display shows what the recipe says.
+  const quantity_text = quantityRawTokens.length ? quantityRawTokens.join(" ") : null;
+
   return {
     name: remainder,
     quantity,
     unit,
+    quantity_text,
     note,
     image_hint: remainder.toLowerCase(),
   };
@@ -877,6 +930,17 @@ function buildStructuredSteps(stepRows, stepIngredientRows, ingredients) {
     .sort((a, b) => a.number - b.number);
 }
 
+// A cook time that resolves to zero ("0 minutes", "0 min", "0 hr 0 min", "0") isn't a
+// real time — it's the extractor's fallback when none was stated. Drop it so the recipe
+// shows no time rather than a broken-looking "0 minutes".
+function sanitizeCookTimeText(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const digits = text.match(/\d+/g);
+  if (digits && digits.length > 0 && digits.every((d) => Number(d) === 0)) return null;
+  return text;
+}
+
 export function normalizeRecipeDetail(recipe, related = {}) {
   const sourceURLs = resolveRecipeSourceURLs(recipe);
   const structuredIngredients = Array.isArray(related.recipeIngredients)
@@ -934,7 +998,7 @@ export function normalizeRecipeDetail(recipe, related = {}) {
     subcategory: recipe.subcategory ?? null,
     recipe_type: recipe.recipe_type ?? null,
     skill_level: recipe.skill_level ?? null,
-    cook_time_text: recipe.cook_time_text ?? null,
+    cook_time_text: sanitizeCookTimeText(recipe.cook_time_text),
     servings_text: recipe.servings_text ?? null,
     serving_size_text: recipe.serving_size_text ?? null,
     daily_diet_text: recipe.daily_diet_text ?? null,

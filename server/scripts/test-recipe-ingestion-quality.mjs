@@ -7,27 +7,580 @@ import assert from "node:assert/strict";
 process.env.OPENAI_API_KEY = "";
 process.env.SUPABASE_URL = "";
 process.env.SUPABASE_ANON_KEY = "";
-process.env.RECIPE_INGESTION_SOCIAL_VIDEO_EAGER = "false";
+process.env.PERPLEXITY_API_KEY = "test-perplexity-key";
 
 const { parseIngredientObjects } = await import("../lib/recipe-detail-utils.js");
+const { redisConfigStatus } = await import("../lib/redis-cache.js");
 const {
   guaranteeRecipeDisplayMacros,
-  normalizeRecipeDisplayFields,
   hasCompleteDisplayMacros,
+  hasUsableRecipeShape,
   assessRecipeLikelihood,
-  photoRecipeDocumentHasUsableCore,
+  buildFinalRecipeValidationIssues,
+  isBlockingFinalRecipeValidationIssue,
+  cleanIngredientQuantityText,
+  shouldRunFinalRecipeValidation,
+  buildRecipeGateUserContent,
   detectRecipeIngestionSourceType,
-  socialRecipeTextCanSkipVideoDownload,
+  isStaleLiveRecipeImportJob,
+  normalizeCreatorHandle,
+  selectedSocialHeroFrame,
   selectRecipeEvidenceFrameDataURLs,
   socialSourceHasPrimaryRecipeEvidence,
-  buildFinalRecipeValidationIssues,
-  isOCRSafeFrameDataURL,
-  canonicalTikTokURLFromMetadata,
-  preferredTikTokProcessingURL,
-  normalizeImportPayload,
-  isStaleLiveRecipeImportJob,
+  socialImportNeedsGroundedCompletion,
+  shouldRunGroundedRecipeCompletion,
+  mergeGroundedSocialCompletion,
+  calibrateSocialRecipeAssessment,
+  assessSocialCompletionContext,
+  recipeSemanticCompleteness,
+  reconcileResolvedRecipeQualityFlags,
+  recipeIDForImportRestore,
+  recipeImportTargetActions,
+  isRecipeEquipmentIngredientName,
+  normalizeRecipeDisplayFields,
+  runSocialRecipeCompletionContext,
+  socialFrameTimestamps,
   SOCIAL_VIDEO_RECIPE_MODEL,
+  RECIPE_IMPORT_HARD_COMPLETION_MODEL,
 } = await import("../lib/recipe-ingestion.js");
+
+assert.deepEqual(
+  recipeImportTargetActions("saved"),
+  { saveToRecipes: true, addToPrep: false },
+  "a saved import must appear in Recipes without being added to prep"
+);
+assert.deepEqual(
+  recipeImportTargetActions("prepped"),
+  { saveToRecipes: true, addToPrep: true },
+  "a prepped import must still appear in Recipes and additionally enter prep"
+);
+assert.equal(
+  recipeIDForImportRestore({ id: "ri_pending_job", status: "fetching", recipe_id: null }),
+  null,
+  "an active import job must not be mistaken for a persisted recipe"
+);
+assert.equal(
+  recipeIDForImportRestore({ id: "uir_saved_recipe" }),
+  "uir_saved_recipe",
+  "an existing imported recipe row remains restorable"
+);
+
+{
+  const previousRuntime = process.env.OUNJE_RUNTIME_ENV;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousDisabled = process.env.REDIS_DISABLED;
+  const previousProductionRedis = process.env.OUNJE_ENABLE_PRODUCTION_REDIS;
+  const previousURL = process.env.REDIS_URL;
+  delete process.env.OUNJE_RUNTIME_ENV;
+  process.env.NODE_ENV = "production";
+  delete process.env.REDIS_DISABLED;
+  process.env.REDIS_URL = "redis://legacy.example:6379";
+  assert.equal(redisConfigStatus().disabled, true, "production must not contact a legacy Redis service by default");
+  assert.equal(redisConfigStatus().configured, false);
+  process.env.REDIS_DISABLED = "false";
+  assert.equal(redisConfigStatus().configured, false, "a stale REDIS_DISABLED=false value must not reactivate production Redis");
+  process.env.OUNJE_ENABLE_PRODUCTION_REDIS = "true";
+  assert.equal(redisConfigStatus().configured, true, "a future managed Redis service can be explicitly enabled");
+  if (previousRuntime == null) delete process.env.OUNJE_RUNTIME_ENV; else process.env.OUNJE_RUNTIME_ENV = previousRuntime;
+  if (previousNodeEnv == null) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
+  if (previousDisabled == null) delete process.env.REDIS_DISABLED; else process.env.REDIS_DISABLED = previousDisabled;
+  if (previousProductionRedis == null) delete process.env.OUNJE_ENABLE_PRODUCTION_REDIS; else process.env.OUNJE_ENABLE_PRODUCTION_REDIS = previousProductionRedis;
+  if (previousURL == null) delete process.env.REDIS_URL; else process.env.REDIS_URL = previousURL;
+}
+
+{
+  const frameURL = "data:image/jpeg;base64,ZmFrZS1mcmFtZQ==";
+  const content = buildRecipeGateUserContent({
+    source_type: "tiktok",
+    platform: "tiktok",
+    frame_data_urls: [frameURL],
+    frame_ocr_texts: [],
+  }, {
+    mediaMode: "video",
+    structuredIngredientCount: 0,
+    structuredInstructionCount: 0,
+    ingredientCandidateCount: 0,
+    instructionCandidateCount: 0,
+    transcriptPresent: false,
+    frameOcrCount: 0,
+    pageImageCount: 0,
+    positiveHits: [],
+    negativeHits: [],
+  });
+  assert.equal(content[0].type, "text");
+  assert.equal(content[1].image_url.url, frameURL, "social recipe gate must receive visual frame evidence");
+  assert.equal(content[1].image_url.detail, "high", "frame text must be sent at readable detail");
+}
+
+{
+  const timestamps = socialFrameTimestamps(34.67, 8);
+  assert.equal(timestamps.length, 8);
+  assert.ok(timestamps[0] <= 0.2, "video evidence must include the creator's opening hero shot");
+  assert.ok(timestamps.at(-1) >= 34.4, "video evidence must include the creator's closing finished-dish shot");
+}
+
+{
+  const frames = Array.from({ length: 10 }, (_, index) => `data:image/jpeg;base64,frame-${index + 1}`);
+  const selected = selectedSocialHeroFrame(
+    { source_type: "tiktok", frame_data_urls: frames },
+    { hero_frame_position: 4 }
+  );
+  assert.equal(selected?.dataURL, frames[3], "hero selection must map to the same frames shown to vision");
+  assert.equal(selectedSocialHeroFrame({ source_type: "web", frame_data_urls: frames }, { hero_frame_position: 1 }), null);
+  assert.equal(selectedSocialHeroFrame({ source_type: "tiktok", frame_data_urls: frames }, { hero_frame_position: 99 }), null);
+}
+
+{
+  const frames = Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`);
+  const selected = selectRecipeEvidenceFrameDataURLs(frames, [
+    { frame_index: 1, confidence: 90, text: "Finished dish" },
+    { frame_index: 2, confidence: 84, text: "Boil assorted meats with salt Maggi pepper curry" },
+    { frame_index: 5, confidence: 87, text: "Bleach palm oil" },
+    { frame_index: 6, confidence: 91, text: "Blend green bell pepper scotch bonnet onion" },
+    { frame_index: 9, confidence: 86, text: "Add pepper mix salt crayfish Maggi iru" },
+  ], 4);
+  assert.deepEqual(
+    selected,
+    [frames[1], frames[4], frames[5], frames[8]],
+    "vision input must prioritize OCR-rich recipe frames instead of visual spacing alone"
+  );
+}
+
+{
+  const ayamaseVideoEvidence = {
+    source_type: "tiktok",
+    frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+    frame_ocr_texts: [
+      { frame_index: 5, confidence: 87, text: "Bleach palm oil" },
+      { frame_index: 6, confidence: 91, text: "Blend green bell pepper scotch bonnet onion" },
+      { frame_index: 9, confidence: 86, text: "Add pepper mix salt crayfish Maggi iru" },
+    ],
+  };
+  assert.equal(
+    socialSourceHasPrimaryRecipeEvidence(ayamaseVideoEvidence),
+    true,
+    "explicit social frame recipe evidence must survive a weak metadata gate"
+  );
+  assert.equal(
+    shouldRunFinalRecipeValidation({
+      ingredients: [{ display_name: "green bell pepper" }],
+      steps: [{ number: 1, text: "Blend the green bell pepper.", ingredients: [{ display_name: "green bell pepper" }] }],
+    }, ayamaseVideoEvidence),
+    true,
+    "final validation must audit the saved recipe against social frame evidence"
+  );
+  assert.equal(SOCIAL_VIDEO_RECIPE_MODEL, "gpt-4.1-mini");
+  assert.equal(RECIPE_IMPORT_HARD_COMPLETION_MODEL, "gpt-4.1-mini");
+}
+
+{
+  assert.equal(
+    hasUsableRecipeShape({
+      ingredients: ["chicken", "salt", "pepper", "lemon"].map((display_name) => ({ display_name, quantity_text: null })),
+      steps: ["Season the chicken.", "Air fry until cooked.", "Brush with lemon butter."].map((text) => ({ text })),
+    }),
+    true,
+    "a source-faithful social recipe with missing quantities must still bypass generic web completion"
+  );
+  assert.equal(
+    hasUsableRecipeShape({ ingredients: [{ display_name: "chicken" }], steps: [{ text: "Cook it." }] }),
+    false
+  );
+}
+
+{
+  const captionRichVideoEvidence = {
+    source_type: "tiktok",
+    frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+    frame_ocr_texts: [{ frame_index: 1, confidence: 28, text: "unreadable frame noise" }],
+    caption_text: "Lemon pepper chicken skewers. Season chicken with salt, pepper, garlic, lemon zest, onion powder, paprika and olive oil. Air fry for 12 minutes, flip, then cook for 10 minutes. Mix butter with lemon juice and serve.",
+    transcript_text: "Add the seasonings to the chicken and mix well. Put the skewers in the air fryer, flip them, then brush on the butter sauce.",
+  };
+  assert.equal(
+    socialSourceHasPrimaryRecipeEvidence(captionRichVideoEvidence),
+    true,
+    "detailed caption and transcript evidence must not be discarded when local frame OCR is noisy"
+  );
+  assert.equal(
+    socialSourceHasPrimaryRecipeEvidence({
+      source_type: "tiktok",
+      frame_data_urls: ["frame-1"],
+      caption_text: "This was so good. You have to try it.",
+      transcript_text: "Follow for more easy recipes.",
+    }),
+    false,
+    "generic social captions must not bypass the recipe evidence gate"
+  );
+}
+
+{
+  const pepperFishRecipe = {
+    title: "Pepper Grilled Fish",
+    author_handle: "@chefttk",
+    ingredients: [
+      "tilapia",
+      "oil-based seasoning",
+      "red pepper-based seasoning",
+      "plantain",
+      "fried yam",
+      "pop pepper sauce",
+    ].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: Array.from({ length: 8 }, (_, index) => ({ text: `Broad step ${index + 1}` })),
+  };
+  const sparsePepperFishSource = {
+    source_type: "tiktok",
+    canonical_url: "https://www.tiktok.com/@chefttk/video/7270184253428600097",
+    transcript_text: "Let's make pepper grilled fish. Use tilapia, oil-based seasoning and red pepper-based seasoning. Serve with yam or plantain.",
+    frame_data_urls: [],
+    frame_ocr_texts: [],
+    ingredient_candidates: ["tilapia", "oil-based seasoning", "red pepper-based seasoning"],
+    instruction_candidates: [],
+  };
+  assert.equal(
+    socialImportNeedsGroundedCompletion(
+      pepperFishRecipe,
+      sparsePepperFishSource,
+      ["incomplete", "missing_steps"]
+    ),
+    true,
+    "a broad social recipe with no frame evidence must receive grounded completion even when its generated shape looks complete"
+  );
+  assert.equal(
+    socialImportNeedsGroundedCompletion(
+      pepperFishRecipe,
+      {
+        ...sparsePepperFishSource,
+        frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+        frame_ocr_texts: Array.from({ length: 12 }, (_, index) => ({
+          frame_index: index + 1,
+          text: "unusable visual OCR noise",
+        })),
+      },
+      ["partial_ingredients", "partial_steps"]
+    ),
+    true,
+    "production partial flags must trigger Sonar even when frame sampling and generated recipe shape look complete"
+  );
+  assert.equal(
+    socialImportNeedsGroundedCompletion(
+      pepperFishRecipe,
+      {
+        ...sparsePepperFishSource,
+        transcript_text: "Serve grilled tilapia with yam, plantain and pepper sauce.",
+        frame_data_urls: Array.from({ length: 12 }, (_, index) => `frame-${index + 1}`),
+        frame_ocr_texts: Array.from({ length: 12 }, (_, index) => ({
+          frame_index: index + 1,
+          text: "unusable visual OCR noise",
+        })),
+        ingredient_candidates: [],
+        instruction_candidates: [],
+      },
+      []
+    ),
+    true,
+    "nonempty OCR noise must not count as detailed frame recipe evidence"
+  );
+  assert.equal(
+    shouldRunGroundedRecipeCompletion(
+      pepperFishRecipe,
+      {
+        source_type: "tiktok",
+        frame_data_urls: ["frame-1", "frame-2", "frame-3"],
+        frame_ocr_texts: [
+          { frame_index: 1, text: "Blend green pepper onion and scotch bonnet" },
+          { frame_index: 2, text: "Bleach palm oil then add pepper mix" },
+          { frame_index: 3, text: "Season with salt crayfish Maggi and iru" },
+        ],
+        ingredient_candidates: ["palm oil", "pepper", "onion", "crayfish"],
+        instruction_candidates: ["Blend peppers", "Bleach oil", "Cook sauce"],
+      },
+      []
+    ),
+    false,
+    "rich creator-provided frame evidence must remain the primary recipe instead of paying for a needless web completion"
+  );
+
+  const unsafeReplacement = {
+    ...pepperFishRecipe,
+    ingredients: ["tilapia", "garlic", "paprika", "lemon"].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: Array.from({ length: 6 }, (_, index) => ({ text: `Replacement step ${index + 1}` })),
+  };
+  const guarded = mergeGroundedSocialCompletion(pepperFishRecipe, unsafeReplacement);
+  assert.deepEqual(
+    guarded.ingredients.map((ingredient) => ingredient.display_name),
+    pepperFishRecipe.ingredients.map((ingredient) => ingredient.display_name),
+    "grounded completion must not replace source-specific sides or sauces with a generic fish recipe"
+  );
+  assert.equal(guarded.author_handle, "@chefttk", "completion must preserve the creator");
+
+  const concreteGroundedCompletion = {
+    ...pepperFishRecipe,
+    ingredients: [
+      "tilapia",
+      "neutral oil",
+      "red bell pepper",
+      "onion",
+      "garlic",
+      "ginger",
+      "paprika",
+      "plantain",
+      "fried yam",
+      "pop pepper sauce",
+    ].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: Array.from({ length: 6 }, (_, index) => ({ text: `Grounded completion step ${index + 1}` })),
+  };
+  const expanded = mergeGroundedSocialCompletion(pepperFishRecipe, concreteGroundedCompletion);
+  assert.deepEqual(
+    expanded.ingredients.map((ingredient) => ingredient.display_name),
+    concreteGroundedCompletion.ingredients.map((ingredient) => ingredient.display_name),
+    "grounded completion may expand generic seasoning labels when it preserves source-specific protein and sides"
+  );
+  assert.equal(expanded.author_handle, "@chefttk", "constituent expansion must preserve the creator");
+
+  const normalizationIssues = buildFinalRecipeValidationIssues({
+    ingredients: [
+      { display_name: "1 whole tilapia fish (700–900 g), scaled and gutted", quantity_text: "1 whole" },
+      { display_name: "vegetable oil", quantity_text: "2 tablespoons" },
+      { display_name: "vegetable oil (for pepper sauce)", quantity_text: "2 tablespoons" },
+    ],
+    steps: [
+      { text: "Rub the tilapia with vegetable oil." },
+      { text: "Cook the pepper sauce with the remaining vegetable oil." },
+    ],
+  });
+  assert.ok(
+    normalizationIssues.some((issue) => issue.includes("Move quantities and size ranges")),
+    "validator must catch quantity text leaking into ingredient names"
+  );
+  assert.ok(
+    normalizationIssues.some((issue) => issue.includes("Consolidate repeated ingredient rows")),
+    "validator must catch role-suffixed duplicate ingredient rows before they reach cart"
+  );
+
+  const preparedComponentIssues = buildFinalRecipeValidationIssues({
+    ingredients: [
+      { display_name: "whole tilapia fish", quantity_text: "1 whole" },
+      { display_name: "red bell pepper", quantity_text: "2" },
+      { display_name: "vegetable oil", quantity_text: "2 tablespoons" },
+    ],
+    steps: [
+      { text: "Score the cleaned whole tilapia, then rub it with vegetable oil." },
+      {
+        number: 2,
+        text: "Coat the tilapia with the prepared red pepper seasoning.",
+        ingredients: [{ display_name: "red pepper seasoning", quantity_text: null }],
+      },
+    ],
+  });
+  assert.ok(
+    !preparedComponentIssues.some((issue) => issue.includes('Ingredient "whole tilapia fish" is listed but not clearly used')),
+    "validator must recognize a distinctive ingredient name used without its generic suffix"
+  );
+  assert.ok(
+    !preparedComponentIssues.some((issue) => issue.includes("red pepper seasoning")),
+    "prepared component labels must not be forced back into the shopping ingredient list"
+  );
+
+  const cleanedStepLinks = normalizeRecipeDisplayFields({
+    title: "Pepper Grilled Tilapia",
+    ingredients: [{ display_name: "tilapia fish", quantity_text: "1 whole" }],
+    steps: [{
+      text: "Grill the tilapia, then serve with fried yam if desired.",
+      ingredients: [{ display_name: "fried yam", quantity_text: null }],
+    }],
+  });
+  assert.deepEqual(
+    cleanedStepLinks.steps[0].ingredients.map((ingredient) => ingredient.display_name),
+    ["tilapia fish"],
+    "step links must keep referenced shopping ingredients and discard optional prepared sides that are not top-level ingredients"
+  );
+
+  const specificPowderLink = normalizeRecipeDisplayFields({
+    title: "Seasoned fish",
+    ingredients: [
+      { display_name: "onion", quantity_text: "1" },
+      { display_name: "onion powder", quantity_text: "1 teaspoon" },
+    ],
+    steps: [{ text: "Rub the fish with onion powder.", ingredients: [] }],
+  });
+  assert.deepEqual(
+    specificPowderLink.steps[0].ingredients.map((ingredient) => ingredient.display_name),
+    ["onion powder"],
+    "step-link inference must prefer the explicitly named ingredient over a shorter overlapping ingredient"
+  );
+  assert.equal(
+    cleanIngredientQuantityText("1 whole tilapia (about 1.2–1.5 kg)", "tilapia fish"),
+    "1 whole (about 1.2–1.5 kg)",
+    "ingredient names must not leak into quantity text and render twice"
+  );
+
+  const inferredContextSource = {
+    ...sparsePepperFishSource,
+    social_completion_context: {
+      exact_match_supported: false,
+      completion_ingredients: ["garlic, ginger, paprika and salt for the pepper seasoning"],
+      completion_steps: ["Blend the pepper seasoning and marinate the tilapia before grilling"],
+    },
+  };
+  const calibrated = calibrateSocialRecipeAssessment(
+    { confidence_score: 0.93, quality_flags: [], review_state: "approved", review_reason: null },
+    pepperFishRecipe,
+    inferredContextSource,
+    ["incomplete", "missing_steps"]
+  );
+  assert.equal(calibrated.confidence_score, 0.68, "thin completion context must not masquerade as creator-source confidence");
+  assert.equal(calibrated.review_state, "draft", "generic component ingredients must block approval");
+  assert.ok(calibrated.quality_flags.includes("grounded_web_completion_missing"));
+  assert.ok(calibrated.quality_flags.includes("unresolved_ingredient_components"));
+
+  const malformedRecipe = {
+    ...pepperFishRecipe,
+    detail_footnote: "Exact ingredient quantities and full recipe details to be released soon.",
+    ingredients: [
+      ...pepperFishRecipe.ingredients,
+      { display_name: "foil", quantity_text: "1 sheet" },
+    ],
+    steps: [
+      { text: "Blend the red peppers and onion until finely chopped." },
+      { text: "Rub the fish with the oil-based seasoning and marinate for 20 minutes." },
+      { text: "Grill the fish over medium heat until cooked through." },
+    ],
+  };
+  const malformedSemantics = recipeSemanticCompleteness(malformedRecipe);
+  assert.ok(malformedSemantics.genericIngredients.includes("oil-based seasoning"));
+  assert.ok(malformedSemantics.equipmentIngredients.includes("foil"));
+  assert.ok(malformedSemantics.teaserFieldCount > 0);
+  assert.equal(isRecipeEquipmentIngredientName("1 sheet foil"), true);
+  assert.ok(
+    buildFinalRecipeValidationIssues(malformedRecipe).some((issue) => issue.includes("Unresolved component ingredients")),
+    "final validation must treat umbrella seasonings as blocking issues"
+  );
+
+  const cleanedMalformedRecipe = normalizeRecipeDisplayFields(malformedRecipe);
+  assert.equal(
+    cleanedMalformedRecipe.ingredients.some((ingredient) => ingredient.display_name === "foil"),
+    false,
+    "equipment must be removed from the shopping ingredient list"
+  );
+  assert.equal(cleanedMalformedRecipe.detail_footnote, null, "coming-soon source copy must not reach the recipe page");
+  assert.ok(cleanedMalformedRecipe.quality_flags.includes("equipment_removed_from_ingredients"));
+  assert.ok(cleanedMalformedRecipe.quality_flags.includes("source_teaser_removed"));
+
+  const groundedInferredContext = {
+    exact_match_supported: false,
+    match_confidence: 0.39,
+    reference_urls: ["https://example.com/pepper-grilled-fish"],
+    source_supported_ingredients: ["1 whole tilapia", "2 red bell peppers", "1 onion", "2 tablespoons neutral oil"],
+    source_supported_steps: ["Score and season the cleaned tilapia, then marinate it for 20 minutes."],
+    completion_ingredients: ["3 garlic cloves", "1 tablespoon grated ginger", "1 teaspoon paprika", "1 teaspoon salt"],
+    completion_steps: [
+      "Blend the peppers, onion, garlic, and ginger into a coarse paste.",
+      "Cook the pepper paste over medium heat for 8 to 10 minutes until reduced.",
+      "Grill the marinated fish over medium-high heat, basting and turning until cooked through.",
+    ],
+  };
+  assert.equal(assessSocialCompletionContext(groundedInferredContext).hasDetails, true);
+  assert.equal(
+    isBlockingFinalRecipeValidationIssue("A liquid amount is vague in the method."),
+    false,
+    "a small wording advisory must not demote an otherwise complete recipe"
+  );
+  assert.equal(
+    isBlockingFinalRecipeValidationIssue("Unresolved component ingredients: oil-based seasoning."),
+    true,
+    "semantic incompleteness must remain blocking"
+  );
+  const completePepperFishRecipe = {
+    ...pepperFishRecipe,
+    ingredients: [
+      "tilapia", "neutral oil", "red bell pepper", "onion", "garlic", "ginger", "paprika", "salt", "black pepper", "plantain", "fried yam", "pop pepper sauce",
+    ].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: [
+      { text: "Score the cleaned tilapia, season it all over, and marinate for 20 minutes." },
+      { text: "Blend the peppers, onion, garlic, and ginger into a coarse paste." },
+      { text: "Cook the pepper paste over medium heat for 8 to 10 minutes until reduced." },
+      { text: "Grill the fish over medium-high heat, basting and turning until cooked through." },
+    ],
+  };
+  const approvedInferred = calibrateSocialRecipeAssessment(
+    { confidence_score: 0.93, quality_flags: [], review_state: "approved", review_reason: null },
+    completePepperFishRecipe,
+    { ...sparsePepperFishSource, social_completion_context: groundedInferredContext },
+    ["incomplete", "hard_completion_retry_applied"]
+  );
+  assert.equal(approvedInferred.confidence_score, 0.82);
+  assert.equal(approvedInferred.review_state, "approved", "a concrete grounded reconstruction may be approved as inferred");
+  assert.ok(approvedInferred.quality_flags.includes("grounded_completion_inferred"));
+  const equipmentFreeMerge = mergeGroundedSocialCompletion(malformedRecipe, completePepperFishRecipe);
+  assert.equal(
+    equipmentFreeMerge.ingredients.some((ingredient) => ingredient.display_name === "foil"),
+    false,
+    "source equipment must not prevent a complete hard-retry recipe from replacing placeholder structure"
+  );
+  const reconciledFlags = reconcileResolvedRecipeQualityFlags(completePepperFishRecipe, [
+    "grounded_completion_incomplete",
+    "unresolved_ingredient_components",
+    "final_validator_review_needed",
+    "final_validator_applied",
+  ]);
+  assert.ok(reconciledFlags.includes("final_validator_applied"));
+  assert.ok(!reconciledFlags.includes("grounded_completion_incomplete"));
+  assert.ok(!reconciledFlags.includes("final_validator_review_needed"));
+  assert.ok(
+    reconcileResolvedRecipeQualityFlags(malformedRecipe, ["grounded_completion_incomplete", "final_validator_applied"])
+      .includes("grounded_completion_incomplete"),
+    "historical blocker flags may clear only when the final recipe is semantically complete"
+  );
+
+  const originalFetch = globalThis.fetch;
+  let capturedPerplexityPayload = null;
+  let perplexityAttempts = 0;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(String(url), "https://api.perplexity.ai/chat/completions");
+    perplexityAttempts += 1;
+    capturedPerplexityPayload = JSON.parse(String(options?.body ?? "{}"));
+    if (perplexityAttempts === 1) {
+      return new Response(JSON.stringify({ error: { message: "temporary upstream failure" } }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            exact_match_supported: false,
+            match_confidence: 0.61,
+            matched_creator_or_source: "Temi Tyrese pepper grilled fish",
+            reference_urls: ["https://example.com/pepper-grilled-fish"],
+            source_supported_ingredients: ["tilapia", "plantain", "fried yam", "pepper sauce"],
+            source_supported_steps: ["grill the seasoned tilapia"],
+            completion_ingredients: ["garlic, ginger and paprika can complete the pepper seasoning"],
+            completion_steps: ["marinate before grilling and baste while cooking"],
+            quantity_guidance: ["use conservative amounts for four tilapia fillets"],
+            cautions: ["No exact written creator recipe was found"],
+          }),
+        },
+      }],
+      citations: ["https://example.com/pepper-grilled-fish"],
+      usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const context = await runSocialRecipeCompletionContext(pepperFishRecipe, sparsePepperFishSource);
+    assert.equal(context.exact_match_supported, false);
+    assert.equal(context.match_confidence, 0.61);
+    assert.equal(perplexityAttempts, 2, "transient Perplexity failures must receive one bounded retry");
+    assert.ok(context.completion_ingredients.some((item) => item.includes("paprika")));
+    assert.equal(capturedPerplexityPayload.model, "sonar-pro");
+    assert.match(capturedPerplexityPayload.messages[0].content, /research context, not a replacement recipe/i);
+    assert.match(capturedPerplexityPayload.messages[0].content, /one concrete shoppable ingredient per completion_ingredients entry/i);
+    assert.match(capturedPerplexityPayload.messages[0].content, /must not mean unusably broad/i);
+    assert.match(capturedPerplexityPayload.messages[1].content, /chefttk/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 1. Ingredient parsing — compound quantities must not leak the fraction into
@@ -111,51 +664,17 @@ assert.equal(detectRecipeIngestionSourceType({ sourceUrl: "https://www.instagram
 assert.equal(detectRecipeIngestionSourceType({ sourceUrl: "https://sallysbakingaddiction.com/recipe" }), "web");
 assert.equal(detectRecipeIngestionSourceType({ sourceText: "make me a high protein dinner" }), "text");
 
-{
-  const publicCatalogImport = normalizeImportPayload({
-    source_url: "https://www.tiktok.com/@chef/video/1234567890123456789",
-    public_catalog_import: true,
-  });
-  assert.equal(publicCatalogImport.public_catalog_import, true, "public catalog approval must survive queue normalization");
-}
+assert.equal(normalizeCreatorHandle("@9resha"), "@9resha");
+assert.equal(
+  normalizeCreatorHandle("MS4wLjABAAAApkyPUHodYpzzuTew33dYjEzer52vag7zyJ6i78LFgMz6l_YI17Xx7hunEXZN9EoC"),
+  null,
+  "TikTok secUid values must never render as public creator handles"
+);
 
 {
   const accepted = await assessRecipeLikelihood({ source_type: "media_image", photo_meal_gate: { is_meal: true, confidence: 0.8 } });
   assert.equal(accepted.is_recipe, true);
   assert.equal(accepted.method, "photo_meal_gate_accept", "a food photo must be accepted via the photo meal gate");
-}
-
-assert.equal(
-  photoRecipeDocumentHasUsableCore({
-    title: "Banana bread",
-    ingredients: ["3 bananas", "2 eggs", "2 cups flour"],
-    steps: ["Mix the batter.", "Bake until set."],
-  }),
-  true,
-  "a readable recipe screenshot or cookbook page must pass the photo import gate"
-);
-assert.equal(
-  photoRecipeDocumentHasUsableCore({
-    title: "Menu",
-    ingredients: ["Chicken"],
-    steps: [],
-  }),
-  false,
-  "an isolated food word must not turn a menu or unrelated screenshot into a recipe"
-);
-
-{
-  const cleaned = normalizeRecipeDisplayFields({
-    ingredients: [
-      { display_name: "1-2 tablespoons cooking oil", quantity_text: "1-2 tablespoons" },
-      { display_name: "salt to taste", quantity_text: "to taste" },
-    ],
-    steps: [],
-  });
-  assert.equal(cleaned.ingredients[0].display_name, "cooking oil");
-  assert.equal(cleaned.ingredients[0].quantity_text, "1-2 tablespoons");
-  assert.equal(cleaned.ingredients[1].display_name, "salt");
-  assert.equal(cleaned.ingredients[1].quantity_text, "to taste");
 }
 {
   const rejected = await assessRecipeLikelihood({ source_type: "media_image", photo_meal_gate: { is_meal: false, confidence: 0.9, reject_reason: "no food" } });
@@ -164,85 +683,32 @@ assert.equal(
 }
 
 // ---------------------------------------------------------------------------
-// 4. Social media fast path — rich captions should avoid a video download,
-//    while video-first posts still receive the full media pipeline.
+// 4. Quantity text preservation — fractions must not be converted to decimals
 // ---------------------------------------------------------------------------
-const captionRecipe = [
-  "This quick coconut chicken recipe makes an easy weeknight dinner.",
-  "Ingredients: 2 chicken breasts, 1 can coconut milk, 1 tablespoon curry powder, 1 onion, garlic, salt, lime, and cilantro.",
-  "Instructions: Heat oil in a skillet, saute the onion and garlic, stir in the curry powder, then add chicken and cook until browned.",
-  "Pour in the coconut milk, simmer for 12 minutes, season with lime and salt, then serve over rice with cilantro.",
-].join(" ");
-assert.equal(
-  socialRecipeTextCanSkipVideoDownload({ metadata: { description: captionRecipe } }),
-  true,
-  "a complete recipe caption should use the text fast path"
-);
-assert.equal(
-  socialRecipeTextCanSkipVideoDownload({ metadata: { description: "Watch until the end for the final dish." } }),
-  false,
-  "video-first social posts must retain the media pipeline"
-);
-assert.equal(isOCRSafeFrameDataURL("data:image/webp;base64,AAAA"), false, "WebP frames must bypass OCR");
-assert.equal(isOCRSafeFrameDataURL("data:image/jpeg;base64,AAAA"), true, "JPEG frames remain eligible for OCR");
-
 {
-  const frames = Array.from({ length: 10 }, (_, index) => `frame-${index + 1}`);
-  const selected = selectRecipeEvidenceFrameDataURLs(frames, [
-    { frame_index: 1, text: "Easy Ayamase recipe", confidence: 30 },
-    { frame_index: 5, text: "Bleach palm oil", confidence: 63 },
-    { frame_index: 6, text: "Blend green bell pepper scotch bonnet onion", confidence: 40 },
-    { frame_index: 9, text: "Add pepper mix. Season with salt, crayfish, Maggi, iru", confidence: 38 },
-  ], 4);
-  assert.deepEqual(
-    selected,
-    ["frame-1", "frame-5", "frame-6", "frame-9"],
-    "vision extraction must receive OCR-rich recipe frames instead of unrelated evenly spaced frames"
-  );
+  const r = parseFirst("1/2 cup unsalted butter");
+  assert.equal(r.quantity_text, "1/2 cup", `quantity_text must preserve the fraction "1/2 cup", got "${r.quantity_text}"`);
 }
-
-const ayamaseVideoEvidence = {
-  source_type: "tiktok",
-  frame_data_urls: ["frame-1", "frame-2"],
-  frame_ocr_texts: [
-    { frame_index: 1, text: "Bleach palm oil", confidence: 63 },
-    { frame_index: 2, text: "Season with salt, crayfish, Maggi and iru", confidence: 50 },
-  ],
-};
-assert.equal(
-  socialSourceHasPrimaryRecipeEvidence(ayamaseVideoEvidence),
-  true,
-  "recipe-like video frames must remain the primary source even when audio is unrelated"
-);
-assert.equal(
-  SOCIAL_VIDEO_RECIPE_MODEL,
-  "gpt-4.1-mini",
-  "video-only imports must use the tested higher-fidelity extraction model"
-);
-assert.ok(
-  buildFinalRecipeValidationIssues({
-    ingredients: [{ display_name: "green pepper", quantity_text: "4" }],
-    steps: [{ number: 1, text: "Blend the green pepper.", ingredients: [] }],
-  }, ayamaseVideoEvidence).some((issue) => issue.includes("source-evidence coverage")),
-  "the final validator must audit the saved ingredient list against video evidence"
-);
-assert.equal(
-  preferredTikTokProcessingURL(
-    "https://www.tiktok.com/@/video/7616089987406368022?_r=1",
-    "https://vt.tiktok.com/ZSHw9pH5N/"
-  ),
-  "https://vt.tiktok.com/ZSHw9pH5N/",
-  "a malformed TikTok canonical URL must fall back to the shared URL"
-);
-assert.equal(
-  canonicalTikTokURLFromMetadata({
-    id: "7616089987406368022",
-    uploader: "emmy_jiggy",
-    webpage_url: "https://www.tiktok.com/@/video/7616089987406368022",
-  }, "https://vt.tiktok.com/ZSHw9pH5N/"),
-  "https://www.tiktok.com/@emmy_jiggy/video/7616089987406368022",
-  "TikTok metadata should restore a creator-qualified canonical URL"
-);
+{
+  const r = parseFirst("1 and 1/2 cups mini marshmallows");
+  assert.equal(r.quantity_text, "1 1/2 cups", `compound fraction must collapse to "1 1/2 cups", got "${r.quantity_text}"`);
+}
+{
+  const r = parseFirst("1/4 teaspoon Platinum Yeast from Red Star");
+  assert.equal(r.name, "Platinum Yeast from Red Star");
+  assert.equal(r.quantity_text, "1/4 teaspoon");
+}
+{
+  // Decimal sources (model output) are fine to keep as-is
+  const r = parseFirst("0.25 cup granulated sugar");
+  assert.ok(r.quantity_text != null, "decimal quantities should also be preserved");
+  assert.equal(r.name, "granulated sugar");
+}
+{
+  const [r] = parseIngredientObjects([{ display_name: "Pinch of sugar", quantity_text: "pinch" }]);
+  assert.equal(r.name, "sugar", "word-based quantity prefixes must not leave a leading 'of' in the ingredient name");
+  assert.equal(r.quantity_text, "pinch");
+}
 
 const fourMinutesAgo = new Date(Date.now() - 4 * 60_000).toISOString();
 const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();

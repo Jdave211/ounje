@@ -5,6 +5,10 @@ struct OunjePaywallHostView: View {
     let initialTier: OunjePricingTier?
     let isDismissible: Bool
     let usesDummyTrialFlow: Bool
+    // When true, this is a lapsed member hitting the expiry gate — not a brand-new user.
+    // Swaps the new-user eyebrow/headline for a warmer "welcome back / membership ended"
+    // framing while keeping the same (hard-wall) plan picker and CTA.
+    let isReturningMember: Bool
     let onClose: () -> Void
     let onUpgradeSuccess: (() -> Void)?
 
@@ -22,12 +26,14 @@ struct OunjePaywallHostView: View {
         initialTier: OunjePricingTier?,
         isDismissible: Bool = true,
         usesDummyTrialFlow: Bool = false,
+        isReturningMember: Bool = false,
         onClose: @escaping () -> Void,
         onUpgradeSuccess: (() -> Void)? = nil
     ) {
         self.initialTier = initialTier
         self.isDismissible = isDismissible
         self.usesDummyTrialFlow = usesDummyTrialFlow
+        self.isReturningMember = isReturningMember
         self.onClose = onClose
         self.onUpgradeSuccess = onUpgradeSuccess
         _selectedTier = State(initialValue: Self.defaultTier(from: initialTier))
@@ -86,7 +92,7 @@ struct OunjePaywallHostView: View {
                             .fill(OunjePalette.accent)
                             .frame(width: 42, height: 10)
 
-                        Text("7 days free")
+                        Text(isReturningMember ? "Welcome back" : "7 days free")
                             .font(.custom("Slee_handwritting-Regular", size: compact ? 20 : 26))
                             .foregroundStyle(.white.opacity(0.92))
                             .lineLimit(1)
@@ -351,9 +357,21 @@ struct OunjePaywallHostView: View {
     }
 
     private var yearlySavingsBadgeText: String? {
+        // Compute the real annual discount from the LIVE StoreKit prices for this storefront
+        // (1 − annual / 12·monthly). Apple's per-region price tiers don't preserve the US
+        // ratio, so the old hardcoded "27% off" was wrong in other currencies. Fall back to
+        // the static copy only when the products haven't loaded.
+        if let monthly = store.availableMembershipProducts[monthlyPlan],
+           let annual = store.availableMembershipProducts[yearlyPlan],
+           monthly.price > 0 {
+            let twelveMonths = monthly.price * 12
+            guard twelveMonths > 0 else { return nil }
+            let fraction = (twelveMonths - annual.price) / twelveMonths
+            let percent = (fraction * 100 as NSDecimalNumber).intValue
+            return percent >= 5 ? "\(percent)% off" : nil
+        }
         guard let savings = yearlyPlan.savingsText else { return nil }
-        let normalized = savings.replacingOccurrences(of: "Save ", with: "")
-        return "\(normalized) off"
+        return "\(savings.replacingOccurrences(of: "Save ", with: "")) off"
     }
 
     @MainActor

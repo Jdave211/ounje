@@ -47,7 +47,13 @@ enum SharedRecipeImportInbox {
     }
 
     /// Clears envelopes stuck in `processing` after a crash, background kill, or hung network (local inbox only).
-    static func reconcileStaleProcessingEnvelopes(staleAfter seconds: TimeInterval = 15 * 60) throws {
+    ///
+    /// Only affects envelopes that never received a server job ID — those are pre-handoff and
+    /// should resolve within the create POST's 90s timeout. A 2-minute backstop (vs the old
+    /// 15 minutes) means a wedged "Sending to server" self-heals to "Retry needed" quickly
+    /// instead of spinning for a quarter hour. Envelopes that already hold a job ID are skipped,
+    /// so genuinely slow server-side ingestion is never failed prematurely.
+    static func reconcileStaleProcessingEnvelopes(staleAfter seconds: TimeInterval = 2 * 60) throws {
         let all = try readAll()
         let now = Date()
         let staleStates: Set<String> = ["submitted", "processing", "fetching", "parsing", "normalized"]
@@ -57,7 +63,12 @@ enum SharedRecipeImportInbox {
                 continue
             }
 
-            let ref = envelope.serverSubmittedAt ?? envelope.lastAttemptAt ?? envelope.updatedAt ?? envelope.createdAt
+            // Measure staleness from the LATEST activity, not the first submit —
+            // serverSubmittedAt is never refreshed on a re-drive, so anchoring on it would
+            // fail an envelope whose retry POST is still legitimately in flight.
+            let ref = [envelope.serverSubmittedAt, envelope.lastAttemptAt, envelope.updatedAt]
+                .compactMap { $0 }
+                .max() ?? envelope.createdAt
             guard now.timeIntervalSince(ref) >= seconds else { continue }
             let failed = SharedRecipeImportEnvelope(
                 id: envelope.id,

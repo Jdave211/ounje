@@ -101,6 +101,7 @@ struct RootView: View {
                             OunjePaywallHostView(
                                 initialTier: .plus,
                                 isDismissible: false,
+                                isReturningMember: isLapsedMemberAtGate,
                                 onClose: { }
                             )
                             .id("subscription-gate")
@@ -164,6 +165,15 @@ struct RootView: View {
                 await store.refreshLiveTrackingState()
             }
             await notificationCenter.syncForCurrentSession(initialSession)
+            // Past-onboarding users who were never asked (e.g. updated rather than reinstalled)
+            // still get the prompt once. No-op after iOS has a determined status.
+            if store.isOnboarded {
+                await notificationCenter.requestNotificationPermissionIfUndetermined(session: initialSession)
+            }
+            // Re-assert the local trial-ending reminders (2d + 1d before expiry) every
+            // foreground. Idempotent; recovers reminders lost to a reinstall or to
+            // permission being granted after purchase.
+            _ = await notificationCenter.scheduleTrialEndingReminder(entitlement: store.membershipEntitlement)
 
             while !Task.isCancelled {
                 let session = await currentNotificationSession()
@@ -227,6 +237,17 @@ struct RootView: View {
             await store.bootstrapFromSupabaseIfNeeded()
         }
         await store.refreshPostRuntimeBootstrapDetails(session: session, runtimeSnapshot: snapshot)
+    }
+
+    // True when the gate is showing to someone who HAD a paid subscription that lapsed
+    // (vs. a brand-new user who never subscribed). Distinguished by an App Store source or
+    // a prior transaction on the (now-inactive) entitlement — so the paywall can greet them
+    // with "welcome back / your membership ended" instead of the cold new-user pitch.
+    private var isLapsedMemberAtGate: Bool {
+        guard let entitlement = store.membershipEntitlement, entitlement.isActive != true else { return false }
+        return entitlement.source == .appStore
+            || entitlement.originalTransactionID?.isEmpty == false
+            || entitlement.transactionID?.isEmpty == false
     }
 
     private var shouldShowSubscriptionGate: Bool {
@@ -502,6 +523,20 @@ final class AppNotificationCenterManager: ObservableObject {
         }
     }
 
+    /// Recovers the system permission prompt for users who are already past onboarding but
+    /// were never asked (an app update doesn't replay onboarding, and before the onboarding
+    /// race fix the prompt could be skipped entirely). Prompts exactly once: once iOS has a
+    /// determined status this is a cheap no-op, so it's safe to call on every launch/foreground.
+    /// Callers must gate on `store.isOnboarded` so it never fires mid-onboarding.
+    func requestNotificationPermissionIfUndetermined(session: AuthSession?) async {
+        await refreshAuthorizationStatus()
+        guard authorizationStatus == .notDetermined else { return }
+        await requestAuthorizationIfNeeded()
+        if canPresentLocalNotifications {
+            OunjePushTokenRegistrar.shared.registerCurrentTokenIfPossible(session: session, force: true)
+        }
+    }
+
     @discardableResult
     func requestNotificationPermissionAndRegister(session: AuthSession?) async -> Bool {
         await refreshAuthorizationStatus()
@@ -518,45 +553,57 @@ final class AppNotificationCenterManager: ObservableObject {
         return true
     }
 
+    /// Schedules LOCAL trial-ending reminders (2 days + 1 day before expiry) — no server
+    /// push involved. Idempotent (replaces any pending copies), so it's safe to call on
+    /// every foreground: that self-heals the original fragility where the reminder was
+    /// scheduled exactly once at purchase and silently lost if notification permission
+    /// wasn't granted yet (or the app was reinstalled, which wipes pending locals).
     @discardableResult
     func scheduleTrialEndingReminder(entitlement: AppUserEntitlement?) async -> Bool {
         await refreshAuthorizationStatus()
         guard canPresentLocalNotifications,
-              entitlement?.metadata["is_on_trial"]?.lowercased() == "true",
-              let expiresAt = entitlement?.expiresAt,
-              expiresAt > Date()
+              let entitlement,
+              let expiresAt = entitlement.expiresAt,
+              expiresAt > Date(),
+              // Only trials get "your trial ends" copy — a regular subscription renews
+              // and would make this notification factually wrong.
+              entitlement.metadata["is_on_trial"]?.lowercased() == "true"
         else {
             return false
         }
 
-        let reminderDate = expiresAt.addingTimeInterval(-2 * 24 * 60 * 60)
-        guard reminderDate > Date().addingTimeInterval(60) else { return false }
-
-        let identifier = "ounje-trial-ending-reminder"
-        notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
-
-        let content = UNMutableNotificationContent()
-        content.title = "Your Ounje trial ends in 2 days"
-        content.body = "Keep it if it’s helping. You can manage or cancel anytime in App Store subscriptions."
-        content.sound = .default
-        content.categoryIdentifier = "OUNJE_TRIAL_REMINDER"
-        content.threadIdentifier = "membership"
-        content.userInfo = [
-            "kind": "trial_reminder",
-            "actionURL": "ounje://profile/membership",
-            "action_url": "ounje://profile/membership",
-            "deep_link": "ounje://profile/membership",
+        let reminders: [(identifier: String, daysBefore: Double, title: String)] = [
+            ("ounje-trial-ending-reminder-2d", 2, "Your Ounje trial ends in 2 days"),
+            ("ounje-trial-ending-reminder", 1, "Your Ounje trial ends tomorrow"),
         ]
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: reminders.map(\.identifier))
 
-        let interval = max(60, reminderDate.timeIntervalSinceNow)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-        do {
-            try await notificationCenter.add(request)
-            return true
-        } catch {
-            return false
+        var scheduledAny = false
+        for reminder in reminders {
+            let reminderDate = expiresAt.addingTimeInterval(-reminder.daysBefore * 24 * 60 * 60)
+            guard reminderDate > Date().addingTimeInterval(60) else { continue }
+
+            let content = UNMutableNotificationContent()
+            content.title = reminder.title
+            content.body = "Keep it if it’s helping. You can manage or cancel anytime in App Store subscriptions."
+            content.sound = .default
+            content.categoryIdentifier = "OUNJE_TRIAL_REMINDER"
+            content.threadIdentifier = "membership"
+            content.userInfo = [
+                "kind": "trial_reminder",
+                "actionURL": "ounje://profile/membership",
+                "action_url": "ounje://profile/membership",
+                "deep_link": "ounje://profile/membership",
+            ]
+
+            let interval = max(60, reminderDate.timeIntervalSinceNow)
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+            let request = UNNotificationRequest(identifier: reminder.identifier, content: content, trigger: trigger)
+            if (try? await notificationCenter.add(request)) != nil {
+                scheduledAny = true
+            }
         }
+        return scheduledAny
     }
 
     private var currentNotificationFailureRetryInterval: TimeInterval {
@@ -2102,6 +2149,10 @@ private struct MealPlannerShellView: View {
     @State private var requestedImportQueueTab: SharedRecipeImportQueueTab?
     @State private var isProcessingSharedImports = false
     @State private var surfacedCompletedImportIDs = Set<String>()
+    @State private var prewarmedCompletedImportIDs = Set<String>()
+    // Recipe IDs of completed "saved" imports we've already inserted into the cookbook,
+    // so we don't re-merge/persist them on every shared-import refresh cycle.
+    @State private var reconciledSavedImportRecipeIDs = Set<String>()
     @State private var lastSharedImportRefreshAt = Date.distantPast
     @State private var previousSelectedTab: AppTab
     @State private var tabTransitionDirection: CGFloat = 1
@@ -2260,9 +2311,18 @@ private struct MealPlannerShellView: View {
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
             surfacedCompletedImportIDs.removeAll()
+            prewarmedCompletedImportIDs.removeAll()
+            // Load the PERSISTED set of imports we've already auto-added to the cookbook.
+            // Persisting it (instead of resetting per session) means each import is
+            // auto-inserted exactly once — so once the user unsaves an imported recipe it
+            // stays unsaved instead of getting re-added on the next launch/refresh.
+            reconciledSavedImportRecipeIDs = loadReconciledSavedImportIDs(for: store.authSession?.userID)
         }
         .task(id: savedStoreAuthKey) {
             await savedStore.bootstrap(authSession: await savedRecipesSession())
+            // Tombstones are now hydrated — run the import reconcile that the guard paused
+            // (the concurrent shared-import task may have early-returned before hydration).
+            reconcileCompletedSavedImportsIntoCookbook()
         }
         .task(id: "fresh-plan::\(store.authSession?.userID ?? "signed-out")") {
             await store.ensureFreshPlanIfNeeded()
@@ -2359,6 +2419,10 @@ private struct MealPlannerShellView: View {
                 }
 
                 if hasQueuedWork {
+                    // allowNewSubmissions so envelopes whose handoff POST died (app suspended
+                    // mid-share, dropped connection) get re-driven here. shouldAutoProcess
+                    // windows + caps the re-sends, and the server dedupes by source, so this
+                    // can't double-import.
                     await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
                 }
 
@@ -2399,6 +2463,8 @@ private struct MealPlannerShellView: View {
                 await refreshSharedImportState(force: false)
                 lastSharedImportRefreshAt = .now
                 if hasQueuedSharedImportWork || hasLiveSharedImportWork {
+                    // allowNewSubmissions: returning to the foreground is exactly when a
+                    // suspended-mid-share handoff needs to be re-sent (see poll loop above).
                     await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
                     await refreshSharedImportState(force: true)
                     lastSharedImportRefreshAt = .now
@@ -2588,6 +2654,8 @@ private struct MealPlannerShellView: View {
                 await handleCompletedPreppedImport(response)
             }
         )
+        reconcileCompletedSavedImportsIntoCookbook()
+        await prewarmCompletedImportDetails()
     }
 
     @MainActor
@@ -2650,6 +2718,53 @@ private struct MealPlannerShellView: View {
         AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
     }
 
+    // Insert completed "saved" imports into the cookbook the moment they finish, so the
+    // Saved tab updates live instead of only after the next bulk saved-recipes sync (or
+    // a manual open/close of the import detail). Uses the card the completed-imports feed
+    // already carries — no extra network — and the next remote refresh hydrates full data.
+    @MainActor
+    private func reconcileCompletedSavedImportsIntoCookbook() {
+        // Wait until the server's unsave tombstones are loaded. Otherwise, right after a
+        // reinstall (local tombstones wiped), respectUnsave sees an empty set and re-adds
+        // every completed import the user ever unsaved. The reconcile re-runs on the next
+        // refreshSharedImportState once hydration completes, so nothing is lost by waiting.
+        guard savedStore.didHydrateRemoteTombstones else { return }
+        var didChange = false
+        for item in recipeImportHistory.completedItems {
+            let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard status == "saved" else { continue }
+            guard let recipeID = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !recipeID.isEmpty,
+                  !reconciledSavedImportRecipeIDs.contains(recipeID) else { continue }
+            // Mark as auto-reconciled (persisted below) so this import is never auto-added
+            // again — the user's later save/unsave is authoritative from here on.
+            reconciledSavedImportRecipeIDs.insert(recipeID)
+            didChange = true
+            // Already in the cookbook (e.g. saved from Discover) — nothing to insert.
+            if savedStore.savedRecipes.contains(where: { $0.id == recipeID }) { continue }
+            guard let card = item.savedRecipeCard else { continue }
+            savedStore.saveImportedRecipe(card, showToast: false, respectUnsave: true)
+        }
+        if didChange {
+            saveReconciledSavedImportIDs(reconciledSavedImportRecipeIDs, for: store.authSession?.userID)
+        }
+    }
+
+    private func reconciledImportsStorageKey(for userID: String?) -> String {
+        "ounje.reconciledSavedImports.v1.\(userID ?? "guest")"
+    }
+
+    private func loadReconciledSavedImportIDs(for userID: String?) -> Set<String> {
+        let data = UserDefaults.standard.data(forKey: reconciledImportsStorageKey(for: userID))
+        let ids = data.flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
+        return Set(ids)
+    }
+
+    private func saveReconciledSavedImportIDs(_ ids: Set<String>, for userID: String?) {
+        guard let data = try? JSONEncoder().encode(Array(ids)) else { return }
+        UserDefaults.standard.set(data, forKey: reconciledImportsStorageKey(for: userID))
+    }
+
     @MainActor
     private func handleCompletedPreppedImport(_ response: RecipeImportResponse) async {
         guard let detail = response.recipeDetail else { return }
@@ -2667,6 +2782,23 @@ private struct MealPlannerShellView: View {
             destination: nil
         )
         AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
+    }
+
+    private func prewarmCompletedImportDetails() async {
+        let accessToken = await store.freshUserDataSession()?.accessToken
+        let recipeIDs = recipeImportHistory.completedItems.prefix(8).compactMap { item -> String? in
+            guard let id = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
+                return nil
+            }
+            return id
+        }
+
+        for recipeID in recipeIDs {
+            guard prewarmedCompletedImportIDs.insert(recipeID).inserted else { continue }
+            Task(priority: .utility) {
+                _ = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
+            }
+        }
     }
 
 
@@ -3043,7 +3175,11 @@ private struct MealPlannerShellView: View {
                         sourceApp: envelope.sourceApp,
                         attachments: envelope.attachments,
                         processingState: "submitted",
-                        attemptCount: envelope.attemptCount,
+                        // Count this submit attempt (pre-job envelopes only) so the re-drive
+                        // cap in shouldAutoProcess can stop a persistently failing handoff.
+                        attemptCount: previousJobID.isEmpty
+                            ? (envelope.attemptCount ?? 0) + 1
+                            : envelope.attemptCount,
                         lastAttemptAt: Date(),
                         serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
                         lastError: nil,
@@ -3102,8 +3238,14 @@ private struct MealPlannerShellView: View {
                     return trimmed.isEmpty ? nil : trimmed
                 }
                 .first
+                // Only fail when the server explicitly says "failed", or when the job is in
+                // needs_review/draft AND has an explicit error message (meaning it truly couldn't
+                // parse). A needs_review without an error just means human review is needed but
+                // the import may still complete — firing a failure notification there was a false
+                // positive that alarmed users even when the import succeeded shortly after.
+                let hasExplicitError = !(response.job.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
                 let shouldFailImport = backendProcessingState == "failed"
-                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe)
+                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe && hasExplicitError)
 
                 if shouldFailImport {
                     let failedEnvelope = SharedRecipeImportEnvelope(
@@ -3217,6 +3359,19 @@ private struct MealPlannerShellView: View {
                 let shouldKeepServerJobLive = !previousJobID.isEmpty
                     && envelope.isLiveQueueState
                     && Self.isTransientSharedImportNetworkError(error)
+                // A pre-job submit that died for a transient reason (timeout, dropped
+                // connection, or the task getting cancelled when the app was backgrounded
+                // mid-share) goes back to "queued" so the next processing pass re-sends it
+                // immediately — failing it outright forced the user to tap Retry for what
+                // is routine app-switching during a share. The attempt cap keeps a truly
+                // unreachable server from looping; the final attempt falls through to
+                // the failed path below.
+                let isCancelledRequest = error is CancellationError
+                    || ((error as NSError).domain == NSURLErrorDomain
+                        && (error as NSError).code == NSURLErrorCancelled)
+                let shouldRequeueHandoff = previousJobID.isEmpty
+                    && activeAttemptCount < SharedRecipeImportEnvelope.maxHandoffSubmitAttempts
+                    && (isCancelledRequest || Self.isTransientSharedImportNetworkError(error))
                 let errorMessage = (error as? RecipeImportServiceError).map {
                     switch $0 {
                     case .invalidRequest:
@@ -3237,17 +3392,22 @@ private struct MealPlannerShellView: View {
                     canonicalSourceURLString: envelope.canonicalSourceURLString,
                     sourceApp: envelope.sourceApp,
                     attachments: envelope.attachments,
-                    processingState: shouldKeepServerJobLive ? envelope.normalizedProcessingState : "failed",
+                    processingState: shouldKeepServerJobLive
+                        ? envelope.normalizedProcessingState
+                        : (shouldRequeueHandoff ? "queued" : "failed"),
                     attemptCount: activeAttemptCount,
                     lastAttemptAt: Date(),
-                    serverSubmittedAt: envelope.serverSubmittedAt,
+                    // Clearing serverSubmittedAt marks the attempt as definitively over, so
+                    // shouldAutoProcess re-submits on the next pass instead of waiting out
+                    // the 100s in-flight window.
+                    serverSubmittedAt: shouldRequeueHandoff ? nil : envelope.serverSubmittedAt,
                     lastError: errorMessage,
                     updatedAt: Date()
                 )
                 try? SharedRecipeImportInbox.update(failedEnvelope)
                 await sharedImportInbox.refresh()
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
-                if !shouldKeepServerJobLive {
+                if !shouldKeepServerJobLive && !shouldRequeueHandoff {
                     toastCenter.show(
                         title: "Couldn’t import share",
                         subtitle: errorMessage,
@@ -7601,6 +7761,25 @@ private struct SharedRecipeImportQueueRow: View {
         return "Shared import"
     }
 
+    // The import start time: fixed at the moment the user triggered the import.
+    // Using createdAt (never changes) as the anchor so the elapsed clock counts
+    // continuously upward and doesn't reset to 0 when lastAttemptAt is updated
+    // with each poll response.
+    private var importStartDate: Date { item.createdAt }
+
+    private var elapsedText: String {
+        // Use updatedAt as the stop-time for completed/failed imports so the
+        // clock shows the final duration rather than counting forever.
+        let endDate: Date = item.isLiveQueueState ? Date() : (item.updatedAt ?? Date())
+        let elapsed = max(0, endDate.timeIntervalSince(importStartDate))
+        if elapsed < 60 {
+            return "\(Int(elapsed))s"
+        }
+        let minutes = Int(elapsed) / 60
+        let seconds = Int(elapsed) % 60
+        return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
+    }
+
     private var sourceSummaryText: String {
         let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? ""
@@ -7764,6 +7943,23 @@ private struct SharedRecipeImportQueueRow: View {
                         )
                 }
                 .buttonStyle(.plain)
+            }
+
+            // Elapsed clock: only shown while the import is actually in-flight. A
+            // failed/retry-needed import isn't timing anything — and because its
+            // createdAt can be hours/days old (e.g. it was queued before the app was
+            // last closed), an elapsed clock there renders nonsense like "1093m". The
+            // "Retry needed" label + error message already convey that state.
+            if item.isLiveQueueState {
+                TimelineView(.periodic(from: importStartDate, by: 1)) { _ in
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 11))
+                        Text(elapsedText)
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                }
             }
         }
         .padding(16)
@@ -8832,8 +9028,14 @@ private struct DiscoverComposerSheet: View {
                     return trimmed.isEmpty ? nil : trimmed
                 }
                 .first
+                // Only fail when the server explicitly says "failed", or when the job is in
+                // needs_review/draft AND has an explicit error message (meaning it truly couldn't
+                // parse). A needs_review without an error just means human review is needed but
+                // the import may still complete — firing a failure notification there was a false
+                // positive that alarmed users even when the import succeeded shortly after.
+                let hasExplicitError = !(response.job.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
                 let shouldFailImport = backendProcessingState == "failed"
-                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe)
+                    || (["draft", "needs_review"].contains(reviewState) && !canDisplayImportedRecipe && hasExplicitError)
                 let normalizedProcessingState: String = {
                     switch backendProcessingState {
                     case "queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized", "saved":
@@ -9856,7 +10058,15 @@ private func parsedCookMinutes(from text: String?) -> Int? {
 }
 
 func formattedRecipeCookTime(minutes: Int) -> String {
-    minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    guard minutes > 0 else { return "\(minutes) minutes" }
+    if minutes < 60 {
+        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+    }
+    // Over an hour: show hours + minutes (e.g. 190 -> "3 hours, 10 min").
+    let hours = minutes / 60
+    let mins = minutes % 60
+    let hourPart = hours == 1 ? "1 hour" : "\(hours) hours"
+    return mins == 0 ? hourPart : "\(hourPart), \(mins) min"
 }
 
 func recipeDisplayCookMinutes(

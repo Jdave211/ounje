@@ -34,7 +34,10 @@ const APNS_TOPIC = APNS_TEAM_ID && APNS_BUNDLE_ID.startsWith(`${APNS_TEAM_ID}.`)
   : APNS_BUNDLE_ID;
 
 const PRODUCTION_HOST = "api.push.apple.com";
-const SANDBOX_HOST = "api.development.push.apple.com";
+// Apple's development/sandbox gateway is api.sandbox.push.apple.com. (There is no
+// api.development.push.apple.com — sending there fails sandbox tokens with
+// BadEnvironmentKeyInToken, which is why debug-build pushes never arrived.)
+const SANDBOX_HOST = "api.sandbox.push.apple.com";
 const APNS_PORT = 443;
 
 // JWTs for APNs must be regenerated at most once per hour and at least once

@@ -1163,15 +1163,6 @@ struct NotificationPreferencesSheet: View {
                             )
                         )
                         preferenceRow(
-                            title: "Shopping item updates",
-                            detail: "Item changes while Ounje builds your cart.",
-                            symbolName: "list.bullet.rectangle",
-                            isOn: Binding(
-                                get: { preferences.agentShoppingItemUpdates },
-                                set: { update(\.agentShoppingItemUpdates, to: $0) }
-                            )
-                        )
-                        preferenceRow(
                             title: "Prep reminders",
                             detail: "Helpful reminders for plans you’re cooking.",
                             symbolName: "calendar.badge.clock",

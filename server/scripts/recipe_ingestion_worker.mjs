@@ -19,7 +19,11 @@ const DEFAULT_BATCH_SIZE = 3;
 const DEFAULT_IDLE_SLEEP_MS = 20_000;
 const DEFAULT_WAKE_TIMEOUT_MS = 15_000;
 const MAX_WAKE_TIMEOUT_MS = 60_000;
-const MAX_EMPTY_QUEUE_SLEEP_MS = 10 * 60 * 1000;
+// In poll mode (no Redis wake), the idle sleep backs off exponentially. Cap it low so
+// a freshly-queued import is claimed within seconds instead of waiting out a multi-minute
+// backoff (which looked like imports being "stuck on queuing"). One claim RPC every ~15s
+// while idle is negligible load; correctness/latency wins.
+const MAX_EMPTY_QUEUE_SLEEP_MS = 15 * 1000;
 const DEFAULT_STALE_REPAIR_INTERVAL_MS = 5 * 60 * 1000;
 let shuttingDown = false;
 
@@ -61,6 +65,20 @@ function parseArgs(argv) {
   }
 
   return args;
+}
+
+async function repairStaleImports({ workerID, staleAfterMinutes }) {
+  try {
+    const result = await repairStaleRecipeIngestionJobs({
+      staleAfterMinutes,
+      workerID,
+    });
+    if (result.actions.length > 0) {
+      console.warn(`[recipe-ingestion-worker] repaired_stale=${result.actions.length} worker=${workerID}`);
+    }
+  } catch (error) {
+    console.warn(`[recipe-ingestion-worker] stale repair failed worker=${workerID}: ${error.message}`);
+  }
 }
 
 function sleep(ms) {
@@ -115,30 +133,12 @@ async function waitForRedisWake(channel, timeoutMs) {
   });
 }
 
-async function repairStaleImports({ workerID, staleAfterMinutes }) {
-  try {
-    const result = await repairStaleRecipeIngestionJobs({
-      staleAfterMinutes,
-      workerID,
-    });
-    if (result.actions.length > 0) {
-      console.warn(
-        `[recipe-ingestion-worker] repaired_stale=${result.actions.length} worker=${workerID}`
-      );
-    }
-  } catch (error) {
-    console.warn(
-      `[recipe-ingestion-worker] stale repair failed worker=${workerID}: ${error.message}`
-    );
-  }
-}
-
 async function main() {
   const args = parseArgs(process.argv);
   const workerID = args.workerID ?? `recipe_ingest_${process.pid}`;
   let emptyQueueSleepMs = args.idleSleepMs;
   let lastStaleRepairAt = 0;
-  const wakeMode = args.wakeMode === "redis" ? "redis" : "poll";
+  const wakeMode = args.wakeMode === "redis" && redisConfigStatus().configured ? "redis" : "poll";
   console.log(`[recipe-ingestion-worker] started worker=${workerID} wakeMode=${wakeMode}`);
 
   const requestShutdown = (signal) => {

@@ -11,9 +11,15 @@ function redisURL() {
 }
 
 function redisDisabled() {
-  return ["1", "true", "yes", "on"].includes(
-    String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase()
+  const explicitValue = String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(explicitValue)) return true;
+
+  const isProduction = [process.env.OUNJE_RUNTIME_ENV, process.env.NODE_ENV]
+    .some((value) => String(value ?? "").trim().toLowerCase() === "production");
+  const productionRedisEnabled = ["1", "true", "yes", "on"].includes(
+    String(process.env.OUNJE_ENABLE_PRODUCTION_REDIS ?? "").trim().toLowerCase()
   );
+  return isProduction && !productionRedisEnabled;
 }
 
 function redisConnectTimeoutMs() {
@@ -65,7 +71,12 @@ export async function getRedisClient() {
     url,
     socket: {
       connectTimeout: redisConnectTimeoutMs(),
-      reconnectStrategy: false,
+      // Auto-reconnect with capped backoff so a dropped connection self-heals (a
+      // long-lived worker would otherwise hold a dead client forever — breaking the
+      // wake bus + lock acquisition until a manual restart). Give up after ~10 tries
+      // so we don't hammer a Redis that's genuinely gone; getRedisClient() then
+      // rebuilds the client on the next call.
+      reconnectStrategy: (retries) => (retries > 10 ? false : Math.min(200 * 2 ** retries, 5000)),
     },
   });
 

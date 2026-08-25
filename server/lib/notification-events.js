@@ -46,6 +46,9 @@ function notificationPreferenceAreaForKind(kind, metadata = {}) {
 
 async function allowsPushForUserPreference(supabase, userId, kind, metadata = {}) {
   const area = notificationPreferenceAreaForKind(kind, metadata);
+  // Item-by-item shopping updates were removed from the app (no longer a user-facing
+  // toggle), so never deliver them — they'd otherwise keep firing with no way to opt out.
+  if (area === "agentShoppingItemUpdates") return false;
   if (!area) return true;
 
   const { data, error } = await supabase
@@ -186,6 +189,7 @@ export async function createNotificationEvent({
         recipe_id: normalizeString(recipeId) || null,
         order_id: normalizeString(orderId) || null,
         plan_id: normalizeString(planId) || null,
+        job_id: normalizeString(payload.metadata?.job_id) || null,
       },
     }).catch((cause) => {
       console.warn("[notifications] APNs push failed:", cause.message);

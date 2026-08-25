@@ -979,7 +979,9 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
         case (.free, _):
             return "Free"
         case (.foundingLifetime, _):
-            return "$399"
+            // Founding isn't sold via StoreKit and isn't shown as a purchasable option;
+            // defer to the single tier definition so there's no contradictory price literal.
+            return OunjePricingTier.foundingLifetime.priceText
         }
     }
 

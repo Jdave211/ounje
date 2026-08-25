@@ -4,6 +4,9 @@ import StoreKit
 struct StoreProductSnapshot: Hashable {
     let productID: String
     let displayPrice: String
+    // Raw numeric price (in the storefront's currency) so we can compute the real
+    // monthly-vs-annual savings per storefront instead of hardcoding a US figure.
+    let price: Decimal
     let hasIntroductoryOffer: Bool
     let isEligibleForIntroOffer: Bool
 }
@@ -52,6 +55,7 @@ final class StoreKitMembershipBillingService {
             snapshots[plan] = StoreProductSnapshot(
                 productID: product.id,
                 displayPrice: product.displayPrice,
+                price: product.price,
                 hasIntroductoryOffer: subscription?.introductoryOffer != nil,
                 isEligibleForIntroOffer: isEligibleForIntroOffer
             )

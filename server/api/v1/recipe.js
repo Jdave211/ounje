@@ -327,24 +327,14 @@ function recipeHasAnySourceURL(recipe = {}) {
 
 function recipeDetailPayloadIsDisplayReady(payload = {}) {
   const recipe = payload?.recipe ?? payload;
-  if (!hasCompleteDisplayMacros(recipe)) return false;
-  if (recipeHasVideoSourceHint(recipe) && !recipeHasAnySourceURL(recipe)) return false;
-  const description = trimString(recipe?.description);
-  const lowerDescription = description.toLowerCase();
-  if (
-    description.length > 320
-    || (/\bingredients?\b/.test(lowerDescription) && /\b(instructions?|directions?|method)\b/.test(lowerDescription))
-  ) {
-    return false;
-  }
-  const cookText = trimString(recipe?.cook_time_text);
-  if (
-    /\bper\s+(side|batch|piece|donut|doughnut)\b/i.test(cookText)
-    && (!Number.isFinite(Number(recipe?.prep_time_minutes)) || !Number.isFinite(Number(recipe?.cook_time_minutes)))
-  ) {
-    return false;
-  }
-  return true;
+  // A detail with no ingredients or no steps (e.g. one cached mid-import before the
+  // relational/json content landed) is NOT display-ready — treating it as ready makes
+  // the API keep serving a blank/half-done recipe until the cache TTL expires. Reject
+  // it so the route re-reads the complete recipe from the DB.
+  const ingredientCount = Array.isArray(recipe?.ingredients) ? recipe.ingredients.length : 0;
+  const stepCount = Array.isArray(recipe?.steps) ? recipe.steps.length : 0;
+  if (ingredientCount === 0 || stepCount === 0) return false;
+  return Boolean(trimString(recipe?.id) && trimString(recipe?.title));
 }
 
 function missingDisplayMacroPatch(existingRecipe = {}, candidateRecipe = {}) {
@@ -575,12 +565,40 @@ async function prepareRecipeDetailForDisplay(recipeID, detail = {}) {
     .filter(Boolean);
 
   const needsImageHydration = recipeDetailNeedsIngredientImageHydration(detail);
-  const [macroReady, imageLookup] = await Promise.all([
+  const [macroResult, imageLookupResult] = await Promise.allSettled([
     ensureRecipeDetailDisplayMacros(recipeID, detail),
     needsImageHydration ? fetchIngredientImageLookup(ingredientNames) : Promise.resolve(new Map()),
   ]);
 
-  return hydrateRecipeDetailIngredientImages(macroReady, imageLookup.size ? imageLookup : null);
+  if (macroResult.status === "rejected") {
+    console.warn("[recipe/detail] optional macro enrichment failed:", macroResult.reason?.message ?? macroResult.reason);
+  }
+  if (imageLookupResult.status === "rejected") {
+    console.warn("[recipe/detail] optional ingredient image enrichment failed:", imageLookupResult.reason?.message ?? imageLookupResult.reason);
+  }
+
+  const macroReady = macroResult.status === "fulfilled" ? macroResult.value : detail;
+  const imageLookup = imageLookupResult.status === "fulfilled" ? imageLookupResult.value : new Map();
+  try {
+    return await hydrateRecipeDetailIngredientImages(macroReady, imageLookup.size ? imageLookup : null);
+  } catch (error) {
+    console.warn("[recipe/detail] optional ingredient image hydration failed:", error.message);
+    return macroReady;
+  }
+}
+
+function refreshRecipeDetailEnrichmentInBackground(recipeID, detailCacheKey, detail, ttlMs) {
+  void prepareRecipeDetailForDisplay(recipeID, detail)
+    .then((enrichedDetail) => writeSharedTimedCache(
+      recipeDetailCache,
+      detailCacheKey,
+      { recipe: enrichedDetail },
+      ttlMs,
+      "recipe-detail"
+    ))
+    .catch((error) => {
+      console.warn("[recipe/detail] background enrichment failed:", error.message);
+    });
 }
 
 function hasStructuredRecipeJSON(recipe = {}) {
@@ -1195,17 +1213,15 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       "recipe-detail"
     );
     if (cached && recipeDetailPayloadIsDisplayReady(cached)) {
-      if (!recipeDetailNeedsIngredientImageHydration(cached.recipe)) return res.json(cached);
-      const hydratedRecipe = await hydrateRecipeDetailIngredientImages(cached.recipe);
-      const hydratedPayload = { recipe: hydratedRecipe };
-      await writeSharedTimedCache(
-        recipeDetailCache,
-        detailCacheKey,
-        hydratedPayload,
-        recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
-        "recipe-detail"
-      );
-      return res.json(hydratedPayload);
+      if (!hasCompleteDisplayMacros(cached.recipe) || recipeDetailNeedsIngredientImageHydration(cached.recipe)) {
+        refreshRecipeDetailEnrichmentInBackground(
+          recipeId,
+          detailCacheKey,
+          cached.recipe,
+          recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS
+        );
+      }
+      return res.json(cached);
     }
 
     const recipe = recipeId.startsWith("uir_")
@@ -1216,18 +1232,20 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     }
 
     if (hasStructuredRecipeJSON(recipe)) {
-      const recipeDetail = await prepareRecipeDetailForDisplay(recipeId, normalizeRecipeDetail(recipe));
+      const recipeDetail = normalizeRecipeDetail(recipe);
       const payload = {
         recipe: recipeDetail,
       };
 
-      await writeSharedTimedCache(
+      const cacheTTL = recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS;
+      writeSharedTimedCache(
         recipeDetailCache,
         detailCacheKey,
         payload,
-        recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
+        cacheTTL,
         "recipe-detail"
       );
+      refreshRecipeDetailEnrichmentInBackground(recipeId, detailCacheKey, recipeDetail, cacheTTL);
 
       return res.json(payload);
     }
@@ -1244,23 +1262,25 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
         )
       : [];
 
-    const recipeDetail = await prepareRecipeDetailForDisplay(recipeId, normalizeRecipeDetail(recipe, {
+    const recipeDetail = normalizeRecipeDetail(recipe, {
         recipeIngredients,
         recipeSteps,
         stepIngredients,
-      }));
+      });
 
     const payload = {
       recipe: recipeDetail,
     };
 
-    await writeSharedTimedCache(
+    const cacheTTL = recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS;
+    writeSharedTimedCache(
       recipeDetailCache,
       detailCacheKey,
       payload,
-      recipeId.startsWith("uir_") ? IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS : RECIPE_DETAIL_CACHE_TTL_MS,
+      cacheTTL,
       "recipe-detail"
     );
+    refreshRecipeDetailEnrichmentInBackground(recipeId, detailCacheKey, recipeDetail, cacheTTL);
 
     return res.json(payload);
   } catch (error) {
@@ -1378,7 +1398,17 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
       try {
         ({ accessToken, userID: resolvedUserID } = await resolveAuthorizedUserID(req));
       } catch (error) {
-        return sendAuthError(res, error, "recipe/detail/similar");
+        // Don't fail the whole "similar" rail on a flaky session. We can't read the
+        // user's own recipe without auth (RLS), so degrade to latest public recipes
+        // instead of returning an error and showing nothing at the bottom of the page.
+        const latest = await fetchLatestRecipes(Math.max(limit + 1, 12));
+        return res.json({
+          recipes: latest
+            .filter((candidate) => String(candidate.id) !== recipeId)
+            .slice(0, limit)
+            .map(toRecipeCardPayload),
+          rankingMode: "similar_fallback_latest_unauthenticated",
+        });
       }
     } else {
       // Optional auth — allows surfacing the user's own imports as similar results
@@ -1465,7 +1495,7 @@ recipe_router.get("/recipe/detail/:id/similar", async (req, res) => {
             query_embedding: toPgVector(embedding),
             match_count: Math.min(limit + 2, 6),
             exclude_id: recipeId,
-          }).catch(() => [])
+          }, accessToken).catch(() => [])
         : Promise.resolve([]),
     ]);
 
@@ -5200,12 +5230,16 @@ async function embedTextCached(input, model) {
   return embedding;
 }
 
-async function callRecipeRpc(functionName, payload) {
+async function callRecipeRpc(functionName, payload, accessToken = null) {
+  // Some RPCs (e.g. match_user_import_recipes_basic) are SECURITY DEFINER and gate on
+  // auth.uid() — they MUST be called with the user's JWT or they return nothing. Pass
+  // the access token as the bearer when provided; public RPCs fall back to the anon key.
+  const bearer = (typeof accessToken === "string" && accessToken.trim()) ? accessToken.trim() : SUPABASE_ANON_KEY;
   const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${functionName}`, {
     method: "POST",
     headers: {
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${bearer}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),

@@ -16,7 +16,7 @@ import { sanitizeDiscoverBrackets } from "./discover-brackets.js";
 import { runYoutubeDl as ytdl } from "./youtube-dl-wrapper.js";
 import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { broadcastUserInvalidation } from "./realtime-invalidation.js";
-import { acquireRedisLock, publishRedisJSON, readRedisJSON, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
+import { acquireRedisLock, deleteRedisKey, publishRedisJSON, readRedisJSON, redisConfigStatus, releaseRedisLock, writeRedisJSON } from "./redis-cache.js";
 import { importQueueBusyError, recordDbOperation } from "./db-guardrails.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
@@ -34,6 +34,7 @@ import {
   SOCIAL_VIDEO_RECIPE_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
   RECIPE_IMPORT_COMPLETION_MODEL,
+  RECIPE_IMPORT_HARD_COMPLETION_MODEL,
   RECIPE_WEB_REFERENCE_MODEL,
   RECIPE_FINAL_VALIDATOR_MODEL,
   RECIPE_GATE_MODEL,
@@ -41,6 +42,7 @@ import {
   PHOTO_MEAL_GATE_MODEL,
   PHOTO_RECIPE_CLEANUP_MODEL,
   PHOTO_RECIPE_SONAR_MODEL,
+  RECIPE_COMPLETION_SONAR_MODEL,
   SHORT_VIDEO_TRANSCRIBE_MODEL,
 } from "./ingestion/models.js";
 
@@ -54,15 +56,25 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const RECIPE_IMAGE_BUCKET = process.env.RECIPE_IMAGE_BUCKET ?? "recipe-images";
 const RECIPE_IMPORT_MEDIA_BUCKET = process.env.RECIPE_IMPORT_MEDIA_BUCKET ?? "recipe-import-media";
+// Persisted social/short-form MP4s live in their own public bucket — the image bucket
+// rejects video/* mime types and caps at 10MB, which silently dropped native videos.
+const RECIPE_VIDEO_BUCKET = process.env.RECIPE_VIDEO_BUCKET ?? "recipe-videos";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY ?? "";
 const PERPLEXITY_API_URL = process.env.PERPLEXITY_API_URL ?? "https://api.perplexity.ai/chat/completions";
+const RECIPE_COMPLETION_SONAR_TIMEOUT_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.RECIPE_COMPLETION_SONAR_TIMEOUT_MS ?? "60000", 10) || 60_000
+);
 const ENABLE_AI_WEB_REFERENCE_SEARCH = !["0", "false", "no", "off"].includes(String(process.env.RECIPE_ENABLE_AI_WEB_REFERENCE_SEARCH ?? "1").trim().toLowerCase());
 const PLAYWRIGHT_FALLBACK_PATH = "/Users/davejaga/.openclaw/skills/playwright-scraper-skill/node_modules/playwright/index.js";
 const DEFAULT_USER_AGENT =
   process.env.USER_AGENT ||
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
-const MAX_SOCIAL_FRAME_COUNT = Math.max(12, Number.parseInt(process.env.RECIPE_INGESTION_MAX_SOCIAL_FRAMES ?? "12", 10) || 12);
+const MAX_SOCIAL_FRAME_COUNT = Math.max(
+  12,
+  Math.min(Number.parseInt(process.env.RECIPE_INGESTION_MAX_SOCIAL_FRAMES ?? "12", 10) || 12, 16)
+);
 const SOCIAL_METADATA_TIMEOUT_MS = Math.max(
   5_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_METADATA_TIMEOUT_MS ?? "20000", 10) || 20_000
@@ -70,6 +82,10 @@ const SOCIAL_METADATA_TIMEOUT_MS = Math.max(
 const SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS = Math.max(
   5_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS ?? "45000", 10) || 45_000
+);
+const SOCIAL_VIDEO_UPLOAD_TIMEOUT_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_VIDEO_UPLOAD_TIMEOUT_MS ?? "45000", 10) || 45_000
 );
 const SOCIAL_FETCH_TIMEOUT_MS = Math.max(
   3_000,
@@ -79,17 +95,19 @@ const TIKTOK_CANONICAL_RESOLVE_TIMEOUT_MS = Math.max(
   1_000,
   Number.parseInt(process.env.RECIPE_INGESTION_TIKTOK_CANONICAL_RESOLVE_TIMEOUT_MS ?? "5000", 10) || 5_000
 );
+const RAPIDAPI_SOCIAL_KEY = normalizeText(
+  process.env.OUNJE_RAPIDAPI_SOCIAL_KEY
+    ?? process.env.RAPIDAPI_SOCIAL_KEY
+    ?? ""
+);
+const RAPIDAPI_SOCIAL_HOST = "social-media-video-downloader.p.rapidapi.com";
 const SOCIAL_FRAME_PROBE_TIMEOUT_MS = Math.max(
   2_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_PROBE_TIMEOUT_MS ?? "5000", 10) || 5_000
 );
-const SOCIAL_FRAME_EXTRACT_TIMEOUT_MS = Math.max(
-  3_000,
-  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_EXTRACT_TIMEOUT_MS ?? "7000", 10) || 7_000
-);
 const SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS = Math.max(
-  10_000,
-  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS ?? "20000", 10) || 20_000
+  15_000,
+  Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS ?? "45000", 10) || 45_000
 );
 const SOCIAL_AUDIO_EXTRACT_TIMEOUT_MS = Math.max(
   3_000,
@@ -98,9 +116,6 @@ const SOCIAL_AUDIO_EXTRACT_TIMEOUT_MS = Math.max(
 const SOCIAL_OCR_FRAME_TIMEOUT_MS = Math.max(
   3_000,
   Number.parseInt(process.env.RECIPE_INGESTION_SOCIAL_OCR_FRAME_TIMEOUT_MS ?? "8000", 10) || 8_000
-);
-const SOCIAL_VIDEO_EAGER = ["1", "true", "yes", "on"].includes(
-  String(process.env.RECIPE_INGESTION_SOCIAL_VIDEO_EAGER ?? "").trim().toLowerCase()
 );
 const RECIPE_SEARCH_MAX_LINKS = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_SEARCH_MAX_LINKS ?? "3", 10) || 3, 6));
 const RECIPE_REFERENCE_MAX_SOURCES = Math.max(2, Math.min(Number.parseInt(process.env.RECIPE_REFERENCE_MAX_SOURCES ?? "3", 10) || 3, 3));
@@ -120,9 +135,11 @@ const RECIPE_INGESTION_HEARTBEAT_MS = Math.max(
   15_000,
   Number.parseInt(process.env.RECIPE_INGESTION_HEARTBEAT_MS ?? "60000", 10) || 60_000
 );
-const REDIS_DISABLED_FOR_INGESTION_LOCK = ["1", "true", "yes", "on"].includes(
-  String(process.env.REDIS_DISABLED ?? "").trim().toLowerCase()
-);
+// Distributed locks (batch + per-job) only mean anything when Redis is configured.
+// Without Redis (the managed worker's normal polling mode), acquireRedisLock returns null,
+// so we must NOT treat a null lock as "another worker owns this" — otherwise every job
+// early-returns "locked" and is never processed.
+const RECIPE_INGESTION_REDIS_LOCKING_ENABLED = redisConfigStatus().configured;
 const execFile = promisify(execFileCallback);
 
 async function maybeGenerateImportedRecipeImage(recipe = null) {
@@ -178,7 +195,24 @@ async function timeRecipeImportStage(stage, { jobID = null, metadata = null } = 
   }
 }
 
+// Optional outbound proxy for social/video downloads. TikTok hard-blocks datacenter
+// IPs and YouTube bot-checks them, so from a cloud host yt-dlp needs to egress through
+// a residential/rotating proxy. Set OUNJE_SOCIAL_PROXY_URL (or standard HTTPS_PROXY/
+// HTTP_PROXY) on the worker and yt-dlp routes through it. Unset = direct (fine locally).
+function socialDownloadProxyURL() {
+  return normalizeText(
+    process.env.OUNJE_SOCIAL_PROXY_URL
+      ?? process.env.SOCIAL_DOWNLOAD_PROXY_URL
+      ?? process.env.HTTPS_PROXY
+      ?? process.env.https_proxy
+      ?? process.env.HTTP_PROXY
+      ?? process.env.http_proxy
+      ?? ""
+  );
+}
+
 function socialYTDLOptions(overrides = {}) {
+  const proxy = socialDownloadProxyURL();
   return {
     noWarnings: true,
     noCheckCertificates: true,
@@ -187,6 +221,7 @@ function socialYTDLOptions(overrides = {}) {
     retries: 1,
     fragmentRetries: 1,
     extractorRetries: 1,
+    ...(proxy ? { proxy } : {}),
     ...overrides,
   };
 }
@@ -422,6 +457,13 @@ async function _getCanonicalImportCache(userID, canonicalURL, dedupeKey) {
   return redisJob;
 }
 
+async function _deleteCanonicalImportCache(userID, canonicalURL, dedupeKey) {
+  const key = _canonicalImportCacheKey(userID, canonicalURL, dedupeKey);
+  if (!key) return;
+  _canonicalImportCache.delete(key);
+  await deleteRedisKey(_canonicalImportRedisCacheKey(key)).catch(() => {});
+}
+
 function withRecipeAIStage(operation, fn) {
   return withAIUsageContext({ operation }, fn);
 }
@@ -477,7 +519,7 @@ Rules:
 - Return JSON only.
 - Never hallucinate ingredients, quantities, steps, nutrition, or timings that are not supported by the source.
 - Preserve source provenance and media links when available.
-- Prefer explicit quantities exactly as shown in the source.
+- Prefer explicit quantities exactly as shown in the source (e.g. "1/2 cup", "2 and 3/4 tsp") — do not convert fractions to decimals.
 - If a field is unknown, use null, an empty string, or an empty array.
 - If a source is weak or incomplete, keep the recipe partial and set review flags instead of inventing detail.
 - Ingredients must be returned as structured objects with display_name and quantity_text.
@@ -491,7 +533,8 @@ Rules:
 - Ingredient display_name values must contain the grocery item, not the action. For example, use "palm oil", not "bleach palm oil".
 - Every concrete ingredient named in a step must also appear in the top-level ingredients array. Do not hide named ingredients under "spices", "seasoning", or another umbrella term.
 - Use real JSON null for unknown values. Never return the literal string "null".
-- Steps must be sequential and cookable. If step-linked ingredients are visible, include them under the step.
+- Steps must be SHORT, sequential, and cookable — one distinct action per step. If the source bundles multiple distinct actions into one paragraph (e.g. "Preheat oven. Line pan. Mix flour and butter."), SPLIT them into separate numbered steps. A single step must not exceed ~3 sentences. Never merge steps; only split.
+- If step-linked ingredients are visible, include them under the step.
 - Keep titles and descriptions clean and consumer-facing.
 - Do not include commentary outside the JSON object.`;
 
@@ -619,12 +662,22 @@ const RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT = `You are the final import complet
 Rules:
 - Return JSON only.
 - Preserve the identity of the imported dish from the original source evidence.
+- The current imported recipe is the base. Expand and clarify it; never replace it with a fresh or adjacent recipe.
+- Treat original source evidence as highest priority, then exact creator/cross-post evidence from Perplexity, then mainstream completion context.
+- Keep every non-generic source-supported ingredient and technique. Generic placeholders such as "oil-based seasoning" may be replaced by their researched constituent ingredients when the completion context supports that expansion.
+- When Perplexity marks exact_match_supported=false, add conservative, concrete details that make the existing dish fully cookable and add a grounded_completion_inferred quality flag. Non-exact means the additions are inferred; it does not justify leaving unusable component placeholders in the recipe.
+- Expand broad source labels such as "seasoning blend", "pepper seasoning", "marinade", or "sauce base" into individual shoppable ingredients when the grounded context provides a practical composition. Preserve the source label in the relevant step text when useful, but do not keep it as a separate ingredient row beside its constituents.
 - Use web recipe references only to complete weak or missing structure, not to replace the dish with something adjacent.
 - Improve ingredient sizing, timings, servings, nutrition text, and missing or sparse steps when the imported recipe is clearly incomplete.
 - For short social videos with weak/no transcript, infer useful mainstream ingredient quantities when the dish identity is clear and web references support a plausible common range.
 - Best-guess quantities are allowed for common dishes, but keep them conservative and ordinary for the stated serving size.
 - Do not collapse distinct grocery items into generic buckets. If the source or web references expose individual ingredients, keep them as individual shoppable rows instead of "spices", "seasoning", "sauce", or similar umbrella labels.
+- Never list equipment or disposables such as foil, baking sheets, trays, pans, bowls, or blenders as ingredients. Equipment may appear only in the method.
+- Never carry source teaser copy such as "full recipe coming soon" or "details to be released soon" into the description, footnote, ingredients, or steps.
+- Do not list several interchangeable serving suggestions as ingredients the user must buy. Keep creator-shown sides, choose one sensible default when alternatives are offered, and move the remaining alternatives to a serving note.
 - Preserve ingredients like honey, paprika, chili powder, garlic powder, fresh herbs, and other concrete grocery items explicitly when the source supports them.
+- Keep display_name to the ingredient name only. Put amounts, package sizes, preparation notes, and ranges in quantity_text or the method instead of embedding them in display_name.
+- List the same ingredient only once even when it is used in multiple components. Sum compatible quantities and mark quantity_text as "divided" when needed; do not create role-suffixed duplicates such as "vegetable oil" and "vegetable oil (for sauce)".
 - Do not include both a component label and its underlying ingredients. For example, do not list "meat sauce" if ground meat, tomato, onion, garlic, and seasonings are already listed; do not list both "parmesan cheese" and "parmesan cheese, grated".
 - If web references disagree, prefer the most mainstream consensus version that still matches the original source.
 - Never add niche embellishments that are not needed to make the recipe cookable.
@@ -640,15 +693,19 @@ Rules:
 - Fix only concrete consistency issues in the provided recipe. Do not rewrite for style alone.
 - Preserve source-supported dish identity, title, cuisine, and author/source metadata.
 - Ensure ingredients, quantities, and steps agree with each other.
-- For social videos, compare the final recipe against caption, transcript, frame OCR, and ingredient candidates. Restore every concrete ingredient explicitly supported by that evidence; do not silently omit it.
-- Do not replace source-supported ingredients with a generic or merely common version of the dish.
+- Keep display_name to the ingredient name only. Move amounts, size ranges, and preparation notes into quantity_text or the method.
+- Consolidate repeated ingredient rows across recipe components. Sum compatible quantities and use "divided" in quantity_text when appropriate instead of role suffixes such as "for sauce" in display_name.
 - If a step mentions an ingredient that is not listed, either add a conservative ingredient only when clearly necessary, or rewrite the step to use an already listed equivalent.
 - Never add duplicate alias ingredients just to satisfy a step. Prefer rewriting step wording to use the existing listed ingredient name.
 - Do not list both a prepared component and its sub-ingredients unless the prepared component is actually bought as an ingredient.
+- Expand unresolved umbrella ingredients such as "oil-based seasoning", "red pepper-based seasoning", "seasoning blend", or "sauce base" into concrete grocery ingredients when the supplied evidence supports a practical composition.
+- Remove equipment and disposables such as foil, baking sheets, trays, pans, bowls, or blenders from the ingredient list. Keep required equipment in step text only.
+- Remove source teaser copy such as "full recipe coming soon" or "details to be released soon" from every user-facing recipe field.
 - If a step mentions a listed ingredient, keep that ingredient linked in the step's ingredients array with the same practical quantity.
 - Prefer not to add non-shopping pantry liquids like water unless the recipe would be confusing without it.
 - Replace vague or technically wrong cooking verbs with practical cooking actions.
 - Keep steps concise, sequential, and cookable.
+- Use short snake_case identifiers for quality_flags, never prose sentences.
 - Keep ingredient quantities practical for the stated servings.
 - Return compact repairs only: include full ingredients or steps arrays only when those arrays need changes, and omit unchanged fields.
 - Do not include commentary outside the JSON object.`;
@@ -669,8 +726,20 @@ function assertSupabaseConfig() {
   }
 }
 
-function normalizeText(value) {
+// Common named HTML entities from recipe JSON-LD (e.g. Sally's Baking Addiction).
+const NAMED_HTML_ENTITIES_INGESTION = {
+  amp:"&",lt:"<",gt:">",quot:'"',apos:"'",nbsp:" ",ndash:"–",mdash:"—",
+  lsquo:"'",rsquo:"'",ldquo:"“",rdquo:"”",times:"×",
+  frac12:"½",frac14:"¼",frac34:"¾",deg:"°",reg:"®",trade:"™",copy:"©",
+};
+function decodeHTMLEntitiesIngestion(value) {
   return String(value ?? "")
+    .replace(/&#(\d+);/g, (_, c) => String.fromCodePoint(Number(c)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, n) => NAMED_HTML_ENTITIES_INGESTION[n.toLowerCase()] ?? m);
+}
+function normalizeText(value) {
+  return decodeHTMLEntitiesIngestion(String(value ?? ""))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -727,36 +796,6 @@ function uniqueStrings(values) {
   return result;
 }
 
-function socialRecipeTextEvidence(metadata = null, pageSignals = null) {
-  return uniqueStrings([
-    metadata?.title,
-    metadata?.description,
-    pageSignals?.title,
-    pageSignals?.meta_title,
-    pageSignals?.meta_description,
-    pageSignals?.ingredient_candidates?.join("\n"),
-    pageSignals?.instruction_candidates?.join("\n"),
-    pageSignals?.body_text,
-  ]).join("\n\n");
-}
-
-// Video evidence is expensive. Skip it only when the shared caption/page already
-// has both ingredient and preparation signals, leaving video-first posts intact.
-function socialRecipeTextCanSkipVideoDownload({ metadata = null, pageSignals = null } = {}) {
-  if (SOCIAL_VIDEO_EAGER) return false;
-
-  const evidence = socialRecipeTextEvidence(metadata, pageSignals);
-  const wordCount = evidence.split(/\s+/).filter(Boolean).length;
-  if (evidence.length < 320 || wordCount < 60) return false;
-
-  const ingredientSignal = /\bingredients?\b|\b(?:tbsp|tablespoons?|tsp|teaspoons?|cups?|ounces?|oz|grams?|kg|pounds?|lbs?)\b/i.test(evidence)
-    || (pageSignals?.ingredient_candidates?.length ?? 0) >= 3;
-  const preparationSignal = /\b(?:instructions?|directions?|method|steps?|cook|bake|stir|mix|simmer|saute|roast|boil|whisk|serve)\b/i.test(evidence)
-    || (pageSignals?.instruction_candidates?.length ?? 0) >= 2;
-
-  return ingredientSignal && preparationSignal;
-}
-
 function firstNormalizedText(...values) {
   for (const value of values) {
     const normalized = normalizeText(value);
@@ -765,7 +804,7 @@ function firstNormalizedText(...values) {
   return null;
 }
 
-function normalizeCreatorHandle(value) {
+export function normalizeCreatorHandle(value) {
   const normalized = normalizeText(value);
   if (!normalized) return null;
   const withoutURL = normalized
@@ -777,6 +816,10 @@ function normalizeCreatorHandle(value) {
     .replace(/\s+/g, "")
     .trim();
   if (!cleaned) return null;
+  // TikTok's social metadata can expose a long secUid in the same field as the
+  // public username. Public TikTok and Instagram handles are at most 30 chars;
+  // never render an opaque account token as the recipe creator.
+  if (cleaned.length > 30 || /^MS4wLjABAAAA/i.test(cleaned)) return null;
   if (/^\d{8,}$/.test(cleaned)) return null;
   if (!/[a-z_]/i.test(cleaned)) return null;
   return cleaned.startsWith("@") ? cleaned : `@${cleaned}`;
@@ -877,40 +920,40 @@ function cleanURL(raw) {
   }
 }
 
-function isMalformedTikTokVideoURL(raw) {
+function extractYouTubeVideoID(raw) {
+  const cleaned = cleanURL(raw);
+  if (!cleaned || !isProbablyURL(cleaned)) return null;
   try {
-    const url = new URL(String(raw ?? "").trim());
-    return url.hostname.toLowerCase().includes("tiktok.com")
-      && /^\/@\/video\/\d+/i.test(url.pathname);
+    const url = new URL(cleaned);
+    const host = url.hostname.toLowerCase();
+    if (host === "youtu.be") {
+      return normalizeText(url.pathname.split("/").filter(Boolean)[0] ?? "") || null;
+    }
+    if (host.includes("youtube.com") || host.includes("youtube-nocookie.com")) {
+      const watchID = normalizeText(url.searchParams.get("v") ?? "");
+      if (watchID) return watchID;
+      const shortsMatch = url.pathname.match(/^\/shorts\/([A-Za-z0-9_-]{6,})/i);
+      if (shortsMatch?.[1]) return shortsMatch[1];
+      const embedMatch = url.pathname.match(/^\/embed\/([A-Za-z0-9_-]{6,})/i);
+      if (embedMatch?.[1]) return embedMatch[1];
+    }
   } catch {
-    return false;
+    return null;
   }
+  return null;
 }
 
-function preferredTikTokProcessingURL(candidateURL, originalURL) {
-  const candidate = cleanURL(candidateURL);
-  if (candidate && !isMalformedTikTokVideoURL(candidate)) return candidate;
-  return cleanURL(originalURL) ?? candidate;
-}
-
-function canonicalTikTokURLFromMetadata(metadata = null, fallbackURL = null) {
-  const rawMetadataURL = cleanURL(
-    metadata?.webpage_url
-      ?? metadata?.original_url
-      ?? metadata?.webpage_url_basename
-      ?? null
-  );
-  const videoID = normalizeText(metadata?.id);
-  const creator = normalizeCreatorHandle(
-    metadata?.uploader_id
-      ?? metadata?.channel_id
-      ?? metadata?.creator
-      ?? metadata?.uploader
-  );
-  if (videoID && creator) {
-    return `https://www.tiktok.com/${creator}/video/${videoID}`;
+function extractInstagramShortcode(raw) {
+  const cleaned = cleanURL(raw);
+  if (!cleaned || !isProbablyURL(cleaned)) return null;
+  try {
+    const url = new URL(cleaned);
+    if (!url.hostname.toLowerCase().includes("instagram.com")) return null;
+    const match = url.pathname.match(/^\/(?:reel|p|tv)\/([^/?#]+)/i);
+    return normalizeText(match?.[1] ?? "") || null;
+  } catch {
+    return null;
   }
-  return preferredTikTokProcessingURL(rawMetadataURL, fallbackURL);
 }
 
 function canonicalImportIdentityForURL(raw) {
@@ -974,6 +1017,12 @@ function isRecipeImageStorageURL(raw) {
   return normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/`);
 }
 
+function isRecipeVideoStorageURL(raw) {
+  const normalized = cleanURL(raw);
+  if (!normalized || !SUPABASE_URL) return false;
+  return normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/`);
+}
+
 function guessImageExtension(contentType = "", sourceURL = "") {
   const loweredContentType = String(contentType ?? "").toLowerCase();
   if (loweredContentType.includes("png")) return "png";
@@ -1034,6 +1083,48 @@ async function ensureRecipeImageBucket() {
   }
 
   return recipeImageBucketReadyPromise;
+}
+
+let recipeVideoBucketReadyPromise = null;
+async function ensureRecipeVideoBucket() {
+  if (!SUPABASE_URL || !RECIPE_VIDEO_BUCKET || !SUPABASE_SERVICE_ROLE_KEY) return false;
+  if (!recipeVideoBucketReadyPromise) {
+    recipeVideoBucketReadyPromise = (async () => {
+      const headers = {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      };
+      try {
+        const existingResponse = await fetchWithTimeout(
+          `${SUPABASE_URL}/storage/v1/bucket/${encodeURIComponent(RECIPE_VIDEO_BUCKET)}`,
+          { headers },
+          SOCIAL_FETCH_TIMEOUT_MS,
+          "recipe video bucket check"
+        );
+        if (existingResponse.ok) return true;
+        if (existingResponse.status !== 404) return false;
+
+        // Public bucket that actually allows video + a sane size cap (the image bucket
+        // is image-only / 10MB, which silently rejected native MP4 uploads).
+        const createResponse = await fetchWithTimeout(`${SUPABASE_URL}/storage/v1/bucket`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            id: RECIPE_VIDEO_BUCKET,
+            name: RECIPE_VIDEO_BUCKET,
+            public: true,
+            allowed_mime_types: ["video/mp4", "video/quicktime", "video/webm"],
+            file_size_limit: 52428800,
+          }),
+        }, SOCIAL_FETCH_TIMEOUT_MS, "recipe video bucket creation");
+        return createResponse.ok;
+      } catch {
+        return false;
+      }
+    })();
+  }
+  return recipeVideoBucketReadyPromise;
 }
 
 async function persistRecipeImageToStorage(sourceURL, { recipeKey, imageRole = "hero", accessToken = null } = {}) {
@@ -1133,6 +1224,95 @@ async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole =
   }
 }
 
+// Uploads a downloaded social/short-form video file (mp4) to public storage so the
+// app can play it natively with AVPlayer instead of the janky TikTok/IG web embed.
+// Returns the public MP4 URL, or null if upload is skipped (too large / unavailable).
+const PERSISTED_VIDEO_MAX_BYTES = 45 * 1024 * 1024; // 45MB cap
+async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", accessToken = null } = {}) {
+  if (!videoPath || !SUPABASE_URL || !RECIPE_VIDEO_BUCKET) {
+    console.warn("[recipe-ingestion] native video upload skipped: missing video path, Supabase URL, or video bucket");
+    return null;
+  }
+  const storageBearer = (normalizeText(accessToken ?? "") || SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim();
+  if (!storageBearer) {
+    console.warn("[recipe-ingestion] native video upload skipped: missing storage bearer");
+    return null;
+  }
+
+  let videoStat;
+  try {
+    videoStat = await fsp.stat(videoPath);
+  } catch (error) {
+    console.warn("[recipe-ingestion] native video upload skipped: could not inspect video file", error instanceof Error ? error.message : error);
+    return null;
+  }
+  if (!videoStat?.isFile() || videoStat.size <= 0) {
+    console.warn("[recipe-ingestion] native video upload skipped: empty video file");
+    return null;
+  }
+  if (videoStat.size > PERSISTED_VIDEO_MAX_BYTES) {
+    console.warn(`[recipe-ingestion] native video upload skipped: file too large (${videoStat.size} bytes)`);
+    return null;
+  }
+
+  const keyHash = crypto.createHash("sha1").update(`${recipeKey}:video`).digest("hex").slice(0, 20);
+  const storagePath = `${keyHash}.mp4`;
+  const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_VIDEO_BUCKET)}/${encodeURIComponent(storagePath)}`;
+  const publicVideoURL = `${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/${storagePath}`;
+
+  try {
+    const bucketReady = await ensureRecipeVideoBucket();
+    if (!bucketReady) {
+      console.warn("[recipe-ingestion] native video upload skipped: video bucket unavailable");
+      return null;
+    }
+    const existingVideo = await fetchWithTimeout(
+      publicVideoURL,
+      { method: "HEAD" },
+      SOCIAL_FETCH_TIMEOUT_MS,
+      "existing recipe video check"
+    ).catch(() => null);
+    if (existingVideo?.ok) return publicVideoURL;
+
+    const storageApiKey = storageBearer === SUPABASE_SERVICE_ROLE_KEY
+      ? SUPABASE_SERVICE_ROLE_KEY
+      : SUPABASE_ANON_KEY || storageBearer;
+    let uploadResponse = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const body = fs.createReadStream(videoPath);
+      try {
+        uploadResponse = await fetchWithTimeout(uploadURL, {
+          method: "POST",
+          headers: {
+            apikey: storageApiKey,
+            Authorization: `Bearer ${storageBearer}`,
+            "Content-Type": "video/mp4",
+            "Content-Length": String(videoStat.size),
+            "x-upsert": "true",
+          },
+          body,
+          duplex: "half",
+        }, SOCIAL_VIDEO_UPLOAD_TIMEOUT_MS, "native recipe video upload");
+      } catch (error) {
+        body.destroy();
+        if (attempt === 2) throw error;
+        await delay(350 * attempt);
+        continue;
+      }
+      if (uploadResponse.ok || attempt === 2) break;
+      await delay(350 * attempt);
+    }
+    if (!uploadResponse.ok) {
+      console.warn(`[recipe-ingestion] native video upload failed: HTTP ${uploadResponse.status} ${await uploadResponse.text().catch(() => "")}`.slice(0, 200));
+      return null;
+    }
+    return publicVideoURL;
+  } catch (error) {
+    console.warn("[recipe-ingestion] native video upload error:", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 function ingredientDisplayNameFromKey(value) {
   const normalized = normalizeKey(value);
   if (!normalized) return null;
@@ -1145,6 +1325,32 @@ function ingredientDisplayNameFromKey(value) {
       return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
     })
     .join(" ");
+}
+
+// Descriptor / prep words that don't change which trusted ingredient image applies.
+// Stripping them lets "boneless skinless chicken thighs" reuse the image for
+// "chicken thighs" without changing the displayed ingredient text.
+const INGREDIENT_DESCRIPTOR_WORDS = new Set([
+  "fresh", "dried", "ground", "whole", "large", "medium", "small", "extra", "ripe",
+  "raw", "cooked", "boneless", "skinless", "chopped", "minced", "diced", "sliced",
+  "shredded", "grated", "crushed", "peeled", "halved", "quartered", "frozen",
+  "canned", "jarred", "organic", "unsalted", "salted", "reduced", "light", "lean",
+  "fine", "finely", "roughly", "coarsely", "thinly", "thickly", "freshly", "toasted",
+  "roasted", "softened", "melted", "packed", "warm", "cold", "hot", "room",
+  "temperature", "optional", "divided", "drained", "rinsed", "trimmed", "cubed",
+  "mashed", "beaten", "room-temperature", "low-fat", "low", "fat", "free", "boiled",
+]);
+
+// Builds a descriptor-stripped "core" key for relaxed ingredient-image matching.
+// Conservative: only removes known modifier words, never depluralizes (so it can't
+// mangle words like "hummus" or "molasses"). Returns "" when nothing meaningful remains.
+function simplifyIngredientKey(value) {
+  const normalized = normalizeKey(value);
+  if (!normalized) return "";
+  const words = normalized
+    .split(" ")
+    .filter((word) => word && !INGREDIENT_DESCRIPTOR_WORDS.has(word));
+  return words.join(" ").trim();
 }
 
 function isUtilityIngredient(name) {
@@ -1171,11 +1377,13 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
   const loweredSourceType = normalizeText(sourceType).toLowerCase();
   const isTikTok = loweredSourceType === "tiktok" || host.includes("tiktok.com");
   if (!isTikTok) return normalized;
-
-  const canonicalCacheKey = sourceMetadataCacheKey("canonical-url", normalized);
-  const cachedCanonical = await readRedisJSON(canonicalCacheKey);
-  if (cachedCanonical?.canonical_url) {
-    return preferredTikTokProcessingURL(cachedCanonical.canonical_url, normalized);
+  try {
+    const url = new URL(normalized);
+    if (/^\/@[^/]+\/video\/\d+$/i.test(url.pathname)) {
+      return normalized;
+    }
+  } catch {
+    return normalized;
   }
 
   try {
@@ -1186,9 +1394,8 @@ async function expandCanonicalSourceURL(sourceURL, sourceType = null) {
       },
     }, TIKTOK_CANONICAL_RESOLVE_TIMEOUT_MS, "TikTok redirect resolve");
 
-    const redirected = preferredTikTokProcessingURL(response.url, normalized);
+    const redirected = cleanURL(response.url ?? normalized);
     if (redirected && redirected !== normalized) {
-      void writeRedisJSON(canonicalCacheKey, { canonical_url: redirected }, SOURCE_METADATA_CACHE_TTL_SECONDS);
       return redirected;
     }
   } catch {
@@ -1207,13 +1414,7 @@ async function expandCanonicalSourceURLForEnqueue(sourceURL, sourceType = null) 
   const isTikTok = loweredSourceType === "tiktok" || host.includes("tiktok.com");
   if (!isTikTok) return normalized;
 
-  const canonicalCacheKey = sourceMetadataCacheKey("canonical-url", normalized);
-  const cachedCanonical = await readRedisJSON(canonicalCacheKey);
-  if (cachedCanonical?.canonical_url) {
-    return cachedCanonical.canonical_url;
-  }
-
-  // Enqueue must not depend on TikTok or any external redirect resolving.
+  // Enqueue must not depend on Redis, TikTok, or any external redirect resolving.
   // The worker expands canonical URLs after the job is durably stored.
   return normalized;
 }
@@ -1441,11 +1642,10 @@ export async function heartbeatRecipeIngestionJob({ jobID, workerID } = {}) {
 }
 
 const LIVE_RECIPE_IMPORT_STATUSES = ["processing", "fetching", "parsing", "normalized"];
-const QUEUED_RECIPE_IMPORT_STATUSES = ["queued", "retryable"];
 
 export function isStaleLiveRecipeImportJob(job, { staleAfterMinutes = 15, queuedStaleAfterMinutes = 3 } = {}) {
   const status = normalizeText(job?.status).toLowerCase();
-  const isQueued = QUEUED_RECIPE_IMPORT_STATUSES.includes(status);
+  const isQueued = ["queued", "retryable"].includes(status);
   if (!isQueued && !LIVE_RECIPE_IMPORT_STATUSES.includes(status)) return false;
 
   const staleMinutes = isQueued
@@ -1699,6 +1899,61 @@ function collectRecipeEvidenceImageInputs(source, { maxCount = RECIPE_EXTRACTION
     .slice(0, maxCount);
 }
 
+function buildRecipeGateUserContent(source, signals) {
+  const text = [
+    "Decide if this source is actually a recipe.",
+    "For social video, inspect every attached frame. On-screen ingredient lists and cooking directions are primary evidence even when OCR or the caption is weak.",
+    "Do not reject a cooking video only because its caption, audio transcript, or OCR is sparse.",
+    "",
+    "Signals:",
+    JSON.stringify({
+      source_type: source.source_type ?? null,
+      platform: source.platform ?? null,
+      media_mode: signals.mediaMode ?? null,
+      structured_ingredient_count: signals.structuredIngredientCount,
+      structured_instruction_count: signals.structuredInstructionCount,
+      ingredient_candidate_count: signals.ingredientCandidateCount,
+      instruction_candidate_count: signals.instructionCandidateCount,
+      transcript_present: signals.transcriptPresent,
+      frame_count: Array.isArray(source.frame_data_urls) ? source.frame_data_urls.length : 0,
+      frame_ocr_count: signals.frameOcrCount,
+      page_image_count: signals.pageImageCount,
+      positive_hits: signals.positiveHits,
+      negative_hits: signals.negativeHits,
+    }),
+    "",
+    "Title:",
+    source.title ?? "",
+    "",
+    "Description / caption:",
+    source.description ?? source.meta_description ?? "",
+    "",
+    "Ingredient candidates:",
+    JSON.stringify((source.ingredient_candidates ?? []).slice(0, 24)),
+    "",
+    "Instruction candidates:",
+    JSON.stringify((source.instruction_candidates ?? []).slice(0, 18)),
+    "",
+    "Transcript excerpt:",
+    limitText(source.transcript_text ?? "", 3000),
+    "",
+    "Frame OCR excerpt:",
+    limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 8, textLimit: 700 }), 5000),
+    "",
+    "Return JSON like:",
+    JSON.stringify({
+      is_recipe: true,
+      confidence: 0.0,
+      reason: "string",
+    }),
+  ].join("\n");
+
+  return [
+    { type: "text", text },
+    ...collectRecipeEvidenceImageInputs(source, { maxCount: RECIPE_EXTRACTION_MAX_IMAGE_INPUTS }),
+  ];
+}
+
 async function getOCRWorker() {
   if (!ocrWorkerPromise) {
     ocrWorkerPromise = (async () => {
@@ -1713,25 +1968,48 @@ async function getOCRWorker() {
   return ocrWorkerPromise;
 }
 
-function isOCRSafeFrameDataURL(dataURL) {
-  const value = normalizeText(dataURL);
-  if (!value.startsWith("data:")) return true;
-  const mimeType = value.slice(5).split(/[;,]/, 1)[0].toLowerCase();
-
-  // Tesseract.js can emit an unhandled worker error for unsupported WebP/AVIF
-  // decodes. Those frames remain usable by the vision step; OCR is optional.
-  return mimeType !== "image/webp" && mimeType !== "image/avif";
-}
-
 async function ocrFrameDataURLs(frameDataURLs = []) {
   if (!Array.isArray(frameDataURLs) || !frameDataURLs.length) return [];
 
+  if (await commandExists("tesseract")) {
+    const ocrDir = await fsp.mkdtemp(path.join(os.tmpdir(), "ounje-frame-ocr-"));
+    const results = [];
+    try {
+      for (const [index, dataURL] of frameDataURLs.entries()) {
+        const image = imageBufferFromDataURL(dataURL);
+        if (!image) continue;
+        const imagePath = path.join(ocrDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`);
+        try {
+          await fsp.writeFile(imagePath, image.buffer);
+          const { stdout } = await execFileWithTimeout("tesseract", [
+            imagePath,
+            "stdout",
+            "-l", "eng",
+            "--psm", "6",
+          ], SOCIAL_OCR_FRAME_TIMEOUT_MS);
+          const text = normalizeText(stdout ?? "");
+          if (text) {
+            results.push({ frame_index: index + 1, text, confidence: null });
+          }
+        } catch {
+          continue;
+        } finally {
+          await fsp.rm(imagePath, { force: true }).catch(() => {});
+        }
+      }
+      return results;
+    } finally {
+      await fsp.rm(ocrDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  let worker = null;
   try {
-    const worker = await getOCRWorker();
+    worker = await getOCRWorker();
     const results = [];
 
     for (const [index, dataURL] of frameDataURLs.entries()) {
-      if (!dataURL || !isOCRSafeFrameDataURL(dataURL)) continue;
+      if (!dataURL) continue;
       try {
         const recognition = await withTimeout(
           worker.recognize(dataURL),
@@ -1754,6 +2032,11 @@ async function ocrFrameDataURLs(frameDataURLs = []) {
     return results;
   } catch {
     return [];
+  } finally {
+    if (worker) {
+      await worker.terminate().catch(() => {});
+      ocrWorkerPromise = null;
+    }
   }
 }
 
@@ -1993,50 +2276,7 @@ async function assessRecipeLikelihood(source) {
       { role: "system", content: RECIPE_GATE_SYSTEM_PROMPT },
       {
         role: "user",
-        content: [
-          "Decide if this source is actually a recipe.",
-          "",
-          "Signals:",
-          JSON.stringify({
-            source_type: source.source_type ?? null,
-            platform: source.platform ?? null,
-            media_mode: signals.mediaMode ?? null,
-            structured_ingredient_count: signals.structuredIngredientCount,
-            structured_instruction_count: signals.structuredInstructionCount,
-            ingredient_candidate_count: signals.ingredientCandidateCount,
-            instruction_candidate_count: signals.instructionCandidateCount,
-            transcript_present: signals.transcriptPresent,
-            frame_ocr_count: signals.frameOcrCount,
-            page_image_count: signals.pageImageCount,
-            positive_hits: signals.positiveHits,
-            negative_hits: signals.negativeHits,
-          }),
-          "",
-          "Title:",
-          source.title ?? "",
-          "",
-          "Description / caption:",
-          source.description ?? source.meta_description ?? "",
-          "",
-          "Ingredient candidates:",
-          JSON.stringify((source.ingredient_candidates ?? []).slice(0, 24)),
-          "",
-          "Instruction candidates:",
-          JSON.stringify((source.instruction_candidates ?? []).slice(0, 18)),
-          "",
-          "Transcript excerpt:",
-          limitText(source.transcript_text ?? "", 3000),
-          "",
-          "Frame OCR excerpt:",
-          limitText(summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 4, textLimit: 700 }), 3000),
-          "",
-          "Return JSON like:",
-          JSON.stringify({
-            is_recipe: true,
-            confidence: 0.0,
-            reason: "string",
-          }),
-        ].join("\n"),
+        content: buildRecipeGateUserContent(source, signals),
       },
     ],
   }));
@@ -2286,43 +2526,24 @@ function socialSourceHasPrimaryRecipeEvidence(source) {
   const hasFrames = Array.isArray(source?.frame_data_urls) && source.frame_data_urls.length > 0;
   const hasRecipeAction = /\b(?:recipe|ingredients?|add|blend|boil|bake|cook|fry|simmer|season|serve|bleach)\b/i.test(frameText);
   const hasIngredientIdentity = /\b(?:oil|salt|pepper|onion|garlic|rice|meat|chicken|beef|fish|egg|crayfish|curry|beans?|flour|sugar|cream|butter)\b/i.test(frameText);
-  return hasFrames && hasRecipeAction && hasIngredientIdentity;
-}
+  if (hasFrames && hasRecipeAction && hasIngredientIdentity) return true;
 
-function buildReferenceRecipeQueryFromSocialSource(source) {
-  const referenceCandidate = buildReferenceRecipeQueryCandidateFromSocialSource(source);
-  if (referenceCandidate?.query) return referenceCandidate.query;
-
-  const candidates = [
+  const spokenOrCaptionedText = [
     source?.caption_text,
-    source?.raw_text,
     source?.description,
-    source?.meta_description,
-    source?.body_text,
     source?.transcript_text,
-    summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], { maxFrames: 2, textLimit: 350 }),
-    source?.title,
-  ].map((value) => normalizeText(value)).filter(Boolean);
+  ].map((value) => normalizeText(value)).filter(Boolean).join("\n");
+  if (!hasFrames || spokenOrCaptionedText.length < 80) return false;
 
-  const cleaned = candidates
-    .map((value) => value
-      .replace(/https?:\/\/\S+/gi, " ")
-      .replace(/\btiktok\s*[-–—]?\s*make your day\b/gi, " ")
-      .replace(/\btiktok\s*[-–—]?\s*your day\b/gi, " ")
-      .replace(/[@#][\w.-]+/g, " ")
-      .replace(/\b(link in bio|follow for more|full recipe|recipe below|ad|sponsored|promo|promotion|limited time|order now)\b/gi, " ")
-      .replace(/[^\p{L}\p{N}\s'&-]/gu, " ")
-      .replace(/\s+/g, " ")
-      .trim())
-    .find((value) => value.split(/\s+/).length >= 2 && !/^tiktok\b/i.test(value));
+  const actionMatches = spokenOrCaptionedText.match(
+    /\b(?:add|blend|boil|bake|cook|fry|simmer|season|serve|mix|stir|flip|marinat\w*|air\s+fry|grill|roast)\b/gi
+  ) ?? [];
+  const ingredientMatches = spokenOrCaptionedText.match(
+    /\b(?:oil|salt|pepper|onion|garlic|rice|meat|chicken|beef|fish|egg|crayfish|curry|beans?|flour|sugar|cream|butter|lemon|paprika|tomato|cheese|milk|potato)\b/gi
+  ) ?? [];
+  const distinctIngredients = new Set(ingredientMatches.map((value) => normalizeKey(value)));
 
-  if (!cleaned) return "";
-  const words = cleaned
-    .split(/\s+/)
-    .filter((word) => !/^(the|and|with|for|this|that|from|make|made|easy|best|viral|food|recipe)$/i.test(word))
-    .slice(0, 10);
-  const query = words.join(" ").trim() || cleaned.split(/\s+/).slice(0, 10).join(" ");
-  return normalizeText(`${query} recipe`);
+  return actionMatches.length >= 2 && distinctIngredients.size >= 3;
 }
 
 function mergePreviousGateEvidenceIntoSource(source, gateArtifact) {
@@ -3124,12 +3345,6 @@ function normalizeImportPayload(payload = {}) {
     : [];
   const accessToken = normalizeText(payload.access_token ?? payload.accessToken ?? "") || null;
   const photoContext = normalizePhotoRecipeContext(payload.photo_context ?? payload.photoContext ?? null);
-  const publicCatalogImport = Boolean(
-    payload.public_catalog_import === true
-    || payload.publicCatalogImport === true
-    || payload.catalog_import === true
-    || payload.catalogImport === true
-  );
 
   return {
     user_id: normalizeText(payload.user_id ?? payload.userID ?? "") || null,
@@ -3139,7 +3354,8 @@ function normalizeImportPayload(payload = {}) {
     target_state: targetState,
     access_token: accessToken,
     photo_context: photoContext,
-    public_catalog_import: publicCatalogImport,
+    force_reprocess: payload.force_reprocess === true,
+    suppress_notifications: payload.suppress_notifications === true,
     source_type: detectRecipeIngestionSourceType({
       sourceUrl: directSourceURL || (directSourceText && isProbablyURL(directSourceText) ? directSourceText : null),
       sourceText: directSourceText,
@@ -3384,7 +3600,6 @@ function summarizeCompletedImportJob(jobRow, recipeProjection = null) {
     recipeProjection?.title
       ?? requestPayload?.title
       ?? jobRow?.input_text
-      ?? rawSourceURL
       ?? "Imported recipe"
   ) || "Imported recipe";
 
@@ -3601,6 +3816,11 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
   const resolvedLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
     ? Math.min(parsedLimit, 500)
     : null;
+  // Completed imports come from both the job table and the canonical imported
+  // recipe table. Read their bounded metadata sets first, merge/dedupe them,
+  // then apply the requested page limit once. Limiting each source separately
+  // can otherwise return more rows than requested and makes the modal stutter.
+  const sourceScanLimit = 500;
 
   for (const select of selectVariants) {
     try {
@@ -3613,7 +3833,7 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
           // (same-second imports, or null completed_at) come back in a stable order
           // instead of Postgres' arbitrary physical order.
           order: ["completed_at.desc", "updated_at.desc", "created_at.desc", "id.desc"],
-          limit: resolvedLimit,
+          limit: sourceScanLimit,
         }
       );
       lastError = null;
@@ -3635,7 +3855,7 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
       {
         filters: importedFilters,
         order: ["updated_at.desc", "created_at.desc", "id.desc"],
-        limit: resolvedLimit,
+        limit: sourceScanLimit,
       }
     );
   } catch {
@@ -3643,14 +3863,17 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
   }
 
   const importedSourceJobIDs = new Set(importedRows.map((row) => normalizeText(row?.source_job_id)).filter(Boolean));
+  const importedRecipeIDs = new Set(importedRows.map((row) => normalizeText(row?.id)).filter(Boolean));
   const importedItems = importedRows.map(summarizeCompletedImportedRecipe);
   const jobRows = rows
     .filter((row) => {
       const jobID = normalizeText(row?.id);
+      const recipeID = normalizeText(row?.recipe_id);
       // Hide only the terminal job that produced the canonical imported row.
       // Keep dedupe/cache-hit jobs that reused an existing recipe_id: their
       // source URL is what lets old share-extension envelopes reconcile.
-      return !jobID || !importedSourceJobIDs.has(jobID);
+      return (!jobID || !importedSourceJobIDs.has(jobID))
+        && (!recipeID || !importedRecipeIDs.has(recipeID));
     });
   const projectionByID = await fetchCompletedRecipeProjectionsByID(jobRows.map((row) => row?.recipe_id));
   const jobItems = jobRows.map((row) => summarizeCompletedImportJob(row, projectionByID.get(normalizeText(row?.recipe_id)) ?? null));
@@ -3667,8 +3890,9 @@ export async function listCompletedRecipeImportItems({ userID = null, limit = nu
       // is not deterministic).
       return String(right?.id ?? "").localeCompare(String(left?.id ?? ""));
     });
+  const visibleItems = resolvedLimit == null ? items : items.slice(0, resolvedLimit);
   return {
-    items,
+    items: visibleItems,
     totalCount: items.length,
   };
 }
@@ -3730,6 +3954,7 @@ async function broadcastRecipeImportInvalidation(job, eventName) {
 async function maybeEmitRecipeImportNotification(job, eventName) {
   const userID = normalizeText(job?.user_id);
   if (!userID) return;
+  if (job?.request_payload?.suppress_notifications === true) return;
   const status = normalizeText(job?.status);
   const jobID = normalizeText(job?.id);
   if (!jobID) return;
@@ -3738,7 +3963,11 @@ async function maybeEmitRecipeImportNotification(job, eventName) {
   // → push-tokens → recipe-ingestion would loop on import resolution).
   const { createNotificationEvent } = await import("./notification-events.js");
 
-  const title = pickRecipeTitle(job);
+  let title = pickRecipeTitle(job);
+  if (!title && job?.recipe_id) {
+    const recipe = await fetchRecipeCardProjection(job.recipe_id).catch(() => null);
+    title = normalizeText(recipe?.title) || null;
+  }
 
   if (status === "queued" && eventName === "queued") {
     return;
@@ -3809,7 +4038,8 @@ async function findExistingJobForRequest(request, dedupeKey) {
   const existing = rows[0] ?? null;
   if (!existing) return null;
 
-  return isReusableExistingImportJob(existing) ? existing : null;
+  if (!isReusableExistingImportJob(existing)) return null;
+  return await completedImportJobHasLiveRecipe(existing) ? existing : null;
 }
 
 function isReusableExistingImportJob(job) {
@@ -3820,6 +4050,14 @@ function isReusableExistingImportJob(job) {
   const timestamp = Date.parse(job.completed_at ?? job.updated_at ?? job.created_at ?? "");
   if (!Number.isFinite(timestamp)) return false;
   return Date.now() - timestamp <= FAILED_IMPORT_DEDUPE_REUSE_TTL_MS;
+}
+
+async function completedImportJobHasLiveRecipe(job) {
+  const status = normalizeText(job?.status).toLowerCase();
+  if (!["saved", "draft", "needs_review"].includes(status)) return true;
+  const recipeID = normalizeText(job?.recipe_id ?? "");
+  if (!recipeID) return false;
+  return Boolean(await fetchRecipeRowByID(recipeID).catch(() => null));
 }
 
 async function markDuplicateFailedImportsSuperseded(job, { reason = "Superseded by a successful import of the same source." } = {}) {
@@ -3890,7 +4128,11 @@ async function findExistingJobForRequestSource(request, dedupeKey = null) {
     }
   );
 
-  return rows.find((row) => isReusableExistingImportJob(row)) ?? null;
+  for (const row of rows) {
+    if (!isReusableExistingImportJob(row)) continue;
+    if (await completedImportJobHasLiveRecipe(row)) return row;
+  }
+  return null;
 }
 
 async function countActiveImportsForUser(userID) {
@@ -3925,7 +4167,10 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
   // Fast path: in-memory cache hit (avoids DB round-trip for repeated URLs).
   const cacheUserID = scope === "global" ? GLOBAL_IMPORT_CACHE_NAMESPACE : request.user_id;
   const memCached = await _getCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey);
-  if (memCached && (!excludeJobID || memCached.id !== excludeJobID)) return memCached;
+  if (memCached && (!excludeJobID || memCached.id !== excludeJobID)) {
+    if (await completedImportJobHasLiveRecipe(memCached)) return memCached;
+    await _deleteCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey);
+  }
 
   const sourceFilters = [];
   const candidateURLs = urlLookupVariants(
@@ -3966,7 +4211,8 @@ async function findCompletedCanonicalImportForRequest(request, { canonicalURL = 
     }
   );
 
-  const result = rows[0] ?? null;
+  const candidate = rows[0] ?? null;
+  const result = candidate && await completedImportJobHasLiveRecipe(candidate) ? candidate : null;
   if (result) {
     _setCanonicalImportCache(cacheUserID, cacheableURL, cacheDedupeKey, result);
   }
@@ -4021,6 +4267,15 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
 
 async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, canonicalURL = null } = {}) {
   if (!cachedJob?.recipe_id) return null;
+  const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
+  if (!rawRecipeDetail) {
+    await _deleteCanonicalImportCache(
+      job.user_id,
+      canonicalURL ?? cachedJob.canonical_url ?? cachedJob.source_url ?? null,
+      cachedJob.dedupe_key ?? job.dedupe_key ?? null
+    );
+    return null;
+  }
   const now = nowIso();
   const completed = await appendJobEvent(job.id, "canonical_cache_hit", {
     worker_id: workerID,
@@ -4040,13 +4295,11 @@ async function completeJobFromCachedCanonicalImport(job, cachedJob, { workerID, 
     completed_at: now,
   });
   const recipe = await fetchRecipeCardProjection(cachedJob.recipe_id).catch(() => null);
-  const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(cachedJob.recipe_id).catch(() => null);
   const recipeDetail = await ensurePersistedRecipeDisplayMacros(cachedJob.recipe_id, rawRecipeDetail).catch(() => rawRecipeDetail);
-  if (normalizeText(job.target_state).toLowerCase() === "saved") {
-    await upsertSavedRecipeForUser(completed.user_id, recipeDetail ?? recipe, {
-      restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
-    }).catch(() => false);
-  }
+  await persistRecipeTargetStateForUser(completed.user_id, recipeDetail ?? recipe, {
+    targetState: job.target_state,
+    restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
+  }).catch(() => ({ saved: false, prepped: false }));
   await warmRecipeDetailCache({
     userID: completed.user_id,
     recipeID: cachedJob.recipe_id,
@@ -4112,7 +4365,7 @@ async function completeJobByCloningGlobalImportedRecipe(job, cachedJob, { worker
   });
   await markDuplicateFailedImportsSuperseded(completed);
   if (persisted.saved_state === "inserted") {
-    scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: job.id });
+    await scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: job.id });
   }
   invalidateUserBootstrapCache(completed.user_id);
   return formatJobResponse(completed, {
@@ -4146,11 +4399,10 @@ async function completeJobFromExistingImportedRecipe(job, recipeRow, { workerID,
   const recipe = await fetchRecipeCardProjection(recipeID).catch(() => null);
   const rawRecipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
   const recipeDetail = await ensurePersistedRecipeDisplayMacros(recipeID, rawRecipeDetail).catch(() => rawRecipeDetail);
-  if (normalizeText(job.target_state).toLowerCase() === "saved") {
-    await upsertSavedRecipeForUser(completed.user_id, recipeDetail ?? recipe, {
-      restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
-    }).catch(() => false);
-  }
+  await persistRecipeTargetStateForUser(completed.user_id, recipeDetail ?? recipe, {
+    targetState: job.target_state,
+    restoreTombstoneAfter: completed.created_at ?? job.created_at ?? now,
+  }).catch(() => ({ saved: false, prepped: false }));
   await warmRecipeDetailCache({
     userID: completed.user_id,
     recipeID,
@@ -4182,7 +4434,6 @@ async function createCompletedJobRowFromExistingImportedRecipe(request, recipeRo
       source_text: request.source_text || null,
       attachments: request.attachments ?? [],
       photo_context: request.photo_context ?? null,
-      public_catalog_import: request.public_catalog_import === true,
       target_state: request.target_state,
     },
     dedupe_key: dedupeKey ?? recipeRow?.dedupe_key ?? null,
@@ -4276,7 +4527,8 @@ async function createJobRow(request) {
         sourceText: request.source_text,
       });
 
-  const enqueueLockKey = dedupeKey
+  const forceReprocess = request.force_reprocess === true;
+  const enqueueLockKey = dedupeKey && !forceReprocess
     ? recipeImportLockKey("enqueue", `${request.user_id ?? "anon"}:${dedupeKey}`)
     : null;
   const enqueueLockToken = enqueueLockKey
@@ -4287,55 +4539,59 @@ async function createJobRow(request) {
     const lockedExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
     if (lockedExisting) {
+      await restoreSavedRecipeForImportRequest(request, lockedExisting, { requestedAt: nowIso() }).catch(() => false);
       return lockedExisting;
     }
     await delay(200);
     const settledExisting = await findExistingJobForRequest(request, dedupeKey)
       ?? await findExistingJobForRequestSource(request, dedupeKey);
     if (settledExisting) {
+      await restoreSavedRecipeForImportRequest(request, settledExisting, { requestedAt: nowIso() }).catch(() => false);
       return settledExisting;
     }
   }
 
   try {
-  const existing = await findExistingJobForRequest(request, dedupeKey);
-  if (existing) {
-    await restoreSavedRecipeForImportRequest(request, existing, { requestedAt: nowIso() }).catch(() => false);
-    return existing;
-  }
+  if (!forceReprocess) {
+    const existing = await findExistingJobForRequest(request, dedupeKey);
+    if (existing) {
+      await restoreSavedRecipeForImportRequest(request, existing, { requestedAt: nowIso() }).catch(() => false);
+      return existing;
+    }
 
-  const existingForSource = await findExistingJobForRequestSource(request, dedupeKey);
-  if (existingForSource) {
-    await restoreSavedRecipeForImportRequest(request, existingForSource, { requestedAt: nowIso() }).catch(() => false);
-    _setCanonicalImportCache(
-      request.user_id,
-      existingForSource.canonical_url ?? existingForSource.source_url ?? request.source_url ?? null,
-      existingForSource.dedupe_key ?? dedupeKey ?? null,
-      existingForSource
-    );
-    return existingForSource;
-  }
+    const existingForSource = await findExistingJobForRequestSource(request, dedupeKey);
+    if (existingForSource) {
+      await restoreSavedRecipeForImportRequest(request, existingForSource, { requestedAt: nowIso() }).catch(() => false);
+      _setCanonicalImportCache(
+        request.user_id,
+        existingForSource.canonical_url ?? existingForSource.source_url ?? request.source_url ?? null,
+        existingForSource.dedupe_key ?? dedupeKey ?? null,
+        existingForSource
+      );
+      return existingForSource;
+    }
 
-  const completedCanonical = await findCompletedCanonicalImportForRequest(request, {
-    canonicalURL: request.canonical_url ?? request.source_url ?? null,
-    dedupeKey,
-  });
-  if (completedCanonical) {
-    await restoreSavedRecipeForImportRequest(request, completedCanonical, { requestedAt: nowIso() }).catch(() => false);
-    return completedCanonical;
-  }
-
-  const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(request, {
-    canonicalURL: request.canonical_url ?? request.source_url ?? null,
-    dedupeKey,
-  });
-  if (existingImportedRecipe) {
-    await restoreSavedRecipeForImportRequest(request, existingImportedRecipe, { requestedAt: nowIso() }).catch(() => false);
-    const completed = await createCompletedJobRowFromExistingImportedRecipe(request, existingImportedRecipe, {
-      dedupeKey,
+    const completedCanonical = await findCompletedCanonicalImportForRequest(request, {
       canonicalURL: request.canonical_url ?? request.source_url ?? null,
+      dedupeKey,
     });
-    if (completed) return completed;
+    if (completedCanonical) {
+      await restoreSavedRecipeForImportRequest(request, completedCanonical, { requestedAt: nowIso() }).catch(() => false);
+      return completedCanonical;
+    }
+
+    const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(request, {
+      canonicalURL: request.canonical_url ?? request.source_url ?? null,
+      dedupeKey,
+    });
+    if (existingImportedRecipe) {
+      await restoreSavedRecipeForImportRequest(request, existingImportedRecipe, { requestedAt: nowIso() }).catch(() => false);
+      const completed = await createCompletedJobRowFromExistingImportedRecipe(request, existingImportedRecipe, {
+        dedupeKey,
+        canonicalURL: request.canonical_url ?? request.source_url ?? null,
+      });
+      if (completed) return completed;
+    }
   }
 
   const activeImportCount = await countActiveImportsForUser(request.user_id);
@@ -4358,11 +4614,13 @@ async function createJobRow(request) {
       source_text: request.source_text || null,
       attachments: request.attachments ?? [],
       photo_context: request.photo_context ?? null,
-      public_catalog_import: request.public_catalog_import === true,
       target_state: request.target_state,
+      force_reprocess: forceReprocess,
+      suppress_notifications: request.suppress_notifications === true,
     },
     dedupe_key: dedupeKey,
     status: "queued",
+    max_attempts: 5,
     review_state: "pending",
     event_log: [
       {
@@ -4426,7 +4684,8 @@ async function storeEvidenceBundle(jobID, bundle) {
 
   try {
     const [created] = await insertRows("recipe_ingestion_evidence_bundles", [payload], {
-      prefer: "return=minimal",
+      onConflict: "job_id",
+      prefer: "resolution=merge-duplicates,return=representation",
     });
 
     return created ?? payload;
@@ -4741,23 +5000,51 @@ async function upsertSavedRecipeForUser(userID, recipeDetail, { restoreTombstone
   return true;
 }
 
-async function restoreSavedRecipeForExplicitImport(userID, recipeID, { requestedAt = null } = {}) {
+function recipeImportTargetActions(targetState) {
+  const normalizedTarget = normalizeText(targetState).toLowerCase();
+  return {
+    saveToRecipes: true,
+    addToPrep: normalizedTarget === "prepped",
+  };
+}
+
+async function persistRecipeTargetStateForUser(
+  userID,
+  recipeDetail,
+  { targetState = "saved", restoreTombstoneAfter = null } = {}
+) {
   const normalizedUserID = normalizeText(userID);
-  const normalizedRecipeID = normalizeText(recipeID);
-  if (!normalizedUserID || !normalizedRecipeID) return false;
-  const recipeDetail = await fetchCanonicalRecipeDetailByID(normalizedRecipeID).catch(() => null);
-  if (!recipeDetail) return false;
-  return upsertSavedRecipeForUser(normalizedUserID, recipeDetail, {
-    restoreTombstoneAfter: requestedAt ?? nowIso(),
-  });
+  if (!normalizedUserID || !recipeDetail?.id) {
+    return { saved: false, prepped: false };
+  }
+
+  const actions = recipeImportTargetActions(targetState);
+  const saved = actions.saveToRecipes
+    ? await upsertSavedRecipeForUser(normalizedUserID, recipeDetail, { restoreTombstoneAfter })
+    : false;
+  if (actions.addToPrep) {
+    await upsertPrepOverrideForUser(normalizedUserID, recipeDetail);
+  }
+  return { saved, prepped: actions.addToPrep };
+}
+
+function recipeIDForImportRestore(jobOrRecipe) {
+  const linkedRecipeID = normalizeText(jobOrRecipe?.recipe_id);
+  if (linkedRecipeID) return linkedRecipeID;
+  const candidateID = normalizeText(jobOrRecipe?.id);
+  return candidateID && !candidateID.startsWith("ri_") ? candidateID : null;
 }
 
 async function restoreSavedRecipeForImportRequest(request, jobOrRecipe, { requestedAt = null } = {}) {
-  if (normalizeText(request?.target_state).toLowerCase() !== "saved") return false;
   const userID = normalizeText(request?.user_id);
-  const recipeID = normalizeText(jobOrRecipe?.recipe_id ?? jobOrRecipe?.id);
+  const recipeID = recipeIDForImportRestore(jobOrRecipe);
   if (!userID || !recipeID) return false;
-  return restoreSavedRecipeForExplicitImport(userID, recipeID, { requestedAt });
+  const recipeDetail = await fetchCanonicalRecipeDetailByID(recipeID).catch(() => null);
+  if (!recipeDetail) return false;
+  return persistRecipeTargetStateForUser(userID, recipeDetail, {
+    targetState: request?.target_state,
+    restoreTombstoneAfter: requestedAt ?? nowIso(),
+  });
 }
 
 function normalizeCuisinePreference(rawValue) {
@@ -4894,22 +5181,54 @@ async function upsertPrepOverrideForUser(userID, recipeDetail) {
   );
 }
 
+function cleanIngredientQuantityText(quantityText, displayName) {
+  let cleaned = normalizeText(quantityText);
+  if (!cleaned || !/\d/.test(cleaned)) return cleaned || null;
+  const ignoredNameTokens = new Set([
+    "whole", "fresh", "dried", "ground", "large", "medium", "small", "fine",
+    "ripe", "chopped", "minced", "grated", "sliced", "optional", "divided",
+  ]);
+  const nameTokens = normalizeKey(displayName)
+    .split(" ")
+    .filter((token) => token.length >= 4 && !ignoredNameTokens.has(token));
+  for (const token of nameTokens) {
+    cleaned = cleaned.replace(new RegExp(`\\b${token}\\b`, "gi"), " ");
+  }
+  return normalizeText(cleaned)
+    .replace(/\s+([,)])/g, "$1")
+    .replace(/\(\s+/g, "(")
+    || null;
+}
+
 function coerceIngredientItem(item) {
   if (typeof item === "string") {
     const parsed = parseIngredientObjects(item)[0];
     if (!parsed?.name) return null;
+    // Prefer a quantity_text explicitly set on the parsed object.
+    // Otherwise rebuild from quantity + unit — but use the raw numeric as a last
+    // resort, not a decimal reconstruction (0.5 cup → reconstructed vs "1/2 cup" lost).
+    const quantityText = normalizeText(
+      parsed.quantity_text
+        ?? [parsed.quantity != null ? String(parsed.quantity) : null, parsed.unit].filter(Boolean).join(" ")
+    ) || null;
     return {
       display_name: parsed.name,
-      quantity_text: normalizeText([parsed.quantity != null ? String(parsed.quantity) : null, parsed.unit].filter(Boolean).join(" ")) || null,
+      quantity_text: quantityText,
       image_url: null,
     };
   }
   if (!item || typeof item !== "object") return null;
-  const displayName = normalizeText(item.display_name ?? item.displayName ?? item.name ?? item.ingredient ?? "");
+  let displayName = normalizeText(item.display_name ?? item.displayName ?? item.name ?? item.ingredient ?? "");
   if (!displayName) return null;
+  let quantityText = firstNormalizedText(item.quantity_text, item.quantityText, item.amount_text, item.amountText, item.quantity, item.measure);
+  const duplicatedDescriptor = normalizeText(quantityText).match(/(?:^|\s)(whole|large|medium|small)\s*$/i)?.[1];
+  if (duplicatedDescriptor && new RegExp(`^${duplicatedDescriptor}\\s+`, "i").test(displayName)) {
+    displayName = displayName.replace(new RegExp(`^${duplicatedDescriptor}\\s+`, "i"), "");
+  }
+  quantityText = cleanIngredientQuantityText(quantityText, displayName);
   return {
     display_name: displayName,
-    quantity_text: firstNormalizedText(item.quantity_text, item.quantityText, item.amount_text, item.amountText, item.quantity, item.measure),
+    quantity_text: quantityText,
     image_url: cleanURL(item.image_url ?? item.imageUrl ?? null),
   };
 }
@@ -5111,13 +5430,26 @@ function inferRecipeTimingFromSteps(recipe) {
 
 function coerceStructuredRecipeCandidate(candidate, source) {
   const sourceIngredients = Array.isArray(candidate.ingredients) ? candidate.ingredients : [];
-  const ingredients = uniqueBy(
-    [
-      ...sourceIngredients.map(coerceIngredientItem).filter(Boolean),
-      ...buildFallbackIngredientLines(source).map(coerceIngredientItem).filter(Boolean),
-    ],
-    (ingredient) => normalizeKey(ingredient.display_name)
-  ).map((ingredient, index) => ({
+
+  // Only merge fallback ingredient candidates when the structured data is absent or
+  // very sparse (< 3 items). When we already have good JSON-LD ingredients, the
+  // fallback candidates introduce body-text noise: metric weight fragments like
+  // "113g", page UI strings like "Cook Mode", "Prevent your screen...", and
+  // duplicate quantity-as-ingredient tokens ("heaping cup marshmallow creme") that
+  // share no common key with the structured ingredient name, so deduplication misses
+  // them and they all appear as phantom ingredient tiles.
+  const hasStructuredIngredients = sourceIngredients.length >= 3;
+  const candidateIngredients = hasStructuredIngredients
+    ? sourceIngredients.map(coerceIngredientItem).filter(Boolean)
+    : uniqueBy(
+        [
+          ...sourceIngredients.map(coerceIngredientItem).filter(Boolean),
+          ...buildFallbackIngredientLines(source).map(coerceIngredientItem).filter(Boolean),
+        ],
+        (ingredient) => normalizeKey(ingredient.display_name)
+      );
+
+  const ingredients = candidateIngredients.map((ingredient, index) => ({
     ...ingredient,
     sort_order: index + 1,
   }));
@@ -5156,7 +5488,7 @@ function coerceStructuredRecipeCandidate(candidate, source) {
     ? Number(candidate.servings_count)
     : parseFirstInteger(candidate.servings_text ?? candidate.recipeYield ?? candidate.servings);
 
-  const description = firstNormalizedText(candidate.description, source.meta_description, source.description);
+  const description = normalizeText(candidate.description ?? source.meta_description ?? source.description ?? "") || null;
   const heroImageURL = cleanURL(
     candidate.hero_image_url
       ?? candidate.heroImageUrl
@@ -5178,6 +5510,11 @@ function coerceStructuredRecipeCandidate(candidate, source) {
       source.channel_id
     )
   );
+  const sourceAttachedVideoURL = cleanURL(source.attached_video_url ?? null);
+  const candidateAttachedVideoURL = cleanURL(candidate.attached_video_url ?? candidate.attachedVideoUrl ?? null);
+  const attachedVideoURL = isRecipeVideoStorageURL(sourceAttachedVideoURL)
+    ? sourceAttachedVideoURL
+    : candidateAttachedVideoURL ?? sourceAttachedVideoURL;
 
   return {
     title: firstNormalizedText(candidate.title, source.title, source.meta_title),
@@ -5205,7 +5542,7 @@ function coerceStructuredRecipeCandidate(candidate, source) {
     discover_card_image_url: cleanURL(candidate.discover_card_image_url ?? candidate.discoverCardImageUrl ?? heroImageURL),
     recipe_url: cleanURL(candidate.recipe_url ?? candidate.recipeURL ?? source.source_url ?? source.canonical_url ?? null),
     original_recipe_url: cleanURL(candidate.original_recipe_url ?? candidate.originalRecipeUrl ?? source.canonical_url ?? source.source_url ?? null),
-    attached_video_url: cleanURL(candidate.attached_video_url ?? candidate.attachedVideoUrl ?? source.attached_video_url ?? null),
+    attached_video_url: attachedVideoURL,
     detail_footnote: normalizeText(candidate.detail_footnote ?? "") || null,
     image_caption: normalizeText(candidate.image_caption ?? "") || null,
     dietary_tags: uniqueStrings(candidate.dietary_tags ?? candidate.dietaryTags ?? []),
@@ -5321,9 +5658,6 @@ function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
     recipeSteps,
     stepIngredients,
   });
-  const persistableStepIngredients = usesPublicRecipeTables
-    ? stepIngredients.filter((ingredient) => ingredient.ingredient_id)
-    : stepIngredients;
 
   return {
     recipe_id: recipeID,
@@ -5343,7 +5677,7 @@ function buildRecipeArtifacts(normalized, config, recipeRowExtras = {}) {
       image_url: ingredient.image_url ?? canonical.ingredients[index]?.image_url ?? null,
     })),
     recipe_steps: recipeSteps,
-    recipe_step_ingredients: persistableStepIngredients,
+    recipe_step_ingredients: stepIngredients,
     canonical_detail: canonical,
   };
 }
@@ -5481,6 +5815,81 @@ async function resolveTrustedIngredientImageLookup(catalog, ingredients) {
     const imageURL = imageByIngredientID.get(candidate.ingredientID);
     if (imageURL && !lookup.has(candidate.key)) {
       lookup.set(candidate.key, imageURL);
+    }
+  }
+
+  // Relaxed fallback for ingredients that still have no image: match a descriptor-
+  // stripped "core" name against the catalog (e.g. "boneless skinless chicken thighs"
+  // -> "chicken thighs") and reuse that ingredient's trusted image. Stays fully batched
+  // (at most two more set-based queries) so it never adds per-ingredient latency.
+  const stillMissing = [];
+  const seenCoreKeys = new Set();
+  for (const ingredient of ingredients ?? []) {
+    const key = normalizeKey(ingredient.display_name);
+    if (!key || isUtilityIngredient(key) || lookup.has(key)) continue;
+    const core = simplifyIngredientKey(ingredient.display_name);
+    if (!core || core === key) continue;
+    stillMissing.push({ key, core });
+    seenCoreKeys.add(core);
+  }
+
+  if (seenCoreKeys.size) {
+    const coreRows = await fetchRows(
+      "ingredients",
+      "id,normalized_name,default_image_url",
+      {
+        filters: [`normalized_name=in.${buildInClause([...seenCoreKeys])}`],
+        limit: 200,
+      }
+    ).catch(() => []);
+
+    const coreImageByKey = new Map();
+    const coreIDByKey = new Map();
+    for (const row of coreRows) {
+      const rowKey = normalizeKey(row?.normalized_name ?? row?.display_name);
+      if (!rowKey) continue;
+      const img = cleanURL(row?.default_image_url ?? null);
+      if (img && !coreImageByKey.has(rowKey)) coreImageByKey.set(rowKey, img);
+      const id = normalizeText(row?.id ?? "");
+      if (id && !coreIDByKey.has(rowKey)) coreIDByKey.set(rowKey, id);
+    }
+
+    const needRecipeLookup = [];
+    for (const entry of stillMissing) {
+      const directImage = coreImageByKey.get(entry.core);
+      if (directImage) {
+        if (!lookup.has(entry.key)) lookup.set(entry.key, directImage);
+        continue;
+      }
+      const coreID = coreIDByKey.get(entry.core);
+      if (coreID) needRecipeLookup.push({ ...entry, ingredientID: coreID });
+    }
+
+    if (needRecipeLookup.length) {
+      const coreIDs = uniqueStrings(needRecipeLookup.map((entry) => entry.ingredientID));
+      const reuseRows = await fetchRows(
+        "recipe_ingredients",
+        "ingredient_id,image_url",
+        {
+          filters: [
+            `ingredient_id=in.${buildInClause(coreIDs)}`,
+            "image_url=not.is.null",
+          ],
+          order: ["ingredient_id.asc"],
+          limit: 1000,
+        }
+      ).catch(() => []);
+
+      const reuseImageByID = new Map();
+      for (const row of reuseRows) {
+        const id = normalizeText(row?.ingredient_id ?? "");
+        const img = cleanURL(row?.image_url ?? null);
+        if (id && img && !reuseImageByID.has(id)) reuseImageByID.set(id, img);
+      }
+      for (const entry of needRecipeLookup) {
+        const img = reuseImageByID.get(entry.ingredientID);
+        if (img && !lookup.has(entry.key)) lookup.set(entry.key, img);
+      }
     }
   }
 
@@ -5711,6 +6120,16 @@ async function persistNormalizedRecipe(
     }
   }
 
+  // Safety net: never present an empty recipe as a successful import. This catches the
+  // case where dedupe matched a pre-existing blank recipe (e.g. one produced by an older
+  // pipeline before content guards existed) — without this, the user gets a "saved"
+  // recipe that opens to no ingredients and no steps.
+  const persistedIngredientCount = Array.isArray(normalized.ingredients) ? normalized.ingredients.length : 0;
+  const persistedStepCount = Array.isArray(normalized.steps) ? normalized.steps.length : 0;
+  if (persistedIngredientCount === 0 && persistedStepCount === 0) {
+    throw new Error("Imported recipe had no ingredients or steps after persistence.");
+  }
+
   const recipeCard = await fetchRecipeCardProjection(recipeID);
   const recipeDetail = recipeCard
     ? {
@@ -5723,12 +6142,11 @@ async function persistNormalizedRecipe(
         id: recipeID,
       };
 
-  if (userID && String(targetState ?? "").trim() === "saved") {
-    await upsertSavedRecipeForUser(userID, recipeDetail, { restoreTombstoneAfter });
-  }
-
-  if (userID && String(targetState ?? "").trim() === "prepped") {
-    await upsertPrepOverrideForUser(userID, recipeDetail);
+  if (userID) {
+    await persistRecipeTargetStateForUser(userID, recipeDetail, {
+      targetState,
+      restoreTombstoneAfter,
+    });
   }
 
   return {
@@ -5739,119 +6157,70 @@ async function persistNormalizedRecipe(
   };
 }
 
-export async function promoteUserImportedRecipeToCatalog(recipeID) {
-  const normalizedRecipeID = normalizeText(recipeID);
-  if (!normalizedRecipeID.startsWith(USER_IMPORTED_RECIPE_TABLE_CONFIG.recipePrefix)) {
-    throw new Error("A user-import recipe id is required for catalog promotion.");
-  }
-
-  const detail = await fetchCanonicalRecipeDetailByID(
-    normalizedRecipeID,
-    USER_IMPORTED_RECIPE_TABLE_CONFIG
-  );
-  if (!detail) throw new Error(`Imported recipe ${normalizedRecipeID} was not found.`);
-
-  const sourceURL = [
-    detail.original_recipe_url,
-    detail.recipe_url,
-    detail.attached_video_url,
-  ]
-    .map(cleanURL)
-    .filter(Boolean)
-    .find((value) => {
-      try {
-        const host = new URL(value).hostname.toLowerCase();
-        return host.includes("tiktok.com") || host.includes("instagram.com");
-      } catch {
-        return false;
-      }
-    }) ?? null;
-  if (!sourceURL) {
-    throw new Error(`Imported recipe ${normalizedRecipeID} does not have a public social source.`);
-  }
-  if (!normalizeText(detail.title) || (detail.ingredients ?? []).length < 3 || (detail.steps ?? []).length < 2) {
-    throw new Error(`Imported recipe ${normalizedRecipeID} is not complete enough for the public catalog.`);
-  }
-
-  const promoted = await persistNormalizedRecipe({
-    ...detail,
-    id: null,
-    external_id: `social:${crypto.createHash("sha256").update(sourceURL).digest("hex").slice(0, 24)}`,
-    recipe_path: null,
-    source_provenance_json: {
-      catalog_origin: "existing_import",
-      source_url: sourceURL,
-      promoted_at: nowIso(),
-    },
-  }, {
-    userID: null,
-    targetState: "saved",
-    dedupeExisting: true,
-    reviewState: "approved",
-    confidenceScore: 0.98,
-    qualityFlags: ["promoted_existing_import"],
-  });
-
-  return {
-    imported_recipe_id: normalizedRecipeID,
-    catalog_recipe_id: promoted.recipe_id,
-    saved_state: promoted.saved_state,
-    source_url: sourceURL,
-  };
-}
-
-function scheduleUserImportEmbedding(recipeID, recipeDetail, { jobID = null } = {}) {
+// Embeds the imported recipe so it can power semantic "similar recipes" lookups.
+// Awaited (best-effort, timeout-bounded) rather than a detached setTimeout — the old
+// fire-and-forget version was silently killed whenever the worker restarted, leaving
+// most imports without embeddings and degrading the similar-recipes rail. The job is
+// already marked `saved` by the time this runs, so awaiting only delays the worker
+// picking up the NEXT job, never the user seeing their recipe.
+async function scheduleUserImportEmbedding(recipeID, recipeDetail, { jobID = null } = {}) {
   if (!openai || !recipeID || !recipeDetail) return;
+  try {
+    const embeddingInput = [
+      `title: ${normalizeText(recipeDetail.title ?? "", 240)}`,
+      `description: ${normalizeText(recipeDetail.description ?? "", 600)}`,
+      `recipe_type: ${normalizeText(recipeDetail.recipe_type ?? recipeDetail.category ?? "", 80)}`,
+      `main_protein: ${normalizeText(recipeDetail.main_protein ?? "", 80)}`,
+      `cuisine_tags: ${(recipeDetail.cuisine_tags ?? []).join(", ")}`,
+      `dietary_tags: ${(recipeDetail.dietary_tags ?? []).join(", ")}`,
+      `flavor_tags: ${(recipeDetail.flavor_tags ?? []).join(", ")}`,
+      `ingredients: ${normalizeText(recipeDetail.ingredients_text ?? (recipeDetail.ingredients ?? []).map((entry) => [entry.quantity_text, entry.display_name].filter(Boolean).join(" ")).join(", "), 1600)}`,
+    ].join("\n");
 
-  setTimeout(() => {
-    void (async () => {
-      const embeddingInput = [
-        `title: ${normalizeText(recipeDetail.title ?? "", 240)}`,
-        `description: ${normalizeText(recipeDetail.description ?? "", 600)}`,
-        `recipe_type: ${normalizeText(recipeDetail.recipe_type ?? recipeDetail.category ?? "", 80)}`,
-        `main_protein: ${normalizeText(recipeDetail.main_protein ?? "", 80)}`,
-        `cuisine_tags: ${(recipeDetail.cuisine_tags ?? []).join(", ")}`,
-        `dietary_tags: ${(recipeDetail.dietary_tags ?? []).join(", ")}`,
-        `flavor_tags: ${(recipeDetail.flavor_tags ?? []).join(", ")}`,
-        `ingredients: ${normalizeText(recipeDetail.ingredients_text ?? (recipeDetail.ingredients ?? []).map((entry) => [entry.quantity_text, entry.display_name].filter(Boolean).join(" ")).join(", "), 1600)}`,
-      ].join("\n");
-
-      const resp = await timeRecipeImportStage(
+    const resp = await withTimeout(
+      timeRecipeImportStage(
         "post_completion_embedding",
         { jobID, metadata: { recipe_id: recipeID } },
         () => openai.embeddings.create({ model: "text-embedding-3-small", input: embeddingInput })
-      );
-      const vector = resp.data?.[0]?.embedding;
-      if (!Array.isArray(vector) || vector.length === 0) return;
-      await patchRows(
-        USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-        [`id=eq.${encodeURIComponent(recipeID)}`],
-        { embedding_basic: `[${vector.join(",")}]` },
-        { prefer: "return=minimal" }
-      );
-    })().catch((embeddingError) => {
-      console.warn("[recipe-ingestion] user-import embedding failed:", embeddingError.message);
-    });
-  }, 0);
+      ),
+      15_000,
+      "user_import_embedding"
+    );
+    const vector = resp.data?.[0]?.embedding;
+    if (!Array.isArray(vector) || vector.length === 0) return;
+    await patchRows(
+      USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
+      [`id=eq.${encodeURIComponent(recipeID)}`],
+      { embedding_basic: `[${vector.join(",")}]` },
+      { prefer: "return=minimal" }
+    );
+  } catch (embeddingError) {
+    console.warn("[recipe-ingestion] user-import embedding failed:", embeddingError instanceof Error ? embeddingError.message : embeddingError);
+  }
 }
 
 function assessRecipeQuality(normalized, source) {
   const flags = new Set();
   let confidence = 0.2;
   const isShortFormVideo = ["youtube", "tiktok", "instagram", "media_video"].includes(source.source_type);
+  const semanticQuality = recipeSemanticCompleteness(normalized);
 
   if (normalized.title) confidence += 0.16;
   else flags.add("missing_title");
 
-  if ((normalized.ingredients ?? []).length >= 3) confidence += 0.22;
+  if (semanticQuality.concreteIngredientCount >= 3) confidence += 0.22;
   else flags.add("low_ingredient_count");
+
+  if (semanticQuality.genericIngredients.length) flags.add("unresolved_ingredient_components");
+  if (semanticQuality.equipmentIngredients.length) flags.add("equipment_listed_as_ingredient");
+  if (semanticQuality.teaserFieldCount) flags.add("source_teaser_text");
 
   const ingredientsWithoutQuantities = (normalized.ingredients ?? []).filter((ingredient) => !normalizeText(ingredient.quantity_text)).length;
   if ((normalized.ingredients ?? []).length > 0 && ingredientsWithoutQuantities > Math.ceil(normalized.ingredients.length * 0.6)) {
     flags.add("many_missing_quantities");
   }
 
-  if ((normalized.steps ?? []).length >= 2) confidence += 0.22;
+  if (semanticQuality.meaningfulStepCount >= 2) confidence += 0.22;
   else flags.add("low_step_count");
 
   if (normalized.servings_count || normalized.servings_text) confidence += 0.08;
@@ -5864,13 +6233,15 @@ function assessRecipeQuality(normalized, source) {
   if (source.used_llm) confidence += 0.05;
 
   confidence = Math.min(0.99, Math.max(0.05, confidence));
-  let reviewState = confidence >= 0.72 && !flags.has("source_blocked") ? "approved" : "needs_review";
+  const hasSemanticBlocker = semanticQuality.blockingIssues.length > 0;
+  let reviewState = confidence >= 0.72 && !flags.has("source_blocked") && !hasSemanticBlocker ? "approved" : "needs_review";
   if (
     reviewState !== "approved"
     && ["text", "concept_prompt", "recipe_search"].includes(normalizeText(source.source_type).toLowerCase())
     && confidence >= 0.38
     && confidence < 0.72
     && !flags.has("source_blocked")
+    && !hasSemanticBlocker
   ) {
     reviewState = "draft";
     flags.add("draft_text_import");
@@ -5881,6 +6252,7 @@ function assessRecipeQuality(normalized, source) {
     && confidence >= 0.38
     && confidence < 0.72
     && ((normalizeText(source.transcript_text).length > 0) || (Array.isArray(source.frame_ocr_texts) && source.frame_ocr_texts.some((frame) => normalizeText(frame?.text))))
+    && !hasSemanticBlocker
   ) {
     reviewState = "draft";
     flags.add("draft_short_form_video");
@@ -5896,10 +6268,71 @@ function assessRecipeQuality(normalized, source) {
           flags.has("social_source_without_transcript") ? "Social source lacked strong transcript/caption support." : null,
           flags.has("many_missing_quantities") ? "Most ingredients did not include explicit quantities." : null,
           flags.has("low_step_count") ? "Instruction coverage is thin and should be reviewed." : null,
+          semanticQuality.blockingIssues[0] ?? null,
         ])[0] ?? "Recipe import needs a quick review before trusting it fully."
       : reviewState === "draft"
         ? "Imported from short-form video with enough evidence for a usable draft, but it still deserves a quick human check."
       : null,
+  };
+}
+
+function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlags = []) {
+  if (!isSocialRecipeMaterial(source)) return assessment;
+
+  const flags = uniqueStrings(qualityFlags).map((flag) => normalizeText(flag).toLowerCase());
+  const semanticQuality = recipeSemanticCompleteness(recipe);
+  const missingGroundedContextFlag = flags.includes("grounded_completion_context_unavailable");
+  const hasBlockingValidatorFlag = flags.some((flag) => [
+    "final_validator_review_needed",
+    "final_validator_failed",
+    "grounded_completion_context_unavailable",
+  ].includes(flag)) || (flags.includes("grounded_completion_incomplete") && semanticQuality.blockingIssues.length > 0);
+  const startedIncomplete = flags.some((flag) => (
+    /(?:incomplete|partial|sparse|thin|broad)/.test(flag)
+    || /missing[_ -]?(?:steps?|ingredients?|quantit)/.test(flag)
+    || /low[_ -]?(?:step|ingredient|detail)/.test(flag)
+  ));
+  const coverage = socialRecipeEvidenceCoverage(source);
+  const thinSourceEvidence = startedIncomplete || (
+    coverage.usableFrameOCRCount < 2
+    && (coverage.ingredientCandidateCount < 4 || coverage.instructionCandidateCount < 3)
+    && !coverage.hasStrongTranscriptRecipeEvidence
+  );
+  if (!thinSourceEvidence && semanticQuality.blockingIssues.length === 0 && !hasBlockingValidatorFlag) return assessment;
+
+  const context = source?.social_completion_context ?? null;
+  const hasGroundedContext = socialCompletionContextHasDetails(context);
+  const confidenceCap = hasGroundedContext
+    ? (context.exact_match_supported ? 0.9 : 0.82)
+    : 0.68;
+  const confidence = Math.min(Number(assessment?.confidence_score ?? 0), confidenceCap);
+  const recipeShapeIsUsable = hasUsableRecipeShape(recipe) && semanticQuality.isUsable;
+  const reviewState = hasGroundedContext && recipeShapeIsUsable && !hasBlockingValidatorFlag && confidence >= 0.72
+    ? "approved"
+    : "draft";
+  const calibratedFlags = uniqueStrings([
+    ...(assessment?.quality_flags ?? []),
+    "thin_social_source_evidence",
+    ...(hasGroundedContext ? ["grounded_web_completion"] : ["grounded_web_completion_missing"]),
+    ...(hasGroundedContext && !context.exact_match_supported ? ["grounded_completion_inferred"] : []),
+    ...(semanticQuality.genericIngredients.length ? ["unresolved_ingredient_components"] : []),
+    ...(semanticQuality.equipmentIngredients.length ? ["equipment_listed_as_ingredient"] : []),
+    ...(semanticQuality.teaserFieldCount ? ["source_teaser_text"] : []),
+  ]);
+
+  return {
+    ...assessment,
+    confidence_score: Number(confidence.toFixed(4)),
+    quality_flags: calibratedFlags,
+    review_state: reviewState,
+    review_reason: semanticQuality.blockingIssues[0]
+      ?? (missingGroundedContextFlag ? "Grounded web context was unavailable, so this complete reconstruction remains a draft." : null)
+      ?? (hasBlockingValidatorFlag ? "The final validator still found unresolved recipe details." : null)
+      ?? (hasGroundedContext
+      ? context.exact_match_supported
+        ? "Sparse social evidence was completed using a matching creator or cross-post recipe source."
+        : "Sparse social evidence was completed conservatively with grounded web context; inferred details remain flagged."
+      : "The social source did not expose enough recipe detail and grounded web completion was unavailable."),
   };
 }
 
@@ -5967,6 +6400,42 @@ function pickBestSchemaRecipe(jsonLdRecipes) {
     .sort((left, right) => right.score - left.score)[0]?.recipe ?? null;
 }
 
+// Resolves the best image URL from a schema.org Recipe.image field. The field may be
+// a string, an array of strings, an ImageObject ({url,width,height}), or an array of
+// ImageObjects (often multiple crop ratios). We pick the largest by declared width,
+// falling back to the last entry (commonly the highest-res), so the recipe card gets
+// a clean hero image instead of a cropped thumbnail.
+function pickStructuredRecipeImageURL(imageField) {
+  if (!imageField) return null;
+
+  const toCandidate = (entry) => {
+    if (!entry) return null;
+    if (typeof entry === "string") {
+      const url = normalizeText(entry);
+      return url ? { url, width: 0 } : null;
+    }
+    if (typeof entry === "object") {
+      const url = normalizeText(entry.url ?? entry.contentUrl ?? entry["@id"] ?? "");
+      if (!url) return null;
+      const width = Number.parseFloat(String(entry.width ?? "").replace(/[^\d.]+/g, "")) || 0;
+      return { url, width };
+    }
+    return null;
+  };
+
+  const candidates = (Array.isArray(imageField) ? imageField : [imageField])
+    .map(toCandidate)
+    .filter((candidate) => candidate && /^https?:\/\//i.test(candidate.url));
+  if (!candidates.length) return null;
+
+  const withWidth = candidates.filter((candidate) => candidate.width > 0);
+  if (withWidth.length) {
+    return withWidth.sort((left, right) => right.width - left.width)[0].url;
+  }
+  // No declared dimensions — array order usually runs small→large, so take the last.
+  return candidates[candidates.length - 1].url;
+}
+
 async function loadPlaywright() {
   try {
     const localModule = await import(PLAYWRIGHT_FALLBACK_PATH);
@@ -6001,6 +6470,17 @@ function absoluteURLFrom(baseURL, value) {
   } catch {
     return cleanURL(raw);
   }
+}
+
+// Extract a canonical YouTube watch URL from iframe embeds in raw HTML.
+// Recipe sites typically embed YouTube demos as:
+//   <iframe src="https://www.youtube.com/embed/VIDEO_ID?...">
+// Returns a standard https://www.youtube.com/watch?v=VIDEO_ID URL, or null.
+function extractYouTubeEmbedURL(html) {
+  if (!html) return null;
+  const match = html.match(/(?:src|data-src)=["']https?:\/\/(?:www\.)?youtube(?:-nocookie)?\.com\/embed\/([A-Za-z0-9_-]{11})[^"']*["']/i);
+  if (!match) return null;
+  return `https://www.youtube.com/watch?v=${match[1]}`;
 }
 
 function stripHTML(value) {
@@ -6081,8 +6561,20 @@ async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } =
     || htmlMetaContent(html, ["og:title", "twitter:title"])
     || stripHTML(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
   const pageImageURLs = extractImageURLsFromHTML(html, response.url || sourceURL);
-  const metaImageURL = htmlMetaContent(html, ["og:image", "twitter:image"]);
+  // Prefer the schema.org Recipe image (usually the full-res hero) over og:image,
+  // which is frequently a smaller social-share crop. Fall back to og/twitter, then
+  // the first inline page image.
+  const structuredImageURL = pickStructuredRecipeImageURL(structuredRecipe?.image);
+  const metaImageURL = structuredImageURL
+    || htmlMetaContent(html, ["og:image", "twitter:image"])
+    || (Array.isArray(pageImageURLs) ? pageImageURLs[0] : null);
   const bodyText = stripHTML(html).slice(0, 120000);
+
+  // Extract YouTube video from iframe embeds — recipe blogs typically embed a
+  // YouTube demonstration video alongside the recipe using an <iframe> pointing
+  // at https://www.youtube.com/embed/VIDEO_ID. The og:video meta is often absent.
+  const attachedVideoURL = cleanURL(htmlMetaContent(html, ["og:video", "og:video:url"]))
+    || extractYouTubeEmbedURL(html);
 
   return {
     source_type: "web",
@@ -6093,9 +6585,9 @@ async function extractWebSourceWithFetch(sourceURL, { playwrightError = null } =
     meta_title: htmlMetaContent(html, ["og:title", "twitter:title"]) || null,
     meta_description: htmlMetaContent(html, ["description", "og:description", "twitter:description"]) || null,
     hero_image_url: cleanURL(absoluteURLFrom(response.url || sourceURL, metaImageURL)),
-    attached_video_url: cleanURL(htmlMetaContent(html, ["og:video", "og:video:url"])),
     site_name: htmlMetaContent(html, ["og:site_name"]) || hostForURL(response.url || sourceURL),
     author_name: htmlMetaContent(html, ["author"]) || null,
+    attached_video_url: attachedVideoURL,
     ingredient_candidates: Array.isArray(structuredRecipe?.recipeIngredient) ? structuredRecipe.recipeIngredient : [],
     instruction_candidates: instructions,
     page_image_urls: pageImageURLs,
@@ -6238,7 +6730,14 @@ async function extractWebSourceWithPlaywright(sourceURL) {
         meta_title: normalize(meta("og:title") || meta("twitter:title") || document.title),
         meta_description: normalize(meta("description") || meta("og:description") || meta("twitter:description")),
         meta_image_url: meta("og:image") || meta("twitter:image") || null,
-        meta_video_url: meta("og:video") || meta("og:video:url") || null,
+        meta_video_url: meta("og:video") || meta("og:video:url")
+          || (() => {
+              const iframe = document.querySelector('iframe[src*="youtube.com/embed/"], iframe[src*="youtube-nocookie.com/embed/"]');
+              const src = iframe?.getAttribute("src") || iframe?.getAttribute("data-src") || "";
+              const m = src.match(/embed\/([A-Za-z0-9_-]{11})/);
+              return m ? `https://www.youtube.com/watch?v=${m[1]}` : null;
+            })()
+          || null,
         site_name: normalize(meta("og:site_name")),
         author_name: normalize(meta("author")),
         body_text: normalize(document.body?.innerText || "").slice(0, 120000),
@@ -6251,6 +6750,10 @@ async function extractWebSourceWithPlaywright(sourceURL) {
 
     const structuredRecipe = pickBestSchemaRecipe(pageData.json_ld);
     const instructions = parseSchemaRecipeInstructions(structuredRecipe?.recipeInstructions);
+    // Prefer the full-res schema.org Recipe image over og:image's social-share crop.
+    const heroImageURL = pickStructuredRecipeImageURL(structuredRecipe?.image)
+      || pageData.meta_image_url
+      || (Array.isArray(pageData.page_image_urls) ? pageData.page_image_urls[0] : null);
 
     return {
       source_type: "web",
@@ -6260,7 +6763,7 @@ async function extractWebSourceWithPlaywright(sourceURL) {
       title: pageData.title || pageData.meta_title || null,
       meta_title: pageData.meta_title || null,
       meta_description: pageData.meta_description || null,
-      hero_image_url: cleanURL(pageData.meta_image_url),
+      hero_image_url: cleanURL(absoluteURLFrom(pageData.source_url, heroImageURL)),
       attached_video_url: cleanURL(pageData.meta_video_url),
       site_name: pageData.site_name || hostForURL(sourceURL),
       author_name: pageData.author_name || null,
@@ -6307,10 +6810,41 @@ async function extractWebSourceWithPlaywright(sourceURL) {
 }
 
 async function extractWebSource(sourceURL) {
+  // Always try the plain HTTP fetch first — it's sub-second and sufficient for
+  // any site that emits JSON-LD structured recipe data (the vast majority of
+  // recipe blogs). Playwright adds 45–105s of Chromium startup + navigation
+  // before we even start parsing, and only helps for JS-rendered pages that
+  // hide their recipes behind client-side rendering.
+  //
+  // Strategy: fetch first, check if we got usable structured data. If yes,
+  // return immediately. If no (JS-rendered, bot-blocked, or too thin),
+  // fall through to Playwright for a proper browser render.
+  let fetchSource;
+  try {
+    fetchSource = await extractWebSourceWithFetch(sourceURL);
+  } catch (fetchError) {
+    // Fetch itself failed (network error, 4xx/5xx) — go straight to Playwright.
+    try {
+      return await extractWebSourceWithPlaywright(sourceURL);
+    } catch {
+      throw fetchError;
+    }
+  }
+
+  const hasStructuredRecipe = fetchSource.structured_recipe?.recipeIngredient?.length >= 2;
+  const hasUsableBodyText = (fetchSource.body_text?.length ?? 0) > 500;
+
+  if (hasStructuredRecipe || hasUsableBodyText) {
+    // Fetch gave us enough — no need to spin up a browser.
+    return fetchSource;
+  }
+
+  // Page likely renders its recipe client-side — use Playwright.
   try {
     return await extractWebSourceWithPlaywright(sourceURL);
-  } catch (error) {
-    return extractWebSourceWithFetch(sourceURL, { playwrightError: error });
+  } catch (playwrightError) {
+    // Playwright also failed; return whatever the fetch got.
+    return { ...fetchSource, artifacts: fetchSource.artifacts ?? [] };
   }
 }
 
@@ -6440,6 +6974,17 @@ async function findDownloadedVideoPath(directory) {
     .find((filePath) => /\.(mp4|mov|m4v|webm)$/i.test(filePath)) ?? null;
 }
 
+function socialFrameTimestamps(duration, maxFrames) {
+  const safeDuration = Number.isFinite(Number(duration)) && Number(duration) > 0 ? Number(duration) : 12;
+  const safeFrameCount = Math.max(1, Number.parseInt(maxFrames, 10) || 1);
+  const firstFrameAt = Math.min(0.2, Math.max(safeDuration * 0.02, 0.1));
+  const lastFrameAt = Math.max(firstFrameAt, safeDuration - 0.2);
+  return Array.from({ length: safeFrameCount }, (_, index) => {
+    const fraction = safeFrameCount <= 1 ? 0.5 : index / (safeFrameCount - 1);
+    return firstFrameAt + ((lastFrameAt - firstFrameAt) * fraction);
+  });
+}
+
 async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) {
   if (!(await commandExists("ffmpeg")) || !(await commandExists("ffprobe"))) {
     return [];
@@ -6462,38 +7007,83 @@ async function sampleVideoFrames(videoPath, maxFrames = MAX_SOCIAL_FRAME_COUNT) 
   }
 
   const frameDir = await fsp.mkdtemp(path.join(os.tmpdir(), "ounje-social-frames-"));
-  const normalizedFrameCount = Math.max(1, Math.floor(Number(maxFrames) || 1));
-  const startAt = Math.min(0.1, Math.max(duration * 0.01, 0));
-  const sampleDuration = Math.max(duration - startAt - 0.1, 0.5);
-  const sampleRate = normalizedFrameCount / sampleDuration;
-  const outputPattern = path.join(frameDir, "frame-%03d.jpg");
+  const timestamps = socialFrameTimestamps(duration, maxFrames);
+  const frameCount = timestamps.length;
 
   try {
-    await execFileWithTimeout("ffmpeg", [
-      "-y",
-      "-ss", startAt.toFixed(3),
-      "-i", videoPath,
-      "-t", sampleDuration.toFixed(3),
-      "-vf", `fps=${sampleRate.toFixed(8)},scale='min(720,iw)':-2`,
-      "-frames:v", String(normalizedFrameCount),
-      "-q:v", "2",
-      "-start_number", "1",
-      outputPattern,
-    ], SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS);
+    // Seek directly to each timestamp, but run the decoders sequentially. One
+    // multi-input FFmpeg process is quick on a laptop but holds every decoder in
+    // memory at once and can exceed Render Starter's 512 MB limit.
+    const perFrameTimeoutMs = Math.max(
+      8_000,
+      Math.ceil(SOCIAL_FRAME_BATCH_EXTRACT_TIMEOUT_MS / Math.max(1, frameCount)),
+    );
+    for (const [index, timestamp] of timestamps.entries()) {
+      try {
+        await execFileWithTimeout("ffmpeg", [
+          "-y",
+          "-hide_banner",
+          "-loglevel", "error",
+          "-threads", "1",
+          "-ss", timestamp.toFixed(3),
+          "-i", videoPath,
+          "-frames:v", "1",
+          "-vf", "scale='min(720,iw)':-2",
+          "-q:v", "4",
+          path.join(frameDir, `frame-${String(index + 1).padStart(3, "0")}.jpg`),
+        ], perFrameTimeoutMs);
+      } catch (error) {
+        console.warn(
+          `[recipe-ingestion] frame ${index + 1}/${frameCount} extraction failed:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
 
     const framePaths = (await fsp.readdir(frameDir))
       .filter((entry) => /^frame-\d+\.jpg$/i.test(entry))
       .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
-      .slice(0, normalizedFrameCount);
-    return await Promise.all(framePaths.map(async (entry) => {
+      .slice(0, frameCount);
+    const frames = [];
+    for (const entry of framePaths) {
       const buffer = await fsp.readFile(path.join(frameDir, entry));
-      return toDataURL(buffer, "image/jpeg");
-    }));
-  } catch {
+      frames.push(toDataURL(buffer, "image/jpeg"));
+    }
+    while (frames.length > 0 && frames.length < frameCount) {
+      frames.push(frames[frames.length - 1]);
+    }
+    return frames;
+  } catch (error) {
+    console.warn("[recipe-ingestion] frame extraction failed:", error instanceof Error ? error.message : error);
     return [];
   } finally {
     await fsp.rm(frameDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+function selectedSocialHeroFrame(source, modelResult = null) {
+  const sourceType = normalizeText(source?.source_type ?? source?.platform ?? "").toLowerCase();
+  if (!["tiktok", "instagram", "youtube", "media_video"].includes(sourceType)) return null;
+
+  const frames = selectRecipeEvidenceFrameDataURLs(
+    source?.frame_data_urls,
+    source?.frame_ocr_texts,
+    RECIPE_EXTRACTION_MAX_IMAGE_INPUTS
+  );
+  if (!frames.length) return null;
+
+  const requestedPosition = Number.parseInt(
+    modelResult?.hero_frame_position ?? modelResult?.recipe?.hero_frame_position ?? "",
+    10
+  );
+  if (!Number.isFinite(requestedPosition) || requestedPosition < 1 || requestedPosition > frames.length) {
+    return null;
+  }
+
+  return {
+    dataURL: frames[requestedPosition - 1],
+    position: requestedPosition,
+  };
 }
 
 async function transcribeShortVideo(videoPath) {
@@ -6531,18 +7121,311 @@ async function transcribeShortVideo(videoPath) {
   }
 }
 
-async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = null) {
+// Fetches a ready-made remote MP4 (e.g. a TikTok extraction API's no-watermark URL)
+// straight to disk. Capped so a surprise huge file can't blow up the worker.
+async function downloadRemoteVideoToFile(url, destPath) {
+  const resp = await fetchWithTimeout(
+    url,
+    { headers: { "user-agent": DEFAULT_USER_AGENT, accept: "video/mp4,video/*;q=0.9,*/*;q=0.8" } },
+    SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+    "remote video download"
+  );
+  if (!resp.ok) throw new Error(`remote video download failed: HTTP ${resp.status}`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (!buffer.length) throw new Error("remote video download returned an empty body");
+  if (buffer.length > 80 * 1024 * 1024) throw new Error("remote video exceeds size cap");
+  await fsp.writeFile(destPath, buffer);
+  return destPath;
+}
+
+function rapidAPISubtitleBucketFromTracks(...trackGroups) {
+  const bucket = {};
+  for (const tracks of trackGroups) {
+    const list = Array.isArray(tracks) ? tracks : [];
+    for (const track of list) {
+      const url = cleanURL(track?.url ?? track?.Url ?? track?.URL ?? null);
+      if (!url) continue;
+      const language = normalizeText(
+        track?.language
+          ?? track?.LanguageCodeName
+          ?? track?.languageCode
+          ?? track?.LanguageID
+          ?? "en"
+      ) || "en";
+      const ext = normalizeText(track?.ext ?? track?.Format ?? track?.captionFormat ?? "").toLowerCase() || "vtt";
+      if (!bucket[language]) bucket[language] = [];
+      bucket[language].push({ ext, url });
+    }
+  }
+  return bucket;
+}
+
+function rapidAPITranscriptText(payload = null) {
+  const transcript = payload?.metadata?.transcript?.transcript;
+  if (Array.isArray(transcript)) {
+    return uniqueStrings(transcript.map((entry) => normalizeText(
+      entry?.text
+        ?? entry?.utf8
+        ?? entry?.caption
+        ?? entry?.snippet
+        ?? entry
+    ))).join(" ");
+  }
+  return normalizeText(transcript ?? "");
+}
+
+function rapidAPIResponseURL(value) {
+  const url = cleanURL(value);
+  if (!url || !isProbablyURL(url)) return null;
+  return url;
+}
+
+function collectRapidAPIVideoCandidates(payload = null) {
+  const candidates = [];
+  const addCandidate = (value, context = {}) => {
+    const url = rapidAPIResponseURL(value?.url ?? value);
+    if (!url) return;
+    const label = normalizeText(value?.label ?? context.label ?? "");
+    const mimeType = normalizeText(value?.metadata?.mime_type ?? value?.mime_type ?? context.mime_type ?? "");
+    const quality = normalizeText(value?.metadata?.quality_label ?? value?.metadata?.definition ?? value?.definition ?? label);
+    const width = finiteNumberOrNull(value?.metadata?.width ?? value?.width);
+    const height = finiteNumberOrNull(value?.metadata?.height ?? value?.height);
+    const lengthText = normalizeText(value?.metadata?.content_length_text ?? value?.content_length_text ?? "");
+    const lowered = `${label} ${mimeType} ${quality} ${url}`.toLowerCase();
+    let score = 0;
+    if (lowered.includes("video")) score += 30;
+    if (lowered.includes("mp4")) score += 25;
+    if (lowered.includes("720")) score += 8;
+    if (lowered.includes("1080")) score += 10;
+    if (lowered.includes("prox")) score += 2;
+    if (height) score += Math.min(12, height / 90);
+    if (width) score += Math.min(6, width / 160);
+    if (/cover|thumb|avatar|image|jpg|jpeg|png|webp/i.test(lowered)) score -= 60;
+    candidates.push({ url, score, label, mime_type: mimeType, quality, width, height, length_text: lengthText });
+  };
+
+  for (const content of Array.isArray(payload?.contents) ? payload.contents : []) {
+    for (const key of ["videos", "video", "renderableVideos", "media", "medias"]) {
+      const value = content?.[key];
+      if (Array.isArray(value)) {
+        for (const item of value) addCandidate(item, { label: key });
+      } else if (value && typeof value === "object") {
+        addCandidate(value, { label: key });
+      }
+    }
+    addCandidate(content);
+  }
+
+  const nestedVideo = payload?.metadata?.additionalData?.video;
+  if (nestedVideo && typeof nestedVideo === "object") {
+    addCandidate({ url: nestedVideo.playAddr, label: "playAddr", metadata: nestedVideo });
+    addCandidate({ url: nestedVideo.downloadAddr, label: "downloadAddr", metadata: nestedVideo });
+  }
+
+  return candidates
+    .filter((candidate) => candidate.url)
+    .sort((left, right) => right.score - left.score);
+}
+
+function rapidAPIInfoFromPayload(payload, sourceURL, platform) {
+  const metadata = payload?.metadata ?? {};
+  const additional = metadata.additionalData ?? {};
+  const video = additional.video ?? {};
+  const authorUser = metadata.author?.user ?? metadata.author ?? {};
+  const authorStats = metadata.author?.stats ?? null;
+  const title = normalizeText(
+    additional.desc
+      ?? metadata.description
+      ?? metadata.title
+      ?? ""
+  );
+  const thumbnail = cleanURL(metadata.thumbnailUrl ?? video.cover ?? video.originCover ?? video.dynamicCover ?? null);
+  const authorHandle = normalizeText(authorUser.uniqueId ?? authorUser.username ?? authorUser.id ?? "");
+  const authorName = normalizeText(authorUser.nickname ?? authorUser.name ?? metadata.author?.name ?? "");
+  const subtitleBucket = rapidAPISubtitleBucketFromTracks(
+    video.subtitleInfos,
+    video.claInfo?.captionInfos,
+    additional?.video?.subtitleInfos
+  );
+
+  return {
+    id: normalizeText(additional.id ?? video.id ?? metadata.id ?? "") || null,
+    title: title || normalizeText(metadata.title ?? "") || null,
+    description: title || normalizeText(metadata.description ?? "") || null,
+    uploader: authorName || null,
+    uploader_id: authorHandle || null,
+    uploader_url: authorHandle
+      ? platform === "instagram"
+        ? `https://www.instagram.com/${authorHandle.replace(/^@/, "")}/`
+        : platform === "tiktok"
+          ? `https://www.tiktok.com/@${authorHandle.replace(/^@/, "")}`
+          : null
+      : null,
+    channel: normalizeText(metadata.author?.name ?? authorName) || null,
+    channel_url: cleanURL(metadata.author?.url ?? null),
+    webpage_url: cleanURL(sourceURL),
+    original_url: cleanURL(sourceURL),
+    duration: finiteNumberOrNull(video.duration ?? additional.duration ?? metadata.duration),
+    thumbnail,
+    thumbnails: thumbnail ? [{ url: thumbnail }] : [],
+    subtitles: subtitleBucket,
+    automatic_captions: subtitleBucket,
+    _rapidapi_provider: "social-media-video-downloader",
+    _rapidapi_author_stats: authorStats,
+    _rapidapi_transcript_text: rapidAPITranscriptText(payload),
+  };
+}
+
+async function fetchSocialViaRapidAPI(sourceURL, platform) {
+  if (!RAPIDAPI_SOCIAL_KEY) return null;
+  const cleaned = cleanURL(sourceURL);
+  if (!cleaned) return null;
+
+  let endpointPath = null;
+  const params = new URLSearchParams();
+  if (platform === "tiktok") {
+    endpointPath = "/tiktok/v3/post/details";
+    params.set("url", cleaned);
+  } else if (platform === "instagram") {
+    const shortcode = extractInstagramShortcode(cleaned);
+    if (!shortcode) return null;
+    endpointPath = "/instagram/v3/media/post/details";
+    params.set("shortcode", shortcode);
+  } else if (platform === "youtube") {
+    const videoID = extractYouTubeVideoID(cleaned);
+    if (!videoID) return null;
+    endpointPath = "/youtube/v3/video/details";
+    params.set("videoId", videoID);
+    params.set("getTranscript", "true");
+    params.set("urlAccess", "normal");
+  } else {
+    return null;
+  }
+
+  const requestURL = `https://${RAPIDAPI_SOCIAL_HOST}${endpointPath}?${params.toString()}`;
+  let payload;
+  try {
+    const resp = await fetchWithTimeout(
+      requestURL,
+      {
+        headers: {
+          "X-RapidAPI-Key": RAPIDAPI_SOCIAL_KEY,
+          "X-RapidAPI-Host": RAPIDAPI_SOCIAL_HOST,
+          "user-agent": DEFAULT_USER_AGENT,
+          accept: "application/json",
+        },
+      },
+      SOCIAL_METADATA_TIMEOUT_MS,
+      `${platform} rapidapi social downloader`
+    );
+    if (!resp.ok) return null;
+    payload = await resp.json();
+  } catch (error) {
+    console.warn(`[recipe-ingestion] ${platform} rapidapi social downloader failed:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+
+  if (!payload || payload.error) {
+    const message = normalizeText(payload?.error?.message ?? payload?.error ?? "");
+    if (message) console.warn(`[recipe-ingestion] ${platform} rapidapi social downloader error:`, message);
+    return null;
+  }
+
+  const candidates = collectRapidAPIVideoCandidates(payload);
+  const selectedVideo = platform === "youtube"
+    ? candidates.find((candidate) => /mp4a|audio/i.test(candidate.mime_type ?? ""))
+    : candidates[0];
+  const videoURL = selectedVideo?.url ?? null;
+  return {
+    video_url: videoURL,
+    info: rapidAPIInfoFromPayload(payload, cleaned, platform),
+    raw_json: compactJSON({
+      metadata: payload.metadata ?? null,
+      selected_video: selectedVideo ?? null,
+      content_count: Array.isArray(payload.contents) ? payload.contents.length : null,
+    }),
+  };
+}
+
+// TikTok hard-blocks datacenter IPs from yt-dlp. A TikTok extraction API (tikwm-style,
+// configurable via OUNJE_TIKTOK_API_URL) runs the extraction on its own infrastructure
+// and returns video metadata + a no-watermark MP4 URL we can fetch directly. Returns
+// { video_url, info } shaped like yt-dlp's metadata, or null when unavailable/disabled.
+const TIKTOK_EXTRACTION_API_URL = normalizeText(process.env.OUNJE_TIKTOK_API_URL || "https://www.tikwm.com/api/");
+const TIKTOK_EXTRACTION_API_ENABLED = !["0", "false", "no", "off"].includes(
+  String(process.env.OUNJE_TIKTOK_API_ENABLED ?? "true").trim().toLowerCase()
+);
+async function fetchTikTokViaAPI(sourceURL) {
+  if (!TIKTOK_EXTRACTION_API_ENABLED || !TIKTOK_EXTRACTION_API_URL) return null;
+  const cleaned = cleanURL(sourceURL);
+  if (!cleaned) return null;
+
+  const base = TIKTOK_EXTRACTION_API_URL;
+  const requestURL = `${base}${base.includes("?") ? "&" : "?"}url=${encodeURIComponent(cleaned)}&hd=1`;
+  let payload;
+  try {
+    const resp = await fetchWithTimeout(
+      requestURL,
+      { headers: { "user-agent": DEFAULT_USER_AGENT, accept: "application/json" } },
+      SOCIAL_METADATA_TIMEOUT_MS,
+      "tiktok extraction api"
+    );
+    if (!resp.ok) return null;
+    payload = await resp.json();
+  } catch (error) {
+    console.warn("[recipe-ingestion] tiktok extraction api failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
+
+  if (!payload || Number(payload.code) !== 0 || !payload.data) return null;
+  const data = payload.data;
+  const videoURL = cleanURL(data.hdplay || data.play || data.wmplay || null);
+  if (!videoURL) return null;
+
+  const author = data.author || {};
+  const handle = normalizeText(author.unique_id || "");
+  const caption = normalizeText(data.title || "");
+  const thumbnail = cleanURL(data.origin_cover || data.cover || null);
+  return {
+    video_url: videoURL,
+    info: {
+      id: normalizeText(data.id || "") || null,
+      title: caption || null,
+      description: caption || null,
+      uploader: normalizeText(author.nickname || "") || null,
+      uploader_id: handle || null,
+      uploader_url: handle ? `https://www.tiktok.com/@${handle}` : null,
+      webpage_url: cleaned,
+      duration: Number(data.duration) || null,
+      thumbnail,
+      thumbnails: thumbnail ? [{ url: thumbnail }] : [],
+      _extraction_provider: "tiktok_api",
+    },
+  };
+}
+
+async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = null, { directVideoURL = null } = {}) {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), `ounje-${platform}-`));
   try {
-    await withTimeout(
-      ytdl(sourceURL, socialYTDLOptions({
-        output: path.join(tempDir, "asset.%(ext)s"),
-        format: "mp4/best",
-        mergeOutputFormat: "mp4",
-      }), ytdlExecOptions(SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS)),
-      SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
-      `${platform} video download`
-    );
+    if (directVideoURL) {
+      // A ready-made MP4 URL (e.g. from the TikTok extraction API) — fetch it straight
+      // to disk instead of running yt-dlp, which the platform blocks from this host.
+      await withTimeout(
+        downloadRemoteVideoToFile(directVideoURL, path.join(tempDir, "asset.mp4")),
+        SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+        `${platform} direct video download`
+      );
+    } else {
+      await withTimeout(
+        ytdl(sourceURL, socialYTDLOptions({
+          output: path.join(tempDir, "asset.%(ext)s"),
+          format: "mp4/best",
+          mergeOutputFormat: "mp4",
+        }), ytdlExecOptions(SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS)),
+        SOCIAL_VIDEO_DOWNLOAD_TIMEOUT_MS,
+        `${platform} video download`
+      );
+    }
 
     const videoPath = await findDownloadedVideoPath(tempDir);
     if (!videoPath) {
@@ -6553,16 +7436,23 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
       };
     }
 
-    const [transcriptText, frameDataURLs] = await Promise.all([
-      transcribeShortVideo(videoPath),
-      sampleVideoFrames(videoPath, MAX_SOCIAL_FRAME_COUNT),
-    ]);
+    // Render Starter has a 512 MB memory limit. Keep the rich video path, but do
+    // not overlap FFmpeg, transcription, and the native-video upload. The frame
+    // sampler still extracts every evidence frame in one FFmpeg process.
+    const frameDataURLs = await sampleVideoFrames(videoPath, MAX_SOCIAL_FRAME_COUNT);
+    const transcriptText = await transcribeShortVideo(videoPath);
+    // Persist the MP4 so the app can play it natively (with the scrubber) instead
+    // of the TikTok/IG web embed. Best-effort — null if too large/unavailable.
+    const persistedVideoURL = await persistRecipeVideoToStorage(videoPath, {
+      recipeKey: metadata?.id ?? sourceURL,
+    });
     const frameOCRTexts = await ocrFrameDataURLs(frameDataURLs);
 
     return {
       transcript_text: transcriptText,
       frame_data_urls: frameDataURLs,
       frame_ocr_texts: frameOCRTexts,
+      persisted_video_url: persistedVideoURL,
       downloaded_video: true,
       metadata_preview: compactJSON({
         id: metadata?.id ?? null,
@@ -6586,15 +7476,21 @@ async function enrichDownloadedShortVideoSource(sourceURL, platform, metadata = 
 }
 
 async function extractYouTubeSource(sourceURL) {
-  const info = await fetchYtdlMetadataCached(sourceURL, {
+  const rapidAPIResult = await fetchSocialViaRapidAPI(sourceURL, "youtube");
+  const info = rapidAPIResult?.info ?? await fetchYtdlMetadataCached(sourceURL, {
     label: "youtube metadata resolve",
     cacheKind: "youtube-metadata",
   });
 
   const subtitleTrack = pickSubtitleTrack(info);
-  const transcriptText = await downloadTranscript(subtitleTrack);
+  const transcriptText = normalizeText(rapidAPIResult?.info?._rapidapi_transcript_text ?? "") || await downloadTranscript(subtitleTrack);
   const thumbnailURL = bestThumbnail(info);
-  const downloadedSignals = await enrichDownloadedShortVideoSource(sourceURL, "youtube", info);
+  const downloadedSignals = await enrichDownloadedShortVideoSource(
+    sourceURL,
+    "youtube",
+    info,
+    { directVideoURL: rapidAPIResult?.video_url ?? null }
+  );
   const resolvedTranscript = normalizeText(downloadedSignals.transcript_text || transcriptText);
   const evidenceBundle = buildVideoEvidenceBundle({
     source_type: "youtube",
@@ -6627,7 +7523,9 @@ async function extractYouTubeSource(sourceURL) {
     author_url: cleanURL(info.channel_url ?? info.uploader_url ?? null),
     hero_image_url: thumbnailURL,
     thumbnail_url: thumbnailURL,
-    attached_video_url: cleanURL(info.webpage_url ?? sourceURL),
+    // Prefer the persisted MP4 so the app plays it natively with the scrubber;
+    // fall back to the original page URL (web embed) when the download/upload failed.
+    attached_video_url: cleanURL(downloadedSignals.persisted_video_url ?? info.webpage_url ?? sourceURL),
     transcript_text: resolvedTranscript || null,
     frame_data_urls: downloadedSignals.frame_data_urls ?? [],
     frame_ocr_texts: downloadedSignals.frame_ocr_texts ?? [],
@@ -6665,6 +7563,7 @@ async function extractYouTubeSource(sourceURL) {
             source_url: cleanURL(info.webpage_url ?? sourceURL),
             raw_json: compactJSON({
               downloaded_video: true,
+              persisted_video_url: downloadedSignals.persisted_video_url ?? null,
               frame_count: downloadedSignals.frame_data_urls?.length ?? 0,
               transcript_excerpt: resolvedTranscript ? resolvedTranscript.slice(0, 2000) : null,
               frame_ocr_texts: downloadedSignals.frame_ocr_texts ?? [],
@@ -6678,36 +7577,59 @@ async function extractYouTubeSource(sourceURL) {
         source_url: cleanURL(info.webpage_url ?? sourceURL),
         raw_json: compactJSON(evidenceBundle),
       },
+      rapidAPIResult
+        ? {
+            artifact_type: "youtube_rapidapi_social_downloader",
+            content_type: "application/json",
+            source_url: cleanURL(info.webpage_url ?? sourceURL),
+            raw_json: rapidAPIResult.raw_json,
+          }
+        : null,
     ].filter(Boolean),
   };
 }
 
 async function extractSocialSource(sourceURL, platform) {
-  const [metadataResult, pageSignals] = await Promise.all([
-    fetchYtdlMetadataCached(sourceURL, {
-      label: `${platform} metadata resolve`,
-      cacheKind: `${platform}-metadata`,
-    }).then((value) => ({ value, error: null })).catch((error) => ({ value: null, error })),
-    extractSocialPageSignals(sourceURL, platform),
-  ]);
-  const metadata = metadataResult.value;
-  const canonicalURL = platform === "tiktok"
-    ? canonicalTikTokURLFromMetadata(metadata, sourceURL)
-    : cleanURL(metadata?.webpage_url ?? pageSignals?.canonical_url ?? sourceURL);
-  const blocked = Boolean(metadataResult.error);
-  if (metadataResult.error) {
-    console.warn(`[recipe-ingestion] ${platform} metadata skipped:`, errorSummary(metadataResult.error));
+  let metadata = null;
+  let blocked = false;
+  let apiVideoURL = null;
+  let rapidAPIResult = null;
+
+  rapidAPIResult = await fetchSocialViaRapidAPI(sourceURL, platform);
+  if (rapidAPIResult?.info) {
+    metadata = rapidAPIResult.info;
+    apiVideoURL = rapidAPIResult.video_url ?? null;
   }
 
-  const useTextFastPath = socialRecipeTextCanSkipVideoDownload({ metadata, pageSignals });
-  const textEvidence = useTextFastPath ? socialRecipeTextEvidence(metadata, pageSignals) : "";
+  // Always resolve TikTok's fetchable MP4 through the dedicated extractor. A
+  // metadata provider may return a media-looking URL that later responds with a
+  // block page or 403 from Render, which is no better than returning no URL.
+  if (platform === "tiktok") {
+    const apiResult = await fetchTikTokViaAPI(sourceURL);
+    if (apiResult?.video_url) {
+      metadata = metadata ?? apiResult.info;
+      apiVideoURL = apiResult.video_url;
+    }
+  }
+
+  if (!metadata) {
+    try {
+      metadata = await fetchYtdlMetadataCached(sourceURL, {
+        label: `${platform} metadata resolve`,
+        cacheKind: `${platform}-metadata`,
+      });
+    } catch (error) {
+      blocked = true;
+      console.warn(`[recipe-ingestion] ${platform} metadata skipped:`, error instanceof Error ? error.message : error);
+    }
+  }
+
   const transcriptTrack = metadata ? pickSubtitleTrack(metadata) : null;
-  const [transcriptText, downloadedSignals] = useTextFastPath
-    ? ["", { transcript_text: "", frame_data_urls: [], frame_ocr_texts: [], downloaded_video: false }]
-    : await Promise.all([
-      downloadTranscript(transcriptTrack),
-      enrichDownloadedShortVideoSource(sourceURL, platform, metadata),
-    ]);
+  const [pageSignals, transcriptText, downloadedSignals] = await Promise.all([
+    extractSocialPageSignals(sourceURL, platform),
+    downloadTranscript(transcriptTrack),
+    enrichDownloadedShortVideoSource(sourceURL, platform, metadata, { directVideoURL: apiVideoURL }),
+  ]);
   const mediaMode = inferSocialMediaMode({
     downloadedVideo: downloadedSignals.downloaded_video,
     pageSignals,
@@ -6743,13 +7665,13 @@ async function extractSocialSource(sourceURL, platform) {
     platform,
     media_mode: mediaMode,
     source_url: cleanURL(sourceURL),
-    canonical_url: canonicalURL,
+    canonical_url: cleanURL(metadata?.webpage_url ?? pageSignals?.canonical_url ?? sourceURL),
     title,
     description,
     author_name: normalizeText(metadata?.uploader ?? pageSignals?.author_name ?? "") || null,
     author_handle: creatorHandle,
     author_url: cleanURL(metadata?.uploader_url ?? metadata?.channel_url ?? null),
-    attached_video_url: canonicalURL,
+    attached_video_url: cleanURL(metadata?.webpage_url ?? sourceURL),
     meta_description: description,
     page_signals_summary: compactJSON({
       title: pageSignals?.title ?? null,
@@ -6768,7 +7690,7 @@ async function extractSocialSource(sourceURL, platform) {
     source_type: platform,
     platform,
     source_url: cleanURL(sourceURL),
-    canonical_url: canonicalURL,
+    canonical_url: cleanURL(metadata?.webpage_url ?? pageSignals?.canonical_url ?? sourceURL),
     title: title || null,
     description: description || null,
     author_name: normalizeText(metadata?.uploader ?? pageSignals?.author_name ?? "") || null,
@@ -6776,21 +7698,23 @@ async function extractSocialSource(sourceURL, platform) {
     author_url: cleanURL(metadata?.uploader_url ?? metadata?.channel_url ?? null),
     hero_image_url: thumbnailURL,
     thumbnail_url: thumbnailURL,
-    attached_video_url: canonicalURL,
+    // Prefer the persisted MP4 for native AVPlayer playback (+ scrubber); fall back
+    // to the original page URL (web embed) when the download/upload was unavailable.
+    attached_video_url: cleanURL(downloadedSignals.persisted_video_url ?? metadata?.webpage_url ?? sourceURL),
     transcript_text: resolvedTranscript || null,
     frame_data_urls: effectiveFrameDataURLs,
     frame_ocr_texts: effectiveFrameOCRTexts,
     page_image_urls: pageSignals?.page_image_urls ?? [],
     media_mode: mediaMode,
     blocked,
-    raw_text: limitText([description, resolvedTranscript, textEvidence].filter(Boolean).join("\n\n")),
+    raw_text: limitText([description, resolvedTranscript].filter(Boolean).join("\n\n")),
     source_provenance_json: evidenceBundle,
     artifacts: [
       metadata
         ? {
             artifact_type: `${platform}_metadata`,
             content_type: "application/json",
-            source_url: canonicalURL,
+            source_url: cleanURL(metadata.webpage_url ?? sourceURL),
             raw_json: compactJSON({
               id: metadata.id,
               title: metadata.title,
@@ -6809,7 +7733,7 @@ async function extractSocialSource(sourceURL, platform) {
         ? {
             artifact_type: `${platform}_slideshow_inference`,
             content_type: "application/json",
-            source_url: canonicalURL,
+            source_url: cleanURL(metadata?.webpage_url ?? sourceURL),
             raw_json: compactJSON({
               media_mode: mediaMode,
               page_image_urls: (pageSignals?.page_image_urls ?? []).slice(0, 12),
@@ -6822,9 +7746,10 @@ async function extractSocialSource(sourceURL, platform) {
         ? {
             artifact_type: `${platform}_video_inference`,
             content_type: "application/json",
-            source_url: canonicalURL,
+            source_url: cleanURL(metadata?.webpage_url ?? sourceURL),
             raw_json: compactJSON({
               downloaded_video: true,
+              persisted_video_url: downloadedSignals.persisted_video_url ?? null,
               frame_count: downloadedSignals.frame_data_urls?.length ?? 0,
               transcript_excerpt: resolvedTranscript ? resolvedTranscript.slice(0, 2000) : null,
               frame_ocr_texts: downloadedSignals.frame_ocr_texts ?? [],
@@ -6832,23 +7757,20 @@ async function extractSocialSource(sourceURL, platform) {
             }),
           }
         : null,
-      useTextFastPath
-        ? {
-            artifact_type: `${platform}_video_download_skipped`,
-            content_type: "application/json",
-            source_url: canonicalURL,
-            raw_json: {
-              reason: "caption_or_page_recipe_evidence",
-              evidence_length: textEvidence.length,
-            },
-          }
-        : null,
       {
         artifact_type: `${platform}_evidence_bundle`,
         content_type: "application/json",
-        source_url: canonicalURL,
+        source_url: cleanURL(metadata?.webpage_url ?? sourceURL),
         raw_json: compactJSON(evidenceBundle),
       },
+      rapidAPIResult
+        ? {
+            artifact_type: `${platform}_rapidapi_social_downloader`,
+            content_type: "application/json",
+            source_url: cleanURL(metadata?.webpage_url ?? sourceURL),
+            raw_json: rapidAPIResult.raw_json,
+          }
+        : null,
       pageSignals
         ? {
             artifact_type: `${platform}_page_signals`,
@@ -7199,33 +8121,6 @@ async function runPhotoVisualAnalysis(imageInput, mealGate, photoContext = {}) {
 // re-inferring the same photo); merging saves one round-trip (~3-5s) on real-food
 // photos. Trade-off: a non-food image now also pays for the analysis portion, but those
 // are the rare case. Output mirrors runPhotoMealGate + runPhotoVisualAnalysis exactly.
-function normalizePhotoRecipeDocument(value) {
-  if (!value || typeof value !== "object") return null;
-  const ingredients = uniqueStrings((Array.isArray(value.ingredients) ? value.ingredients : [])
-    .map((entry) => typeof entry === "string" ? entry : entry?.text ?? entry?.display_name ?? ""));
-  const steps = uniqueStrings((Array.isArray(value.steps) ? value.steps : [])
-    .map((entry) => typeof entry === "string" ? entry : entry?.text ?? entry?.description ?? ""));
-  const title = normalizeText(value.title ?? "", 180) || null;
-  if (!title && ingredients.length === 0 && steps.length === 0) return null;
-  return {
-    title,
-    ingredients: ingredients.slice(0, 60),
-    steps: steps.slice(0, 40),
-    servings_text: normalizeText(value.servings_text ?? value.servings ?? "", 120) || null,
-    prep_time_iso: normalizeText(value.prep_time_iso ?? "", 80) || null,
-    cook_time_iso: normalizeText(value.cook_time_iso ?? "", 80) || null,
-    total_time_iso: normalizeText(value.total_time_iso ?? "", 80) || null,
-    notes: uniqueStrings(Array.isArray(value.notes) ? value.notes : []).slice(0, 20),
-    confidence: Number.isFinite(Number(value.confidence)) ? Number(value.confidence) : null,
-  };
-}
-
-function photoRecipeDocumentHasUsableCore(document) {
-  return Boolean(document?.title)
-    && (document?.ingredients?.length ?? 0) >= 3
-    && (document?.steps?.length ?? 0) >= 2;
-}
-
 async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) {
   const emptyVisual = (uncertainty = null) => ({
     dish_candidates: [],
@@ -7236,9 +8131,8 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
     plating_context: null,
     uncertainty,
   });
-  const imageInputs = (Array.isArray(imageInput) ? imageInput : [imageInput]).filter(Boolean).slice(0, 4);
-  const imageParts = openai ? imageInputs.map(photoImageContentPart).filter(Boolean) : [];
-  if (!openai || imageParts.length === 0) {
+  const imagePart = openai ? photoImageContentPart(imageInput) : null;
+  if (!openai || !imagePart) {
     const reason = !openai ? "OpenAI vision is unavailable." : "No readable photo was provided.";
     return {
       meal_gate: { is_meal: false, confidence: 0, visible_food_components: [], likely_meal_type: null, reject_reason: reason },
@@ -7255,11 +8149,9 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
         role: "system",
         content: [
           "Do TWO things for this image in one pass.",
-          "1) IMPORT GATE: decide whether the images contain either food that could form the basis of a recipe OR readable recipe content such as a recipe screenshot, cookbook page, ingredient list, or cooking instructions. Accept either kind. Reject only when there is neither food nor usable recipe content.",
+          "1) MEAL GATE: decide whether the image contains any food — a prepared meal, dish, raw ingredients, baked goods, snack, beverage, or any edible item that could be the basis of a recipe. Accept homemade/restaurant food, raw ingredients, baked goods, snacks, drinks, and any real food even if imperfectly plated, lit, or photographed. Reject ONLY images with no food at all (pure scenery, text-only images, menus/receipts/screenshots, packaged products with no visible food, non-food objects). When in doubt, accept.",
           "Treat a single plated dish, bowl, tray, dessert, rice dish, noodle dish, or mixed meal as valid food even if exact naming is fuzzy.",
-          "2) VISUAL ANALYSIS: for food photos, identify the most likely dish and visual evidence. For recipe screenshots or cookbook pages, transcribe the title, ingredients, quantities, steps, servings, times, and notes as faithfully as the visible text allows.",
-          "When multiple images are provided, treat them as ordered pages or views from one recipe and combine their evidence. Never ignore later images.",
-          "For a food photo, prefer a common canonical dish name over a literal inventory. Include likely hidden ingredients only when normal for the candidate dish. If uncertain, return multiple ranked dish_candidates. Avoid unsupported broad cuisine labels.",
+          "2) VISUAL ANALYSIS (only meaningful when it is food): identify the most likely recipe/dish name a normal cook would search for, then extract visual evidence (sauce texture, garnish, plating, noodle/rice shape, browning, coating). Prefer a common canonical dish name over a literal inventory. Include likely hidden ingredients only when normal for the candidate dish. If uncertain, return multiple ranked dish_candidates. Avoid unsupported broad cuisine labels.",
           "Do not write the final recipe. Return strict JSON only.",
         ].join("\n"),
       },
@@ -7274,7 +8166,6 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
               "Return JSON with this exact shape:",
               JSON.stringify({
                 is_meal: true,
-                input_type: "food_photo|recipe_document|non_recipe",
                 confidence: 0.0,
                 visible_food_components: ["string"],
                 likely_meal_type: "string|null",
@@ -7286,24 +8177,10 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
                 cuisine_hints: ["string"],
                 plating_context: "string|null",
                 uncertainty: "string|null",
-                recipe_document: {
-                  title: "string|null",
-                  ingredients: ["quantity plus ingredient exactly as shown"],
-                  steps: ["instruction exactly as shown"],
-                  servings_text: "string|null",
-                  prep_time_iso: "ISO 8601 duration or null",
-                  cook_time_iso: "ISO 8601 duration or null",
-                  total_time_iso: "ISO 8601 duration or null",
-                  notes: ["string"],
-                  confidence: 0.0,
-                },
               }),
             ].join("\n"),
           },
-          ...imageParts.flatMap((part, index) => [
-            { type: "text", text: `Image ${index + 1} of ${imageParts.length}` },
-            part,
-          ]),
+          imagePart,
         ],
       },
     ],
@@ -7318,11 +8195,6 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
   const likelyMealType = normalizeText(parsed?.likely_meal_type ?? "") || null;
   const dishCandidates = Array.isArray(parsed?.dish_candidates) ? parsed.dish_candidates.slice(0, 5) : [];
   const visibleIngredients = uniqueStrings(Array.isArray(parsed?.visible_ingredients) ? parsed.visible_ingredients : visibleFoodComponents);
-  const recipeDocument = normalizePhotoRecipeDocument(parsed?.recipe_document);
-  const inputType = ["food_photo", "recipe_document", "non_recipe"].includes(normalizeText(parsed?.input_type).toLowerCase())
-    ? normalizeText(parsed.input_type).toLowerCase()
-    : recipeDocument ? "recipe_document" : isMeal ? "food_photo" : "non_recipe";
-  const hasRecipeDocument = photoRecipeDocumentHasUsableCore(recipeDocument);
   const confidenceOverride = !isMeal && (
     likelyMealType !== null ||
     (
@@ -7330,14 +8202,12 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
       && (visibleFoodComponents.length > 0 || visibleIngredients.length > 0 || dishCandidates.length > 0)
     )
   );
-  const isImportable = isMeal || hasRecipeDocument || confidenceOverride;
   const meal_gate = {
-    is_meal: isImportable,
-    input_type: hasRecipeDocument ? "recipe_document" : inputType,
+    is_meal: isMeal || confidenceOverride,
     confidence,
     visible_food_components: visibleFoodComponents,
     likely_meal_type: likelyMealType,
-    reject_reason: isImportable ? null : (normalizeText(parsed?.reject_reason ?? "") || null),
+    reject_reason: (isMeal || confidenceOverride) ? null : (normalizeText(parsed?.reject_reason ?? "") || null),
   };
 
   // Visual analysis — mirrors runPhotoVisualAnalysis.
@@ -7349,10 +8219,9 @@ async function runPhotoMealGateAndVisualAnalysis(imageInput, photoContext = {}) 
     cuisine_hints: uniqueStrings(Array.isArray(parsed?.cuisine_hints) ? parsed.cuisine_hints : []),
     plating_context: normalizeText(parsed?.plating_context ?? "", 500) || null,
     uncertainty: normalizeText(parsed?.uncertainty ?? "", 700) || null,
-    recipe_document: recipeDocument,
   };
 
-  return { meal_gate, visual_analysis, recipe_document: recipeDocument };
+  return { meal_gate, visual_analysis };
 }
 
 function photoRecipeSearchQuery(visualAnalysis = {}, photoContext = {}) {
@@ -7551,7 +8420,7 @@ async function extractPhotoRecipeSource(request) {
   // a whole vision round-trip versus the previous gate-then-analyze sequence.
   const earlyRecipeKey = photoContext?.dish_hint ?? "photo-recipe";
   const [gateAndAnalysis, uploadedHeroURL] = await Promise.all([
-    runPhotoMealGateAndVisualAnalysis(imageInputs, photoContext),
+    runPhotoMealGateAndVisualAnalysis(primaryImage, photoContext),
     persistPhotoRecipeHeroImage(primaryImage, {
       recipeKey: earlyRecipeKey,
       accessToken: request.access_token ?? null,
@@ -7559,11 +8428,9 @@ async function extractPhotoRecipeSource(request) {
   ]);
   const mealGate = gateAndAnalysis.meal_gate;
   let visualAnalysis = mealGate.is_meal ? gateAndAnalysis.visual_analysis : null;
-  const recipeDocument = gateAndAnalysis.recipe_document ?? visualAnalysis?.recipe_document ?? null;
-  const documentHasUsableCore = photoRecipeDocumentHasUsableCore(recipeDocument);
   let heroImageURL = uploadedHeroURL ?? sourceURL ?? null;
 
-  const sonarContext = mealGate.is_meal && !documentHasUsableCore
+  const sonarContext = mealGate.is_meal
     ? await runPhotoSonarContext(visualAnalysis, photoContext, {
         source_type: "media_image",
         title: photoContext?.dish_hint ?? visualAnalysis?.dish_candidates?.[0]?.name ?? "Photo dish",
@@ -7572,7 +8439,6 @@ async function extractPhotoRecipeSource(request) {
       })
     : null;
   const title = photoContext?.dish_hint
-    ?? recipeDocument?.title
     ?? sonarContext?.matched_dish_name
     ?? visualAnalysis?.dish_candidates?.[0]?.name
     ?? "Photo recipe";
@@ -7582,7 +8448,6 @@ async function extractPhotoRecipeSource(request) {
     photoContext?.coarse_place_context ? `Coarse place context: ${photoContext.coarse_place_context}` : null,
     `Meal gate: ${JSON.stringify(mealGate)}`,
     visualAnalysis ? `Visual analysis: ${JSON.stringify(visualAnalysis)}` : null,
-    recipeDocument ? `Transcribed recipe: ${JSON.stringify(recipeDocument)}` : null,
     sonarContext ? `Grounded references: ${JSON.stringify(sonarContext)}` : null,
   ].filter(Boolean).join("\n\n");
   return {
@@ -7591,20 +8456,16 @@ async function extractPhotoRecipeSource(request) {
     source_url: sourceURL,
     canonical_url: sourceURL,
     title,
-    description: recipeDocument
-      ? "Recipe transcribed from an attached image."
-      : visualAnalysis?.plating_context ?? "Recipe inferred from a food photo.",
+    description: visualAnalysis?.plating_context ?? "Recipe inferred from a food photo.",
     meta_description: visualAnalysis?.uncertainty ?? null,
     raw_text: rawText,
     transcript_text: rawText,
     ingredient_candidates: uniqueStrings([
-      ...(recipeDocument?.ingredients ?? []),
       ...(visualAnalysis?.visible_ingredients ?? []),
       ...(visualAnalysis?.likely_hidden_ingredients ?? []),
       ...(sonarContext?.ingredient_patterns ?? []),
     ]),
     instruction_candidates: uniqueStrings([
-      ...(recipeDocument?.steps ?? []),
       ...(visualAnalysis?.cooking_methods ?? []),
       ...(sonarContext?.technique_notes ?? []),
     ]),
@@ -7614,19 +8475,7 @@ async function extractPhotoRecipeSource(request) {
     photo_image_inputs: imageInputs,
     photo_meal_gate: mealGate,
     photo_visual_analysis: visualAnalysis,
-    photo_recipe_document: recipeDocument,
     photo_sonar_context: sonarContext,
-    structured_recipe: documentHasUsableCore ? {
-      name: recipeDocument.title,
-      description: recipeDocument.notes?.join(" ") || "Recipe transcribed from an attached image.",
-      recipeIngredient: recipeDocument.ingredients,
-      recipeInstructions: recipeDocument.steps,
-      recipeYield: recipeDocument.servings_text,
-      prepTime: recipeDocument.prep_time_iso,
-      cookTime: recipeDocument.cook_time_iso,
-      totalTime: recipeDocument.total_time_iso,
-      image: heroImageURL,
-    } : null,
     source_provenance_json: {
       source_type: "media_image",
       platform: "photo",
@@ -7636,14 +8485,12 @@ async function extractPhotoRecipeSource(request) {
       photo_context: photoContext,
       photo_meal_gate: mealGate,
       photo_visual_analysis: visualAnalysis,
-      photo_recipe_document: recipeDocument,
       photo_sonar_context: sonarContext,
       photo_search_queries: sonarContext?.search_queries ?? photoRecipeSearchQueries(visualAnalysis, photoContext),
       evidence_json: {
         photo_context: photoContext,
         meal_gate: mealGate,
         visual_analysis: visualAnalysis,
-        recipe_document: recipeDocument,
         sonar_context: sonarContext,
         search_queries: sonarContext?.search_queries ?? photoRecipeSearchQueries(visualAnalysis, photoContext),
         hero_image_url: heroImageURL,
@@ -7652,7 +8499,6 @@ async function extractPhotoRecipeSource(request) {
     artifacts: [
       { artifact_type: "photo_meal_gate", content_type: "application/json", source_url: sourceURL, raw_json: compactJSON(mealGate), metadata: { is_meal: mealGate.is_meal, confidence: mealGate.confidence } },
       ...(visualAnalysis ? [{ artifact_type: "photo_visual_analysis", content_type: "application/json", source_url: sourceURL, raw_json: compactJSON(visualAnalysis) }] : []),
-      ...(recipeDocument ? [{ artifact_type: "photo_recipe_document", content_type: "application/json", source_url: sourceURL, raw_json: compactJSON(recipeDocument), metadata: { usable_core: documentHasUsableCore } }] : []),
       ...(sonarContext ? [{ artifact_type: "photo_sonar_context", content_type: "application/json", source_url: sourceURL, raw_json: compactJSON(sonarContext), metadata: { fallback: Boolean(sonarContext.fallback), reference_count: sonarContext.reference_urls?.length ?? 0 } }] : []),
     ],
   };
@@ -7660,6 +8506,7 @@ async function extractPhotoRecipeSource(request) {
 
 async function extractSourceMaterial(request) {
   const sourceType = request.source_type;
+  // processRecipeIngestionJob resolves TikTok share redirects before this point.
   const resolvedSourceURL = request.source_url;
   if (sourceType === "youtube") return extractYouTubeSource(resolvedSourceURL);
   if (sourceType === "tiktok") return extractSocialSource(resolvedSourceURL, "tiktok");
@@ -7698,6 +8545,7 @@ async function extractRecipeWithModel(source) {
       text: [
         "Extract a recipe from this source material.",
         "If the source does not provide nutrition but the dish, servings, and ingredient quantities are clear enough, return conservative best-guess per-serving calories_kcal, protein_g, carbs_g, and fat_g. These are rough display estimates for the app.",
+        "For social video, the attached frame images are chronological. Return hero_frame_position as the 1-based position of the sharpest, most appetizing finished-dish frame. Avoid faces, motion blur, transitions, ingredient-only shots, and frames dominated by text. Return null when no frame is suitable.",
         "",
         `source_type: ${source.source_type}`,
         `platform: ${source.platform ?? ""}`,
@@ -7762,6 +8610,7 @@ async function extractRecipeWithModel(source) {
             ingredients: [{ display_name: "string", quantity_text: "string|null", image_url: "string|null" }],
             steps: [{ number: "integer|null", text: "string", tip_text: "string|null", ingredients: [{ display_name: "string", quantity_text: "string|null" }] }]
           },
+          hero_frame_position: "integer|null",
           quality_flags: ["string"],
           review_reason: "string|null"
         }),
@@ -8088,6 +8937,17 @@ function hasUsableRecipeCore(recipe) {
   return ingredientCount >= 4 && stepCount >= 3 && quantifiedIngredientCount >= 2;
 }
 
+function hasUsableRecipeShape(recipe) {
+  if (!recipe || typeof recipe !== "object") return false;
+  const ingredientCount = Array.isArray(recipe.ingredients)
+    ? recipe.ingredients.filter((item) => normalizeText(item?.display_name ?? item?.name ?? item)).length
+    : 0;
+  const stepCount = Array.isArray(recipe.steps)
+    ? recipe.steps.filter((item) => normalizeText(item?.text ?? item)).length
+    : 0;
+  return ingredientCount >= 4 && stepCount >= 3;
+}
+
 function recipeCoreMetrics(recipe) {
   const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
   const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
@@ -8112,11 +8972,6 @@ function recipeCoreMetrics(recipe) {
   };
 }
 
-function hasUsableRecipeShape(recipe) {
-  const metrics = recipeCoreMetrics(recipe);
-  return metrics.ingredientCount >= 4 && metrics.stepCount >= 3;
-}
-
 function recipeNeedsCompletionPass(recipe) {
   const metrics = recipeCoreMetrics(recipe);
   const sparseQuantities = metrics.ingredientCount >= 3
@@ -8135,6 +8990,188 @@ function recipeNeedsCompletionPass(recipe) {
     || !Number.isFinite(recipe?.fat_g);
 }
 
+function isSocialRecipeMaterial(source) {
+  const sourceType = normalizeText(source?.source_type ?? source?.platform ?? "").toLowerCase();
+  return ["tiktok", "instagram", "youtube", "shorts", "reel", "social", "media_video"]
+    .some((token) => sourceType.includes(token));
+}
+
+function socialRecipeEvidenceCoverage(source) {
+  const frameCount = Array.isArray(source?.frame_data_urls) ? source.frame_data_urls.length : 0;
+  const frameOCRTexts = Array.isArray(source?.frame_ocr_texts)
+    ? source.frame_ocr_texts.map((frame) => normalizeText(frame?.text)).filter(Boolean)
+    : [];
+  const recipeSignalCounts = (text) => {
+    const actionSignals = [
+      /\badd\b/i,
+      /\bblend\w*\b/i,
+      /\bboil\w*\b/i,
+      /\bbak\w*\b/i,
+      /\bcook\w*\b/i,
+      /\bfry\w*\b/i,
+      /\bsimmer\w*\b/i,
+      /\bseason\w*\b/i,
+      /\bserv\w*\b/i,
+      /\bmix\w*\b/i,
+      /\bstir\w*\b/i,
+      /\bflip\w*\b/i,
+      /\bmarinat\w*\b/i,
+      /\bgrill\w*\b/i,
+      /\broast\w*\b/i,
+    ].filter((pattern) => pattern.test(text)).length;
+    const ingredientSignals = [
+      /\b(?:fish|tilapia|salmon|cod)\b/i,
+      /\b(?:chicken|beef|pork|lamb|meat)\b/i,
+      /\b(?:rice|yam|plantain|potato|beans?)\b/i,
+      /\b(?:pepper|onion|garlic|ginger|tomato)\b/i,
+      /\b(?:oil|butter|cream|milk|cheese)\b/i,
+      /\b(?:salt|paprika|curry|seasoning|spices?)\b/i,
+      /\b(?:flour|sugar|egg|baking soda|baking powder)\b/i,
+    ].filter((pattern) => pattern.test(text)).length;
+    return { actionSignals, ingredientSignals };
+  };
+  const usableFrameOCRCount = frameOCRTexts.filter((text) => {
+    const signals = recipeSignalCounts(text);
+    const hasMeasurement = /\b\d+(?:[./]\d+)?\s*(?:g|kg|ml|l|tsp|tbsp|cups?|oz|lb)\b/i.test(text);
+    return (signals.actionSignals > 0 && signals.ingredientSignals > 0)
+      || (hasMeasurement && signals.ingredientSignals > 0);
+  }).length;
+  const ingredientCandidateCount = Array.isArray(source?.ingredient_candidates)
+    ? source.ingredient_candidates.filter((item) => normalizeText(item?.display_name ?? item?.name ?? item)).length
+    : 0;
+  const instructionCandidateCount = Array.isArray(source?.instruction_candidates)
+    ? source.instruction_candidates.filter((item) => normalizeText(item?.text ?? item)).length
+    : 0;
+  const transcriptChars = normalizeText(source?.transcript_text ?? "").length;
+  const transcriptSignals = recipeSignalCounts(normalizeText(source?.transcript_text ?? ""));
+  return {
+    frameCount,
+    frameOCRCount: frameOCRTexts.length,
+    usableFrameOCRCount,
+    ingredientCandidateCount,
+    instructionCandidateCount,
+    transcriptChars,
+    transcriptActionSignals: transcriptSignals.actionSignals,
+    transcriptIngredientSignals: transcriptSignals.ingredientSignals,
+    hasStrongTranscriptRecipeEvidence:
+      transcriptSignals.actionSignals >= 4
+      && transcriptSignals.ingredientSignals >= 4,
+    hasPrimaryRecipeEvidence: socialSourceHasPrimaryRecipeEvidence(source),
+  };
+}
+
+function isGenericCompletionIngredientName(value) {
+  const name = normalizeText(value)
+    .toLowerCase()
+    .replace(/^(?:\d+(?:[./–-]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])\s*(?:cups?|tsp|tbsp|teaspoons?|tablespoons?|g|kg|ml|l|oz|lb|pounds?)?\s+/i, "")
+    .replace(/\s*\([^)]*\)\s*$/g, "")
+    .trim();
+  if (!name) return true;
+  return /^(?:seasonings?|spices?|spice mix|seasoning blend|spice blend|marinade|sauce base|(?:red )?pepper seasoning|pepper sauce seasoning|garnish)$/i.test(name)
+    || /^(?:oil|pepper|red pepper|green pepper)[- ]based (?:seasoning|spice mix|spices|marinade|sauce)$/i.test(name)
+    || /^(?:mixed|assorted|preferred|favorite|house) (?:seasonings?|spices?|spice mix|seasoning blend)$/i.test(name);
+}
+
+function isRecipeEquipmentIngredientName(value) {
+  const name = normalizeText(value)
+    .toLowerCase()
+    .replace(/^(?:\d+(?:[./–-]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])\s*(?:sheets?|pieces?|units?)?\s+/, "")
+    .replace(/\s*\([^)]*\)\s*$/g, "")
+    .trim();
+  if (!name) return false;
+  return /^(?:(?:aluminum|aluminium)\s+)?foil(?:\s+sheets?)?$/.test(name)
+    || /^(?:baking|parchment|greaseproof) paper(?:\s+sheets?)?$/.test(name)
+    || /^(?:baking sheet|sheet pan|baking tray|roasting tray|roasting pan|mixing bowl|food processor|blender|grill|oven|pan|pot|tray|bowl)$/.test(name);
+}
+
+function isRecipeTeaserText(value) {
+  const text = normalizeText(value).toLowerCase();
+  if (!text) return false;
+  return /\b(?:full|complete|exact)\s+(?:recipe|ingredient quantities|ingredients|recipe details|details)\b.{0,80}\b(?:coming|available|released|posted|shared)\s+soon\b/i.test(text)
+    || /\b(?:recipe|details|quantities)\s+to\s+be\s+(?:released|posted|shared)\b/i.test(text);
+}
+
+function recipeSemanticCompleteness(recipe) {
+  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
+  const genericIngredients = ingredients
+    .map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name ?? ingredient))
+    .filter((name) => name && isGenericCompletionIngredientName(name));
+  const equipmentIngredients = ingredients
+    .map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name ?? ingredient))
+    .filter((name) => name && isRecipeEquipmentIngredientName(name));
+  const concreteIngredientCount = ingredients.filter((ingredient) => {
+    const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? ingredient);
+    return name && !isGenericCompletionIngredientName(name) && !isRecipeEquipmentIngredientName(name);
+  }).length;
+  const meaningfulStepCount = steps.filter((step) => {
+    const text = normalizeText(step?.text ?? step);
+    return text.length >= 24 && /\b(?:add|bake|blend|boil|broil|chop|coat|combine|cook|fry|grill|heat|marinate|mix|pour|reduce|roast|rub|season|simmer|stir|toast|whisk)\w*\b/i.test(text);
+  }).length;
+  const teaserFields = [recipe?.description, recipe?.detail_footnote, ...steps.map((step) => step?.text ?? step)]
+    .filter((value) => isRecipeTeaserText(value));
+  const blockingIssues = uniqueStrings([
+    ...(genericIngredients.length ? [`Unresolved component ingredients: ${genericIngredients.slice(0, 5).join(", ")}.`] : []),
+    ...(equipmentIngredients.length ? [`Equipment is listed as ingredients: ${equipmentIngredients.slice(0, 5).join(", ")}.`] : []),
+    ...(teaserFields.length ? ["User-facing recipe fields contain source teaser or unavailable-recipe copy."] : []),
+  ]);
+
+  return {
+    genericIngredients,
+    equipmentIngredients,
+    concreteIngredientCount,
+    meaningfulStepCount,
+    teaserFieldCount: teaserFields.length,
+    blockingIssues,
+    isUsable: blockingIssues.length === 0 && concreteIngredientCount >= 3 && meaningfulStepCount >= 2,
+  };
+}
+
+function reconcileResolvedRecipeQualityFlags(recipe, qualityFlags = []) {
+  const flags = uniqueStrings(qualityFlags);
+  const semantics = recipeSemanticCompleteness(recipe);
+  if (semantics.blockingIssues.length > 0 || !flags.includes("final_validator_applied")) return flags;
+  const resolvedFlags = new Set([
+    "grounded_completion_incomplete",
+    "unresolved_ingredient_components",
+    "equipment_listed_as_ingredient",
+    "source_teaser_text",
+    "final_validator_review_needed",
+  ]);
+  return flags.filter((flag) => !resolvedFlags.has(normalizeText(flag).toLowerCase()));
+}
+
+function socialImportNeedsGroundedCompletion(recipe, source, qualityFlags = []) {
+  if (!isSocialRecipeMaterial(source)) return false;
+
+  const metrics = recipeCoreMetrics(recipe);
+  const coverage = socialRecipeEvidenceCoverage(source);
+  const flags = uniqueStrings(qualityFlags).map((flag) => normalizeText(flag).toLowerCase());
+  const hasExplicitIncompletenessFlag = flags.some((flag) => (
+    /(?:incomplete|partial|sparse|thin|broad)/.test(flag)
+    || /missing[_ -]?(?:steps?|ingredients?|quantit)/.test(flag)
+    || /low[_ -]?(?:step|ingredient|detail)/.test(flag)
+    || flag === "social_source_without_transcript"
+  ));
+  const genericIngredientCount = (recipe?.ingredients ?? []).filter((ingredient) => (
+    isGenericCompletionIngredientName(ingredient?.display_name ?? ingredient?.name ?? ingredient)
+  )).length;
+  const sourceCoverageIsThin = coverage.usableFrameOCRCount < 2
+    && (coverage.ingredientCandidateCount < 4 || coverage.instructionCandidateCount < 3)
+    && !coverage.hasStrongTranscriptRecipeEvidence;
+
+  return hasExplicitIncompletenessFlag
+    || metrics.needsRepair
+    || (sourceCoverageIsThin && (genericIngredientCount > 0 || !hasUsableRecipeShape(recipe)));
+}
+
+function shouldRunGroundedRecipeCompletion(recipe, source, qualityFlags = []) {
+  if (isSocialRecipeMaterial(source)) {
+    return socialImportNeedsGroundedCompletion(recipe, source, qualityFlags);
+  }
+  return recipeNeedsCompletionPass(recipe);
+}
+
 function buildRecipeCompletionQuery(recipe, source) {
   const title = normalizeText(recipe?.title ?? source?.title ?? "");
   if (title) return title;
@@ -8147,6 +9184,12 @@ function buildRecipeCompletionQuery(recipe, source) {
     .map((part) => normalizeText(part))
     .find(Boolean)
     ?? raw.slice(0, 120);
+}
+
+function buildSocialRecipeCompletionQuery(recipe, source) {
+  const title = normalizeText(recipe?.title ?? source?.title ?? "");
+  const creator = normalizeText(source?.author_handle ?? source?.author_name ?? "").replace(/^@/, "");
+  return normalizeText([title, creator, "recipe ingredients instructions"].filter(Boolean).join(" "), 220);
 }
 
 function ingredientQuantityCompletionChanges(beforeRecipe, afterRecipe) {
@@ -8177,6 +9220,284 @@ function recipeReferenceSummaryForArtifact(recipeSources) {
     site_name: entry.site_name ?? null,
     source_url: entry.canonical_url ?? entry.source_url ?? null,
   })).filter((entry) => entry.title || entry.source_url);
+}
+
+function assessSocialCompletionContext(context) {
+  if (!context) {
+    return {
+      hasDetails: false,
+      concreteIngredientCount: 0,
+      usefulStepCount: 0,
+      referenceCount: 0,
+    };
+  }
+  const ingredientDetails = [
+    ...(context.source_supported_ingredients ?? []),
+    ...(context.completion_ingredients ?? []),
+  ];
+  const stepDetails = [
+    ...(context.source_supported_steps ?? []),
+    ...(context.completion_steps ?? []),
+  ];
+  const concreteIngredientCount = uniqueStrings(ingredientDetails)
+    .filter((item) => {
+      const text = normalizeText(item);
+      return text && !isGenericCompletionIngredientName(text) && !isRecipeEquipmentIngredientName(text);
+    }).length;
+  const usefulStepCount = uniqueStrings(stepDetails)
+    .filter((item) => normalizeText(item).length >= 24).length;
+  const referenceCount = uniqueStrings(context.reference_urls ?? []).filter(Boolean).length;
+  const matchConfidence = Number(context.match_confidence ?? 0);
+  const minimumIngredients = context.exact_match_supported ? 3 : 4;
+  const minimumSteps = context.exact_match_supported ? 2 : 3;
+  // For non-exact completion this score measures creator-match confidence, not
+  // whether the researched reconstruction itself is detailed enough to cook.
+  const minimumConfidence = context.exact_match_supported ? 0.45 : 0.25;
+  return {
+    hasDetails:
+      concreteIngredientCount >= minimumIngredients
+      && usefulStepCount >= minimumSteps
+      && matchConfidence >= minimumConfidence
+      && (context.exact_match_supported || referenceCount > 0),
+    concreteIngredientCount,
+    usefulStepCount,
+    referenceCount,
+  };
+}
+
+function socialCompletionContextHasDetails(context) {
+  return assessSocialCompletionContext(context).hasDetails;
+}
+
+async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID = null, attempt = 1 } = {}) {
+  if (!PERPLEXITY_API_KEY || !isSocialRecipeMaterial(source)) return null;
+
+  const query = buildSocialRecipeCompletionQuery(normalizedRecipe, source);
+  if (!query) return null;
+  const payload = {
+    model: RECIPE_COMPLETION_SONAR_MODEL,
+    temperature: 0.05,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        schema: {
+          type: "object",
+          properties: {
+            exact_match_supported: { type: "boolean" },
+            match_confidence: { type: "number" },
+            matched_creator_or_source: { type: ["string", "null"] },
+            reference_urls: { type: "array", items: { type: "string" } },
+            source_supported_ingredients: { type: "array", items: { type: "string" } },
+            source_supported_steps: { type: "array", items: { type: "string" } },
+            completion_ingredients: { type: "array", items: { type: "string" } },
+            completion_steps: { type: "array", items: { type: "string" } },
+            quantity_guidance: { type: "array", items: { type: "string" } },
+            cautions: { type: "array", items: { type: "string" } },
+          },
+          required: [
+            "exact_match_supported",
+            "match_confidence",
+            "matched_creator_or_source",
+            "reference_urls",
+            "source_supported_ingredients",
+            "source_supported_steps",
+            "completion_ingredients",
+            "completion_steps",
+            "quantity_guidance",
+            "cautions",
+          ],
+        },
+      },
+    },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are Ounje's grounded recipe completion researcher.",
+          "Research the exact creator, social post, caption phrases, cross-posts, and exact dish before using broader recipe references.",
+          "Return research context, not a replacement recipe.",
+          "Separate details supported by the creator or an exact cross-post from conservative gap-fill details inferred from closely matching recipes.",
+          "Never change the dish identity, main protein, sides, cuisine, or creator-specific named components.",
+          "When an exact written recipe cannot be found, set exact_match_supported=false, research closely matching recipes from the same cuisine and cooking method, and return a conservative but complete inferred version of the missing details.",
+          "Non-exact must not mean unusably broad: expand labels such as seasoning blend, pepper seasoning, marinade, or sauce base into practical constituent ingredients when comparable sources support the composition.",
+          "Write one concrete shoppable ingredient per completion_ingredients entry, include a conservative quantity or range when supportable, and never return another umbrella label in place of a usable breakdown.",
+          "Write completion_steps as specific cooking actions with useful timings, heat levels, and doneness cues when the references support them.",
+          "Put uncertainty and the basis for inferred additions in cautions; do not weaken the usable recipe itself into placeholders.",
+        ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          `search_query: ${query}`,
+          `social_url: ${source?.canonical_url ?? source?.source_url ?? ""}`,
+          "",
+          "Current imported base recipe:",
+          JSON.stringify(normalizedRecipe),
+          "",
+          "Creator source evidence:",
+          JSON.stringify({
+            title: source?.title ?? null,
+            author_name: source?.author_name ?? null,
+            author_handle: source?.author_handle ?? null,
+            description: source?.description ?? source?.meta_description ?? null,
+            transcript_text: limitText(source?.transcript_text ?? "", attempt > 1 ? 4_500 : 6_000),
+            frame_ocr_text: summarizeFrameOCRTexts(source?.frame_ocr_texts ?? [], {
+              maxFrames: attempt > 1 ? 6 : 12,
+              textLimit: attempt > 1 ? 400 : 900,
+            }),
+            ingredient_candidates: source?.ingredient_candidates ?? [],
+            instruction_candidates: source?.instruction_candidates ?? [],
+          }),
+          "",
+          "Return only the requested JSON research context. Preserve uncertainty in exact_match_supported, match_confidence, and cautions instead of fabricating creator support, while still providing a complete grounded gap-fill.",
+        ].join("\n"),
+      },
+    ],
+  };
+
+  const startedAt = Date.now();
+  let responsePayload = null;
+  let response = null;
+  try {
+    response = await fetchWithTimeout(PERPLEXITY_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${PERPLEXITY_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }, RECIPE_COMPLETION_SONAR_TIMEOUT_MS, "social recipe completion context");
+    responsePayload = await response.json().catch(() => null);
+    await recordExternalAICall({
+      provider: "perplexity",
+      apiType: "chat.completions",
+      service: "recipe-ingestion",
+      operation: "recipe_import.social_completion_context",
+      model: RECIPE_COMPLETION_SONAR_MODEL,
+      status: response.ok ? "succeeded" : "failed",
+      durationMS: Date.now() - startedAt,
+      inputPayload: payload,
+      outputPayload: responsePayload,
+      inputTokens: responsePayload?.usage?.prompt_tokens ?? responsePayload?.usage?.input_tokens ?? null,
+      outputTokens: responsePayload?.usage?.completion_tokens ?? responsePayload?.usage?.output_tokens ?? null,
+      totalTokens: responsePayload?.usage?.total_tokens ?? null,
+      metadata: { job_id: jobID, search_query: query, attempt },
+      error: response.ok ? null : new Error(responsePayload?.error?.message ?? `Perplexity returned HTTP ${response.status}`),
+    }).catch(() => {});
+    if (!response.ok) {
+      throw new Error(responsePayload?.error?.message ?? `Perplexity returned HTTP ${response.status}`);
+    }
+
+    const rawContent = responsePayload?.choices?.[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(rawContent.match(/\{[\s\S]*\}/)?.[0] ?? rawContent);
+    const context = {
+      query,
+      exact_match_supported: Boolean(parsed?.exact_match_supported),
+      match_confidence: Number.isFinite(Number(parsed?.match_confidence))
+        ? Math.max(0, Math.min(1, Number(parsed.match_confidence)))
+        : 0,
+      matched_creator_or_source: normalizeText(parsed?.matched_creator_or_source ?? "") || null,
+      reference_urls: uniqueStrings([
+        ...(Array.isArray(parsed?.reference_urls) ? parsed.reference_urls : []),
+        ...(Array.isArray(responsePayload?.citations) ? responsePayload.citations : []),
+      ].map(cleanURL).filter(Boolean)).slice(0, 8),
+      source_supported_ingredients: uniqueStrings(parsed?.source_supported_ingredients ?? []).slice(0, 32),
+      source_supported_steps: uniqueStrings(parsed?.source_supported_steps ?? []).slice(0, 24),
+      completion_ingredients: uniqueStrings(parsed?.completion_ingredients ?? []).slice(0, 32),
+      completion_steps: uniqueStrings(parsed?.completion_steps ?? []).slice(0, 24),
+      quantity_guidance: uniqueStrings(parsed?.quantity_guidance ?? []).slice(0, 24),
+      cautions: uniqueStrings(parsed?.cautions ?? []).slice(0, 12),
+    };
+    source.social_completion_context = context;
+    if (jobID) {
+      await storeArtifact(jobID, {
+        artifact_type: "social_completion_context",
+        content_type: "application/json",
+        source_url: source?.canonical_url ?? source?.source_url ?? null,
+        raw_json: compactJSON(context),
+        metadata: {
+          provider: "perplexity",
+          model: RECIPE_COMPLETION_SONAR_MODEL,
+          exact_match_supported: context.exact_match_supported,
+          match_confidence: context.match_confidence,
+          reference_count: context.reference_urls.length,
+          attempt,
+        },
+      }).catch(() => {});
+    }
+    return context;
+  } catch (error) {
+    if (response == null) {
+      await recordExternalAICall({
+        provider: "perplexity",
+        apiType: "chat.completions",
+        service: "recipe-ingestion",
+        operation: "recipe_import.social_completion_context",
+        model: RECIPE_COMPLETION_SONAR_MODEL,
+        status: "failed",
+        durationMS: Date.now() - startedAt,
+        inputPayload: payload,
+        outputPayload: responsePayload,
+        metadata: { job_id: jobID, search_query: query, attempt },
+        error,
+      }).catch(() => {});
+    }
+    const retryableStatus = Number(response?.status ?? 0);
+    const retryable = [408, 409, 425, 429].includes(retryableStatus)
+      || retryableStatus >= 500
+      || /timed out|timeout|fetch failed|http 408|http 409|http 425|http 429|http 5\d\d/i.test(errorSummary(error)?.message ?? "");
+    if (attempt < 2 && retryable) {
+      await delay(750);
+      return await runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID, attempt: attempt + 1 });
+    }
+    if (jobID) {
+      await storeArtifact(jobID, {
+        artifact_type: "social_completion_context",
+        content_type: "application/json",
+        source_url: source?.canonical_url ?? source?.source_url ?? null,
+        raw_json: compactJSON({ query, error: errorSummary(error) }),
+        metadata: { provider: "perplexity", status: "failed", attempts: attempt },
+      }).catch(() => {});
+    }
+    return null;
+  }
+}
+
+function mergeGroundedSocialCompletion(baseRecipe, completedRecipe) {
+  const merged = mergeCompletedRecipe(baseRecipe, completedRecipe);
+  const baseIngredients = Array.isArray(baseRecipe?.ingredients) ? baseRecipe.ingredients : [];
+  const completedIngredients = Array.isArray(completedRecipe?.ingredients) ? completedRecipe.ingredients : [];
+  const requiredBaseIngredients = baseIngredients.filter((ingredient) => {
+    const name = ingredient?.display_name ?? ingredient?.name ?? ingredient;
+    return !isGenericCompletionIngredientName(name) && !isRecipeEquipmentIngredientName(name);
+  });
+  const preservesSourceIdentity = requiredBaseIngredients.every((ingredient) => (
+    completedIngredients.some((candidate) => ingredientNameMatches(
+      candidate?.display_name ?? candidate?.name ?? candidate,
+      ingredient?.display_name ?? ingredient?.name ?? ingredient
+    ))
+  ));
+  const completedSemantics = recipeSemanticCompleteness(completedRecipe);
+  const canAdoptCompletedStructure = preservesSourceIdentity
+    && completedIngredients.length >= requiredBaseIngredients.length
+    && Array.isArray(completedRecipe?.steps)
+    && completedRecipe.steps.length >= Math.max(3, Math.min(baseRecipe?.steps?.length ?? 0, 5))
+    && completedSemantics.blockingIssues.length === 0
+    && completedSemantics.concreteIngredientCount >= Math.max(3, requiredBaseIngredients.length);
+
+  return {
+    ...merged,
+    title: baseRecipe?.title ?? merged.title,
+    author_name: baseRecipe?.author_name ?? merged.author_name,
+    author_handle: baseRecipe?.author_handle ?? merged.author_handle,
+    source: baseRecipe?.source ?? merged.source,
+    source_platform: baseRecipe?.source_platform ?? merged.source_platform,
+    recipe_url: baseRecipe?.recipe_url ?? merged.recipe_url,
+    original_recipe_url: baseRecipe?.original_recipe_url ?? merged.original_recipe_url,
+    attached_video_url: baseRecipe?.attached_video_url ?? merged.attached_video_url,
+    ingredients: canAdoptCompletedStructure ? completedIngredients : baseIngredients,
+    steps: canAdoptCompletedStructure ? completedRecipe.steps : (baseRecipe?.steps ?? []),
+  };
 }
 
 async function storeWebCompletionLookupArtifact(jobID, {
@@ -8297,22 +9618,37 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
+  const socialCompletionContext = isSocialRecipeMaterial(source)
+    ? await runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID })
+    : null;
+  const socialContextAssessment = assessSocialCompletionContext(socialCompletionContext);
+  const hasGroundedSocialCompletionContext = socialContextAssessment.hasDetails;
+  const hasSocialCompletionContext = Boolean(
+    socialCompletionContext
+    && socialContextAssessment.referenceCount > 0
+    && (socialContextAssessment.concreteIngredientCount > 0 || socialContextAssessment.usefulStepCount > 0)
+  );
+  const isSocialCompletion = isSocialRecipeMaterial(source);
   let lookupSource = null;
-  try {
-    lookupSource = await extractRecipeSearchSource(completionQuery, [], { source, jobID });
-  } catch (error) {
-    await storeWebCompletionLookupArtifact(jobID, {
-      completionQuery,
-      source,
-      error,
-      status: "failed",
-    });
-    return {
-      recipe: normalizedRecipe,
-      quality_flags: ["web_completion_lookup_failed"],
-      review_reason: "Web reference lookup failed before quantity completion.",
-      applied: false,
-    };
+  if (!hasSocialCompletionContext) {
+    try {
+      lookupSource = await extractRecipeSearchSource(completionQuery, [], { source, jobID });
+    } catch (error) {
+      await storeWebCompletionLookupArtifact(jobID, {
+        completionQuery,
+        source,
+        error,
+        status: "failed",
+      });
+      if (!isSocialCompletion) {
+        return {
+          recipe: normalizedRecipe,
+          quality_flags: ["web_completion_lookup_failed"],
+          review_reason: "Grounded web context was unavailable before recipe completion.",
+          applied: false,
+        };
+      }
+    }
   }
 
   const recipeSources = Array.isArray(lookupSource?.recipe_sources)
@@ -8323,9 +9659,9 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     source,
     lookupSource,
     recipeSources,
-    status: recipeSources.length ? "ok" : "empty",
+    status: hasSocialCompletionContext ? "perplexity_context" : (recipeSources.length ? "ok" : "empty"),
   });
-  if (!recipeSources.length) {
+  if (!recipeSources.length && !hasSocialCompletionContext && !isSocialCompletion) {
     return {
       recipe: normalizedRecipe,
       quality_flags: ["web_completion_no_references"],
@@ -8334,12 +9670,23 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
+  const initialCompletionModel = isSocialCompletion && !hasSocialCompletionContext
+    ? RECIPE_IMPORT_HARD_COMPLETION_MODEL
+    : RECIPE_IMPORT_COMPLETION_MODEL;
+
   const response = await timeRecipeImportStage(
     "web_completion",
-    { jobID, metadata: { reference_count: recipeSources.length } },
+    {
+      jobID,
+      metadata: {
+        reference_count: recipeSources.length,
+        perplexity_context: hasSocialCompletionContext,
+        perplexity_exact_match: socialCompletionContext?.exact_match_supported ?? null,
+      },
+    },
     () => withRecipeAIStage("recipe_import.web_completion", () => openai.chat.completions.create({
-      model: RECIPE_IMPORT_COMPLETION_MODEL,
-      ...chatCompletionTemperatureParams(RECIPE_IMPORT_COMPLETION_MODEL, 0.08),
+      model: initialCompletionModel,
+      ...chatCompletionTemperatureParams(initialCompletionModel, 0.08),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT },
@@ -8358,11 +9705,15 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
               title: source.title ?? null,
               description: source.description ?? source.meta_description ?? null,
               transcript_text: source.transcript_text ?? null,
+              frame_ocr_text: summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 12, textLimit: 1_000 }),
               raw_text: source.raw_text ?? null,
               ingredient_candidates: source.ingredient_candidates ?? [],
               instruction_candidates: source.instruction_candidates ?? [],
               structured_recipe: source.structured_recipe ?? null,
             }),
+            "",
+            "Grounded Perplexity completion context:",
+            JSON.stringify(socialCompletionContext),
             "",
             "Web recipe references:",
             JSON.stringify(recipeSources.map((entry) => ({
@@ -8422,13 +9773,113 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
   );
 
   const rawContent = response.choices?.[0]?.message?.content ?? "{}";
-  const parsed = JSON.parse(rawContent);
-  const completedRecipe = coerceStructuredRecipeCandidate(parsed.recipe ?? parsed, source);
-  const mergedRecipe = mergeCompletedRecipe(normalizedRecipe, completedRecipe);
+  let parsed = JSON.parse(rawContent);
+  let completedRecipe = coerceStructuredRecipeCandidate(parsed.recipe ?? parsed, source);
+  let mergedRecipe = isSocialCompletion
+    ? mergeGroundedSocialCompletion(normalizedRecipe, completedRecipe)
+    : mergeCompletedRecipe(normalizedRecipe, completedRecipe);
+  let selectedCompletionModel = initialCompletionModel;
+  let hardRetryApplied = false;
+  let completionSemantics = recipeSemanticCompleteness(mergedRecipe);
+
+  if (isSocialRecipeMaterial(source) && !completionSemantics.isUsable) {
+    try {
+      const hardResponse = await timeRecipeImportStage(
+        "web_completion_hard_retry",
+        {
+          jobID,
+          metadata: {
+          initial_model: initialCompletionModel,
+            retry_model: RECIPE_IMPORT_HARD_COMPLETION_MODEL,
+            blocking_issue_count: completionSemantics.blockingIssues.length,
+          },
+        },
+        () => withRecipeAIStage("recipe_import.web_completion_hard_retry", () => openai.chat.completions.create({
+          model: RECIPE_IMPORT_HARD_COMPLETION_MODEL,
+          ...chatCompletionTemperatureParams(RECIPE_IMPORT_HARD_COMPLETION_MODEL, 0.04),
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: [
+              "The first completion attempt is still not a usable recipe. Repair it completely without changing the imported dish.",
+              "Every ingredient row must be a concrete edible or shoppable ingredient. Expand all umbrella seasonings, marinades, and sauce bases into their practical constituents.",
+              "Do not list foil or any equipment as an ingredient. Do not include coming-soon or unavailable-recipe teaser copy.",
+              "Make the method detailed enough to cook: preparation, seasoning composition, temperatures or heat levels, timings, and doneness cues where the evidence supports them.",
+              "Use conservative mainstream quantities when the creator did not publish exact amounts, and flag those additions as inferred.",
+              "",
+              "Detected semantic failures:",
+              JSON.stringify(completionSemantics.blockingIssues),
+              "",
+              "Original imported recipe:",
+              JSON.stringify(normalizedRecipe),
+              "",
+              "Rejected first completion:",
+              JSON.stringify(completedRecipe),
+              "",
+              "Creator evidence:",
+              JSON.stringify({
+                title: source.title ?? null,
+                description: source.description ?? source.meta_description ?? null,
+                transcript_text: limitText(source.transcript_text ?? "", 8_000),
+                frame_ocr_text: summarizeFrameOCRTexts(source.frame_ocr_texts ?? [], { maxFrames: 12, textLimit: 1_000 }),
+                ingredient_candidates: source.ingredient_candidates ?? [],
+                instruction_candidates: source.instruction_candidates ?? [],
+              }),
+              "",
+              "Grounded web context:",
+              JSON.stringify(socialCompletionContext),
+              "",
+              "Return the same JSON shape as the first completion, with a complete recipe object, quality_flags, and review_reason.",
+              ].join("\n"),
+            },
+          ],
+        }))
+      );
+      const hardRawContent = hardResponse.choices?.[0]?.message?.content ?? "{}";
+      const hardParsed = JSON.parse(hardRawContent);
+      const hardCompletedRecipe = coerceStructuredRecipeCandidate(hardParsed.recipe ?? hardParsed, source);
+      const hardMergedRecipe = mergeGroundedSocialCompletion(normalizedRecipe, hardCompletedRecipe);
+      const hardSemantics = recipeSemanticCompleteness(hardMergedRecipe);
+      const semanticScore = (quality) => (
+        (quality.concreteIngredientCount * 3)
+        + (quality.meaningfulStepCount * 2)
+        - (quality.blockingIssues.length * 20)
+      );
+      if (
+        hardSemantics.blockingIssues.length < completionSemantics.blockingIssues.length
+        || (hardSemantics.blockingIssues.length === 0 && semanticScore(hardSemantics) > semanticScore(completionSemantics))
+      ) {
+        parsed = hardParsed;
+        completedRecipe = hardCompletedRecipe;
+        mergedRecipe = hardMergedRecipe;
+        completionSemantics = hardSemantics;
+        selectedCompletionModel = RECIPE_IMPORT_HARD_COMPLETION_MODEL;
+        hardRetryApplied = true;
+      }
+    } catch (error) {
+      if (jobID) {
+        await storeArtifact(jobID, {
+          artifact_type: "hard_completion_retry",
+          content_type: "application/json",
+          source_url: source.canonical_url ?? source.source_url ?? null,
+          raw_json: compactJSON({ error: errorSummary(error), applied: false }),
+          metadata: { model: RECIPE_IMPORT_HARD_COMPLETION_MODEL, failed: true, applied: false },
+        }).catch(() => {});
+      }
+    }
+  }
   const filledQuantities = ingredientQuantityCompletionChanges(normalizedRecipe, mergedRecipe);
   const qualityFlags = uniqueStrings([
     ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
+    ...(hasSocialCompletionContext ? ["perplexity_completion_context"] : []),
+    ...(isSocialCompletion && !hasSocialCompletionContext ? ["grounded_completion_context_unavailable"] : []),
+    ...(hasSocialCompletionContext && !hasGroundedSocialCompletionContext ? ["perplexity_completion_context_thin"] : []),
+    ...(hasSocialCompletionContext && !socialCompletionContext.exact_match_supported ? ["grounded_completion_inferred"] : []),
     ...(filledQuantities.length ? ["quantities_inferred"] : []),
+    ...(hardRetryApplied ? ["hard_completion_retry_applied"] : []),
+    ...(!completionSemantics.isUsable ? ["grounded_completion_incomplete"] : []),
     ...(JSON.stringify(mergedRecipe) !== JSON.stringify(normalizedRecipe) ? ["web_completion_applied"] : []),
   ]);
   if (jobID) {
@@ -8440,13 +9891,19 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
         completion_query: completionQuery,
         filled_quantities: filledQuantities,
         reference_sources: recipeReferenceSummaryForArtifact(recipeSources),
+        perplexity_context: socialCompletionContext,
         quality_flags: qualityFlags,
         review_reason: normalizeText(parsed.review_reason ?? "") || null,
       }),
       metadata: {
-        model: RECIPE_IMPORT_COMPLETION_MODEL,
+        model: selectedCompletionModel,
+        initial_model: initialCompletionModel,
+        hard_retry_applied: hardRetryApplied,
+        semantic_blocking_issue_count: completionSemantics.blockingIssues.length,
         filled_quantity_count: filledQuantities.length,
         reference_count: recipeSources.length,
+        perplexity_context: hasSocialCompletionContext,
+        perplexity_exact_match: socialCompletionContext?.exact_match_supported ?? null,
       },
     }).catch(() => {});
   }
@@ -8454,8 +9911,8 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
   return {
     recipe: mergedRecipe,
     quality_flags: qualityFlags,
-    review_reason: normalizeText(parsed.review_reason ?? "") || null,
-    applied: JSON.stringify(mergedRecipe) !== JSON.stringify(normalizedRecipe),
+    review_reason: completionSemantics.blockingIssues[0] ?? (normalizeText(parsed.review_reason ?? "") || null),
+    applied: completionSemantics.isUsable && JSON.stringify(mergedRecipe) !== JSON.stringify(normalizedRecipe),
   };
 }
 
@@ -8665,17 +10122,25 @@ function ingredientNameMatchesText(ingredientName, text) {
   if (!key || !haystack) return false;
   if (haystack.includes(key)) return true;
   const compactName = normalizeKey(String(ingredientName ?? "").split(/\s+/).slice(-2).join(" "));
-  return Boolean(compactName && compactName.length >= 5 && haystack.includes(compactName));
+  if (compactName && compactName.length >= 5 && haystack.includes(compactName)) return true;
+  const genericTokens = new Set([
+    "fresh", "dried", "ground", "whole", "large", "medium", "small",
+    "pepper", "sauce", "seasoning", "powder", "optional", "divided",
+  ]);
+  const distinctiveTokens = key
+    .split(" ")
+    .filter((token) => token.length >= 5 && !genericTokens.has(token));
+  const haystackTokens = new Set(haystack.split(" "));
+  return distinctiveTokens.some((token) => haystackTokens.has(token));
 }
 
 function buildFinalRecipeValidationIssues(recipe, source = null) {
   const issues = [];
   const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
   const stepText = normalizeText(steps.map((step) => step.text ?? "").join("\n"));
+  const semanticQuality = recipeSemanticCompleteness(recipe);
 
-  if (socialSourceHasPrimaryRecipeEvidence(source)) {
-    issues.push("Check source-evidence coverage: every concrete ingredient explicitly named in the social video's frame OCR, caption, transcript, or ingredient candidates must appear in the final ingredient list and relevant steps. Do not add ingredients based only on what is common for the dish.");
-  }
+  issues.push(...semanticQuality.blockingIssues);
 
   if (/\bwater\b/i.test(stepText) && !recipeHasIngredientNamed(recipe, ["water"])) {
     issues.push("Steps mention water, but water is not listed. Either remove the water reference by using a listed liquid, or add water only if the recipe needs it.");
@@ -8687,6 +10152,35 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
 
   if (/\b(a little|some|a bit of)\b.{0,35}\b(water|stock|broth|oil)\b/i.test(stepText)) {
     issues.push("A liquid amount is vague in the method. Make it practical for the serving size or refer to the listed quantity.");
+  }
+
+  const ingredientRows = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const ingredientNamesWithEmbeddedQuantity = ingredientRows
+    .map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name ?? ""))
+    .filter((name) => /^(?:\d+(?:[./–-]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])\s+(?:whole\s+)?/i.test(name));
+  if (ingredientNamesWithEmbeddedQuantity.length) {
+    issues.push(`Move quantities and size ranges out of ingredient display names: ${ingredientNamesWithEmbeddedQuantity.slice(0, 4).join(", ")}.`);
+  }
+
+  const ingredientRoleKey = (value) => normalizeKey(
+    normalizeText(value)
+      .replace(/\s*\((?:for|to)\s+[^)]*\)\s*$/i, "")
+      .replace(/,?\s+(?:for|to)\s+(?:the\s+)?(?:sauce|marinade|seasoning|garnish|grill|pan|tray|serving)\s*$/i, "")
+  );
+  const duplicateIngredientGroups = new Map();
+  for (const ingredient of ingredientRows) {
+    const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
+    const key = ingredientRoleKey(name);
+    if (!name || !key) continue;
+    const names = duplicateIngredientGroups.get(key) ?? [];
+    names.push(name);
+    duplicateIngredientGroups.set(key, names);
+  }
+  const repeatedIngredientNames = [...duplicateIngredientGroups.values()]
+    .filter((names) => names.length > 1)
+    .flat();
+  if (repeatedIngredientNames.length) {
+    issues.push(`Consolidate repeated ingredient rows and total compatible quantities: ${repeatedIngredientNames.slice(0, 8).join(", ")}.`);
   }
 
   const missingQuantityIngredients = (recipe?.ingredients ?? []).filter((ingredient) => {
@@ -8706,17 +10200,15 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
     for (const ingredientName of ingredientNames) {
       const key = normalizeKey(ingredientName);
       if (!key || /^(salt|pepper|water)$/i.test(ingredientName)) continue;
-      if (!normalizeKey(stepText).includes(key)) {
-        const compactName = ingredientName.split(/\s+/).slice(-2).join(" ");
-        if (compactName && !normalizeKey(stepText).includes(normalizeKey(compactName))) {
-          issues.push(`Ingredient "${ingredientName}" is listed but not clearly used in the steps.`);
-          if (issues.length >= 6) break;
-        }
+      if (!ingredientNameMatchesText(ingredientName, stepText)) {
+        issues.push(`Ingredient "${ingredientName}" is listed but not clearly used in the steps.`);
+        if (issues.length >= 6) break;
       }
     }
   }
 
   const linkedIngredientIssues = [];
+  const missingTopLevelLinkedNames = new Set();
   for (const step of steps) {
     const currentStepText = normalizeText(step?.text ?? "");
     const linkedNames = Array.isArray(step?.ingredients)
@@ -8726,11 +10218,15 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
 
     for (const linkedName of linkedNames) {
       if (!linkedName || /^(salt|pepper|water)$/i.test(linkedName)) continue;
+      if (isGenericCompletionIngredientName(linkedName)) continue;
       const isTopLevelIngredient = ingredientNames.some((ingredientName) => (
         ingredientNameMatchesText(linkedName, ingredientName)
         || ingredientNameMatchesText(ingredientName, linkedName)
       ));
       if (!isTopLevelIngredient) {
+        const missingKey = normalizeKey(linkedName);
+        if (missingTopLevelLinkedNames.has(missingKey)) continue;
+        missingTopLevelLinkedNames.add(missingKey);
         const stepNumber = step.number ?? step.step_number ?? "?";
         linkedIngredientIssues.push(`Step ${stepNumber} uses "${linkedName}", but it is missing from the top-level ingredient list.`);
         break;
@@ -8750,14 +10246,29 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
   }
   issues.push(...linkedIngredientIssues);
 
-  return uniqueStrings(issues).slice(0, 8);
+  return uniqueStrings(issues).slice(0, 10);
+}
+
+function shouldRunFinalRecipeValidation(recipe, source = null) {
+  return socialSourceHasPrimaryRecipeEvidence(source)
+    || buildFinalRecipeValidationIssues(recipe, source).length > 0;
+}
+
+function isBlockingFinalRecipeValidationIssue(issue) {
+  const text = normalizeText(issue).toLowerCase();
+  if (!text) return false;
+  return /unresolved component ingredients|equipment is listed as ingredients|source teaser|missing from the top-level ingredient list|missing quantities|consolidate repeated ingredient rows|listed but not clearly used|steps mention water/.test(text);
 }
 
 async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } = {}) {
-  const validationIssues = buildFinalRecipeValidationIssues(recipe, source);
-  if (!validationIssues.length) {
+  const validationBaseRecipe = normalizeRecipeDisplayFields(recipe);
+  const validationIssues = buildFinalRecipeValidationIssues(validationBaseRecipe, source);
+  const finalValidatorModel = isSocialRecipeMaterial(source)
+    ? RECIPE_IMPORT_HARD_COMPLETION_MODEL
+    : RECIPE_FINAL_VALIDATOR_MODEL;
+  if (!shouldRunFinalRecipeValidation(validationBaseRecipe, source)) {
     return {
-      recipe,
+      recipe: validationBaseRecipe,
       quality_flags: [],
       review_reason: null,
       validation_notes: [],
@@ -8767,7 +10278,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
 
   if (!openai) {
     return {
-      recipe,
+      recipe: validationBaseRecipe,
       quality_flags: ["final_validator_issues"],
       review_reason: validationIssues.join(" "),
       validation_notes: validationIssues,
@@ -8780,9 +10291,9 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       "final_validation",
       { jobID, metadata: { issue_count: validationIssues.length } },
       () => withRecipeAIStage("recipe_import.final_validator", () => openai.chat.completions.create({
-        model: RECIPE_FINAL_VALIDATOR_MODEL,
-        ...chatCompletionTemperatureParams(RECIPE_FINAL_VALIDATOR_MODEL, 0.02),
-        ...chatCompletionLatencyParams(RECIPE_FINAL_VALIDATOR_MODEL, 1800),
+        model: finalValidatorModel,
+        ...chatCompletionTemperatureParams(finalValidatorModel, 0.02),
+        ...chatCompletionLatencyParams(finalValidatorModel, 5200),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
@@ -8793,7 +10304,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
               JSON.stringify(validationIssues),
               "",
               "Recipe:",
-              JSON.stringify(recipe),
+              JSON.stringify(validationBaseRecipe),
               "",
               "Source hints:",
               JSON.stringify({
@@ -8809,6 +10320,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
                   textLimit: 1_000,
                 }), 8_000),
               }),
+              "For social video, restore every concrete source-supported ingredient that is missing from the top-level ingredients and the relevant steps. Do not replace the creator's recipe with a generic dish recipe.",
               "",
               "Return JSON like:",
               JSON.stringify({
@@ -8830,21 +10342,25 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     const parsed = JSON.parse(rawContent);
     const repairPatch = parsed.recipe && typeof parsed.recipe === "object" ? parsed.recipe : parsed;
     const repairedInput = {
-      ...recipe,
+      ...validationBaseRecipe,
       ...repairPatch,
-      ingredients: Array.isArray(repairPatch.ingredients) ? repairPatch.ingredients : recipe.ingredients,
-      steps: Array.isArray(repairPatch.steps) ? repairPatch.steps : recipe.steps,
+      ingredients: Array.isArray(repairPatch.ingredients) ? repairPatch.ingredients : validationBaseRecipe.ingredients,
+      steps: Array.isArray(repairPatch.steps) ? repairPatch.steps : validationBaseRecipe.steps,
     };
-    const repaired = coerceStructuredRecipeCandidate(repairedInput, source);
+    const repaired = normalizeRecipeDisplayFields(coerceStructuredRecipeCandidate(repairedInput, source));
     const repairedMetrics = recipeCoreMetrics(repaired);
-    const originalMetrics = recipeCoreMetrics(recipe);
+    const originalMetrics = recipeCoreMetrics(validationBaseRecipe);
     const repairedIssues = buildFinalRecipeValidationIssues(repaired, source);
+    const issueCountImproved = validationIssues.length === 0
+      ? repairedIssues.length === 0
+      : repairedIssues.length < validationIssues.length;
     const shouldUseRepair =
       repairedMetrics.ingredientCount >= Math.max(1, originalMetrics.ingredientCount - 1)
       && repairedMetrics.stepCount >= Math.max(1, originalMetrics.stepCount - 1)
-      && repairedIssues.length <= validationIssues.length;
+      && issueCountImproved;
 
-    const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(recipe);
+    const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(validationBaseRecipe);
+    const remainingBlockingIssues = repairedIssues.filter(isBlockingFinalRecipeValidationIssue);
     const validationNotes = uniqueStrings([
       ...validationIssues,
       ...(Array.isArray(parsed.validation_notes) ? parsed.validation_notes : []),
@@ -8852,7 +10368,13 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     ]);
     const qualityFlags = uniqueStrings([
       ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
-      ...(applied ? ["final_validator_applied"] : ["final_validator_review_needed"]),
+      ...(applied
+        ? ["final_validator_applied", ...(remainingBlockingIssues.length ? ["final_validator_review_needed"] : repairedIssues.length ? ["final_validator_advisory"] : [])]
+        : remainingBlockingIssues.length
+          ? ["final_validator_review_needed"]
+          : repairedIssues.length
+            ? ["final_validator_advisory"]
+          : ["final_validator_checked"]),
     ]);
 
     if (jobID) {
@@ -8868,18 +10390,21 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
           applied,
         }),
         metadata: {
-          model: RECIPE_FINAL_VALIDATOR_MODEL,
+          model: finalValidatorModel,
           issue_count: validationIssues.length,
           remaining_issue_count: repairedIssues.length,
+          remaining_blocking_issue_count: remainingBlockingIssues.length,
           applied,
         },
       }).catch(() => {});
     }
 
     return {
-      recipe: applied ? repaired : recipe,
+      recipe: applied ? repaired : validationBaseRecipe,
       quality_flags: qualityFlags,
-      review_reason: normalizeText(parsed.review_reason ?? "") || (repairedIssues.length ? repairedIssues.join(" ") : null),
+      review_reason: remainingBlockingIssues.length
+        ? normalizeText(parsed.review_reason ?? "") || remainingBlockingIssues.join(" ")
+        : null,
       validation_notes: validationNotes,
       applied,
     };
@@ -8895,7 +10420,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
           applied: false,
         }),
         metadata: {
-          model: RECIPE_FINAL_VALIDATOR_MODEL,
+          model: finalValidatorModel,
           issue_count: validationIssues.length,
           applied: false,
           failed: true,
@@ -8903,7 +10428,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       }).catch(() => {});
     }
     return {
-      recipe,
+      recipe: validationBaseRecipe,
       quality_flags: ["final_validator_failed"],
       review_reason: validationIssues.join(" "),
       validation_notes: validationIssues,
@@ -9130,20 +10655,13 @@ async function synthesizeRecipeFromPhoto(source, { jobID = null } = {}) {
     coarse_place_context: source.photo_context?.coarse_place_context ?? null,
     meal_gate: source.photo_meal_gate,
     visual_analysis: source.photo_visual_analysis,
-    recipe_document: source.photo_recipe_document,
     sonar_context: source.photo_sonar_context,
     hero_image_url: source.hero_image_url ?? null,
   };
-  const imageParts = (source.photo_image_inputs ?? [])
-    .slice(0, 4)
-    .map(photoImageContentPart)
-    .filter(Boolean);
+  const imagePart = photoImageContentPart(source.photo_image_inputs?.[0]);
   const makeRequest = async ({ repairIssues = [], previousRecipe = null } = {}) => {
     const userText = [
       "Create a cookable Ounje recipe from the photo analysis and grounded web evidence.",
-      source.photo_recipe_document
-        ? "The images contain transcribed recipe text. Preserve its ingredients, quantities, and instructions as the primary source of truth; only fill genuinely missing fields."
-        : null,
       "Use web references for mainstream quantities when the photo cannot show amounts.",
       "Keep uncertainty in provenance, but make the recipe useful.",
       "Use the photo to identify the likely dish, not as a strict ingredient checklist.",
@@ -9185,10 +10703,7 @@ async function synthesizeRecipeFromPhoto(source, { jobID = null } = {}) {
       previousRecipe ? `Previous invalid recipe: ${JSON.stringify(previousRecipe).slice(0, 12000)}` : null,
     ].filter(Boolean).join("\n");
     const content = [{ type: "text", text: userText }];
-    imageParts.forEach((part, index) => {
-      content.push({ type: "text", text: `Source image ${index + 1} of ${imageParts.length}` });
-      content.push(part);
-    });
+    if (imagePart) content.push(imagePart);
     const response = await withRecipeAIStage(repairIssues.length ? "recipe_import.photo_recipe_repair" : "recipe_import.photo_recipe_cleanup", () => openai.chat.completions.create({
       model: PHOTO_RECIPE_CLEANUP_MODEL,
       ...chatCompletionTemperatureParams(PHOTO_RECIPE_CLEANUP_MODEL, repairIssues.length ? 0.08 : 0.18),
@@ -9990,7 +11505,11 @@ function cleanupStepIngredientReferences(steps = [], ingredients = [], replaceme
       const replacementName = replacements.get(normalizeKey(rawName)) ?? rawName;
       const matchedIngredient = ingredientByNameKey.get(normalizeKey(replacementName))
         ?? ingredientByDedupeKey.get(recipeIngredientDisplayDedupeKey(replacementName));
-      const displayName = normalizeText(matchedIngredient?.display_name ?? replacementName);
+      if (!matchedIngredient) {
+        changed = true;
+        continue;
+      }
+      const displayName = normalizeText(matchedIngredient.display_name);
       if (!displayName) continue;
       const refKey = normalizeKey(displayName);
       if (seen.has(refKey)) {
@@ -10005,6 +11524,32 @@ function cleanupStepIngredientReferences(steps = [], ingredients = [], replaceme
         display_name: displayName,
         quantity_text: normalizeText(baseRef.quantity_text ?? baseRef.quantity ?? matchedIngredient?.quantity_text ?? "") || null,
       });
+    }
+    const stepTextKey = normalizeKey(step?.text ?? "");
+    const mentionCandidates = ingredients
+      .map((ingredient) => ({
+        ingredient,
+        displayName: normalizeText(ingredient?.display_name ?? ingredient?.name ?? ""),
+      }))
+      .filter((candidate) => candidate.displayName && ingredientNameMatchesText(candidate.displayName, stepTextKey))
+      .map((candidate) => ({ ...candidate, key: normalizeKey(candidate.displayName) }))
+      .sort((left, right) => {
+        const leftExact = stepTextKey.includes(left.key) ? 1 : 0;
+        const rightExact = stepTextKey.includes(right.key) ? 1 : 0;
+        return rightExact - leftExact || right.key.length - left.key.length;
+      });
+    const selectedMentionKeys = [];
+    for (const { ingredient, displayName, key } of mentionCandidates) {
+      if (selectedMentionKeys.some((selectedKey) => selectedKey.includes(key) || key.includes(selectedKey))) continue;
+      selectedMentionKeys.push(key);
+      const refKey = normalizeKey(displayName);
+      if (!refKey || seen.has(refKey)) continue;
+      seen.add(refKey);
+      cleanedRefs.push({
+        display_name: displayName,
+        quantity_text: normalizeText(ingredient?.quantity_text ?? ingredient?.quantity ?? "") || null,
+      });
+      changed = true;
     }
     if (cleanedRefs.length !== step.ingredients.length) changed = true;
     return {
@@ -10026,28 +11571,13 @@ function deterministicRecipeCleanup(recipe) {
   let ingredientReplacements = new Map();
 
   if (Array.isArray(nextRecipe.ingredients)) {
-    nextRecipe.ingredients = nextRecipe.ingredients.map((ingredient) => {
-      const displayName = normalizeText(ingredient?.display_name ?? ingredient?.name ?? "");
-      const quantityText = normalizeText(ingredient?.quantity_text ?? ingredient?.quantity ?? "");
-      if (!displayName || !quantityText) return ingredient;
-
-      const loweredName = displayName.toLowerCase();
-      const loweredQuantity = quantityText.toLowerCase();
-      let cleanedName = displayName;
-      if (loweredName.startsWith(`${loweredQuantity} `)) {
-        cleanedName = displayName.slice(quantityText.length).trim();
-      } else if (loweredName.endsWith(` ${loweredQuantity}`)) {
-        cleanedName = displayName.slice(0, -(quantityText.length + 1)).trim();
-      }
-      if (!cleanedName || cleanedName === displayName) return ingredient;
-      return {
-        ...ingredient,
-        display_name: cleanedName,
-        name: cleanedName,
-        image_hint: normalizeText(ingredient?.image_hint ?? "") || cleanedName.toLowerCase(),
-      };
-    });
-
+    const foodIngredients = nextRecipe.ingredients.filter((ingredient) => !isRecipeEquipmentIngredientName(
+      ingredient?.display_name ?? ingredient?.name ?? ingredient
+    ));
+    if (foodIngredients.length !== nextRecipe.ingredients.length) {
+      nextRecipe.ingredients = foodIngredients;
+      qualityFlags.push("equipment_removed_from_ingredients");
+    }
     const deduped = dedupeRecipeIngredientsForDisplay(nextRecipe.ingredients);
     if (deduped.changed) {
       nextRecipe.ingredients = deduped.ingredients;
@@ -10069,11 +11599,15 @@ function deterministicRecipeCleanup(recipe) {
   }
 
   const currentDescription = normalizeText(nextRecipe.description);
-  if (!currentDescription || sourceCaptionLooksLikeRecipeBody(currentDescription)) {
+  if (!currentDescription || sourceCaptionLooksLikeRecipeBody(currentDescription) || isRecipeTeaserText(currentDescription)) {
     nextRecipe.description = compactRecipeDescription(nextRecipe);
     qualityFlags.push("description_compacted");
   } else {
     nextRecipe.description = limitText(currentDescription, 220);
+  }
+  if (isRecipeTeaserText(nextRecipe.detail_footnote)) {
+    nextRecipe.detail_footnote = null;
+    qualityFlags.push("source_teaser_removed");
   }
 
   const timing = inferRecipeTimingFromSteps(nextRecipe);
@@ -10166,11 +11700,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
           prep_time_iso: source.structured_recipe.prepTime,
           cook_time_iso: source.structured_recipe.cookTime,
           total_time_iso: source.structured_recipe.totalTime,
-          hero_image_url: Array.isArray(source.structured_recipe.image)
-            ? source.structured_recipe.image[0]
-            : typeof source.structured_recipe.image === "string"
-              ? source.structured_recipe.image
-              : source.hero_image_url,
+          hero_image_url: pickStructuredRecipeImageURL(source.structured_recipe.image) ?? source.hero_image_url,
           recipe_url: source.source_url,
           original_recipe_url: source.canonical_url,
           attached_video_url: source.attached_video_url,
@@ -10219,7 +11749,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     // query falls back to the title, which is almost always present — so complete web
     // imports paid for a needless web search. Sparse photo/social imports still pass
     // this gate and get completed.
-    if (recipeNeedsCompletionPass(normalized) && !(socialSourceHasPrimaryRecipeEvidence(source) && hasUsableRecipeShape(normalized))) {
+    if (shouldRunGroundedRecipeCompletion(normalized, source, modelResult.quality_flags ?? [])) {
       const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
       normalized = completion.recipe;
       modelResult.quality_flags = uniqueStrings([
@@ -10249,7 +11779,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     // query falls back to the title, which is almost always present — so complete web
     // imports paid for a needless web search. Sparse photo/social imports still pass
     // this gate and get completed.
-    if (recipeNeedsCompletionPass(normalized) && !(socialSourceHasPrimaryRecipeEvidence(source) && hasUsableRecipeShape(normalized))) {
+    if (shouldRunGroundedRecipeCompletion(normalized, source, modelResult.quality_flags ?? [])) {
       const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
       normalized = completion.recipe;
       modelResult.quality_flags = uniqueStrings([
@@ -10288,7 +11818,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     // query falls back to the title, which is almost always present — so complete web
     // imports paid for a needless web search. Sparse photo/social imports still pass
     // this gate and get completed.
-    if (recipeNeedsCompletionPass(normalized) && !(socialSourceHasPrimaryRecipeEvidence(source) && hasUsableRecipeShape(normalized))) {
+    if (shouldRunGroundedRecipeCompletion(normalized, source, modelResult.quality_flags ?? [])) {
       const completion = await completeImportedRecipeWithWebEvidence(normalized, source, { jobID });
       normalized = completion.recipe;
       modelResult.quality_flags = uniqueStrings([
@@ -10324,17 +11854,44 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   const normalizedCategory = normalizeText(normalized.category ?? "");
 
   const _imgRecipeKey = normalized.title ?? source.title ?? source.canonical_url ?? source.source_url ?? source.source_type ?? "recipe";
-  const _heroSrc = normalized.hero_image_url ?? normalized.discover_card_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
-  const _cardSrc = normalized.discover_card_image_url ?? normalized.hero_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
+  const socialHeroFrame = selectedSocialHeroFrame(source, modelResult);
+  const isSocialVideoImport = ["tiktok", "instagram", "youtube", "media_video"].includes(
+    normalizeText(source.source_type ?? source.platform ?? "").toLowerCase()
+  );
+  // The model must not invent an image URL for a social import. Prefer a selected
+  // full-resolution frame, then the source provider's own cover image.
+  const _heroSrc = isSocialVideoImport
+    ? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null
+    : normalized.hero_image_url ?? normalized.discover_card_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
+  const _cardSrc = isSocialVideoImport
+    ? _heroSrc
+    : normalized.discover_card_image_url ?? normalized.hero_image_url ?? source.hero_image_url ?? source.meta_image_url ?? source.thumbnail_url ?? null;
 
   let persistedHeroImageURL, persistedCardImageURL;
-  if (_heroSrc && _cardSrc && _heroSrc !== _cardSrc) {
+  if (socialHeroFrame?.dataURL) {
+    const parsedFrame = imageBufferFromDataURL(socialHeroFrame.dataURL);
+    persistedHeroImageURL = parsedFrame
+      ? await uploadRecipeImageBufferToStorage(parsedFrame.buffer, {
+          recipeKey: _imgRecipeKey,
+          imageRole: "video-frame-hero",
+          accessToken,
+          contentType: parsedFrame.contentType,
+          sourceKey: `${source.canonical_url ?? source.source_url ?? _imgRecipeKey}:frame:${socialHeroFrame.position}`,
+        })
+      : null;
+    persistedCardImageURL = persistedHeroImageURL;
+    if (persistedHeroImageURL) {
+      modelResult.quality_flags = uniqueStrings([...(modelResult.quality_flags ?? []), "video_frame_hero"]);
+    }
+  }
+
+  if (!persistedHeroImageURL && _heroSrc && _cardSrc && _heroSrc !== _cardSrc) {
     // Different source URLs — upload hero and card in parallel.
     [persistedHeroImageURL, persistedCardImageURL] = await Promise.all([
       persistRecipeImageToStorage(_heroSrc, { recipeKey: _imgRecipeKey, imageRole: "hero", accessToken }),
       persistRecipeImageToStorage(_cardSrc, { recipeKey: _imgRecipeKey, imageRole: "card", accessToken }),
     ]);
-  } else {
+  } else if (!persistedHeroImageURL) {
     // Same source URL (or only one exists) — upload once and reuse.
     persistedHeroImageURL = await persistRecipeImageToStorage(_heroSrc, { recipeKey: _imgRecipeKey, imageRole: "hero", accessToken });
     persistedCardImageURL = persistedHeroImageURL;
@@ -10390,12 +11947,26 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     throw new Error("Could not extract ingredients or steps from this source.");
   }
 
-  const assessment = assessRecipeQuality(
+  modelResult.quality_flags = reconcileResolvedRecipeQualityFlags(normalized, modelResult.quality_flags ?? []);
+  if (
+    modelResult.quality_flags.includes("final_validator_applied")
+    && recipeSemanticCompleteness(normalized).blockingIssues.length === 0
+    && /unresolved component ingredients|equipment is listed as ingredients|source teaser/i.test(normalizeText(modelResult.review_reason ?? ""))
+  ) {
+    modelResult.review_reason = null;
+  }
+
+  const assessment = calibrateSocialRecipeAssessment(
+    assessRecipeQuality(
+      normalized,
+      {
+        ...source,
+        used_llm: !structuredIsStrong,
+      }
+    ),
     normalized,
-    {
-      ...source,
-      used_llm: !structuredIsStrong,
-    }
+    source,
+    modelResult.quality_flags ?? []
   );
   const sourceProvenance = buildSourceProvenanceRecord(source, {
     reviewState: assessment.review_state,
@@ -10499,9 +12070,18 @@ async function publishRecipeImportWake(jobRow, { reason = "queued" } = {}) {
 }
 
 export async function queueRecipeIngestion(payload = {}, options = {}) {
-  const requests = Array.isArray(payload.sources)
+  const forceReprocess = options.forceReprocess === true;
+  const suppressNotifications = options.suppressNotifications === true;
+  const normalizedRequests = Array.isArray(payload.sources)
     ? payload.sources.map((entry) => normalizeImportPayload({ ...payload, ...entry }))
     : [normalizeImportPayload(payload)];
+  const requests = normalizedRequests.map((request) => ({
+    ...request,
+    // These controls are accepted only through server-side options. Request-body
+    // fields cannot bypass normal duplicate protection or suppress notifications.
+    force_reprocess: forceReprocess,
+    suppress_notifications: suppressNotifications,
+  }));
 
   const processInline = shouldProcessImportInline(payload, options);
   const results = [];
@@ -10522,13 +12102,43 @@ export async function queueRecipeIngestion(payload = {}, options = {}) {
     };
 
     const job = await createJobRow(queuedRequest);
-    let wakePublished = null;
-    if (isImportQueuedForWorker(job)) {
-      wakePublished = await publishRecipeImportWake(job, { reason: "queued" });
-    }
+
+    // Website imports are lightweight (HTTP fetch + JSON-LD parse + LLM) and need
+    // none of the managed worker's heavy media tooling. They can run on the API when
+    // explicitly enabled; social/video imports always stay worker-owned.
+    const inlineWebImport = !processInline && shouldInlineWebImport(request);
+
     if (processInline) {
+      // Explicit synchronous inline (dev/test harness): block until done.
       results.push(await processRecipeIngestionJob(job.id, { workerID: `api_${nanoid(8)}`, accessToken: queuedRequest.access_token ?? null }));
+    } else if (inlineWebImport) {
+      // Website imports run inline on THIS API service, but in the background — so the
+      // client gets an immediate queued job it can poll (and returns to the regular
+      // route with a progress card) instead of blocking on the web-import screen until
+      // processing completes. The dyno stays alive to finish the work.
+      //
+      // Claim the job for the API up front: the managed worker only claims queued/retryable
+      // jobs, so flipping it to `processing` (with leased_at) before the background
+      // pass starts prevents the worker from also grabbing it and redundantly
+      // re-processing the same web import. leased_at lets the stale-lease reclaim
+      // recover the job if this dyno dies mid-process.
+      const inlineWorkerID = `api_${nanoid(8)}`;
+      await patchRecipeIngestionJobRow(job.id, {
+        status: "processing",
+        worker_id: inlineWorkerID,
+        leased_at: nowIso(),
+        attempts: 1,
+      }).catch(() => {});
+      void processRecipeIngestionJob(job.id, { workerID: inlineWorkerID, accessToken: queuedRequest.access_token ?? null })
+        .catch((error) => {
+          console.error(`[recipe-ingestion] inline web import job ${job.id} failed:`, error?.message ?? error);
+        });
+      results.push(formatJobResponse({ ...job, status: "processing" }, { processing_mode: "queued" }));
     } else {
+      let wakePublished = null;
+      if (isImportQueuedForWorker(job)) {
+        wakePublished = await publishRecipeImportWake(job, { reason: "queued" });
+      }
       const status = normalizeText(job.status).toLowerCase();
       const processingMode = ["saved", "draft", "needs_review"].includes(status)
         ? "cached"
@@ -10553,6 +12163,21 @@ function shouldProcessImportInline(payload = {}, options = {}) {
     || payload.processInline === true
     || options.processInline === true;
   return allowInline && requestedInline;
+}
+
+// Website imports may run inline on the API service when explicitly enabled. Social
+// and video sources always require the managed worker's yt-dlp/ffmpeg/browser runtime.
+function shouldInlineWebImport(request = {}) {
+  const enabled = !["0", "false", "no", "off"].includes(
+    String(process.env.OUNJE_INLINE_WEB_IMPORTS ?? "true").trim().toLowerCase()
+  );
+  if (!enabled) return false;
+  const sourceType = detectRecipeIngestionSourceType({
+    sourceUrl: request.source_url ?? null,
+    sourceText: request.source_text ?? "",
+    attachments: request.attachments ?? [],
+  });
+  return sourceType === "web";
 }
 
 export async function fetchRecipeIngestionJob(jobID) {
@@ -10671,6 +12296,7 @@ export async function retryRecipeIngestionJob(jobID, { userID = null } = {}) {
     review_reason: null,
     error_message: null,
     attempts: 0,
+    max_attempts: Math.max(Number(job.max_attempts ?? 0), 5),
     worker_id: null,
     leased_at: null,
     completed_at: null,
@@ -10697,14 +12323,18 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
   }
 
   const isAlreadyComplete = ["saved", "needs_review", "draft"].includes(normalizeText(existingJob.status));
-  const processLockKey = isAlreadyComplete ? null : recipeImportLockKey("process", existingJob.id);
+  // Best-effort per-job lock, acquired only for the release-in-finally below. We do NOT
+  // bail when it can't be acquired: the claim RPC (FOR UPDATE SKIP LOCKED + status flip)
+  // already guarantees a single worker owns this job, and inline web imports flip status
+  // to `processing` up front. Bailing on a failed acquire meant an orphaned lock — left
+  // by a crashed/restarted worker, TTL 30 min — stranded the job in `processing` for up
+  // to half an hour. The lock is a redundant optimization, never a correctness gate.
+  const processLockKey = (isAlreadyComplete || !RECIPE_INGESTION_REDIS_LOCKING_ENABLED)
+    ? null
+    : recipeImportLockKey("process", existingJob.id);
   const processLockToken = processLockKey
     ? await acquireRedisLock(processLockKey, IMPORT_PROCESS_LOCK_TTL_SECONDS)
     : null;
-  if (processLockKey && !processLockToken) {
-    const latestJob = await fetchJobRow(existingJob.id).catch(() => null);
-    return formatJobResponse(latestJob ?? existingJob, { processing_mode: "locked" });
-  }
 
   const stopHeartbeat = startRecipeIngestionHeartbeat(existingJob.id, workerID);
   try {
@@ -10725,24 +12355,17 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     return formatJobResponse(existingJob, { recipe });
   }
 
-  const originalSourceURL = existingJob.source_url ?? existingJob.request_payload?.source_url ?? null;
   let requestPayload = normalizeImportPayload({
     user_id: existingJob.user_id,
     ...(existingJob.request_payload ?? {}),
     source_type: existingJob.source_type,
-    source_url: existingJob.canonical_url ?? originalSourceURL,
+    source_url: existingJob.canonical_url ?? existingJob.source_url,
     target_state: existingJob.target_state,
     source_text: existingJob.input_text ?? existingJob.request_payload?.source_text ?? "",
   });
-  const sourceURLForExpansion = requestPayload.source_type === "tiktok"
-    ? preferredTikTokProcessingURL(requestPayload.source_url, originalSourceURL)
-    : requestPayload.source_url;
-  const expandedSourceURL = await expandCanonicalSourceURL(sourceURLForExpansion, requestPayload.source_type);
   requestPayload = {
     ...requestPayload,
-    source_url: requestPayload.source_type === "tiktok"
-      ? preferredTikTokProcessingURL(expandedSourceURL, originalSourceURL ?? requestPayload.source_url)
-      : expandedSourceURL ?? requestPayload.source_url ?? null,
+    source_url: await expandCanonicalSourceURL(requestPayload.source_url, requestPayload.source_type) ?? requestPayload.source_url ?? null,
   };
   const canonicalDedupeKey = buildDedupeKey({
     sourceUrl: existingJob.source_url ?? requestPayload.source_url,
@@ -10758,6 +12381,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     ...requestPayload,
     access_token: accessToken ?? requestPayload.access_token ?? null,
   };
+  const forceReprocess = requestPayload.force_reprocess === true;
   if (!requestPayload.user_id
     && requiresUserScopedRecipeImport(requestPayload)
     && !allowsPublicCatalogRecipeImport(existingJob.request_payload ?? requestPayload)) {
@@ -10799,50 +12423,54 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       }).catch(() => {});
     }
 
-    const cachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
-      canonicalURL: requestPayload.source_url,
-      dedupeKey: canonicalDedupeKey,
-      excludeJobID: existingJob.id,
-    });
-    if (cachedCanonical) {
-      return await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
-        workerID,
-        canonicalURL: requestPayload.source_url,
-      });
-    }
-
-    const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(lookupRequest, {
-      canonicalURL: requestPayload.source_url,
-      dedupeKey: canonicalDedupeKey,
-    });
-    if (existingImportedRecipe) {
-      return await completeJobFromExistingImportedRecipe(existingJob, existingImportedRecipe, {
-        workerID,
+    if (!forceReprocess) {
+      const cachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
         canonicalURL: requestPayload.source_url,
         dedupeKey: canonicalDedupeKey,
+        excludeJobID: existingJob.id,
       });
-    }
-
-    const globalCachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
-      canonicalURL: requestPayload.source_url,
-      dedupeKey: canonicalDedupeKey,
-      excludeJobID: existingJob.id,
-      scope: "global",
-    });
-    if (globalCachedCanonical) {
-      const sameUser = normalizeText(globalCachedCanonical.user_id) === normalizeText(existingJob.user_id);
-      if (sameUser) {
-        return await completeJobFromCachedCanonicalImport(existingJob, globalCachedCanonical, {
+      if (cachedCanonical) {
+        const cachedResult = await completeJobFromCachedCanonicalImport(existingJob, cachedCanonical, {
           workerID,
           canonicalURL: requestPayload.source_url,
         });
+        if (cachedResult) return cachedResult;
       }
-      const cloned = await completeJobByCloningGlobalImportedRecipe(existingJob, globalCachedCanonical, {
-        workerID,
+
+      const existingImportedRecipe = await findExistingUserImportedRecipeForRequest(lookupRequest, {
         canonicalURL: requestPayload.source_url,
         dedupeKey: canonicalDedupeKey,
       });
-      if (cloned) return cloned;
+      if (existingImportedRecipe) {
+        return await completeJobFromExistingImportedRecipe(existingJob, existingImportedRecipe, {
+          workerID,
+          canonicalURL: requestPayload.source_url,
+          dedupeKey: canonicalDedupeKey,
+        });
+      }
+
+      const globalCachedCanonical = await findCompletedCanonicalImportForRequest(lookupRequest, {
+        canonicalURL: requestPayload.source_url,
+        dedupeKey: canonicalDedupeKey,
+        excludeJobID: existingJob.id,
+        scope: "global",
+      });
+      if (globalCachedCanonical) {
+        const sameUser = normalizeText(globalCachedCanonical.user_id) === normalizeText(existingJob.user_id);
+        if (sameUser) {
+          const globalCachedResult = await completeJobFromCachedCanonicalImport(existingJob, globalCachedCanonical, {
+            workerID,
+            canonicalURL: requestPayload.source_url,
+          });
+          if (globalCachedResult) return globalCachedResult;
+        }
+        const cloned = await completeJobByCloningGlobalImportedRecipe(existingJob, globalCachedCanonical, {
+          workerID,
+          canonicalURL: requestPayload.source_url,
+          dedupeKey: canonicalDedupeKey,
+        });
+        if (cloned) return cloned;
+      }
     }
 
     const resumedSourceArtifact = await fetchLatestJobArtifact(existingJob.id, "source_evidence_bundle").catch(() => null);
@@ -10866,6 +12494,21 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
 
     const resumedNormalizedArtifact = await fetchLatestJobArtifact(existingJob.id, "normalized_recipe").catch(() => null);
     const hasResumableNormalizedRecipe = Boolean(resumedNormalizedArtifact?.raw_json && existingJob.normalized_at);
+
+    const sourceEvidenceSummary = source.source_provenance_json?.evidence_summary ?? {};
+    job = await appendJobEvent(existingJob.id, "source_evidence_ready", {
+      worker_id: workerID,
+      media_mode: source.media_mode ?? source.source_provenance_json?.media_mode ?? null,
+      downloaded_video: Boolean(sourceEvidenceSummary.downloaded_video),
+      frame_count: Number(sourceEvidenceSummary.frame_count ?? source.frame_data_urls?.length ?? 0),
+      frame_ocr_count: Number(sourceEvidenceSummary.frame_ocr_count ?? source.frame_ocr_texts?.length ?? 0),
+      transcript_chars: normalizeText(source.transcript_text ?? "").length,
+      native_video_ready: Boolean(
+        cleanURL(source.attached_video_url)
+          && cleanURL(source.attached_video_url) !== cleanURL(source.canonical_url)
+          && cleanURL(source.attached_video_url) !== cleanURL(source.source_url)
+      ),
+    });
 
     if (!hasResumableNormalizedRecipe && source.source_type === "media_image" && source.photo_meal_gate && !source.photo_meal_gate.is_meal) {
       const evidenceBundle = await storeEvidenceBundle(existingJob.id, source.source_provenance_json ?? buildSourceProvenanceRecord(source));
@@ -10925,10 +12568,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
         },
       }).catch(() => {});
       if (!recipeGate.is_recipe) {
-        if (
-          socialSourceHasPrimaryRecipeEvidence(source)
-          || shouldContinueRecipeImportDespiteGate(recipeGate, source)
-        ) {
+        if (socialSourceHasPrimaryRecipeEvidence(source)) {
           job = await appendJobEvent(existingJob.id, "not_recipe_gate_overridden", {
             worker_id: workerID,
             reason: recipeGate.reason,
@@ -10937,8 +12577,38 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
           }, {
             quality_flags: uniqueStrings([
               ...(existingJob.quality_flags ?? []),
-              socialSourceHasPrimaryRecipeEvidence(source) ? "primary_video_evidence_gate_override" : "recipe_lead_gate_override",
+              "primary_video_evidence_gate_override",
             ]),
+          });
+        } else if (socialSourceHasFoodIdentity(source)) {
+          // A recognizable dish name is not evidence for the source's exact recipe.
+          // Never replace a failed TikTok/Instagram extraction with a generic web
+          // recipe and silently save it as the user's import.
+          const completedAt = nowIso();
+          job = await appendJobEvent(existingJob.id, "social_recipe_evidence_incomplete", {
+            worker_id: workerID,
+            reason: recipeGate.reason,
+            confidence: recipeGate.confidence,
+            method: recipeGate.method,
+          }, {
+            status: "needs_review",
+            canonical_url: source.canonical_url ?? requestPayload.source_url,
+            fetched_at: nowIso(),
+            completed_at: completedAt,
+            error_message: "Ounje could not extract the exact recipe from this social post.",
+            review_state: "needs_review",
+            review_reason: recipeGate.reason ?? "The post did not expose enough ingredient or instruction evidence.",
+            quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "social_exact_evidence_missing"]),
+          });
+          return formatJobResponse(job);
+        } else if (shouldContinueRecipeImportDespiteGate(recipeGate, source)) {
+          job = await appendJobEvent(existingJob.id, "not_recipe_gate_overridden", {
+            worker_id: workerID,
+            reason: recipeGate.reason,
+            confidence: recipeGate.confidence,
+            method: recipeGate.method,
+          }, {
+            quality_flags: uniqueStrings([...(existingJob.quality_flags ?? []), "recipe_lead_gate_override"]),
           });
         } else {
           const completedAt = nowIso();
@@ -11066,7 +12736,9 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       restoreTombstoneAfter: existingJob.created_at ?? existingJob.queued_at ?? nowIso(),
     });
 
-	    const finalStatus = "saved";
+	    const finalStatus = extraction.review_state === "approved"
+	      ? "saved"
+	      : extraction.review_state;
 	    job = await appendJobEvent(existingJob.id, "completed", {
 	      recipe_id: persisted.recipe_id,
 	      deduped: persisted.saved_state === "deduped",
@@ -11102,7 +12774,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
     });
     await markDuplicateFailedImportsSuperseded(job);
     if (existingJob.user_id && persisted.saved_state === "inserted") {
-      scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: existingJob.id });
+      await scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: existingJob.id });
     }
     invalidateUserBootstrapCache(existingJob.user_id);
 
@@ -11113,10 +12785,10 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
   } catch (error) {
     const quotaError = isOpenAIQuotaError(error);
     const modelError = isOpenAITerminalModelError(error);
-    const terminal = quotaError || modelError || nextAttempt >= Number(existingJob.max_attempts ?? 3);
-	    job = await appendJobEvent(existingJob.id, terminal ? "failed" : "retry_scheduled", {
-	      worker_id: workerID,
-	      error_message: error.message,
+    const terminal = modelError || nextAttempt >= Number(existingJob.max_attempts ?? 5);
+    job = await appendJobEvent(existingJob.id, terminal ? "failed" : "retry_scheduled", {
+      worker_id: workerID,
+      error_message: error.message,
       terminal_reason: quotaError
         ? "openai_quota_or_rate_limit"
         : modelError
@@ -11145,10 +12817,12 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
 
 export async function runRecipeIngestionWorkerBatch({ workerID = `daemon_${nanoid(8)}`, batchSize = 3 } = {}) {
   const lockKey = "recipe-ingestion:worker-batch";
+  // Best-effort batch lock only — do NOT bail when it can't be acquired. The claim RPC
+  // uses `FOR UPDATE SKIP LOCKED`, so two workers can never grab the same job regardless.
+  // Previously, bailing here meant any transient Redis hiccup (a dropped client that
+  // wouldn't reconnect, or stale lock contention) silently stopped the worker from
+  // claiming ANY job — imports sat queued for hours until a manual restart.
   const lockToken = await acquireRedisLock(lockKey, 55);
-  if (!lockToken && process.env.REDIS_URL && !REDIS_DISABLED_FOR_INGESTION_LOCK) {
-    console.warn("[recipe-ingestion-worker] Redis batch lock unavailable; continuing with database claim locking.");
-  }
 
   try {
     const claimed = await callRpc("claim_recipe_ingestion_jobs", {
@@ -11193,19 +12867,24 @@ export {
   RECIPE_IMPORT_WAKE_CHANNEL,
   RECIPE_GATE_MODEL,
   RECIPE_IMPORT_COMPLETION_MODEL,
+  RECIPE_IMPORT_HARD_COMPLETION_MODEL,
   RECIPE_INGESTION_MODEL,
   SOCIAL_VIDEO_RECIPE_MODEL,
   RECIPE_SEARCH_SYNTHESIS_MODEL,
   PHOTO_MEAL_GATE_MODEL,
   assessRecipeLikelihood,
-  extractPhotoRecipeSource,
-  buildNormalizedRecipe,
   buildPhotoImportDedupeKey,
-  photoRecipeDocumentHasUsableCore,
+  buildRecipeGateUserContent,
+  selectedSocialHeroFrame,
+  socialFrameTimestamps,
+  sampleVideoFrames,
+  expandCanonicalSourceURL,
   maybeGenerateImportedRecipeImage,
   photoRecipeSearchQueries,
-  normalizeImportPayload,
   buildFinalRecipeValidationIssues,
+  isBlockingFinalRecipeValidationIssue,
+  cleanIngredientQuantityText,
+  shouldRunFinalRecipeValidation,
   buildDedupeKey,
   canonicalImportIdentityForURL,
   estimateRecipeMacrosLocally,
@@ -11213,19 +12892,27 @@ export {
   fillRecipeMacrosWithDisplayFallback,
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
+  hasUsableRecipeShape,
   normalizeRecipeDisplayFields,
+  isGenericCompletionIngredientName,
+  isRecipeEquipmentIngredientName,
+  isRecipeTeaserText,
+  recipeSemanticCompleteness,
+  reconcileResolvedRecipeQualityFlags,
+  recipeIDForImportRestore,
+  recipeImportTargetActions,
+  assessSocialCompletionContext,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
   recipeNeedsSecondaryFill,
-  socialRecipeTextCanSkipVideoDownload,
+  socialImportNeedsGroundedCompletion,
+  shouldRunGroundedRecipeCompletion,
+  mergeGroundedSocialCompletion,
+  calibrateSocialRecipeAssessment,
+  runSocialRecipeCompletionContext,
   selectRecipeEvidenceFrameDataURLs,
   socialSourceHasPrimaryRecipeEvidence,
-  isOCRSafeFrameDataURL,
-  canonicalTikTokURLFromMetadata,
-  preferredTikTokProcessingURL,
-  expandCanonicalSourceURL,
-  sampleVideoFrames,
   requiresUserScopedRecipeImport,
   shouldProcessImportInline,
   isCanonicalCacheableSource,

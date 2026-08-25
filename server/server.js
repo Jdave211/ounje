@@ -261,6 +261,9 @@ app.get("/", (req, res) => {
   res.json({ message: "Hello from server" });
 });
 app.get("/healthz", async (req, res) => {
+  const revision = String(process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? "local")
+    .trim()
+    .slice(0, 12);
   const missingEnv = [
     "OPENAI_API_KEY",
     "SUPABASE_URL",
@@ -272,6 +275,7 @@ app.get("/healthz", async (req, res) => {
     return res.status(503).json({
       ok: false,
       service: "ounje-api",
+      revision,
       status: "missing_env",
       missingEnv,
       checkedAt: new Date().toISOString(),
@@ -283,6 +287,7 @@ app.get("/healthz", async (req, res) => {
     return res.status(503).json({
       ok: false,
       service: "ounje-api",
+      revision,
       status: "supabase_unavailable",
       checkedAt: new Date().toISOString(),
     });
@@ -314,6 +319,7 @@ app.get("/healthz", async (req, res) => {
     const payload = {
       ok: true,
       service: "ounje-api",
+      revision,
       status: responseStatus,
       dependencies: {
         supabase: "ok",
@@ -333,6 +339,7 @@ app.get("/healthz", async (req, res) => {
     const payload = {
       ok: false,
       service: "ounje-api",
+      revision,
       status: "dependency_error",
       dependencies: {
         supabase: error.message,
@@ -367,7 +374,8 @@ const ENABLE_RECIPE_INGESTION_POLLING = ["1", "true", "yes", "on"].includes(
 );
 const CAN_CLAIM_RECIPE_INGESTION_JOBS = RECIPE_INGESTION_WORKER_ID
   .toLowerCase()
-  .startsWith("vm_recipe_ingest");
+  .startsWith("render_recipe_ingest")
+  && !RECIPE_INGESTION_WORKER_ID.toLowerCase().startsWith("render_recipe_ingest_api");
 const RECIPE_INGESTION_ROLE = CAN_CLAIM_RECIPE_INGESTION_JOBS
   ? "worker_claims_enabled"
   : "enqueue_only";

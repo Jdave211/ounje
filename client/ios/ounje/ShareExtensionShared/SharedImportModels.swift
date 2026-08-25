@@ -138,12 +138,27 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
             return isLiveQueueState
         }
 
-        // A transport attempt is not a server acknowledgement. Background
-        // URLSession uploads can be interrupted after the extension exits, so
-        // any non-terminal envelope without a backend job remains eligible for
-        // the containing app to submit. The API deduplicates repeated URLs.
-        return ["queued", "submitted", "retryable"].contains(state)
+        // No server job ID yet — this import never finished handoff. Cap re-submits so a
+        // persistently failing envelope ends up failed (via the catch path or the stale
+        // watchdog) instead of retrying forever.
+        guard (attemptCount ?? 0) < Self.maxHandoffSubmitAttempts else { return false }
+
+        // If a submit was already started, only suppress re-sending while that POST could
+        // still be in flight (it times out at 90s). Past that window the submit clearly never
+        // landed (no job was created — e.g. the app was suspended mid-request during a share
+        // handoff), so re-drive it instead of stranding the import in "submitted" until the
+        // stale watchdog. The server dedupes by source, so a re-send can't create a duplicate
+        // even if the original request eventually arrives.
+        if let serverSubmittedAt {
+            let lastActivity = [serverSubmittedAt, lastAttemptAt].compactMap { $0 }.max() ?? serverSubmittedAt
+            return Date().timeIntervalSince(lastActivity) >= 100
+        }
+
+        return state == "queued"
     }
+
+    /// Max client-side submit attempts for an envelope that has no server job yet.
+    static let maxHandoffSubmitAttempts = 3
 
     var isTerminalLocalState: Bool {
         ["saved", "draft", "needs_review", "completed_applied"].contains(normalizedProcessingState)

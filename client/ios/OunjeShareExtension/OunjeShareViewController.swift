@@ -4,6 +4,13 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 final class OunjeShareViewController: UIViewController {
+    // The extension stays alive through this await, so the FOREGROUND POST reliably creates
+    // the job on the server before the share sheet closes — that's what makes imports land
+    // without ever opening the app. The API responds in ~1-4s; this generous ceiling only
+    // bounds the rare slow-network tail. (Was 6s, which the tail tripped — and the fallback
+    // is a fire-and-forget background upload that iOS drops when it kills the extension, so
+    // a tripped timeout silently lost the import.)
+    private static let foregroundBackendSubmitTimeout: TimeInterval = 20
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let previewLabel = UILabel()
@@ -153,14 +160,33 @@ final class OunjeShareViewController: UIViewController {
                 await Self.sendQueuedNotificationIfAllowed(for: envelope)
 
                 if let authSession = self.sharedAuthSession() {
-                    do {
-                        try await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
-                        try? SharedRecipeImportInbox.update(self.queuedEnvelope(envelope))
-                    } catch {
-                        await MainActor.run {
-                            self.showSetupRequiredState()
+                    var backendJobCreated = false
+
+                    if envelope.attachments.isEmpty {
+                        do {
+                            let response = try await self.submitEnvelopeToBackend(
+                                envelope,
+                                authSession: authSession,
+                                timeoutInterval: Self.foregroundBackendSubmitTimeout
+                            )
+                            try? SharedRecipeImportInbox.update(
+                                self.reconciledEnvelope(envelope, response: response)
+                            )
+                            backendJobCreated = true
+                        } catch {
+                            backendJobCreated = false
                         }
-                        return
+                    }
+
+                    if !backendJobCreated {
+                        // Foreground submit failed (slow network, expired token, or a
+                        // media-only share we can't POST synchronously). Fire the background
+                        // upload as a best effort, but LEAVE the envelope "queued" (don't mark
+                        // it "submitted"): the durable local copy then gets cleanly re-driven
+                        // the next time the app opens, instead of the stale watchdog stranding
+                        // it as "could not be matched to a server job". The server dedupes by
+                        // source URL, so a later re-send can never create a duplicate.
+                        try? await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
                     }
 
                     await MainActor.run {
@@ -476,21 +502,105 @@ final class OunjeShareViewController: UIViewController {
         }
     }
 
-    private func queuedEnvelope(_ envelope: SharedRecipeImportEnvelope) -> SharedRecipeImportEnvelope {
-        SharedRecipeImportEnvelope(
+    private func submitEnvelopeToBackend(
+        _ envelope: SharedRecipeImportEnvelope,
+        authSession: SharedAuthSession,
+        timeoutInterval: TimeInterval = 90
+    ) async throws -> RecipeImportResponse {
+        guard authSession.hasBackendAuthorization else {
+            throw URLError(.userAuthenticationRequired)
+        }
+
+        let attachments = try await makeRecipeImportAttachmentPayloads(from: envelope.attachments)
+        let sourceText = envelope.resolvedSourceText
+
+        var lastError: Error?
+        for baseURL in ImportSubmissionServer.candidateBaseURLs {
+            do {
+                return try await submitEnvelopeToBackend(
+                    baseURL: baseURL,
+                    envelope: envelope,
+                    authSession: authSession,
+                    sourceText: sourceText,
+                    attachments: attachments,
+                    timeoutInterval: timeoutInterval
+                )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? URLError(.badServerResponse)
+    }
+
+    private func submitEnvelopeToBackend(
+        baseURL: String,
+        envelope: SharedRecipeImportEnvelope,
+        authSession: SharedAuthSession,
+        sourceText: String,
+        attachments: [RecipeImportAttachmentPayload],
+        timeoutInterval: TimeInterval = 90
+    ) async throws -> RecipeImportResponse {
+        guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
+            throw URLError(.badURL)
+        }
+        guard authSession.hasBackendAuthorization else {
+            throw URLError(.userAuthenticationRequired)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = timeoutInterval
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyBackendAuthorization(authSession, to: &request)
+        request.setValue(authSession.userID, forHTTPHeaderField: "x-user-id")
+        request.setValue(envelope.id, forHTTPHeaderField: "x-ounje-import-envelope-id")
+        request.httpBody = try JSONEncoder().encode(
+            RecipeImportRequestPayload(
+                userID: authSession.userID,
+                sourceURL: envelope.sourceURLString,
+                sourceText: sourceText,
+                accessToken: authSession.accessToken,
+                targetState: envelope.targetState,
+                attachments: attachments
+            )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+    }
+
+    private func reconciledEnvelope(
+        _ envelope: SharedRecipeImportEnvelope,
+        response: RecipeImportResponse
+    ) -> SharedRecipeImportEnvelope {
+        let backendState = response.job.status
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let liveBackendStates = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"]
+        let localState = liveBackendStates.contains(backendState) ? backendState : "queued"
+        return SharedRecipeImportEnvelope(
             id: envelope.id,
             createdAt: envelope.createdAt,
-            jobID: envelope.jobID,
+            jobID: response.job.id,
             targetState: envelope.targetState,
             sourceText: envelope.sourceText,
             sourceURLString: envelope.sourceURLString,
-            canonicalSourceURLString: envelope.canonicalSourceURLString,
+            canonicalSourceURLString: response.job.canonicalURL ?? response.job.sourceURL ?? envelope.canonicalSourceURLString,
             sourceApp: envelope.sourceApp,
             attachments: envelope.attachments,
-            processingState: "queued",
-            attemptCount: envelope.attemptCount,
+            processingState: localState,
+            attemptCount: max(envelope.attemptCount ?? 0, 1),
             lastAttemptAt: Date(),
-            serverSubmittedAt: nil,
+            serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
             lastError: nil,
             updatedAt: Date()
         )
@@ -629,6 +739,24 @@ private struct RecipeImportRequestPayload: Encodable {
         case targetState = "target_state"
         case attachments
         case processInline = "process_inline"
+    }
+}
+
+private struct RecipeImportResponse: Decodable {
+    let job: RecipeImportJobPayload
+}
+
+private struct RecipeImportJobPayload: Decodable {
+    let id: String
+    let status: String
+    let sourceURL: String?
+    let canonicalURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case status
+        case sourceURL = "source_url"
+        case canonicalURL = "canonical_url"
     }
 }
 
