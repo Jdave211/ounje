@@ -131,3 +131,77 @@ services:
         sync: false
       - key: RECIPE_VIDEO_BUCKET
         sync: false
+  - name: ounje-automation
+    type: worker
+    runtime: docker
+    plan: starter
+    dockerfilePath: Dockerfile
+    dockerCommand: node server/scripts/automation_worker.mjs --worker-id render_automation_worker --lock-seconds 900 --idle-sleep-ms 15000
+    maxShutdownDelaySeconds: 300
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - Dockerfile
+        - .dockerignore
+        - package.json
+        - render.yaml
+        - server/**
+        - supabase/migrations/**
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OUNJE_RUNTIME_ENV
+        value: production
+      - key: AUTOSHOP_MANUAL_BETA_ONLY
+        value: "true"
+      - key: REDIS_DISABLED
+        value: "true"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: KROGER_CLIENT_ID
+        sync: false
+      - key: KROGER_CLIENT_SECRET
+        sync: false
+      - key: BROWSER_USE_API_KEY
+        sync: false
+      - key: LUMBOX_API_KEY
+        sync: false
+      - key: AGENTSIM_API_KEY
+        sync: false
+      - key: TWO_CAPTCHA_API_KEY
+        sync: false
+  - name: ounje-recipe-ingestion-health
+    type: cron
+    runtime: docker
+    plan: starter
+    schedule: "* * * * *"
+    dockerfilePath: Dockerfile
+    dockerCommand: node server/scripts/check_recipe_ingestion_worker_health.mjs --max-queued-age-seconds 90
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - Dockerfile
+        - .dockerignore
+        - package.json
+        - render.yaml
+        - server/**
+        - supabase/migrations/**
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: OUNJE_RUNTIME_ENV
+        value: production
+      - key: REDIS_DISABLED
+        value: "true"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
