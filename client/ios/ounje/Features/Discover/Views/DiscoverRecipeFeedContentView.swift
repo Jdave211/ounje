@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DiscoverRecipeFeedContentView: View {
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
     let isSearchRefreshing: Bool
     let errorMessage: String?
     let hasResolvedInitialLoad: Bool
@@ -62,13 +63,17 @@ struct DiscoverRecipeFeedContentView: View {
             )
         } else {
             LazyVGrid(columns: recipeColumns, spacing: 16) {
-                ForEach(visibleRecipes) { recipe in
+                ForEach(Array(visibleRecipes.enumerated()), id: \.element.id) { index, recipe in
                     DiscoverRemoteRecipeCard(
                         recipe: recipe,
                         transitionNamespace: transitionNamespace
                     ) {
                         onSelectRecipe(recipe)
                     }
+                    .firstRunGuideTarget(
+                        .discoverRecipe,
+                        enabled: index == 0 && firstRunGuide.phase == .discoverRecipe
+                    )
                     .onAppear {
                         guard shouldPrefetchRecipe(recipe) else { return }
                         Task {
@@ -77,8 +82,8 @@ struct DiscoverRecipeFeedContentView: View {
                     }
                 }
             }
-            .opacity(isActivelyLoading ? 0.42 : 1.0)
-            .animation(.easeInOut(duration: 0.2), value: isActivelyLoading)
+            .opacity(isSearchRefreshing ? 0.58 : 1.0)
+            .animation(.easeInOut(duration: 0.2), value: isSearchRefreshing)
 
             if isFetchingMore {
                 LazyVGrid(columns: recipeColumns, spacing: 14) {

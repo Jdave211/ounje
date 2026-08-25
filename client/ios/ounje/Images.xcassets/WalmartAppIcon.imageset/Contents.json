@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "walmart-app-icon.jpg",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

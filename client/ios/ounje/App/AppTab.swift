@@ -1,7 +1,6 @@
 import Foundation
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case prep
     case discover
     case cookbook
     case cart
@@ -9,26 +8,25 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    static let navigationTabs: [AppTab] = [.cookbook, .discover, .cart, .profile]
+
     var motionIndex: Int {
         switch self {
-        case .prep:
+        case .cookbook:
             return 0
         case .discover:
             return 1
-        case .cookbook:
-            return 2
         case .cart:
-            return 3
+            return 2
         case .profile:
-            return 4
+            return 3
         }
     }
 
     var title: String {
         switch self {
-        case .prep: return "Prep"
         case .discover: return "Discover"
-        case .cookbook: return "Cookbook"
+        case .cookbook: return "Recipes"
         case .cart: return "Cart"
         case .profile: return "Profile"
         }
@@ -36,7 +34,6 @@ enum AppTab: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .prep: return "calendar"
         case .discover: return "safari"
         case .cookbook: return "book.closed"
         case .cart: return "basket"

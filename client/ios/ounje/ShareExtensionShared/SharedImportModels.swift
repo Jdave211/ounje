@@ -17,6 +17,9 @@ struct SharedRecipeImportAttachment: Codable, Identifiable, Hashable {
 }
 
 struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
+    private static let staleQueuedImportInterval: TimeInterval = 3 * 60
+    private static let staleActiveImportInterval: TimeInterval = 15 * 60
+
     let id: String
     let createdAt: Date
     let jobID: String?
@@ -84,6 +87,10 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     }
 
     var queueStatusLabel: String {
+        if isStaleLiveImport {
+            return "Retry needed"
+        }
+
         let normalizedActiveStage = String(activeStage ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -118,7 +125,7 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
     }
 
     var isRetryNeeded: Bool {
-        normalizedProcessingState == "failed"
+        normalizedProcessingState == "failed" || isStaleLiveImport
     }
 
     var shouldAutoProcess: Bool {
@@ -131,15 +138,11 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
             return isLiveQueueState
         }
 
-        if serverSubmittedAt != nil {
-            return false
-        }
-
-        if state == "queued" {
-            return true
-        }
-
-        return false
+        // A transport attempt is not a server acknowledgement. Background
+        // URLSession uploads can be interrupted after the extension exits, so
+        // any non-terminal envelope without a backend job remains eligible for
+        // the containing app to submit. The API deduplicates repeated URLs.
+        return ["queued", "submitted", "retryable"].contains(state)
     }
 
     var isTerminalLocalState: Bool {
@@ -148,6 +151,35 @@ struct SharedRecipeImportEnvelope: Codable, Identifiable, Hashable {
 
     var isLiveQueueState: Bool {
         !isRetryNeeded && !isTerminalLocalState
+    }
+
+    var isStaleLiveImport: Bool {
+        let state = normalizedProcessingState
+        let threshold: TimeInterval
+        switch state {
+        case "queued", "retryable":
+            threshold = Self.staleQueuedImportInterval
+        case "submitted", "processing", "fetching", "parsing", "normalized":
+            threshold = Self.staleActiveImportInterval
+        default:
+            return false
+        }
+        return Date().timeIntervalSince(activityReferenceDate) >= threshold
+    }
+
+    var activityReferenceDate: Date {
+        switch normalizedProcessingState {
+        case "queued", "retryable", "submitted":
+            return serverSubmittedAt
+                ?? stageStartedAt
+                ?? createdAt
+        default:
+            return stageStartedAt
+                ?? updatedAt
+                ?? lastAttemptAt
+                ?? serverSubmittedAt
+                ?? createdAt
+        }
     }
 
     var isPinnedTypedImport: Bool {

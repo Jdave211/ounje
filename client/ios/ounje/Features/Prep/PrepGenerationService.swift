@@ -59,6 +59,18 @@ final class MealPlanningAgent {
         "ounces": "oz",
         "ounce": "oz",
         "ozs": "oz",
+        "grams": "g",
+        "gram": "g",
+        "kilograms": "kg",
+        "kilogram": "kg",
+        "milliliters": "ml",
+        "milliliter": "ml",
+        "millilitres": "ml",
+        "millilitre": "ml",
+        "liters": "l",
+        "liter": "l",
+        "litres": "l",
+        "litre": "l",
         "cups": "cup",
         "tablespoon": "tbsp",
         "tablespoons": "tbsp",
@@ -1780,9 +1792,13 @@ final class MealPlanningAgent {
                 let sourceDisplayName = recoveredIngredientNameIfNeeded(from: ingredient) ?? ingredient.name
                 let displayName = genericBucketDisplayName(for: sourceDisplayName)
                 let canonicalName = canonicalIngredientName(displayName)
-                let canonicalUnit = canonicalUnitName(ingredient.unit)
+                let resolvedMeasurement = ShoppingIngredientCanonicalizer.resolvedMeasurement(
+                    amount: ingredient.amount,
+                    unit: ingredient.unit
+                )
+                let canonicalUnit = canonicalUnitName(resolvedMeasurement.unit)
                 let key = "\(canonicalName)::\(canonicalUnit)"
-                let amountToAdd = ingredient.amount * scale
+                let amountToAdd = resolvedMeasurement.amount * scale
                 let priceToAdd = ingredient.estimatedUnitPrice * amountToAdd
                 let source = GroceryItemSource(
                     recipeID: plannedRecipe.recipe.id,
@@ -2042,7 +2058,25 @@ final class MealPlanningAgent {
         if normalized.isEmpty {
             return "ct"
         }
-        return unitAliasMap[normalized] ?? normalized
+        if let exact = unitAliasMap[normalized] {
+            return exact
+        }
+        let leadingUnit = normalized
+            .split(whereSeparator: { $0.isWhitespace })
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+            ?? ""
+        let recognizedLeadingUnits: Set<String> = [
+            "g", "kg", "oz", "lb", "ml", "l", "cup", "tbsp", "tsp", "ct"
+        ]
+        if let alias = unitAliasMap[leadingUnit] {
+            return alias
+        }
+        if recognizedLeadingUnits.contains(leadingUnit) {
+            return leadingUnit
+        }
+        return normalized
     }
 
     private func optimizeProviders(for groceries: [GroceryItem], profile: UserProfile) -> [ProviderQuote] {

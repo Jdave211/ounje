@@ -4,19 +4,17 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 final class OunjeShareViewController: UIViewController {
-    private static let quickBackendSubmitTimeout: TimeInterval = 6
-
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let previewLabel = UILabel()
-    private let saveButton = UIButton(type: .system)
-    private let prepButton = UIButton(type: .system)
-    private let cancelButton = UIButton(type: .system)
+    private let doneButton = UIButton(type: .system)
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
 
     private var shareDraftSummary = ""
     private var providerCount = 0
-    private var currentTask: Task<Void, Never>?
+    private var loadSummaryTask: Task<Void, Never>?
+    private var submitTask: Task<Void, Never>?
+    private var didStartAutomaticSubmit = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -24,20 +22,26 @@ final class OunjeShareViewController: UIViewController {
         loadSummary()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        beginAutomaticSubmitIfNeeded()
+    }
+
     deinit {
-        currentTask?.cancel()
+        loadSummaryTask?.cancel()
+        submitTask?.cancel()
     }
 
     private func configureUI() {
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.07, alpha: 1)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "Send to Ounje"
+        titleLabel.text = "Adding to Ounje"
         titleLabel.font = .systemFont(ofSize: 26, weight: .bold)
         titleLabel.textColor = UIColor(white: 0.97, alpha: 1)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "We’ll pull the recipe in, normalize it, and drop it into your cookbook or prime prep."
+        subtitleLabel.text = "Ounje is sending this to your cookbook."
         subtitleLabel.font = .systemFont(ofSize: 14, weight: .medium)
         subtitleLabel.textColor = UIColor(white: 0.7, alpha: 1)
         subtitleLabel.numberOfLines = 0
@@ -59,22 +63,13 @@ final class OunjeShareViewController: UIViewController {
 
         [titleLabel, subtitleLabel, previewLabel, activityIndicator].forEach(card.addSubview)
 
-        saveButton.translatesAutoresizingMaskIntoConstraints = false
-        prepButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        doneButton.translatesAutoresizingMaskIntoConstraints = false
+        configurePrimaryButton(doneButton, title: "Done", tint: .white, background: UIColor(red: 0.15, green: 0.46, blue: 0.31, alpha: 1))
+        doneButton.alpha = 0
+        doneButton.isEnabled = false
+        doneButton.addTarget(self, action: #selector(handleDoneTap), for: .touchUpInside)
 
-        configurePrimaryButton(saveButton, title: "Save to Cookbook", tint: UIColor(red: 0.94, green: 0.9, blue: 0.82, alpha: 1), background: UIColor(red: 0.18, green: 0.18, blue: 0.2, alpha: 1))
-        configurePrimaryButton(prepButton, title: "Add to Prime Prep", tint: .white, background: UIColor(red: 0.15, green: 0.46, blue: 0.31, alpha: 1))
-
-        cancelButton.setTitle("Cancel", for: .normal)
-        cancelButton.setTitleColor(UIColor(white: 0.7, alpha: 1), for: .normal)
-        cancelButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .medium)
-
-        saveButton.addTarget(self, action: #selector(handleSaveTap), for: .touchUpInside)
-        prepButton.addTarget(self, action: #selector(handlePrepTap), for: .touchUpInside)
-        cancelButton.addTarget(self, action: #selector(handleCancelTap), for: .touchUpInside)
-
-        let buttonStack = UIStackView(arrangedSubviews: [saveButton, prepButton, cancelButton])
+        let buttonStack = UIStackView(arrangedSubviews: [doneButton])
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         buttonStack.axis = .vertical
         buttonStack.spacing = 12
@@ -108,9 +103,7 @@ final class OunjeShareViewController: UIViewController {
             buttonStack.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 18),
             buttonStack.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
 
-            saveButton.heightAnchor.constraint(equalToConstant: 54),
-            prepButton.heightAnchor.constraint(equalToConstant: 54),
-            cancelButton.heightAnchor.constraint(equalToConstant: 44),
+            doneButton.heightAnchor.constraint(equalToConstant: 54),
         ])
     }
 
@@ -124,32 +117,35 @@ final class OunjeShareViewController: UIViewController {
     }
 
     private func loadSummary() {
-        currentTask = Task { [weak self] in
+        loadSummaryTask = Task { [weak self] in
             guard let self else { return }
             let draft = await self.buildSummary()
             await MainActor.run {
                 self.shareDraftSummary = draft.summary
                 self.providerCount = draft.providerCount
-                self.previewLabel.text = draft.summary
+                let currentTitle = self.titleLabel.text ?? ""
+                if currentTitle != "Added" && currentTitle != "Couldn’t send" {
+                    self.previewLabel.text = draft.summary
+                }
             }
         }
     }
 
-    @objc private func handleSaveTap() {
+    private func beginAutomaticSubmitIfNeeded() {
+        guard !didStartAutomaticSubmit else { return }
+        didStartAutomaticSubmit = true
         submit(targetState: "saved")
     }
 
-    @objc private func handlePrepTap() {
-        submit(targetState: "prepped")
-    }
-
-    @objc private func handleCancelTap() {
+    @objc private func handleDoneTap() {
         extensionContext?.completeRequest(returningItems: nil)
     }
 
     private func submit(targetState: String) {
         toggleBusy(true)
-        currentTask = Task { [weak self] in
+        titleLabel.text = "Sending to Ounje"
+        subtitleLabel.text = "Ounje is adding this to your cookbook."
+        submitTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let envelope = try await self.captureEnvelope(targetState: targetState)
@@ -157,52 +153,33 @@ final class OunjeShareViewController: UIViewController {
                 await Self.sendQueuedNotificationIfAllowed(for: envelope)
 
                 if let authSession = self.sharedAuthSession() {
-                    var backendJobCreated = false
-
-                    if envelope.attachments.isEmpty {
-                        do {
-                            let response = try await self.submitEnvelopeToBackend(
-                                envelope,
-                                authSession: authSession,
-                                timeoutInterval: Self.quickBackendSubmitTimeout
-                            )
-                            try? SharedRecipeImportInbox.update(
-                                self.reconciledEnvelope(envelope, response: response)
-                            )
-                            backendJobCreated = true
-                        } catch {
-                            backendJobCreated = false
+                    do {
+                        try await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
+                        try? SharedRecipeImportInbox.update(self.queuedEnvelope(envelope))
+                    } catch {
+                        await MainActor.run {
+                            self.showSetupRequiredState()
                         }
-                    }
-
-                    if !backendJobCreated {
-                        do {
-                            try await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
-                            try? SharedRecipeImportInbox.update(self.submittedEnvelope(envelope))
-                        } catch {
-                            // If the background upload cannot be scheduled, hand off to
-                            // the containing app so the durable local envelope can be sent.
-                            await MainActor.run {
-                                self.openContainingApp(for: envelope.id)
-                            }
-                        }
+                        return
                     }
 
                     await MainActor.run {
-                        self.toggleBusy(false)
-                        self.extensionContext?.completeRequest(returningItems: nil)
+                        self.showSentStateAndComplete()
                     }
                     return
                 }
 
                 await MainActor.run {
-                    self.openContainingApp(for: envelope.id)
-                    self.extensionContext?.completeRequest(returningItems: nil)
+                    self.showSetupRequiredState()
                 }
             } catch {
                 await MainActor.run {
                     self.toggleBusy(false)
+                    self.titleLabel.text = "Couldn’t send"
+                    self.subtitleLabel.text = "Try sharing the link itself or a shorter clip."
                     self.previewLabel.text = "We couldn’t pull that share cleanly. Try sharing the link itself or a shorter clip."
+                    self.doneButton.alpha = 1
+                    self.doneButton.isEnabled = true
                 }
             }
         }
@@ -229,7 +206,7 @@ final class OunjeShareViewController: UIViewController {
             .appendingPathComponent("background-submit.json", isDirectory: false)
         try body.write(to: bodyURL, options: .atomic)
 
-        guard let accessToken = authSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
+        guard authSession.hasBackendAuthorization else {
             throw URLError(.userAuthenticationRequired)
         }
 
@@ -238,8 +215,9 @@ final class OunjeShareViewController: UIViewController {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            applyBackendAuthorization(authSession, to: &request)
             request.setValue(authSession.userID, forHTTPHeaderField: "x-user-id")
+            request.setValue(envelope.id, forHTTPHeaderField: "x-ounje-import-envelope-id")
             request.setValue(String(body.count), forHTTPHeaderField: "Content-Length")
 
             let configuration = URLSessionConfiguration.background(
@@ -248,6 +226,7 @@ final class OunjeShareViewController: UIViewController {
             configuration.sharedContainerIdentifier = SharedRecipeImportConstants.appGroupID
             configuration.sessionSendsLaunchEvents = true
             configuration.isDiscretionary = false
+            configuration.waitsForConnectivity = true
             configuration.timeoutIntervalForRequest = 30
             configuration.timeoutIntervalForResource = 10 * 60
 
@@ -263,14 +242,34 @@ final class OunjeShareViewController: UIViewController {
     }
 
     private func toggleBusy(_ busy: Bool) {
-        saveButton.isEnabled = !busy
-        prepButton.isEnabled = !busy
-        cancelButton.isEnabled = !busy
+        doneButton.isEnabled = !busy
         if busy {
             activityIndicator.startAnimating()
         } else {
             activityIndicator.stopAnimating()
         }
+    }
+
+    private func showSentStateAndComplete() {
+        toggleBusy(false)
+        titleLabel.text = "Added"
+        subtitleLabel.text = "Ounje is working in the background."
+        previewLabel.text = "Added. Ounje is working."
+        doneButton.alpha = 1
+        doneButton.isEnabled = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.extensionContext?.completeRequest(returningItems: nil)
+        }
+    }
+
+    private func showSetupRequiredState() {
+        toggleBusy(false)
+        titleLabel.text = "Open Ounje once"
+        subtitleLabel.text = "Ounje needs to finish share setup before it can import in the background."
+        previewLabel.text = "Open Ounje once, then share this recipe again."
+        doneButton.alpha = 1
+        doneButton.isEnabled = true
     }
 
     private static func sendQueuedNotificationIfAllowed(for envelope: SharedRecipeImportEnvelope) async {
@@ -283,22 +282,17 @@ final class OunjeShareViewController: UIViewController {
             return
         }
 
-        let destination = envelope.targetState
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .localizedCaseInsensitiveCompare("prepped") == .orderedSame
-            ? "prime prep"
-            : "cookbook"
         let content = UNMutableNotificationContent()
-        content.title = "Added to queue"
-        content.body = "Ounje is importing this recipe into your \(destination)."
+        content.title = "Import started"
+        content.body = "Ounje is importing this recipe into your cookbook."
         content.sound = .default
         content.categoryIdentifier = "OUNJE_RECIPE_IMPORT"
         content.threadIdentifier = "recipe-import"
         content.userInfo = [
             "kind": "recipe_import_queued",
-            "actionURL": "ounje://imports",
-            "action_url": "ounje://imports",
-            "deep_link": "ounje://imports",
+            "actionURL": "ounje://import-status",
+            "action_url": "ounje://import-status",
+            "deep_link": "ounje://import-status",
         ]
 
         let request = UNNotificationRequest(
@@ -467,78 +461,22 @@ final class OunjeShareViewController: UIViewController {
         return nil
     }
 
-    private func submitEnvelopeToBackend(
-        _ envelope: SharedRecipeImportEnvelope,
-        authSession: SharedAuthSession,
-        timeoutInterval: TimeInterval = 90
-    ) async throws -> RecipeImportResponse {
-        let attachments = try await makeRecipeImportAttachmentPayloads(from: envelope.attachments)
-        let sourceText = envelope.resolvedSourceText
-
-        var lastError: Error?
-        for baseURL in ImportSubmissionServer.candidateBaseURLs {
-            do {
-                return try await submitEnvelopeToBackend(
-                    baseURL: baseURL,
-                    envelope: envelope,
-                    authSession: authSession,
-                    sourceText: sourceText,
-                    attachments: attachments,
-                    timeoutInterval: timeoutInterval
-                )
-            } catch {
-                lastError = error
-            }
+    private func applyBackendAuthorization(_ authSession: SharedAuthSession, to request: inout URLRequest) {
+        let shareAuthorization = authSession.shareImportAuthorization?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !shareAuthorization.isEmpty,
+           authSession.shareImportAuthorizationExpiresAt.map({ $0 > Date() }) ?? false {
+            request.setValue(shareAuthorization, forHTTPHeaderField: "x-ounje-share-authorization")
+            return
         }
 
-        throw lastError ?? URLError(.badServerResponse)
+        let accessToken = authSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !accessToken.isEmpty {
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        }
     }
 
-    private func submitEnvelopeToBackend(
-        baseURL: String,
-        envelope: SharedRecipeImportEnvelope,
-        authSession: SharedAuthSession,
-        sourceText: String,
-        attachments: [RecipeImportAttachmentPayload],
-        timeoutInterval: TimeInterval = 90
-    ) async throws -> RecipeImportResponse {
-        guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
-            throw URLError(.badURL)
-        }
-        guard let accessToken = authSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines), !accessToken.isEmpty else {
-            throw URLError(.userAuthenticationRequired)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = timeoutInterval
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue(authSession.userID, forHTTPHeaderField: "x-user-id")
-        request.httpBody = try JSONEncoder().encode(
-            RecipeImportRequestPayload(
-                userID: authSession.userID,
-                sourceURL: envelope.sourceURLString,
-                sourceText: sourceText,
-                accessToken: authSession.accessToken,
-                targetState: envelope.targetState,
-                attachments: attachments
-            )
-        )
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw URLError(.badServerResponse)
-        }
-
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-
-        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
-    }
-
-    private func submittedEnvelope(_ envelope: SharedRecipeImportEnvelope) -> SharedRecipeImportEnvelope {
+    private func queuedEnvelope(_ envelope: SharedRecipeImportEnvelope) -> SharedRecipeImportEnvelope {
         SharedRecipeImportEnvelope(
             id: envelope.id,
             createdAt: envelope.createdAt,
@@ -549,38 +487,10 @@ final class OunjeShareViewController: UIViewController {
             canonicalSourceURLString: envelope.canonicalSourceURLString,
             sourceApp: envelope.sourceApp,
             attachments: envelope.attachments,
-            processingState: "submitted",
-            attemptCount: max(envelope.attemptCount ?? 0, 1),
+            processingState: "queued",
+            attemptCount: envelope.attemptCount,
             lastAttemptAt: Date(),
-            serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
-            lastError: nil,
-            updatedAt: Date()
-        )
-    }
-
-    private func reconciledEnvelope(
-        _ envelope: SharedRecipeImportEnvelope,
-        response: RecipeImportResponse
-    ) -> SharedRecipeImportEnvelope {
-        let backendState = response.job.status
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let liveBackendStates = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"]
-        let localState = liveBackendStates.contains(backendState) ? backendState : "queued"
-        return SharedRecipeImportEnvelope(
-            id: envelope.id,
-            createdAt: envelope.createdAt,
-            jobID: response.job.id,
-            targetState: envelope.targetState,
-            sourceText: envelope.sourceText,
-            sourceURLString: envelope.sourceURLString,
-            canonicalSourceURLString: response.job.canonicalURL ?? response.job.sourceURL ?? envelope.canonicalSourceURLString,
-            sourceApp: envelope.sourceApp,
-            attachments: envelope.attachments,
-            processingState: localState,
-            attemptCount: max(envelope.attemptCount ?? 0, 1),
-            lastAttemptAt: Date(),
-            serverSubmittedAt: envelope.serverSubmittedAt ?? Date(),
+            serverSubmittedAt: nil,
             lastError: nil,
             updatedAt: Date()
         )
@@ -663,19 +573,6 @@ final class OunjeShareViewController: UIViewController {
         }
     }
 
-    private func openContainingApp(for envelopeID: String) {
-        guard let url = SharedRecipeImportInbox.handoffURL(for: envelopeID) else { return }
-        let selector = NSSelectorFromString("openURL:")
-        var responder: UIResponder? = self
-        while let current = responder {
-            if current.responds(to: selector) {
-                _ = current.perform(selector, with: url)
-                break
-            }
-            responder = current.next
-        }
-    }
-
 }
 
 private struct SharedAuthSession: Codable {
@@ -684,6 +581,17 @@ private struct SharedAuthSession: Codable {
 
     let userID: String
     let accessToken: String?
+    let shareImportAuthorization: String?
+    let shareImportAuthorizationExpiresAt: Date?
+
+    var hasBackendAuthorization: Bool {
+        let shareAuthorization = shareImportAuthorization?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !shareAuthorization.isEmpty,
+           shareImportAuthorizationExpiresAt.map({ $0 > Date() }) ?? false {
+            return true
+        }
+        return !(accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+    }
 }
 
 private struct RecipeImportAttachmentPayload: Encodable {
@@ -724,33 +632,15 @@ private struct RecipeImportRequestPayload: Encodable {
     }
 }
 
-private struct RecipeImportResponse: Decodable {
-    let job: RecipeImportJobPayload
-}
-
-private struct RecipeImportJobPayload: Decodable {
-    let id: String
-    let status: String
-    let sourceURL: String?
-    let canonicalURL: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case status
-        case sourceURL = "source_url"
-        case canonicalURL = "canonical_url"
-    }
-}
-
 private enum ImportSubmissionServer {
     static let productionBaseURL = "https://ounje-idbl.onrender.com"
 
     static var candidateBaseURLs: [String] {
         deduplicated(
             [
+                productionBaseURL,
                 explicitWorkerBaseURL,
-                explicitPrimaryBaseURL,
-                productionBaseURL
+                explicitPrimaryBaseURL
             ].compactMap { $0 }
         )
     }

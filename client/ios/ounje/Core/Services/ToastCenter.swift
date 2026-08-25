@@ -1,6 +1,10 @@
 import SwiftUI
 import Foundation
 
+enum AppToastLayout {
+    static let topInset: CGFloat = 12
+}
+
 enum AppToastTone: Equatable {
     case neutral
     case destructive
@@ -25,6 +29,7 @@ struct AppToast: Identifiable, Equatable {
 enum AppToastDestination: Hashable {
     case recipe(DiscoverRecipeCardData)
     case recipeImportQueue(SharedRecipeImportQueueTab)
+    case plans
     case appTab(AppTab)
 }
 

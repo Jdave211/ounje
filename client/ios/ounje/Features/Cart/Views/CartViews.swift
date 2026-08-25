@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import UIKit
+import ImageIO
 
 actor CartSupportWarmupCache {
     static let shared = CartSupportWarmupCache()
@@ -8,7 +9,8 @@ actor CartSupportWarmupCache {
     private struct Entry {
         let planID: UUID
         let signature: String
-        let rows: [SupabaseRecipeIngredientRow]
+        var rows: [SupabaseRecipeIngredientRow]
+        var snapshot: MainShopSnapshot?
         let warmedAt: Date
     }
 
@@ -21,17 +23,35 @@ actor CartSupportWarmupCache {
               Date().timeIntervalSince(entry.warmedAt) < 30 * 60 else {
             return nil
         }
-        return entry.rows
+        return entry.rows.isEmpty ? nil : entry.rows
+    }
+
+    func snapshot(for plan: MealPlan) -> MainShopSnapshot? {
+        let signature = MainShopSnapshotBuilder.signature(for: plan.groceryItems)
+        guard let entry = entriesByPlanID[plan.id],
+              entry.signature == signature,
+              Date().timeIntervalSince(entry.warmedAt) < 30 * 60 else {
+            return nil
+        }
+        return entry.snapshot
     }
 
     func store(rows: [SupabaseRecipeIngredientRow], for plan: MealPlan) {
         guard !rows.isEmpty else { return }
-        entriesByPlanID[plan.id] = Entry(
-            planID: plan.id,
-            signature: MainShopSnapshotBuilder.signature(for: plan.groceryItems),
-            rows: rows,
-            warmedAt: .now
-        )
+        let signature = MainShopSnapshotBuilder.signature(for: plan.groceryItems)
+        let snapshot = entriesByPlanID[plan.id].flatMap { $0.signature == signature ? $0.snapshot : nil }
+        store(Entry(planID: plan.id, signature: signature, rows: rows, snapshot: snapshot, warmedAt: .now))
+    }
+
+    func store(snapshot: MainShopSnapshot, for plan: MealPlan) {
+        let signature = MainShopSnapshotBuilder.signature(for: plan.groceryItems)
+        guard snapshot.signature == signature else { return }
+        let rows = entriesByPlanID[plan.id].flatMap { $0.signature == signature ? $0.rows : nil } ?? []
+        store(Entry(planID: plan.id, signature: signature, rows: rows, snapshot: snapshot, warmedAt: .now))
+    }
+
+    private func store(_ entry: Entry) {
+        entriesByPlanID[entry.planID] = entry
         if entriesByPlanID.count > 4 {
             let stalePlanIDs = entriesByPlanID
                 .values
@@ -54,16 +74,28 @@ enum CartSupportWarmupService {
             return
         }
 
-        try? await Task.sleep(nanoseconds: 900_000_000)
-        guard !Task.isCancelled else { return }
-
         guard let plan = await MainActor.run(body: { store.latestPlan }),
               !plan.recipes.isEmpty else {
             return
         }
 
+        let localSnapshot: MainShopSnapshot
+        if let cached = await CartSupportWarmupCache.shared.snapshot(for: plan) {
+            localSnapshot = cached
+        } else {
+            let groceryItems = plan.groceryItems
+            localSnapshot = await Task.detached(priority: .utility) {
+                MainShopSnapshotBuilder.buildLocalSnapshot(for: groceryItems)
+            }.value
+            guard !Task.isCancelled else { return }
+            await CartSupportWarmupCache.shared.store(snapshot: localSnapshot, for: plan)
+        }
+        prewarmArtwork(for: plan, rows: [], snapshot: localSnapshot)
+
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        guard !Task.isCancelled else { return }
+
         if await CartSupportWarmupCache.shared.rows(for: plan) != nil {
-            prewarmArtwork(for: plan, rows: [])
             return
         }
 
@@ -76,14 +108,18 @@ enum CartSupportWarmupService {
                 return
             }
             await CartSupportWarmupCache.shared.store(rows: rows, for: activePlan)
-            prewarmArtwork(for: activePlan, rows: rows)
+            prewarmArtwork(for: activePlan, rows: rows, snapshot: localSnapshot)
         } catch {
-            prewarmArtwork(for: plan, rows: [])
+            // The local snapshot is already ready even when artwork lookup fails.
         }
     }
 
     static func cachedIngredientRows(for plan: MealPlan) async -> [SupabaseRecipeIngredientRow]? {
         await CartSupportWarmupCache.shared.rows(for: plan)
+    }
+
+    static func cachedSnapshot(for plan: MealPlan) async -> MainShopSnapshot? {
+        await CartSupportWarmupCache.shared.snapshot(for: plan)
     }
 
     static func buildPrepRecipeIngredientRows(from recipes: [PlannedRecipe]) async throws -> [SupabaseRecipeIngredientRow] {
@@ -133,22 +169,27 @@ enum CartSupportWarmupService {
             .flatMap(\.1)
     }
 
-    private static func prewarmArtwork(for plan: MealPlan, rows: [SupabaseRecipeIngredientRow]) {
-        let urls = Array(
-            Set(
-                rows.compactMap(\.imageURL)
-                + (plan.mainShopSnapshot?.items ?? []).compactMap { item in
+    private static func prewarmArtwork(
+        for plan: MealPlan,
+        rows: [SupabaseRecipeIngredientRow],
+        snapshot: MainShopSnapshot
+    ) {
+        var seen = Set<String>()
+        let urls = (
+            rows.compactMap(\.imageURL)
+                + (plan.mainShopSnapshot?.items ?? snapshot.items).compactMap { item in
                     guard let value = item.imageURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
                           !value.isEmpty else {
                         return nil
                     }
                     return URL(string: value)
                 }
-            )
         )
+        .filter { seen.insert($0.absoluteString).inserted }
+        .prefix(12)
         guard !urls.isEmpty else { return }
         Task { @MainActor in
-            CartArtworkImageLoader.prewarm(urls: urls)
+            CartArtworkImageLoader.prewarm(urls: Array(urls))
         }
     }
 
@@ -161,12 +202,18 @@ enum CartSupportWarmupService {
 }
 
 struct CartTabView: View {
+    private enum CartListScope: String {
+        case toBuy
+        case alreadyHave
+    }
+
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var toastCenter: AppToastCenter
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
     @Environment(\.openURL) private var openURL
     @Binding var selectedTab: AppTab
     @Binding var focusedRecipeID: String?
-    @State private var displayMode: CartDisplayMode = .reconciled
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
     @State private var isRunLogsPresented = false
     @State private var isCartMappingPresented = false
     @State private var ingredientRows: [SupabaseRecipeIngredientRow] = []
@@ -177,111 +224,221 @@ struct CartTabView: View {
     @State private var isLoadingIngredients = false
     @State private var ingredientLoadError: String?
     @StateObject private var instacartRunLogsStore = InstacartRunLogsStore()
-    @State private var collapsedRecipeGroupIDs = Set<String>()
     @State private var isShoppingListMode = false
     @State private var checkedShoppingItemIDs = Set<String>()
+    @State private var tripOwnedItemKeys = Set<String>()
+    @State private var automaticHouseholdOptOutKeys = Set<String>()
+    @State private var cartListScope: CartListScope = .toBuy
+    @State private var isTransferSelectionMode = false
+    @State private var selectedTransferItemKeys = Set<String>()
+    @State private var resolvedReviewItemKeys = Set<String>()
+    @State private var selectedCartItem: CartGroceryDisplayItem?
+    @State private var selectedProblemItem: CartProblemItem?
+    @State private var isShoppingActionPresented = false
+    @State private var isBasketExpanded = false
 
     var body: some View {
-        GeometryReader { proxy in
+        ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Cart")
-                            .biroHeaderFont(32)
-                            .foregroundStyle(OunjePalette.primaryText)
-                        Text(cartSummaryLine)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                    }
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .center, spacing: 12) {
+                            BiroScriptDisplayText("Cart", size: 31, color: OunjePalette.primaryText)
 
-                    Spacer(minLength: 0)
-                }
+                            Spacer(minLength: 0)
 
-                    if shouldShowLiveCartContent {
-                        CartDisplayModeBar(
-                            selection: $displayMode,
-                            trailingAction: cartModeTrailingAction,
-                            trailingDisabled: isCartBuyNowModeBarDisabled,
-                            trailingContent: {
-                                cartModeTrailingContent
-                            }
-                        )
-                        .padding(.top, -12)
-                    }
-
-                    if let bannerMessage = liveInstacartRunBannerMessage {
-                        Button(action: openInstacartRunsSheet) {
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(OunjePalette.surface.opacity(0.9))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1)
-                                        )
-                                        .frame(width: 36, height: 36)
-
-                                    CartCachedArtworkView(imageURL: activeInstacartRunSummary?.selectedStoreLogoURL) {
-                                        HoppingCartIcon(
-                                            isActive: true,
-                                            color: OunjePalette.primaryText,
-                                            size: 15
-                                        )
-                                    }
-                                    .frame(width: 22, height: 22)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                }
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(activeInstacartRunTitle)
+                            if !isShoppingListMode, !isTransferSelectionMode {
+                                Button {
+                                    isShoppingActionPresented = true
+                                } label: {
+                                    Label("Shop now", systemImage: "cart")
                                         .font(.system(size: 13, weight: .bold))
                                         .foregroundStyle(OunjePalette.primaryText)
-                                    Text(bannerMessage)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(OunjePalette.secondaryText)
-                                        .lineLimit(2)
+                                        .padding(.horizontal, 12)
+                                        .frame(height: 38)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(OunjePalette.surface)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                                                )
+                                        )
                                 }
+                                .buttonStyle(.plain)
+                                .firstRunGuideTarget(
+                                    .shopNow,
+                                    enabled: firstRunGuide.phase == .cartShopNow
+                                )
+                                .disabled(visibleReconciledCartItems.isEmpty)
+                                .opacity(visibleReconciledCartItems.isEmpty ? 0.42 : 1)
+                                .offset(y: 15)
+                            }
+                        }
+
+                        if cartPlanOptions.count > 1 {
+                            Menu {
+                                ForEach(cartPlanOptions) { batch in
+                                    Button {
+                                        selectCartPlan(batch)
+                                    } label: {
+                                        if batch.id == activeCartPlan?.id {
+                                            Label(batch.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(batch.name)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                cartPlanSelectorLabel(showsChevron: true)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            cartPlanSelectorLabel(showsChevron: false)
+                        }
+
+                        if isShoppingListMode {
+                            HStack(spacing: 12) {
+                                Text(operationalCartSummaryLine)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(OunjePalette.secondaryText)
 
                                 Spacer(minLength: 0)
 
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 12, weight: .bold))
+                                if !basketItems.isEmpty {
+                                    Menu {
+                                        Button {
+                                            resetShoppingListChecks()
+                                        } label: {
+                                            Label("Reset checks", systemImage: "arrow.counterclockwise")
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundStyle(OunjePalette.secondaryText)
+                                            .frame(width: 34, height: 34)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Shopping list options")
+                                }
+
+                                Button("Done", action: finishShoppingList)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 13)
+                                    .frame(height: 34)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(OunjePalette.surface)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                                            )
+                                    )
+                                    .firstRunGuideTarget(
+                                        .checklistDone,
+                                        enabled: firstRunGuide.phase == .cartChecklistDone
+                                    )
+                            }
+                            .padding(.top, 16)
+                        } else {
+                            cartListScopeSelector
+
+                            if cartListScope == .alreadyHave, !isTransferSelectionMode {
+                                Text("These items are already in your kitchen.")
+                                    .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(OunjePalette.secondaryText)
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .fill(OunjePalette.surface.opacity(0.9))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                            .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1)
-                                    )
-                            )
+
                         }
-                        .buttonStyle(.plain)
                     }
+                    .id("first-guide-cart-top")
 
                     if shouldShowEmptyCartState {
                         CartEmptyState(
                             onBrowseDiscover: { selectedTab = .discover }
                         )
-                    } else if displayMode == .reconciled && isLoadingIngredients && visibleReconciledCartItems.isEmpty {
+                    } else if isLoadingIngredients && visibleReconciledCartItems.isEmpty {
                         CartMainShopLoadingState()
-                    } else if displayMode != .reconciled && isLoadingIngredients && displayIngredientGroups.isEmpty && visibleCartItems.isEmpty {
-                        CartLoadingState()
+                    } else if shouldShowUnavailableCartState {
+                        CartUnavailableState {
+                            Task { await reloadCartIngredients(forceRebuild: true) }
+                        }
                     } else {
-                        cartDisplayContent
+                        operationalCartContent
                     }
                 }
                 .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
                 .padding(.top, 14)
-                .padding(.bottom, 12)
+                .padding(.bottom, 18)
             }
             .scrollIndicators(.hidden)
+            .onAppear {
+                scrollToGuideTarget(firstRunGuide.phase, using: proxy)
+            }
+            .onChange(of: firstRunGuide.phase) { phase in
+                scrollToGuideTarget(phase, using: proxy)
+            }
+            .onChange(of: firstGuideCartItemScrollID) { _ in
+                scrollToGuideTarget(firstRunGuide.phase, using: proxy)
+            }
         }
         .background(OunjePalette.background.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isTransferSelectionMode {
+                cartTransferSelectionActions
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .sheet(item: $selectedCartItem) { item in
+            let quantity = mainShopQuantityDisplay(for: item)
+            CartItemDetailSheet(
+                item: item,
+                quantityCount: quantity.count,
+                quantityUnitLabel: quantity.unitLabel,
+                isAlreadyHave: tripOwnedItemKeys.contains(cartItemKey(item)),
+                sourceEntries: cartMappingEntry(for: item)?.sourceEntries ?? [],
+                onDecreaseQuantity: { adjustMainShopQuantity(for: item, delta: -1) },
+                onIncreaseQuantity: { adjustMainShopQuantity(for: item, delta: 1) },
+                onToggleAlreadyHave: { toggleMainShopItemOnHandForTrip(item) },
+                onRemove: { removeMainShopItem(item) }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.hidden)
+        }
+        .sheet(item: $selectedProblemItem) { problem in
+            CartProblemItemSheet(
+                item: problem,
+                onCorrect: { correctedName in
+                    resolveProblemItem(problem, correctedName: correctedName)
+                },
+                onRemove: {
+                    dismissProblemItem(problem)
+                }
+            )
+            .presentationDetents([.height(340)])
+            .presentationDragIndicator(.hidden)
+        }
+        .sheet(isPresented: $isShoppingActionPresented, onDismiss: {
+            if firstRunGuide.phase == .cartChecklistOption {
+                firstRunGuide.advance(to: .cartShopNow)
+            }
+        }) {
+            CartShoppingActionSheet(
+                planName: activeCartPlan?.name ?? "Usual",
+                itemCount: visibleReconciledCartItems.count,
+                instacartTitle: shoppingSheetInstacartTitle,
+                instacartSubtitle: shoppingSheetInstacartSubtitle,
+                isInstacartDisabled: shoppingSheetInstacartDisabled,
+                choosesProvider: cartBuyNowStatusTone == .idle,
+                onChecklist: beginShoppingList,
+                onInstacart: handleShoppingSheetInstacartAction
+            )
+            .presentationDetents([.height(296)])
+            .presentationDragIndicator(.hidden)
+        }
         .sheet(isPresented: $isRunLogsPresented) {
             InstacartRunLogsSheet(
                 store: instacartRunLogsStore,
@@ -312,182 +469,935 @@ struct CartTabView: View {
         .task(id: cartReloadKey) {
             await reloadCartIngredients(forceRebuild: false)
         }
-        .task(id: cartTrackingReloadKey) {
-            await store.refreshLiveTrackingState()
-        }
         .onAppear {
             loadShoppingListState()
+            loadTripCartState()
+            syncCartGuideInteractionState()
         }
         .onChange(of: shoppingListPersistenceKey) { _ in
             loadShoppingListState()
         }
-    }
-
-    @ViewBuilder
-    private var runLogsButtonContent: some View {
-        let isShoppingActive = isCartWorkAnimating
-        let inactiveIconColor = Color.white.opacity(0.58)
-        if instacartRunLogsStore.isLoading {
-            liveRunLogsButtonShell(isActive: isShoppingActive, activeChrome: false) {
-                ProgressView()
-                    .tint(Color.white.opacity(isShoppingActive ? 0.88 : 0.58))
-            }
-        } else if isShoppingActive {
-            liveRunLogsButtonShell(
-                isActive: true,
-                activeChrome: false,
-                pulseScale: 1.0
-            ) {
-                HoppingCartIcon(
-                    isActive: true,
-                    color: Color.white.opacity(0.88),
-                    size: 17
-                )
-            }
-        } else {
-            liveRunLogsButtonShell(isActive: false) {
-                HoppingCartIcon(
-                    isActive: false,
-                    color: inactiveIconColor,
-                    size: 15
-                )
+        .onChange(of: tripCartPersistenceScope) { _ in
+            loadTripCartState()
+            loadShoppingListState()
+        }
+        .onChange(of: automaticHouseholdDefaultsSignature) { _ in
+            applyAutomaticHouseholdDefaults()
+        }
+        .onChange(of: firstRunGuide.phase) { _ in
+            syncCartGuideInteractionState()
+        }
+        .onChange(of: firstGuideCartItemScrollID) { _ in
+            syncCartGuideInteractionState()
+        }
+        .onChange(of: isShoppingActionPresented) { isPresented in
+            if isPresented, firstRunGuide.phase == .cartShopNow {
+                firstRunGuide.advance(to: .cartChecklistOption)
             }
         }
     }
 
-    @ViewBuilder
-    private var cartModeTrailingContent: some View {
-        if hasActiveInstacartRun {
-            EmptyView()
-        } else if shouldShowBuyNowInModeBar {
-            compactBuyNowButtonContent
-        } else {
-            runLogsButtonContent
+    private var cartPlanOptions: [PrepBatch] {
+        guard let plan = store.latestPlan else { return [] }
+        if let batches = plan.batches, !batches.isEmpty {
+            return batches
+        }
+        return [
+            PrepBatch(
+                id: plan.id,
+                name: "Usual",
+                recipes: plan.recipes,
+                groceryItems: plan.groceryItems,
+                recurringRecipeIDs: plan.recurringRecipeIDs,
+                createdAt: plan.generatedAt
+            )
+        ]
+    }
+
+    private var cartTypographyStyle: RecipeTypographyStyle {
+        RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+    }
+
+    private var activeCartPlan: PrepBatch? {
+        store.activeBatch ?? cartPlanOptions.first
+    }
+
+    private var activeCartPlanDescriptor: String {
+        let count = activeCartPlan?.recipes.count ?? store.latestPlan?.recipes.count ?? 0
+        return "Plan · \(count) \(count == 1 ? "recipe" : "recipes")"
+    }
+
+    private var activeCartPlanFlagshipURL: URL? {
+        activeCartPlan?.flagshipImageURL
+    }
+
+    private func cartPlanSelectorLabel(showsChevron: Bool) -> some View {
+        HStack(spacing: 12) {
+            CartPlanFlagshipArtwork(
+                imageURL: activeCartPlanFlagshipURL,
+                title: activeCartPlan?.name ?? "Usual"
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                CartPreferenceText(
+                    activeCartPlan?.name ?? "Usual",
+                    size: 18,
+                    style: cartTypographyStyle,
+                    cleanWeight: .bold
+                )
+                .lineLimit(1)
+
+                Text(activeCartPlanDescriptor)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(OunjePalette.primaryText)
+        .contentShape(Rectangle())
+    }
+
+    private func selectCartPlan(_ batch: PrepBatch) {
+        guard store.latestPlan?.batches?.contains(where: { $0.id == batch.id }) == true else { return }
+        _ = store.setPrimePrepBatch(batchID: batch.id)
+    }
+
+    private var tripCartPersistenceScope: String {
+        let userID = store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "signed-out"
+        let planID = store.latestPlan?.id.uuidString ?? "no-plan"
+        let batchID = store.activeBatch?.id.uuidString
+            ?? store.latestPlan?.activeBatchID?.uuidString
+            ?? "legacy"
+        return "\(userID)::\(planID)::\(batchID)"
+    }
+
+    private var kitchenInventoryPersistenceScope: String {
+        store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "signed-out"
+    }
+
+    private var tripOwnedPersistenceKey: String {
+        "ounje.cart.on-hand.v2::\(kitchenInventoryPersistenceScope)"
+    }
+
+    private var reviewResolutionPersistenceKey: String {
+        "ounje.cart.reviewed.v1::\(tripCartPersistenceScope)"
+    }
+
+    private var automaticHouseholdOptOutPersistenceKey: String {
+        "ounje.cart.household-opt-out.v2::\(kitchenInventoryPersistenceScope)"
+    }
+
+    private func cartItemKey(_ item: CartGroceryDisplayItem) -> String {
+        Self.normalizedIngredientKey(item.removalKey ?? item.name)
+    }
+
+    private var planScopedCartItems: [CartGroceryDisplayItem] {
+        reconciledCartItems.filter { item in
+            !isHiddenMainShopRelatedItem(named: item.name, removalKey: item.removalKey)
         }
     }
 
-    @ViewBuilder
-    private func activeRunButtonContent(_ activeRun: InstacartRunLogSummary) -> some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(OunjePalette.surface.opacity(0.92))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .stroke(OunjePalette.stroke.opacity(0.9), lineWidth: 1)
-                    )
-                    .frame(width: 38, height: 38)
+    private var tripOwnedCartItems: [CartGroceryDisplayItem] {
+        planScopedCartItems.filter { tripOwnedItemKeys.contains(cartItemKey($0)) }
+    }
 
-                CartCachedArtworkView(imageURL: activeRun.selectedStoreLogoURL) {
-                    HoppingCartIcon(
-                        isActive: true,
-                        color: OunjePalette.primaryText,
-                        size: 16
-                    )
+    private var operationalCartSummaryLine: String {
+        let total = visibleReconciledCartItems.count
+        if isShoppingListMode {
+            let picked = visibleReconciledCartItems.filter {
+                checkedShoppingItemIDs.contains(cartItemKey($0))
+            }.count
+            return "\(picked) of \(total) picked"
+        }
+
+        let owned = tripOwnedCartItems.count
+        return "\(total) \(total == 1 ? "item" : "items") to buy · \(owned) already have"
+    }
+
+    private var scopedOperationalCartItems: [CartGroceryDisplayItem] {
+        switch cartListScope {
+        case .toBuy:
+            return visibleReconciledCartItems
+        case .alreadyHave:
+            return tripOwnedCartItems
+        }
+    }
+
+    private var uncheckedCartItems: [CartGroceryDisplayItem] {
+        guard isShoppingListMode else { return scopedOperationalCartItems }
+        return visibleReconciledCartItems
+    }
+
+    private var basketItems: [CartGroceryDisplayItem] {
+        guard isShoppingListMode else { return [] }
+        return visibleReconciledCartItems.filter {
+            checkedShoppingItemIDs.contains(cartItemKey($0))
+        }
+    }
+
+    private var operationalCartSections: [CartAisleGroup] {
+        let grouped = Dictionary(grouping: uncheckedCartItems, by: CartAisle.classify)
+        return CartAisle.allCases.compactMap { aisle in
+            guard let items = grouped[aisle], !items.isEmpty else { return nil }
+            return CartAisleGroup(
+                aisle: aisle,
+                items: items.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                 }
-                .frame(width: 22, height: 22)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Open active run")
-                    .font(.system(size: 12, weight: .bold))
-                Text(cartBuyNowStatusMessage ?? "Building your Instacart cart...")
-                    .font(.system(size: 10, weight: .semibold))
-                    .lineLimit(1)
-            }
+            )
         }
-        .foregroundStyle(OunjePalette.primaryText)
-        .padding(.horizontal, 12)
-        .frame(height: 42)
-        .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.92))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
-                )
-        )
     }
 
-    @ViewBuilder
-    private var compactBuyNowButtonContent: some View {
-        HStack(spacing: 8) {
-            if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(OunjePalette.primaryText)
-            }
+    private var problemItems: [CartProblemItem] {
+        (boxedCartCoverageSummary?.actionableUncoveredBaseLabels ?? [])
+            .filter { !resolvedReviewItemKeys.contains(Self.normalizedIngredientKey($0)) }
+            .map(CartProblemItem.init(name:))
+    }
 
-            Text(compactBuyNowButtonTitle)
+    private var scopedProblemItems: [CartProblemItem] {
+        cartListScope == .toBuy ? problemItems : []
+    }
+
+    private var cartListScopeSelector: some View {
+        HStack(spacing: 18) {
+            cartListScopeButton(
+                scope: .toBuy,
+                title: "\(visibleReconciledCartItems.count) items to buy"
+            )
+            cartListScopeButton(
+                scope: .alreadyHave,
+                title: "\(tripOwnedCartItems.count) already have"
+            )
+
+            Spacer(minLength: 0)
+
+            if !isTransferSelectionMode, !scopedOperationalCartItems.isEmpty {
+                Button("Select") {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(OunjeMotion.quickSpring) {
+                        isTransferSelectionMode = true
+                        selectedTransferItemKeys.removeAll()
+                    }
+                    if firstRunGuide.phase == .cartSelect {
+                        firstRunGuide.advance(to: .cartIngredient)
+                    }
+                }
                 .font(.system(size: 13, weight: .bold))
-        }
-        .foregroundStyle(OunjePalette.primaryText)
-        .padding(.horizontal, 14)
-        .frame(height: 42)
-        .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(cartBuyNowDisabledReason == nil ? OunjePalette.accent : OunjePalette.surface.opacity(0.92))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(
-                            cartBuyNowDisabledReason == nil ? OunjePalette.accent.opacity(0.75) : OunjePalette.stroke,
-                            lineWidth: 1
+                .foregroundStyle(OunjePalette.primaryText)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 13)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
                         )
                 )
-        )
-        .opacity(isCartBuyNowModeBarDisabled ? 0.58 : 1)
-    }
-
-    private var compactBuyNowButtonTitle: String {
-        if store.isManualAutoshopRunning || isInstacartShoppingActivelyRunning {
-            return "Building"
-        }
-        if cartBuyNowStatusTone == .failed {
-            return "Retry"
-        }
-        return "Buy now"
-    }
-
-    private var shouldShowBuyNowInModeBar: Bool {
-        displayMode == .reconciled
-            && shouldShowLiveCartContent
-            && currentInstacartCartURL == nil
-            && !hasActiveInstacartRun
-    }
-
-    private var cartModeTrailingAction: (() -> Void)? {
-        if hasActiveInstacartRun {
-            return nil
-        }
-        if shouldShowBuyNowInModeBar {
-            return { startCartBuyNowRun() }
-        }
-        return { openInstacartRunsSheet() }
-    }
-
-    private var isCartBuyNowModeBarDisabled: Bool {
-        shouldShowBuyNowInModeBar && cartBuyNowDisabledReason != nil
-    }
-
-    private func handleCartModeTrailingAction() {
-        if hasActiveInstacartRun {
-            openInstacartRunsSheet()
-            return
-        }
-
-        if shouldShowBuyNowInModeBar {
-            guard !isCartBuyNowModeBarDisabled else {
-                if let reason = cartBuyNowDisabledReason {
-                    toastCenter.show(title: reason, destination: nil)
-                }
-                return
+                .firstRunGuideTarget(
+                    firstRunGuide.phase == .cartSelect ? .cartSelect : .cartRestoreSelect,
+                    enabled: firstRunGuide.phase == .cartSelect || firstRunGuide.phase == .cartRestoreInfo
+                )
             }
-            startCartBuyNowRun()
-            return
+        }
+        .padding(.top, 16)
+    }
+
+    private func cartListScopeButton(
+        scope: CartListScope,
+        title: String
+    ) -> some View {
+        let isSelected = cartListScope == scope
+        return Button {
+            withAnimation(OunjeMotion.quickSpring) {
+                cartListScope = scope
+                isTransferSelectionMode = false
+                selectedTransferItemKeys.removeAll()
+            }
+            if scope == .alreadyHave, firstRunGuide.phase == .cartScope {
+                firstRunGuide.advance(to: .cartRestoreInfo)
+            }
+        } label: {
+            Text(title)
+                .font(.system(size: 14, weight: isSelected ? .bold : .semibold))
+                .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .padding(.vertical, 4)
+                .overlay(alignment: .bottom) {
+                    if isSelected {
+                        Rectangle()
+                            .fill(OunjePalette.primaryText)
+                            .frame(height: 2)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .firstRunGuideTarget(
+            firstRunGuide.phase == .cartScope ? .cartScope : .cartAlreadyHaveIntro,
+            enabled: scope == .alreadyHave
+                && (firstRunGuide.phase == .cartAlreadyHaveIntro || firstRunGuide.phase == .cartScope)
+        )
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var transferDestinationTitle: String {
+        cartListScope == .toBuy ? "Already have" : "Items to buy"
+    }
+
+    private var cartTransferSelectionActions: some View {
+        HStack(spacing: 10) {
+            Button("Cancel") {
+                withAnimation(OunjeMotion.quickSpring) {
+                    isTransferSelectionMode = false
+                    selectedTransferItemKeys.removeAll()
+                }
+            }
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(OunjePalette.primaryText)
+            .buttonStyle(.plain)
+            .frame(width: 104, height: 48)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OunjePalette.surface)
+            )
+
+            Button(transferDestinationTitle) {
+                moveSelectedCartItems()
+                if firstRunGuide.phase == .cartAlreadyHave {
+                    firstRunGuide.advance(to: .cartScope)
+                }
+            }
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(OunjePalette.background)
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OunjePalette.softCream)
+            )
+            .disabled(selectedTransferItemKeys.isEmpty)
+            .opacity(selectedTransferItemKeys.isEmpty ? 0.42 : 1)
+            .accessibilityLabel("Move selected items to \(transferDestinationTitle)")
+            .firstRunGuideTarget(
+                .cartAlreadyHave,
+                enabled: firstRunGuide.phase == .cartAlreadyHave
+            )
+        }
+        .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+        .padding(.vertical, 10)
+        .background(OunjePalette.background.opacity(0.98))
+        .overlay(alignment: .top) {
+            Divider().background(OunjePalette.stroke.opacity(0.8))
+        }
+    }
+
+    private func toggleTransferSelection(for item: CartGroceryDisplayItem) {
+        let key = cartItemKey(item)
+        guard !key.isEmpty else { return }
+        withAnimation(OunjeMotion.quickSpring) {
+            if selectedTransferItemKeys.contains(key) {
+                selectedTransferItemKeys.remove(key)
+            } else {
+                selectedTransferItemKeys.insert(key)
+            }
+        }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func moveSelectedCartItems() {
+        let keys = selectedTransferItemKeys
+        guard !keys.isEmpty else { return }
+        let previouslyOwned = tripOwnedItemKeys.intersection(keys)
+        let previousOptOuts = automaticHouseholdOptOutKeys.intersection(keys)
+        let destination = transferDestinationTitle
+
+        withAnimation(OunjeMotion.quickSpring) {
+            if cartListScope == .toBuy {
+                automaticHouseholdOptOutKeys.subtract(keys)
+                tripOwnedItemKeys.formUnion(keys)
+            } else {
+                tripOwnedItemKeys.subtract(keys)
+                automaticHouseholdOptOutKeys.formUnion(keys)
+            }
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+        }
+        persistTripCartState()
+        toastCenter.show(
+            title: "Moved to \(destination)",
+            subtitle: "\(keys.count) \(keys.count == 1 ? "item" : "items")",
+            systemImage: "arrow.left.arrow.right",
+            actionTitle: "Undo",
+            action: { [toastCenter] in
+                tripOwnedItemKeys.subtract(keys)
+                tripOwnedItemKeys.formUnion(previouslyOwned)
+                automaticHouseholdOptOutKeys.subtract(keys)
+                automaticHouseholdOptOutKeys.formUnion(previousOptOuts)
+                persistTripCartState()
+                toastCenter.dismiss()
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var operationalCartContent: some View {
+        LazyVStack(alignment: .leading, spacing: 24) {
+            if operationalCartSections.isEmpty,
+               scopedProblemItems.isEmpty,
+               basketItems.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(OunjePalette.accent)
+                    CartPreferenceText(
+                        cartListScope == .toBuy ? "Nothing left to buy" : "Nothing marked on hand",
+                        size: 19,
+                        style: cartTypographyStyle,
+                        cleanWeight: .bold
+                    )
+                    Text(cartListScope == .toBuy ? "Everything in this plan is already handled." : "Items marked as already have will appear here.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+                .padding(.top, 12)
+            }
+
+            if !scopedProblemItems.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Needs review")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .padding(.bottom, 8)
+
+                    ForEach(scopedProblemItems) { item in
+                        Button {
+                            selectedProblemItem = item
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "exclamationmark.circle")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.accent)
+                                    .frame(width: 48, height: 48)
+
+                                CartPreferenceText(
+                                    item.name,
+                                    size: 16,
+                                    style: cartTypographyStyle,
+                                    cleanWeight: .semibold
+                                )
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if item.id != scopedProblemItems.last?.id {
+                            Divider()
+                                .background(OunjePalette.stroke.opacity(0.8))
+                                .padding(.leading, 60)
+                        }
+                    }
+                }
+            }
+
+            ForEach(operationalCartSections) { section in
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(section.aisle.title)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .padding(.bottom, 8)
+
+                    ForEach(section.items) { item in
+                        let quantity = mainShopQuantityDisplay(for: item)
+                        CartOperationalItemRow(
+                            item: item,
+                            quantityAmountText: quantity.amountText,
+                            quantityUnitLabel: quantity.unitLabel,
+                            isShoppingMode: isShoppingListMode,
+                            isChecked: isShoppingListMode && checkedShoppingItemIDs.contains(cartItemKey(item)),
+                            isAlreadyHave: tripOwnedItemKeys.contains(cartItemKey(item)),
+                            isTransferSelectionMode: isTransferSelectionMode,
+                            isTransferSelected: selectedTransferItemKeys.contains(cartItemKey(item)),
+                            typographyStyle: cartTypographyStyle,
+                            onTap: {
+                                if isTransferSelectionMode {
+                                    toggleTransferSelection(for: item)
+                                    if firstRunGuide.phase == .cartIngredient {
+                                        firstRunGuide.advance(to: .cartAlreadyHave)
+                                    }
+                                } else if isShoppingListMode {
+                                    toggleCheckedShoppingItem(item)
+                                    if firstRunGuide.phase == .cartChecklistInfo {
+                                        let itemKey = cartItemKey(item)
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                            guard firstRunGuide.phase == .cartChecklistInfo,
+                                                  checkedShoppingItemIDs.contains(itemKey) else { return }
+                                            firstRunGuide.advance(to: .cartChecklistDone)
+                                        }
+                                    }
+                                } else {
+                                    selectedCartItem = item
+                                }
+                            },
+                            onDecrease: { adjustMainShopQuantity(for: item, delta: -1) },
+                            onIncrease: { adjustMainShopQuantity(for: item, delta: 1) }
+                        )
+                        .equatable()
+                        .firstRunGuideTarget(
+                            cartListGuideTargetID(for: item),
+                            enabled: firstRunGuide.phase == .cartOverview
+                                || firstRunGuide.phase == .cartChecklistInfo
+                        )
+                        .firstRunGuideTarget(
+                            .cartIngredient,
+                            enabled: firstRunGuide.phase == .cartIngredient
+                                && item.id == operationalCartSections.first?.items.first?.id
+                        )
+                        .id("first-guide-cart-item-\(item.id)")
+
+                        if item.id != section.items.last?.id {
+                            Divider()
+                                .background(OunjePalette.stroke.opacity(0.8))
+                                .padding(.leading, 60)
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+
+    private var firstGuideCartItemScrollID: String? {
+        guard let itemID = operationalCartSections.first?.items.first?.id else { return nil }
+        return "first-guide-cart-item-\(itemID)"
+    }
+
+    private var firstGuideCartItemIDs: [String] {
+        Array(operationalCartSections.flatMap(\.items).prefix(5).map(\.id))
+    }
+
+    private func cartListGuideTargetID(for item: CartGroceryDisplayItem) -> FirstRunGuideTargetID? {
+        FirstRunGuideTargetID.cartListItemTarget(at: firstGuideCartItemIDs.firstIndex(of: item.id))
+    }
+
+    private func syncCartGuideInteractionState() {
+        switch firstRunGuide.phase {
+        case .cartOverview:
+            cartListScope = .toBuy
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+        case .cartAlreadyHaveIntro:
+            cartListScope = .toBuy
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+        case .cartSelect:
+            cartListScope = .toBuy
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+        case .cartIngredient:
+            cartListScope = .toBuy
+            isTransferSelectionMode = true
+            selectedTransferItemKeys.removeAll()
+        case .cartAlreadyHave:
+            cartListScope = .toBuy
+            isTransferSelectionMode = true
+            if selectedTransferItemKeys.isEmpty,
+               let item = operationalCartSections.first?.items.first {
+                selectedTransferItemKeys.insert(cartItemKey(item))
+            }
+        case .cartScope:
+            cartListScope = .toBuy
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+        case .cartRestoreInfo:
+            cartListScope = .alreadyHave
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+        case .cartShopNow:
+            cartListScope = .toBuy
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+            isShoppingListMode = false
+        case .cartChecklistInfo, .cartChecklistDone:
+            cartListScope = .toBuy
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+            isShoppingListMode = true
+        default:
+            break
+        }
+    }
+
+    private func scrollToGuideTarget(_ phase: FirstRunGuidePhase?, using proxy: ScrollViewProxy) {
+        let targetID: String?
+        switch phase {
+        case .cartIngredient, .cartAlreadyHave:
+            targetID = firstGuideCartItemScrollID
+        case .cartOverview, .cartSelect, .cartAlreadyHaveIntro, .cartScope,
+             .cartRestoreInfo, .cartShopNow, .cartChecklistInfo, .cartChecklistDone:
+            targetID = "first-guide-cart-top"
+        default:
+            targetID = nil
+        }
+        guard let targetID else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            withAnimation(OunjeMotion.quickSpring) {
+                proxy.scrollTo(targetID, anchor: phase == .cartIngredient ? .center : .top)
+            }
+        }
+    }
+
+    private var shouldShowAutomationStatus: Bool {
+        cartBuyNowStatusTone != .idle || currentInstacartCartURL != nil
+    }
+
+    private var automationStatusTitle: String {
+        let run = activeInstacartRunSummary ?? store.latestInstacartRun
+        switch cartBuyNowStatusTone {
+        case .running:
+            let total = max(run?.itemCount ?? visibleReconciledCartItems.count, 1)
+            let complete = min(run?.resolvedCount ?? 0, total)
+            return "Building cart · \(complete) of \(total) items"
+        case .partial:
+            let reviewCount = max(1, (run?.unresolvedCount ?? 0) + (run?.shortfallCount ?? 0))
+            return "\(reviewCount) \(reviewCount == 1 ? "item needs" : "items need") review"
+        case .complete:
+            return "Cart ready"
+        case .failed:
+            return "Cart build needs attention"
+        case .idle:
+            return "Instacart status"
+        }
+    }
+
+    private var cartAutomationStatusRow: some View {
+        Button(action: openInstacartRunsSheet) {
+            HStack(spacing: 12) {
+                Image(systemName: cartBuyNowStatusTone == .complete ? "checkmark.circle.fill" : "cart")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OunjePalette.accent)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OunjePalette.surface)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(automationStatusTitle)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text("Tap for status and item review")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(OunjePalette.surface.opacity(0.82))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func finishShoppingList() {
+        let pickedCount = basketItems.count
+        withAnimation(OunjeMotion.quickSpring) {
+            isShoppingListMode = false
+        }
+        if firstRunGuide.phase == .cartChecklistDone {
+            firstRunGuide.advance(to: .discover)
+        }
+        persistShoppingListState()
+        toastCenter.show(
+            title: "Shopping progress saved",
+            subtitle: pickedCount == 1
+                ? "1 item checked off."
+                : "\(pickedCount) items checked off.",
+            systemImage: "checkmark.circle.fill"
+        )
+    }
+
+    private func resetShoppingListChecks() {
+        guard !checkedShoppingItemIDs.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(OunjeMotion.quickSpring) {
+            checkedShoppingItemIDs.removeAll()
+        }
+        persistShoppingListState()
+        toastCenter.show(
+            title: "Checks reset",
+            subtitle: "Everything is back on your list.",
+            systemImage: "arrow.counterclockwise"
+        )
+    }
+
+    private func beginShoppingList() {
+        isShoppingActionPresented = false
+        withAnimation(OunjeMotion.quickSpring) {
+            cartListScope = .toBuy
+            isTransferSelectionMode = false
+            selectedTransferItemKeys.removeAll()
+            isShoppingListMode = true
+            isBasketExpanded = false
+        }
+        if firstRunGuide.phase == .cartChecklistOption {
+            firstRunGuide.advance(to: .cartChecklistInfo)
+        }
+    }
+
+    private var shoppingSheetInstacartTitle: String {
+        switch cartBuyNowStatusTone {
+        case .running:
+            return "Instacart in progress"
+        case .partial, .failed:
+            return "Needs review"
+        case .complete:
+            return currentInstacartCartURL == nil ? "View Instacart status" : "Review in Instacart"
+        case .idle:
+            return "Build Instacart cart"
+        }
+    }
+
+    private var shoppingSheetInstacartSubtitle: String {
+        switch cartBuyNowStatusTone {
+        case .running:
+            return "Ounje is matching the items in this list."
+        case .partial:
+            let run = activeInstacartRunSummary ?? store.latestInstacartRun
+            let reviewCount = max(1, (run?.unresolvedCount ?? 0) + (run?.shortfallCount ?? 0))
+            return "\(reviewCount) \(reviewCount == 1 ? "item needs" : "items need") your choice."
+        case .failed:
+            return "Open the item review and try the unresolved matches again."
+        case .complete:
+            return "Your matched items are ready for a final check."
+        case .idle:
+            return cartBuyNowDisabledReason ?? "Ounje will match these items in Instacart."
+        }
+    }
+
+    private var shoppingSheetInstacartSymbol: String {
+        switch cartBuyNowStatusTone {
+        case .running:
+            return "clock"
+        case .partial, .failed:
+            return "exclamationmark.circle"
+        case .complete:
+            return "checkmark.circle"
+        case .idle:
+            return "cart.badge.plus"
+        }
+    }
+
+    private var shoppingSheetInstacartDisabled: Bool {
+        cartBuyNowStatusTone == .idle && cartBuyNowDisabledReason != nil
+    }
+
+    private func handleShoppingSheetInstacartAction() {
+        switch cartBuyNowStatusTone {
+        case .running, .partial, .failed:
+            isShoppingActionPresented = false
+            openInstacartRunsSheet()
+        case .complete:
+            isShoppingActionPresented = false
+            if let url = currentInstacartCartURL {
+                openURL(url)
+            } else {
+                openInstacartRunsSheet()
+            }
+        case .idle:
+            guard cartBuyNowDisabledReason == nil else { return }
+            isShoppingActionPresented = false
+            startCartBuyNowRun(trigger: "cart_shop_this_list")
+        }
+    }
+
+    private func cartMappingEntry(for item: CartGroceryDisplayItem) -> CartMainShopMappingEntry? {
+        cartMainShopMappingEntries.first { $0.id == item.id }
+    }
+
+    private func markMainShopItemOnHandForTrip(_ item: CartGroceryDisplayItem) {
+        let key = cartItemKey(item)
+        guard !key.isEmpty else { return }
+        withAnimation(OunjeMotion.quickSpring) {
+            automaticHouseholdOptOutKeys.remove(key)
+            tripOwnedItemKeys.insert(key)
+            selectedCartItem = nil
+        }
+        persistTripCartState()
+        toastCenter.show(
+            title: "Already have this",
+            subtitle: item.name,
+            systemImage: "checkmark.circle.fill",
+            destination: nil,
+            actionTitle: "Undo",
+            action: { [toastCenter] in
+                tripOwnedItemKeys.remove(key)
+                automaticHouseholdOptOutKeys.insert(key)
+                persistTripCartState()
+                toastCenter.dismiss()
+            }
+        )
+    }
+
+    private func toggleMainShopItemOnHandForTrip(_ item: CartGroceryDisplayItem) {
+        let key = cartItemKey(item)
+        guard !key.isEmpty else { return }
+
+        if tripOwnedItemKeys.contains(key) {
+            withAnimation(OunjeMotion.quickSpring) {
+                tripOwnedItemKeys.remove(key)
+                automaticHouseholdOptOutKeys.insert(key)
+                selectedCartItem = nil
+            }
+            persistTripCartState()
+            toastCenter.show(
+                title: "Back on shop list",
+                subtitle: item.name,
+                systemImage: "cart.badge.plus",
+                destination: nil,
+                actionTitle: "Undo",
+                action: { [toastCenter] in
+                    automaticHouseholdOptOutKeys.remove(key)
+                    tripOwnedItemKeys.insert(key)
+                    persistTripCartState()
+                    toastCenter.dismiss()
+                }
+            )
+        } else {
+            markMainShopItemOnHandForTrip(item)
+        }
+    }
+
+    private func loadTripCartState() {
+        migratePlanScopedKitchenInventoryIfNeeded()
+        tripOwnedItemKeys = decodedStringSet(forKey: tripOwnedPersistenceKey)
+        automaticHouseholdOptOutKeys = decodedStringSet(forKey: automaticHouseholdOptOutPersistenceKey)
+        resolvedReviewItemKeys = decodedStringSet(forKey: reviewResolutionPersistenceKey)
+        applyAutomaticHouseholdDefaults()
+    }
+
+    private func migratePlanScopedKitchenInventoryIfNeeded() {
+        let defaults = UserDefaults.standard
+        let migrationKey = "ounje.cart.on-hand-migrated-v2::\(kitchenInventoryPersistenceScope)"
+        guard !defaults.bool(forKey: migrationKey) else { return }
+        defer { defaults.set(true, forKey: migrationKey) }
+        let ownedPrefix = "ounje.cart.on-hand.v1::\(kitchenInventoryPersistenceScope)::"
+        let optOutPrefix = "ounje.cart.household-opt-out.v1::\(kitchenInventoryPersistenceScope)::"
+        let allKeys = defaults.dictionaryRepresentation().keys
+
+        var ownedKeys = decodedStringSet(forKey: tripOwnedPersistenceKey)
+        var optOutKeys = decodedStringSet(forKey: automaticHouseholdOptOutPersistenceKey)
+        var migratedKeys: [String] = []
+
+        for key in allKeys where key.hasPrefix(ownedPrefix) {
+            ownedKeys.formUnion(decodedStringSet(forKey: key))
+            migratedKeys.append(key)
+        }
+        for key in allKeys where key.hasPrefix(optOutPrefix) {
+            optOutKeys.formUnion(decodedStringSet(forKey: key))
+            migratedKeys.append(key)
         }
 
-        openInstacartRunsSheet()
+        guard !migratedKeys.isEmpty else { return }
+        optOutKeys.subtract(ownedKeys)
+        encodeStringSet(ownedKeys, forKey: tripOwnedPersistenceKey)
+        encodeStringSet(optOutKeys, forKey: automaticHouseholdOptOutPersistenceKey)
+        migratedKeys.forEach(defaults.removeObject(forKey:))
+    }
+
+    private func persistTripCartState() {
+        encodeStringSet(tripOwnedItemKeys, forKey: tripOwnedPersistenceKey)
+        encodeStringSet(automaticHouseholdOptOutKeys, forKey: automaticHouseholdOptOutPersistenceKey)
+        encodeStringSet(resolvedReviewItemKeys, forKey: reviewResolutionPersistenceKey)
+    }
+
+    private var automaticHouseholdDefaultsSignature: String {
+        planScopedCartItems
+            .map(cartItemKey)
+            .sorted()
+            .joined(separator: "|")
+    }
+
+    private func applyAutomaticHouseholdDefaults() {
+        let householdCanonicalKeys: Set<String> = [
+            "salt", "black pepper", "granulated sugar", "honey"
+        ]
+        let defaultOwnedKeys = Set(
+            planScopedCartItems.compactMap { item -> String? in
+                let canonicalKey = ShoppingIngredientCanonicalizer.match(for: item.name).key
+                let itemKey = cartItemKey(item)
+                guard householdCanonicalKeys.contains(canonicalKey),
+                      !itemKey.isEmpty,
+                      !automaticHouseholdOptOutKeys.contains(itemKey) else {
+                    return nil
+                }
+                return itemKey
+            }
+        )
+        let updatedOwnedKeys = tripOwnedItemKeys.union(defaultOwnedKeys)
+        guard updatedOwnedKeys != tripOwnedItemKeys else { return }
+        tripOwnedItemKeys = updatedOwnedKeys
+        persistTripCartState()
+    }
+
+    private func decodedStringSet(forKey key: String) -> Set<String> {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let values = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(values)
+    }
+
+    private func encodeStringSet(_ values: Set<String>, forKey key: String) {
+        guard let data = try? JSONEncoder().encode(values.sorted()) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    private func resolveProblemItem(_ item: CartProblemItem, correctedName: String) {
+        let corrected = correctedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !corrected.isEmpty else { return }
+        let key = Self.normalizedIngredientKey(item.name)
+        resolvedReviewItemKeys.insert(key)
+        persistTripCartState()
+        selectedProblemItem = nil
+        store.correctMainShopItemName(originalName: item.name, correctedName: corrected)
+        toastCenter.show(
+            title: "Item corrected",
+            subtitle: corrected,
+            systemImage: "checkmark.circle.fill"
+        )
+    }
+
+    private func dismissProblemItem(_ item: CartProblemItem) {
+        resolvedReviewItemKeys.insert(Self.normalizedIngredientKey(item.name))
+        persistTripCartState()
+        selectedProblemItem = nil
     }
 
     private func openInstacartRunsSheet() {
@@ -499,12 +1409,6 @@ struct CartTabView: View {
                 accessToken: session?.accessToken
             )
         }
-    }
-
-    private var isCartWorkAnimating: Bool {
-        isInstacartShoppingActivelyRunning
-            || store.hasLiveInstacartActivity
-            || isLoadingIngredients
     }
 
     private var isInstacartShoppingActivelyRunning: Bool {
@@ -531,51 +1435,6 @@ struct CartTabView: View {
         return false
     }
 
-    private func liveRunLogsButtonShell<Content: View>(
-        isActive: Bool,
-        activeChrome: Bool = true,
-        pulseScale: CGFloat = 1.0,
-        glowOpacity: Double = 0.0,
-        ringScale: CGFloat = 1.0,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        HStack(spacing: 8) {
-            ZStack {
-                if isActive {
-                    if activeChrome {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(OunjePalette.accent.opacity(0.16))
-                            .frame(width: 44, height: 44)
-                            .scaleEffect(ringScale)
-                            .opacity(glowOpacity)
-                            .blur(radius: 0.5)
-                    }
-
-                    if activeChrome {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(OunjePalette.surface.opacity(0.92))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(OunjePalette.accent.opacity(0.68), lineWidth: 1)
-                            )
-                            .shadow(color: OunjePalette.accent.opacity(0.42), radius: 16, x: 0, y: 5)
-                    }
-                } else {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(OunjePalette.surface.opacity(0.84))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                        )
-                }
-
-                content()
-            }
-            .frame(width: isActive && !activeChrome ? 34 : 46, height: isActive && !activeChrome ? 34 : 46)
-            .scaleEffect(isActive ? pulseScale : 1.0)
-        }
-    }
-
     private var activeRecipeIDs: [String] {
         (store.latestPlan?.recipes ?? []).map(\.recipe.id)
     }
@@ -591,87 +1450,23 @@ struct CartTabView: View {
         return [batchKey, recipeKey, groceryKey, snapshotKey].joined(separator: "::")
     }
 
-    private var cartTrackingReloadKey: String {
-        let userKey = store.authSession?.userID ?? "signed-out"
-        let tokenKey = store.authSession?.accessToken?.suffix(18) ?? "no-token"
-        return "cart-tracking::\(userKey)::\(tokenKey)"
-    }
-
     private var shoppingListSignature: String {
         let itemKey = visibleReconciledCartItems.map(\.id).joined(separator: "|")
         return itemKey.isEmpty ? "empty" : itemKey
     }
 
     private var shoppingListPersistenceKey: String {
-        let userKey = store.authSession?.userID ?? store.resolvedTrackingSession?.userID ?? "signed-out"
-        return "ounje.cart.shopping.v1::\(userKey)::\(shoppingListSignature)"
+        "ounje.cart.shopping.v2::\(tripCartPersistenceScope)"
     }
 
     private var shouldShowEmptyCartState: Bool {
         activeRecipeIDs.isEmpty && displayGroceryItems.isEmpty && visibleReconciledCartItems.isEmpty
     }
 
-    private var shouldShowLiveCartContent: Bool {
-        !shouldShowEmptyCartState
-    }
-
-    private var cartSummaryLine: String {
-        if displayMode == .reconciled, !visibleReconciledCartItems.isEmpty {
-            let itemLabel = visibleReconciledCartItems.count == 1 ? "shop item" : "shop items"
-            if let boxedCartCoverageSummary, !boxedCartCoverageSummary.isFullyAccountedFor {
-                let uncoveredCount = boxedCartCoverageSummary.actionableUncoveredBaseLabels.count
-                return "\(visibleReconciledCartItems.count) \(itemLabel) ready • \(uncoveredCount) unmatched"
-            }
-            return "\(visibleReconciledCartItems.count) \(itemLabel) ready"
-        }
-
-        let recipeCount = displayIngredientGroups.count
-        let ingredientCount = displayMode == .grid
-            ? allIngredientCards.count
-            : displayIngredientGroups.reduce(0) { $0 + $1.ingredients.count }
-        if recipeCount > 0 || ingredientCount > 0 {
-            let recipeLabel = recipeCount == 1 ? "recipe" : "recipes"
-            let ingredientLabel = ingredientCount == 1 ? "ingredient" : "ingredients"
-            return "\(recipeCount) \(recipeLabel) • \(ingredientCount) \(ingredientLabel)"
-        }
-        return "Next prep ingredients"
-    }
-
-    private var displayIngredientGroups: [CartIngredientGroup] {
-        guard let latestPlan = store.latestPlan else { return [] }
-
-        return latestPlan.recipes.compactMap { plannedRecipe in
-            let sourceRows = ingredientRows
-                .filter { $0.recipeID == plannedRecipe.recipe.id }
-                .filter { !isHiddenMainShopRelatedItem(named: $0.displayTitle) }
-
-            let fallbackRows = plannedRecipe.recipe.ingredients.enumerated().map { index, ingredient in
-                SupabaseRecipeIngredientRow(
-                    id: "\(plannedRecipe.recipe.id)::fallback::\(index)",
-                    recipeID: plannedRecipe.recipe.id,
-                    ingredientID: nil,
-                    displayName: ingredient.name,
-                    quantityText: CartQuantityFormatter.format(amount: ingredient.amount, unit: ingredient.unit),
-                    imageURLString: nil,
-                    sortOrder: index
-                )
-            }
-            .filter {
-                !isHiddenMainShopRelatedItem(named: $0.displayTitle)
-                && !isOwnedMainShopRelatedItem(named: $0.displayTitle)
-            }
-
-            let rows = sourceRows.isEmpty ? fallbackRows : sourceRows
-            guard !rows.isEmpty else { return nil }
-
-            return CartIngredientGroup(
-                recipeID: plannedRecipe.recipe.id,
-                recipeTitle: plannedRecipe.recipe.title,
-                servings: plannedRecipe.servings,
-                cookTimeMinutes: plannedRecipe.recipe.prepMinutes,
-                ingredients: rows
-            )
-            }
+    private var shouldShowUnavailableCartState: Bool {
+        !activeRecipeIDs.isEmpty
+            && !isLoadingIngredients
+            && planScopedCartItems.isEmpty
     }
 
     private func isHiddenMainShopRelatedItem(
@@ -750,202 +1545,18 @@ struct CartTabView: View {
         cartDisplayItems
     }
 
-    private var visibleCartItems: [CartGroceryDisplayItem] {
-        displayMode == .reconciled ? visibleReconciledCartItems : displayGroceryItems
-    }
-
     private var visibleReconciledCartItems: [CartGroceryDisplayItem] {
-        guard !store.hiddenMainShopItemKeys.isEmpty else {
-            return reconciledCartItems.filter {
-                !isOwnedMainShopRelatedItem(named: $0.name, removalKey: $0.removalKey)
-            }
-        }
-
-        return reconciledCartItems.filter { item in
-            !isHiddenMainShopRelatedItem(named: item.name, removalKey: item.removalKey)
-            && !isOwnedMainShopRelatedItem(named: item.name, removalKey: item.removalKey)
+        planScopedCartItems.filter { item in
+            !tripOwnedItemKeys.contains(cartItemKey(item))
         }
     }
 
     private var hasSourceCartContent: Bool {
-        !displayIngredientGroups.isEmpty || !displayGroceryItems.isEmpty
+        !ingredientRows.isEmpty || !displayGroceryItems.isEmpty
     }
 
     private var hasRenderedCartContent: Bool {
         !ingredientRows.isEmpty || !cartDisplayItems.isEmpty || !reconciledCartItems.isEmpty
-    }
-
-    private var allIngredientCards: [SupabaseRecipeIngredientRow] {
-        var seen = Set<String>()
-        return displayIngredientGroups
-            .flatMap(\.ingredients)
-            .filter { ingredient in
-                guard !isHiddenMainShopRelatedItem(named: ingredient.displayTitle) else { return false }
-                guard !isOwnedMainShopRelatedItem(named: ingredient.displayTitle) else { return false }
-                let key = Self.normalizedIngredientKey(ingredient.displayName)
-                return seen.insert(key).inserted
-        }
-    }
-
-    @ViewBuilder
-    private var cartDisplayContent: some View {
-        switch displayMode {
-        case .recipes:
-            VStack(spacing: 18) {
-                ForEach(displayIngredientGroups) { group in
-                    CartRecipeListCard(
-                        group: group,
-                        isCollapsed: collapsedRecipeGroupIDs.contains(group.id),
-                        onToggleCollapsed: {
-                            withAnimation(OunjeMotion.quickSpring) {
-                                if collapsedRecipeGroupIDs.contains(group.id) {
-                                    collapsedRecipeGroupIDs.remove(group.id)
-                                } else {
-                                    collapsedRecipeGroupIDs.insert(group.id)
-                                }
-                            }
-                        }
-                    )
-                }
-            }
-        case .grid:
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 18, alignment: .top), count: 4),
-                spacing: 24
-            ) {
-                ForEach(allIngredientCards) { ingredient in
-                    CartFlatIngredientTile(ingredient: ingredient)
-                }
-            }
-        case .reconciled:
-            VStack(alignment: .leading, spacing: 18) {
-                if let ingredientLoadError {
-                    CartMainShopRetryState(
-                        message: ingredientLoadError,
-                        onOpenRuns: {
-                            isRunLogsPresented = true
-                            Task {
-                                let session = await store.freshUserDataSession()
-                                await instacartRunLogsStore.refresh(
-                                    userID: session?.userID,
-                                    accessToken: session?.accessToken
-                                )
-                            }
-                        }
-                    )
-                }
-
-                if shouldShowCartUpdatingBanner {
-                    CartMainShopUpdatingBanner()
-                }
-
-                if let quote = store.latestPlan?.bestQuote, !quote.reviewItems.isEmpty {
-                    ProviderCartReviewCard(quote: quote)
-                }
-
-                if let boxedCartCoverageSummary, !boxedCartCoverageSummary.isFullyAccountedFor {
-                    CartUnmatchedItemsNotice(summary: boxedCartCoverageSummary)
-                }
-
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text("Shop list")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(OunjePalette.primaryText)
-
-                    Spacer(minLength: 0)
-
-                    if displayMode == .reconciled {
-                        HStack(spacing: 8) {
-                            Button(action: toggleShoppingListMode) {
-                                Image(systemName: isShoppingListMode ? "checklist.checked" : "checklist")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(isShoppingListMode ? OunjePalette.primaryText : OunjePalette.secondaryText)
-                                    .frame(width: 32, height: 32)
-                                    .background(
-                                        Circle()
-                                            .fill(isShoppingListMode ? OunjePalette.accent.opacity(0.92) : OunjePalette.surface.opacity(0.9))
-                                            .overlay(
-                                                Circle()
-                                                    .stroke(isShoppingListMode ? OunjePalette.accent.opacity(0.75) : OunjePalette.stroke, lineWidth: 1)
-                                            )
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(isShoppingListMode ? "Turn off shopping list mode" : "Turn on shopping list mode")
-
-                            Button(action: {
-                                isCartMappingPresented = true
-                            }) {
-                                Label("How grouped", systemImage: "square.stack.3d.up")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        Capsule(style: .continuous)
-                                            .fill(OunjePalette.surface.opacity(0.9))
-                                            .overlay(
-                                                Capsule(style: .continuous)
-                                                    .stroke(OunjePalette.stroke, lineWidth: 1)
-                                            )
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Show how this shop list was grouped")
-                        }
-                    }
-                }
-
-                if isLoadingIngredients && !visibleReconciledCartItems.isEmpty {
-                    CartMainShopLoadingState()
-                } else if visibleReconciledCartItems.isEmpty {
-                    if isLoadingIngredients || hasRenderedCartContent || hasSourceCartContent {
-                        CartMainShopLoadingState()
-                    } else {
-                        CartMainShopEmptyState()
-                    }
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(visibleReconciledCartItems.enumerated()), id: \.element.id) { index, item in
-                            let quantityDisplay = mainShopQuantityDisplay(for: item)
-
-                            if shouldShowMainShopDemarcation(
-                                beforeIndex: index,
-                                in: visibleReconciledCartItems
-                            ) {
-                                CartMainShopDemarcationRow(kind: item.sectionKind)
-                                    .padding(.top, index == 0 ? 0 : 8)
-                                    .padding(.bottom, 6)
-                            }
-
-                            CartGroceryLineItemRow(
-                                item: item,
-                                quantityCount: quantityDisplay.count,
-                                quantityUnitLabel: quantityDisplay.unitLabel,
-                                isShoppingListMode: isShoppingListMode,
-                                isChecked: checkedShoppingItemIDs.contains(item.id)
-                            ) {
-                                adjustMainShopQuantity(for: item, delta: -1)
-                            } onIncreaseQuantity: {
-                                adjustMainShopQuantity(for: item, delta: 1)
-                            } onToggleChecked: {
-                                toggleCheckedShoppingItem(item)
-                            } onRemove: {
-                                removeMainShopItem(item)
-                            } onMarkOwned: {
-                                markMainShopItemOwned(item)
-                            }
-                            if index < visibleReconciledCartItems.count - 1 {
-                                Divider()
-                                    .background(OunjePalette.stroke.opacity(0.85))
-                                    .padding(.leading, 68)
-                                    .padding(.vertical, 3)
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     private var shouldShowCartUpdatingBanner: Bool {
@@ -1141,6 +1752,7 @@ struct CartTabView: View {
         )
         return CartMainShopQuantityDisplay(
             count: resolvedCount,
+            amountText: override == nil ? parsed?.amountText ?? "\(resolvedCount)" : "\(resolvedCount)",
             unitLabel: resolvedUnit,
             baseCount: baseCount
         )
@@ -1153,11 +1765,13 @@ struct CartTabView: View {
     }
 
     private func toggleCheckedShoppingItem(_ item: CartGroceryDisplayItem) {
+        let key = cartItemKey(item)
+        guard !key.isEmpty else { return }
         withAnimation(OunjeMotion.quickSpring) {
-            if checkedShoppingItemIDs.contains(item.id) {
-                checkedShoppingItemIDs.remove(item.id)
+            if checkedShoppingItemIDs.contains(key) {
+                checkedShoppingItemIDs.remove(key)
             } else {
-                checkedShoppingItemIDs.insert(item.id)
+                checkedShoppingItemIDs.insert(key)
             }
         }
         persistShoppingListState()
@@ -1169,8 +1783,8 @@ struct CartTabView: View {
             checkedShoppingItemIDs = []
             return
         }
-        let visibleIDs = Set(visibleReconciledCartItems.map(\.id))
-        checkedShoppingItemIDs = Set(ids).intersection(visibleIDs)
+        let visibleKeys = Set(planScopedCartItems.map(cartItemKey))
+        checkedShoppingItemIDs = Set(ids).intersection(visibleKeys)
     }
 
     private func persistShoppingListState() {
@@ -1191,6 +1805,25 @@ struct CartTabView: View {
             return count == 1 ? "item" : "items"
         }
 
+        let leadingUnit = normalized.split(separator: " ").first.map(String.init) ?? normalized
+        if ["g", "gram", "grams"].contains(leadingUnit) {
+            return "g"
+        }
+        if ["kg", "kilogram", "kilograms"].contains(leadingUnit) {
+            return "kg"
+        }
+        if ["oz", "ounce", "ounces"].contains(leadingUnit) {
+            return "oz"
+        }
+        if ["lb", "lbs", "pound", "pounds"].contains(leadingUnit) {
+            return "lb"
+        }
+        if ["ml", "milliliter", "milliliters", "millilitre", "millilitres"].contains(leadingUnit) {
+            return "ml"
+        }
+        if ["l", "liter", "liters", "litre", "litres"].contains(leadingUnit) {
+            return "l"
+        }
         if normalized.contains("tablespoon") || normalized.contains("tbsp") {
             return "tbsp"
         }
@@ -1200,19 +1833,6 @@ struct CartTabView: View {
         if normalized.contains("cup") {
             return count == 1 ? "cup" : "cups"
         }
-        if normalized.contains("pound") || normalized == "lb" || normalized == "lbs" {
-            return "lb"
-        }
-        if normalized.contains("ounce") || normalized == "oz" {
-            return "oz"
-        }
-        if normalized.contains("kilogram") || normalized == "kg" {
-            return "kg"
-        }
-        if normalized.contains("gram") || normalized == "g" {
-            return "g"
-        }
-
         let canonicalToken = normalized
             .split(separator: " ")
             .first
@@ -1787,8 +2407,7 @@ struct CartTabView: View {
 
     private func isMainShopNameRepresented(
         _ candidateName: String,
-        in items: [CartGroceryDisplayItem],
-        similarityThreshold: Int = 70
+        in items: [CartGroceryDisplayItem]
     ) -> Bool {
         let candidateKey = Self.semanticMainShopMergeKey(candidateName)
         guard !candidateKey.isEmpty else { return false }
@@ -1796,20 +2415,14 @@ struct CartTabView: View {
         return items.contains { item in
             let itemKey = Self.semanticMainShopMergeKey(item.name)
             return itemKey == candidateKey
-                || ingredientSimilarityScore(lhs: candidateName, rhs: item.name) >= similarityThreshold
-                || ingredientSimilarityScore(
-                    lhs: Self.canonicalMainShopDisplayName(candidateName),
-                    rhs: Self.canonicalMainShopDisplayName(item.name)
-                ) >= similarityThreshold
         }
     }
 
     private func mergeLexicallyIdenticalMainShopItems(_ items: [CartGroceryDisplayItem]) -> [CartGroceryDisplayItem] {
         struct Aggregate {
             var item: CartGroceryDisplayItem
-            var totalCount: Int
+            var totalAmount: Double
             var preferredUnitLabel: String
-            var preferredUnitRank: Int
             var supportingParts: Set<String>
         }
 
@@ -1819,26 +2432,35 @@ struct CartTabView: View {
         for item in items {
             guard !Self.isExcludedMainShopIngredient(item.name) else { continue }
             let displayName = Self.canonicalMainShopDisplayName(item.name)
-            let key = Self.semanticMainShopMergeKey(displayName)
-            guard !key.isEmpty else { continue }
-
             let parsed = CartQuantityFormatter.mainShopDisplayComponents(from: item.quantityText)
-            let count = max(1, parsed?.roundedCount ?? 1)
-            let rawUnit = parsed?.unitLabel ?? "items"
-            let unitRank = canonicalMainShopUnitRank(rawUnit)
+            let resolvedMeasurement = ShoppingIngredientCanonicalizer.resolvedMeasurement(
+                amount: parsed?.amount ?? 1,
+                unit: parsed?.unitLabel ?? "items"
+            )
+            let rawUnit = resolvedMeasurement.unit
+            let ingredientKey = Self.semanticMainShopMergeKey(displayName)
+            guard !ingredientKey.isEmpty else { continue }
+            let key = ingredientKey
+
+            let amount = max(0, resolvedMeasurement.amount)
             let supportingParts = splitSupportingText(item.supportingText)
 
             if var existing = aggregates[key] {
-                existing.totalCount += count
+                let mergedMeasurement = ShoppingIngredientCanonicalizer.mergedMeasurement(
+                    amount: existing.totalAmount,
+                    unit: existing.preferredUnitLabel,
+                    adding: amount,
+                    unit: rawUnit
+                )
+                existing.totalAmount = mergedMeasurement.amount
+                existing.preferredUnitLabel = mergedMeasurement.unit
                 existing.supportingParts.formUnion(supportingParts)
                 let preferredItem = preferredMergedMainShopItem(existing.item, item)
-
-                if unitRank > existing.preferredUnitRank {
-                    existing.preferredUnitRank = unitRank
-                    existing.preferredUnitLabel = normalizedMainShopUnitLabel(rawUnit, count: existing.totalCount)
-                } else {
-                    existing.preferredUnitLabel = normalizedMainShopUnitLabel(existing.preferredUnitLabel, count: existing.totalCount)
-                }
+                let displayCount = max(1, Int(ceil(existing.totalAmount)))
+                existing.preferredUnitLabel = normalizedMainShopUnitLabel(
+                    existing.preferredUnitLabel,
+                    count: displayCount
+                )
 
                 let chosenImage = preferredItem.imageURL ?? existing.item.imageURL ?? item.imageURL
                 let chosenSection = preferredItem.sectionKind.rawValue < existing.item.sectionKind.rawValue
@@ -1847,31 +2469,34 @@ struct CartTabView: View {
 
                 existing.item = CartGroceryDisplayItem(
                     name: Self.canonicalMainShopDisplayName(preferredItem.name),
-                    quantityText: "\(existing.totalCount) \(existing.preferredUnitLabel)",
+                    quantityText: CartQuantityFormatter.format(
+                        amount: existing.totalAmount,
+                        unit: existing.preferredUnitLabel
+                    ),
                     supportingText: combinedSupportingText(from: existing.supportingParts),
                     imageURL: chosenImage,
                     estimatedPriceText: preferredItem.estimatedPriceText ?? existing.item.estimatedPriceText ?? item.estimatedPriceText,
                     estimatedPriceValue: existing.item.estimatedPriceValue + item.estimatedPriceValue,
                     sectionKind: chosenSection,
-                    removalKey: preferredItem.removalKey ?? existing.item.removalKey ?? item.removalKey ?? key
+                    removalKey: preferredItem.removalKey ?? existing.item.removalKey ?? item.removalKey ?? ingredientKey
                 )
                 aggregates[key] = existing
             } else {
-                let normalizedUnit = normalizedMainShopUnitLabel(rawUnit, count: count)
+                let displayCount = max(1, Int(ceil(amount)))
+                let normalizedUnit = normalizedMainShopUnitLabel(rawUnit, count: displayCount)
                 aggregates[key] = Aggregate(
                     item: CartGroceryDisplayItem(
                         name: displayName,
-                        quantityText: "\(count) \(normalizedUnit)",
+                        quantityText: CartQuantityFormatter.format(amount: amount, unit: normalizedUnit),
                         supportingText: combinedSupportingText(from: supportingParts),
                         imageURL: item.imageURL,
                         estimatedPriceText: item.estimatedPriceText,
                         estimatedPriceValue: item.estimatedPriceValue,
                         sectionKind: item.sectionKind,
-                        removalKey: key
+                        removalKey: ingredientKey
                     ),
-                    totalCount: count,
+                    totalAmount: amount,
                     preferredUnitLabel: normalizedUnit,
-                    preferredUnitRank: unitRank,
                     supportingParts: supportingParts
                 )
                 order.append(key)
@@ -2142,7 +2767,19 @@ struct CartTabView: View {
             || normalizedName.contains("chips")
             || normalizedName.contains("beans")
             || normalizedName.contains("stock")
-            || normalizedName.contains("broth") {
+            || normalizedName.contains("broth")
+            || normalizedName.contains("powder")
+            || normalizedName.contains("granules")
+            || normalizedName.contains("seasoning")
+            || normalizedName.contains("paprika")
+            || normalizedName.contains("cayenne")
+            || normalizedName.contains("black pepper")
+            || normalizedName.contains("peppercorn")
+            || normalizedName.contains("chili flakes")
+            || normalizedName.contains("red pepper flakes")
+            || normalizedName.contains("cumin")
+            || normalizedName.contains("turmeric")
+            || normalizedName.contains("cinnamon") {
             return .dryGoods
         }
         if normalizedName.contains("romaine")
@@ -2245,8 +2882,10 @@ struct CartTabView: View {
             coveredDemandIDs.formUnion(demandIDs)
 
             for component in components {
-                let key = Self.normalizedIngredientKey(component.displayName)
-                guard !key.isEmpty else { continue }
+                let ingredientKey = Self.semanticMainShopMergeKey(component.displayName)
+                guard !ingredientKey.isEmpty else { continue }
+                let unitKey = ShoppingIngredientCanonicalizer.normalizedUnitKey(component.unit)
+                let key = "\(ingredientKey)::\(unitKey)"
 
                 if var existing = nodesByKey[key] {
                     let mergedBaseNames = existing.baseItemNames.union(component.baseItemNames)
@@ -2402,13 +3041,7 @@ struct CartTabView: View {
         }()
         let supportingText = supportingParts.isEmpty ? nil : supportingParts.joined(separator: " • ")
 
-        guard let rule = packageRule else {
-            return (CartQuantityFormatter.format(amount: amount, unit: unit), supportingText)
-        }
-
-        let packageCount = max(1, Int(ceil(amount / rule.packageSize)))
-        let label = packageCount == 1 ? rule.singularLabel : rule.pluralLabel
-        return ("\(packageCount) \(label)", supportingText)
+        return (CartQuantityFormatter.format(amount: amount, unit: unit), supportingText)
     }
 
     private func resolvedCartDisplayName(
@@ -2458,30 +3091,15 @@ struct CartTabView: View {
     }
 
     private static func isExcludedMainShopIngredient(_ value: String) -> Bool {
-        false
+        ShoppingIngredientCanonicalizer.isNonShoppingWater(value)
     }
 
     private static func semanticMainShopMergeKey(_ value: String) -> String {
-        let normalized = normalizedIngredientKey(canonicalMainShopDisplayName(value))
-        guard !normalized.isEmpty else { return "" }
-        let tokens = normalized
-            .split(separator: " ")
-            .map { normalizedMainShopToken(String($0)) }
-            .filter { !$0.isEmpty }
-        let key = tokens.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return key.isEmpty ? normalized : key
+        ShoppingIngredientCanonicalizer.match(for: value).key
     }
 
     private static func canonicalMainShopDisplayName(_ rawName: String) -> String {
-        let normalized = normalizedIngredientKey(rawName)
-        guard !normalized.isEmpty else { return prettifiedShoppingName(rawName) }
-
-        let tokens = normalized
-            .split(separator: " ")
-            .map { normalizedMainShopToken(String($0)) }
-            .filter { !$0.isEmpty }
-        let canonical = tokens.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return prettifiedShoppingName(canonical.isEmpty ? normalized : canonical)
+        ShoppingIngredientCanonicalizer.match(for: rawName).displayName
     }
 
     private static func normalizedMainShopToken(_ value: String) -> String {
@@ -2537,57 +3155,14 @@ struct CartTabView: View {
 
         let hasMainShopItems = !latestPlan.groceryItems.isEmpty
         let signature = mainShopSignature(for: latestPlan.groceryItems)
-        let snapshot = latestPlan.mainShopSnapshot
-        let canRenderStoredSnapshotImmediately = allowSnapshotFastPath
-            && !forceRebuild
-            && hasMainShopItems
-            && snapshot?.signature == signature
-            && snapshot?.items.allSatisfy({ $0.sectionKindRawValue != nil }) == true
-
-        if canRenderStoredSnapshotImmediately, let snapshot {
-            ingredientLoadError = nil
-            reconciledCartItems = mergeLexicallyIdenticalMainShopItems(
-                makeReconciledCartItems(fromSnapshotItems: snapshot.items)
-            )
-            boxedCartCoverageSummary = makeBoxedCoverageSummary(fromSnapshotSummary: snapshot.coverageSummary)
-            focusedRecipeID = nil
-            prewarmCartArtwork(rows: [], cartItems: cartDisplayItems, reconciledItems: reconciledCartItems)
-        }
-
-        let canRenderMainShopFallbackImmediately = hasMainShopItems && !canRenderStoredSnapshotImmediately
-        if canRenderMainShopFallbackImmediately {
-            let fallbackCartItems = buildCartDisplayItems(from: latestPlan.groceryItems, ingredientRows: [])
-            cartDisplayItems = fallbackCartItems
-            reconciledCartItems = mergeLexicallyIdenticalMainShopItems(
-                ensureMainShopCoverage(
-                    reconciledItems: buildReconciledCartDisplayItems(
-                        from: latestPlan.groceryItems,
-                        ingredientRows: []
-                    ),
-                    from: latestPlan.groceryItems,
-                    ingredientRows: []
-                )
-            )
-            boxedCartCoverageSummary = nil
-            focusedRecipeID = nil
-            prewarmCartArtwork(rows: [], cartItems: fallbackCartItems, reconciledItems: reconciledCartItems)
-        }
-
         let preserveVisibleContent = hasRenderedCartContent
-        let shouldBlockForLoad = !canRenderStoredSnapshotImmediately
-            && !canRenderMainShopFallbackImmediately
-            && !preserveVisibleContent
-        isLoadingIngredients = shouldBlockForLoad
+        isLoadingIngredients = !preserveVisibleContent
         ingredientLoadError = nil
         if !preserveVisibleContent {
             ingredientRows = []
-            if !canRenderMainShopFallbackImmediately {
-                cartDisplayItems = []
-            }
-            if !canRenderStoredSnapshotImmediately && !canRenderMainShopFallbackImmediately {
-                reconciledCartItems = []
-                boxedCartCoverageSummary = nil
-            }
+            cartDisplayItems = []
+            reconciledCartItems = []
+            boxedCartCoverageSummary = nil
         }
         focusedRecipeID = nil
         defer { isLoadingIngredients = false }
@@ -2598,6 +3173,50 @@ struct CartTabView: View {
                 guard !Task.isCancelled else { return }
             }
 
+            let storedSnapshot = allowSnapshotFastPath
+                ? latestPlan.mainShopSnapshot.flatMap { snapshot in
+                    snapshot.signature == signature
+                        && snapshot.items.allSatisfy { $0.sectionKindRawValue != nil }
+                        ? snapshot
+                        : nil
+                }
+                : nil
+            let cachedSnapshot: MainShopSnapshot?
+            if let storedSnapshot {
+                cachedSnapshot = storedSnapshot
+            } else {
+                cachedSnapshot = await CartSupportWarmupService.cachedSnapshot(for: latestPlan)
+            }
+
+            let initialSnapshot: MainShopSnapshot
+            if let cachedSnapshot, !forceRebuild {
+                initialSnapshot = cachedSnapshot
+            } else {
+                let groceryItems = latestPlan.groceryItems
+                initialSnapshot = await Task.detached(priority: .userInitiated) {
+                    MainShopSnapshotBuilder.buildLocalSnapshot(for: groceryItems)
+                }.value
+                guard !Task.isCancelled else { return }
+                await CartSupportWarmupCache.shared.store(snapshot: initialSnapshot, for: latestPlan)
+            }
+
+            guard let planAfterSnapshot = store.latestPlan,
+                  planAfterSnapshot.id == latestPlan.id,
+                  mainShopSignature(for: planAfterSnapshot.groceryItems) == signature else {
+                return
+            }
+
+            if hasMainShopItems {
+                let initialItems = makeReconciledCartItems(fromSnapshotItems: initialSnapshot.items)
+                reconciledCartItems = initialItems
+                cartDisplayItems = initialItems
+                boxedCartCoverageSummary = makeBoxedCoverageSummary(
+                    fromSnapshotSummary: initialSnapshot.coverageSummary
+                )
+                isLoadingIngredients = false
+                prewarmCartArtwork(rows: [], cartItems: [], reconciledItems: initialItems)
+            }
+
             let rows = try await cachedOrLoadedPrepRecipeIngredientRows(from: latestPlan)
             guard !Task.isCancelled else { return }
             guard let activePlan = store.latestPlan,
@@ -2606,96 +3225,21 @@ struct CartTabView: View {
                 return
             }
             ingredientRows = rows
-            cartDisplayItems = buildCartDisplayItems(
-                from: activePlan.groceryItems,
-                ingredientRows: rows
-            )
-            let canRenderStoredSnapshot = allowSnapshotFastPath
-                && !forceRebuild
-                && hasMainShopItems
-                && snapshot?.signature == signature
-                && snapshot?.items.allSatisfy({ $0.sectionKindRawValue != nil }) == true
-
-            guard hasMainShopItems else {
-                ingredientLoadError = nil
-                reconciledCartItems = mergeLexicallyIdenticalMainShopItems(
-                    ensureMainShopCoverage(
-                        reconciledItems: [],
-                        from: [],
-                        ingredientRows: rows
-                    )
-                )
-                boxedCartCoverageSummary = nil
-                focusedRecipeID = nil
-                prewarmCartArtwork(
-                    rows: rows,
-                    cartItems: cartDisplayItems,
-                    reconciledItems: reconciledCartItems
-                )
-                return
-            }
-
-            if canRenderStoredSnapshot, let snapshot {
-                ingredientLoadError = nil
-                reconciledCartItems = incrementalMainShopItemsFromSnapshot(
-                    snapshotItems: snapshot.items,
-                    groceryItems: activePlan.groceryItems,
+            if reconciledCartItems.isEmpty {
+                let fallbackItems = ensureMainShopCoverage(
+                    reconciledItems: [],
+                    from: activePlan.groceryItems,
                     ingredientRows: rows
                 )
-                boxedCartCoverageSummary = makeBoxedCoverageSummary(fromSnapshotSummary: snapshot.coverageSummary)
-                focusedRecipeID = nil
-                prewarmCartArtwork(
-                    rows: rows,
-                    cartItems: cartDisplayItems,
-                    reconciledItems: reconciledCartItems
-                )
-
-                if let currentPlan = store.latestPlan, currentPlan.id == latestPlan.id,
-                   let resolvedSnapshot = currentPlan.mainShopSnapshot {
-                    reconciledCartItems = incrementalMainShopItemsFromSnapshot(
-                        snapshotItems: resolvedSnapshot.items,
-                        groceryItems: currentPlan.groceryItems,
-                        ingredientRows: rows
-                    )
-                    boxedCartCoverageSummary = makeBoxedCoverageSummary(fromSnapshotSummary: resolvedSnapshot.coverageSummary)
-                }
-
-                warmCartIngredientSupportData(for: latestPlan)
-                return
+                reconciledCartItems = mergeLexicallyIdenticalMainShopItems(fallbackItems)
             }
-
-            guard !Task.isCancelled else { return }
-
-            guard let currentPlan = store.latestPlan, currentPlan.id == latestPlan.id,
-                  let resolvedSnapshot = currentPlan.mainShopSnapshot,
-                  resolvedSnapshot.signature == signature else {
-                ingredientLoadError = nil
-                let fallbackItems = mergeLexicallyIdenticalMainShopItems(
-                    ensureMainShopCoverage(
-                        reconciledItems: buildReconciledCartDisplayItems(
-                            from: activePlan.groceryItems,
-                            ingredientRows: rows
-                        ),
-                        from: activePlan.groceryItems,
-                        ingredientRows: rows
-                    )
-                )
-                if !fallbackItems.isEmpty {
-                    reconciledCartItems = fallbackItems
-                } else if !preserveVisibleContent && !canRenderStoredSnapshotImmediately {
-                    reconciledCartItems = []
-                    boxedCartCoverageSummary = nil
-                }
-                return
-            }
-
-            ingredientLoadError = nil
-            reconciledCartItems = incrementalMainShopItemsFromSnapshot(
-                snapshotItems: resolvedSnapshot.items,
-                groceryItems: currentPlan.groceryItems,
-                ingredientRows: rows
+            reconciledCartItems = applyingIngredientArtwork(
+                to: reconciledCartItems,
+                from: rows
             )
-            boxedCartCoverageSummary = makeBoxedCoverageSummary(fromSnapshotSummary: resolvedSnapshot.coverageSummary)
+            cartDisplayItems = reconciledCartItems
+            ingredientLoadError = nil
+            focusedRecipeID = nil
             prewarmCartArtwork(
                 rows: rows,
                 cartItems: cartDisplayItems,
@@ -2705,16 +3249,47 @@ struct CartTabView: View {
             if !preserveVisibleContent {
                 ingredientLoadError = nil
                 ingredientRows = []
-                if !canRenderMainShopFallbackImmediately {
-                    cartDisplayItems = []
-                }
-                if !canRenderStoredSnapshotImmediately && !canRenderMainShopFallbackImmediately {
-                    reconciledCartItems = []
-                    boxedCartCoverageSummary = nil
-                }
             } else {
                 ingredientLoadError = nil
             }
+        }
+    }
+
+    private func applyingIngredientArtwork(
+        to items: [CartGroceryDisplayItem],
+        from rows: [SupabaseRecipeIngredientRow]
+    ) -> [CartGroceryDisplayItem] {
+        var artworkByKey: [String: URL] = [:]
+        for row in rows {
+            guard let imageURL = row.imageURL else { continue }
+            let normalizedKey = Self.normalizedIngredientKey(row.displayTitle)
+            let canonicalKey = ShoppingIngredientCanonicalizer.match(for: row.displayTitle).key
+            if !normalizedKey.isEmpty {
+                artworkByKey[normalizedKey] = artworkByKey[normalizedKey] ?? imageURL
+            }
+            if !canonicalKey.isEmpty {
+                artworkByKey[canonicalKey] = artworkByKey[canonicalKey] ?? imageURL
+            }
+        }
+
+        guard !artworkByKey.isEmpty else { return items }
+        return items.map { item in
+            guard item.imageURL == nil else { return item }
+            let normalizedKey = Self.normalizedIngredientKey(item.removalKey ?? item.name)
+            let canonicalKey = ShoppingIngredientCanonicalizer.match(for: item.name).key
+            guard let imageURL = artworkByKey[normalizedKey] ?? artworkByKey[canonicalKey] else {
+                return item
+            }
+            return CartGroceryDisplayItem(
+                name: item.name,
+                quantityText: item.quantityText,
+                supportingText: item.supportingText,
+                imageURL: imageURL,
+                estimatedPriceText: item.estimatedPriceText,
+                estimatedPriceValue: item.estimatedPriceValue,
+                sectionKind: item.sectionKind,
+                removalKey: item.removalKey
+            )
         }
     }
 
@@ -2747,15 +3322,16 @@ struct CartTabView: View {
         cartItems: [CartGroceryDisplayItem],
         reconciledItems: [CartGroceryDisplayItem]
     ) {
-        let urls = Array(
-            Set(
-                rows.compactMap(\.imageURL) +
-                cartItems.compactMap(\.imageURL) +
-                reconciledItems.compactMap(\.imageURL)
-            )
+        var seen = Set<String>()
+        let urls = (
+            reconciledItems.compactMap(\.imageURL)
+                + rows.compactMap(\.imageURL)
+                + cartItems.compactMap(\.imageURL)
         )
+        .filter { seen.insert($0.absoluteString).inserted }
+        .prefix(12)
         guard !urls.isEmpty else { return }
-        CartArtworkImageLoader.prewarm(urls: urls)
+        CartArtworkImageLoader.prewarm(urls: Array(urls))
     }
 
     private func buildPrepRecipeIngredientRows(from recipes: [PlannedRecipe]) async throws -> [SupabaseRecipeIngredientRow] {
@@ -2772,8 +3348,844 @@ struct CartTabView: View {
     }
 }
 
+private extension PrepBatch {
+    var flagshipImageURL: URL? {
+        for plannedRecipe in recipes {
+            for candidate in [
+                plannedRecipe.recipe.cardImageURLString,
+                plannedRecipe.recipe.heroImageURLString,
+            ] {
+                guard let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !value.isEmpty,
+                      let url = URL(string: value) else {
+                    continue
+                }
+                return url
+            }
+        }
+        return nil
+    }
+}
+
+private struct CartPreferenceText: View {
+    let text: String
+    let size: CGFloat
+    let color: Color
+    let style: RecipeTypographyStyle
+    let cleanWeight: Font.Weight
+    let usesDisplayFont: Bool
+
+    init(
+        _ text: String,
+        size: CGFloat,
+        color: Color = OunjePalette.primaryText,
+        style: RecipeTypographyStyle,
+        cleanWeight: Font.Weight = .semibold,
+        usesDisplayFont: Bool = false
+    ) {
+        self.text = text
+        self.size = size
+        self.color = color
+        self.style = style
+        self.cleanWeight = cleanWeight
+        self.usesDisplayFont = usesDisplayFont
+    }
+
+    var body: some View {
+        Group {
+            if style == .playful {
+                SleeScriptDisplayText(text, size: size, color: color)
+            } else if usesDisplayFont {
+                HelveticaNowDisplayText(text, size: size, color: color, weight: cleanWeight)
+            } else {
+                Text(text)
+                    .font(.system(size: size, weight: cleanWeight))
+                    .tracking(0)
+                    .foregroundStyle(color)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+    }
+}
+
+private struct CartPlanFlagshipArtwork: View {
+    let imageURL: URL?
+    let title: String
+    var size: CGFloat = 54
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(OunjePalette.panel)
+
+            if imageURL != nil {
+                CartCachedArtworkView(imageURL: imageURL) {
+                    fallback
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(OunjePalette.stroke.opacity(0.8), lineWidth: 1)
+        )
+    }
+
+    private var fallback: some View {
+        Text(IngredientMonogramFormatter.monogram(for: title))
+            .sleeDisplayFont(size * 0.34)
+            .foregroundStyle(OunjePalette.softCream.opacity(0.78))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+enum CartAisle: Int, CaseIterable, Identifiable {
+    case produce
+    case meat
+    case dairy
+    case pantry
+    case other
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .produce: return "Produce"
+        case .meat: return "Meat"
+        case .dairy: return "Dairy"
+        case .pantry: return "Pantry"
+        case .other: return "Other"
+        }
+    }
+
+    static func classify(_ item: CartGroceryDisplayItem) -> CartAisle {
+        let name = item.name.lowercased()
+        let containsAny: ([String]) -> Bool = { terms in
+            terms.contains { name.contains($0) }
+        }
+
+        if [.dryGoods, .prepared, .pantry].contains(item.sectionKind) || containsAny([
+            "adobo sauce", "black pepper", "cayenne", "chili flake", "cinnamon",
+            "cocoa", "coriander", "cumin", "flour", "granule", "honey", "noodle",
+            "oil", "paprika", "pasta", "peppercorn", "powder", "rice", "salt",
+            "sauce", "seasoning", "spice", "sugar", "syrup", "turmeric", "canned",
+            "tin"
+        ]) {
+            return .pantry
+        }
+        if containsAny([
+            "apple", "avocado", "banana", "berry", "berries", "broccoli", "cabbage",
+            "carrot", "celery", "cilantro", "cucumber", "garlic", "ginger", "herb",
+            "lemon", "lime", "lettuce", "mango", "mushroom", "onion", "orange",
+            "bell pepper", "chili pepper", "jalape", "poblano", "plantain", "potato",
+            "scallion", "spinach", "tomato", "zucchini"
+        ]) {
+            return .produce
+        }
+        if containsAny([
+            "beef", "chicken", "fish", "lamb", "meat", "pork", "salmon", "sausage",
+            "shrimp", "steak", "turkey", "bacon", "mince", "ground"
+        ]) {
+            return .meat
+        }
+        if containsAny([
+            "butter", "cheese", "cream", "egg", "milk", "yogurt", "yoghurt", "mozzarella",
+            "parmesan", "ricotta", "custard"
+        ]) {
+            return .dairy
+        }
+        if containsAny([
+            "bread", "cereal", "chocolate"
+        ]) {
+            return .pantry
+        }
+        return .other
+    }
+}
+
+struct CartAisleGroup: Identifiable {
+    let aisle: CartAisle
+    let items: [CartGroceryDisplayItem]
+
+    var id: CartAisle { aisle }
+}
+
+struct CartProblemItem: Identifiable {
+    let name: String
+    var id: String { name.lowercased() }
+}
+
+struct CartOperationalItemRow: View, Equatable {
+    let item: CartGroceryDisplayItem
+    let quantityAmountText: String
+    let quantityUnitLabel: String
+    let isShoppingMode: Bool
+    let isChecked: Bool
+    var isAlreadyHave = false
+    var isTransferSelectionMode = false
+    var isTransferSelected = false
+    let typographyStyle: RecipeTypographyStyle
+    let onTap: () -> Void
+    let onDecrease: () -> Void
+    let onIncrease: () -> Void
+
+    static func == (lhs: CartOperationalItemRow, rhs: CartOperationalItemRow) -> Bool {
+        lhs.item == rhs.item
+            && lhs.quantityAmountText == rhs.quantityAmountText
+            && lhs.quantityUnitLabel == rhs.quantityUnitLabel
+            && lhs.isShoppingMode == rhs.isShoppingMode
+            && lhs.isChecked == rhs.isChecked
+            && lhs.isAlreadyHave == rhs.isAlreadyHave
+            && lhs.isTransferSelectionMode == rhs.isTransferSelectionMode
+            && lhs.isTransferSelected == rhs.isTransferSelected
+            && lhs.typographyStyle == rhs.typographyStyle
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: onTap) {
+                HStack(spacing: 12) {
+                    artwork
+
+                    CartPreferenceText(
+                        item.name,
+                        size: 16,
+                        color: (isChecked || isAlreadyHave) ? OunjePalette.secondaryText : OunjePalette.primaryText,
+                        style: typographyStyle,
+                        cleanWeight: .semibold
+                    )
+                    .strikethrough(isChecked, color: OunjePalette.secondaryText)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isTransferSelectionMode {
+                Button(action: onTap) {
+                    Image(systemName: isTransferSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 23, weight: .semibold))
+                        .foregroundStyle(isTransferSelected ? OunjePalette.primaryText : OunjePalette.secondaryText.opacity(0.72))
+                        .frame(width: 42, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isTransferSelected ? "Deselect \(item.name)" : "Select \(item.name)")
+            } else if isAlreadyHave {
+                Button(action: onTap) {
+                    Image(systemName: "nosign")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .frame(width: 42, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Already have \(item.name). Add back to shop list")
+            } else if isShoppingMode {
+                Button(action: onTap) {
+                    if isChecked {
+                        Image(systemName: "checkmark.circle.fill")
+                            .symbolRenderingMode(.palette)
+                            .font(.system(size: 23, weight: .semibold))
+                            .foregroundStyle(OunjePalette.background, OunjePalette.softCream)
+                            .frame(width: 30, height: 44)
+                    } else {
+                        Image(systemName: "circle")
+                            .font(.system(size: 23, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.7))
+                            .frame(width: 30, height: 44)
+                    }
+                }
+                .buttonStyle(.plain)
+            } else {
+                HStack(spacing: 8) {
+                    quantityButton(systemName: "minus", action: onDecrease)
+
+                    VStack(spacing: 1) {
+                        Text(quantityAmountText)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .lineLimit(1)
+
+                        Text(quantityUnitLabel)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .lineLimit(1)
+                    }
+                    .frame(width: 42)
+
+                    quantityButton(systemName: "plus", action: onIncrease)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+        .saturation(isAlreadyHave ? 0 : 1)
+        .opacity(isAlreadyHave && !isTransferSelectionMode ? 0.48 : 1)
+    }
+
+    private var artwork: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(item.imageURL == nil ? OunjePalette.surface : OunjePalette.panel)
+
+            if item.imageURL != nil {
+                CartCachedArtworkView(imageURL: item.imageURL) {
+                    fallbackArtwork
+                }
+            } else {
+                fallbackArtwork
+            }
+        }
+        .frame(width: 48, height: 48)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func quantityButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(OunjePalette.primaryText)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(OunjePalette.surface))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var fallbackArtwork: some View {
+        Text(IngredientMonogramFormatter.monogram(for: item.name))
+            .sleeDisplayFont(17)
+            .foregroundStyle(OunjePalette.softCream.opacity(0.78))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct CartPlanSelectorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let batches: [PrepBatch]
+    let activeBatchID: UUID?
+    let typographyStyle: RecipeTypographyStyle
+    let onSelect: (PrepBatch) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            OunjeSheetHeader(
+                title: "Choose plan",
+                titleStyle: .recipe(typographyStyle),
+                onClose: { dismiss() }
+            )
+
+            VStack(spacing: 0) {
+                ForEach(Array(batches.enumerated()), id: \.element.id) { index, batch in
+                    Button {
+                        onSelect(batch)
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 12) {
+                            CartPlanFlagshipArtwork(
+                                imageURL: batch.flagshipImageURL,
+                                title: batch.name,
+                                size: 48
+                            )
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                CartPreferenceText(
+                                    batch.name,
+                                    size: 17,
+                                    style: typographyStyle,
+                                    cleanWeight: .bold
+                                )
+                                .lineLimit(1)
+
+                                Text("Plan · \(batch.recipes.count) \(batch.recipes.count == 1 ? "recipe" : "recipes")")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(OunjePalette.secondaryText)
+                            }
+                            Spacer()
+                            if batch.id == activeBatchID {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 19, weight: .semibold))
+                                    .foregroundStyle(OunjePalette.accent)
+                            }
+                        }
+                        .frame(minHeight: 64)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if index < batches.count - 1 {
+                        Divider().background(OunjePalette.stroke)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, OunjeLayout.sheetHorizontalPadding)
+        .padding(.top, OunjeLayout.sheetTopPadding)
+        .padding(.bottom, OunjeLayout.sheetBottomPadding)
+        .ounjeSheetSurface()
+    }
+}
+
+struct CartItemDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: CartGroceryDisplayItem
+    let quantityUnitLabel: String
+    let isAlreadyHave: Bool
+    let sourceEntries: [CartMainShopMappingSourceEntry]
+    let onDecreaseQuantity: () -> Void
+    let onIncreaseQuantity: () -> Void
+    let onToggleAlreadyHave: () -> Void
+    let onRemove: () -> Void
+    @State private var displayedQuantityCount: Int
+
+    init(
+        item: CartGroceryDisplayItem,
+        quantityCount: Int,
+        quantityUnitLabel: String,
+        isAlreadyHave: Bool,
+        sourceEntries: [CartMainShopMappingSourceEntry],
+        onDecreaseQuantity: @escaping () -> Void,
+        onIncreaseQuantity: @escaping () -> Void,
+        onToggleAlreadyHave: @escaping () -> Void,
+        onRemove: @escaping () -> Void
+    ) {
+        self.item = item
+        self.quantityUnitLabel = quantityUnitLabel
+        self.isAlreadyHave = isAlreadyHave
+        self.sourceEntries = sourceEntries
+        self.onDecreaseQuantity = onDecreaseQuantity
+        self.onIncreaseQuantity = onIncreaseQuantity
+        self.onToggleAlreadyHave = onToggleAlreadyHave
+        self.onRemove = onRemove
+        _displayedQuantityCount = State(initialValue: quantityCount)
+    }
+
+    private var uniqueSources: [CartMainShopMappingSourceEntry] {
+        var seen = Set<String>()
+        return sourceEntries.filter { seen.insert($0.recipeTitle.lowercased()).inserted }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(alignment: .top, spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OunjePalette.surface)
+                        CartCachedArtworkView(imageURL: item.imageURL) {
+                            Text(IngredientMonogramFormatter.monogram(for: item.name))
+                                .sleeDisplayFont(21)
+                                .foregroundStyle(OunjePalette.softCream.opacity(0.8))
+                        }
+                    }
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(item.name)
+                            .sleeDisplayFont(21)
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Total for this plan")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                    }
+
+                    Spacer()
+                    OunjeSheetCloseButton {
+                        dismiss()
+                    }
+                }
+
+                HStack {
+                    Text("Quantity")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Spacer()
+                    HStack(spacing: 14) {
+                        Button {
+                            onDecreaseQuantity()
+                            if displayedQuantityCount <= 1 {
+                                dismiss()
+                            } else {
+                                displayedQuantityCount -= 1
+                            }
+                        } label: {
+                            Image(systemName: "minus")
+                                .font(.system(size: 13, weight: .bold))
+                                .frame(width: 36, height: 36)
+                        }
+                        Text("\(displayedQuantityCount) \(quantityUnitLabel)")
+                            .font(.system(size: 15, weight: .bold))
+                            .monospacedDigit()
+                            .frame(minWidth: 76)
+                        Button {
+                            onIncreaseQuantity()
+                            displayedQuantityCount += 1
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 13, weight: .bold))
+                                .frame(width: 36, height: 36)
+                        }
+                    }
+                    .foregroundStyle(OunjePalette.primaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Used by")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    if uniqueSources.isEmpty {
+                        Text("This plan")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                    } else {
+                        ForEach(uniqueSources) { source in
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(OunjePalette.accent.opacity(0.72))
+                                    .frame(width: 6, height: 6)
+                                Text(source.recipeTitle)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(OunjePalette.primaryText)
+                                Spacer()
+                                if let quantityText = source.quantityText, !quantityText.isEmpty {
+                                    Text(quantityText)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(OunjePalette.secondaryText)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider().background(OunjePalette.stroke)
+
+                Button {
+                    onToggleAlreadyHave()
+                    dismiss()
+                } label: {
+                    Label(
+                        isAlreadyHave ? "Add back to shop list" : "Already have this",
+                        systemImage: isAlreadyHave ? "cart.badge.plus" : "checkmark.circle"
+                    )
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: 46)
+                }
+                .buttonStyle(.plain)
+
+                Button(role: .destructive) {
+                    onRemove()
+                    dismiss()
+                } label: {
+                    Label("Remove from cart", systemImage: "trash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: 46)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
+            .padding(.bottom, 28)
+        }
+        .background(OunjePalette.background.ignoresSafeArea())
+    }
+}
+
+struct CartProblemItemSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: CartProblemItem
+    let onCorrect: (String) -> Void
+    let onRemove: () -> Void
+    @State private var correctedName: String
+
+    init(
+        item: CartProblemItem,
+        onCorrect: @escaping (String) -> Void,
+        onRemove: @escaping () -> Void
+    ) {
+        self.item = item
+        self.onCorrect = onCorrect
+        self.onRemove = onRemove
+        _correctedName = State(initialValue: item.name)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("Review item")
+                    .biroHeaderFont(25)
+                    .foregroundStyle(OunjePalette.primaryText)
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+            }
+
+            TextField("Ingredient name", text: $correctedName)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(OunjePalette.primaryText)
+                .padding(.horizontal, 14)
+                .frame(height: 50)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+
+            Button {
+                onCorrect(correctedName)
+                dismiss()
+            } label: {
+                Text("Use this name")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(OunjePalette.background)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(OunjePalette.accent))
+            }
+            .buttonStyle(.plain)
+            .disabled(correctedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            Button(role: .destructive) {
+                onRemove()
+                dismiss()
+            } label: {
+                Text("Remove from this cart")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 42)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 22)
+        .padding(.top, 18)
+        .background(OunjePalette.background.ignoresSafeArea())
+    }
+}
+
+struct CartShoppingActionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
+    @State private var isChoosingProvider = false
+    let planName: String
+    let itemCount: Int
+    let instacartTitle: String
+    let instacartSubtitle: String
+    let isInstacartDisabled: Bool
+    let choosesProvider: Bool
+    let onChecklist: () -> Void
+    let onInstacart: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            OunjeSheetHeader(
+                title: isChoosingProvider ? "Choose a store" : "Shop now",
+                subtitle: isChoosingProvider
+                    ? "Ounje builds the cart for your review."
+                    : "\(planName) · \(itemCount) \(itemCount == 1 ? "item" : "items")",
+                onClose: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    dismiss()
+                }
+            )
+
+            VStack(spacing: 0) {
+                if isChoosingProvider {
+                    CartShoppingChoiceButton(
+                        title: instacartTitle,
+                        subtitle: instacartSubtitle,
+                        icon: .instacart,
+                        isDisabled: isInstacartDisabled,
+                        action: onInstacart
+                    )
+
+                    Divider()
+                        .overlay(OunjePalette.stroke)
+                        .padding(.leading, 66)
+
+                    CartShoppingChoiceButton(
+                        title: "Walmart",
+                        subtitle: "Not available yet",
+                        icon: .walmart,
+                        isDisabled: true,
+                        action: {}
+                    )
+                } else {
+                    CartShoppingChoiceButton(
+                        title: "Use as checklist",
+                        subtitle: "Shop and tick off items in Ounje.",
+                        icon: .checklist,
+                        action: onChecklist
+                    )
+                    .firstRunGuideTarget(
+                        .checklistOption,
+                        enabled: firstRunGuide.phase == .cartChecklistOption
+                    )
+
+                    Divider()
+                        .overlay(OunjePalette.stroke)
+                        .padding(.leading, 66)
+
+                    CartShoppingChoiceButton(
+                        title: "Let Ounje shop for you",
+                        subtitle: "Instacart and Walmart",
+                        icon: .shoppingProviders,
+                        isDisabled: isInstacartDisabled,
+                        action: {
+                            if choosesProvider {
+                                withAnimation(OunjeMotion.quickSpring) {
+                                    isChoosingProvider = true
+                                }
+                            } else {
+                                onInstacart()
+                            }
+                        }
+                    )
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: OunjeLayout.panelCornerRadius, style: .continuous)
+                    .fill(OunjePalette.panel)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: OunjeLayout.panelCornerRadius, style: .continuous)
+                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                    )
+            )
+        }
+        .padding(.horizontal, OunjeLayout.sheetHorizontalPadding)
+        .padding(.top, OunjeLayout.sheetTopPadding)
+        .padding(.bottom, OunjeLayout.sheetBottomPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .ounjeSheetSurface()
+        .firstRunGuideHost()
+    }
+}
+
+enum CartShoppingChoiceIcon {
+    case checklist
+    case shoppingProviders
+    case instacart
+    case walmart
+}
+
+struct CartShoppingChoiceButton: View {
+    let title: String
+    let subtitle: String
+    let icon: CartShoppingChoiceIcon
+    var isDisabled = false
+    let action: () -> Void
+
+    var body: some View {
+        OunjeSheetActionRow(
+            title: title,
+            subtitle: subtitle,
+            isDisabled: isDisabled,
+            action: action
+        ) {
+            choiceIcon
+                .frame(width: 54, height: 44)
+        }
+    }
+
+    @ViewBuilder
+    private var choiceIcon: some View {
+        switch icon {
+        case .checklist:
+            checklistIcon
+        case .shoppingProviders:
+            shoppingProviderIcons
+        case .instacart:
+            providerIcon(named: "InstacartAppIcon", accessibilityLabel: "Instacart")
+        case .walmart:
+            providerIcon(named: "WalmartAppIcon", accessibilityLabel: "Walmart")
+        }
+    }
+
+    private func providerIcon(named imageName: String, accessibilityLabel: String) -> some View {
+        Image(imageName)
+            .resizable()
+            .scaledToFill()
+            .frame(width: 42, height: 42)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .saturation(isDisabled ? 0 : 1)
+            .opacity(isDisabled ? 0.55 : 1)
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var checklistIcon: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OunjePalette.softCream.opacity(isDisabled ? 0.05 : 0.11))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OunjePalette.softCream.opacity(0.16), lineWidth: 1)
+                )
+
+            Image("NotebookPenIcon")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 25, height: 25)
+                .foregroundStyle(isDisabled ? OunjePalette.secondaryText : OunjePalette.softCream)
+        }
+        .frame(width: 42, height: 42)
+        .accessibilityHidden(true)
+    }
+
+    private var shoppingProviderIcons: some View {
+        ZStack {
+            Image("WalmartAppIcon")
+                .resizable()
+                .scaledToFill()
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OunjePalette.background.opacity(0.85), lineWidth: 1)
+                )
+                .rotationEffect(.degrees(7))
+                .offset(x: 8, y: 5)
+
+            Image("InstacartAppIcon")
+                .resizable()
+                .scaledToFill()
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OunjePalette.background.opacity(0.85), lineWidth: 1)
+                )
+                .rotationEffect(.degrees(-7))
+                .offset(x: -7, y: -4)
+                .zIndex(1)
+        }
+        .frame(width: 54, height: 44)
+        .saturation(isDisabled ? 0 : 1)
+        .opacity(isDisabled ? 0.55 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Instacart and Walmart")
+    }
+}
+
 struct CartGroceryDisplayItem: Identifiable, Hashable {
-    var id: String { "\(sectionKind.rawValue)::\(name.lowercased())::\(quantityText)::\(supportingText ?? "")" }
+    var id: String {
+        let stableKey = (removalKey.flatMap { $0.isEmpty ? nil : $0 } ?? name).lowercased()
+        return "\(sectionKind.rawValue)::\(stableKey)"
+    }
     let name: String
     let quantityText: String
     let supportingText: String?
@@ -2786,6 +4198,7 @@ struct CartGroceryDisplayItem: Identifiable, Hashable {
 
 struct CartMainShopQuantityDisplay {
     let count: Int
+    let amountText: String
     let unitLabel: String
     let baseCount: Int
 }
@@ -2991,7 +4404,7 @@ struct CartEmptyState: View {
                     color: OunjePalette.primaryText
                 )
 
-                Text("Browse recipes and saved meals will build the ingredient shelves here.")
+                Text("Add recipes to a plan and Ounje will build the shopping list here.")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
                     .multilineTextAlignment(.center)
@@ -3010,6 +4423,44 @@ struct CartEmptyState: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
         .padding(.vertical, 28)
+    }
+}
+
+struct CartUnavailableState: View {
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            Text("Shopping items are not ready yet")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(OunjePalette.primaryText)
+
+            Text("Your plan is intact. Try building its shopping list again.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            Button("Try again", action: onRetry)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(OunjePalette.primaryText)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 14)
+                .frame(height: 38)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OunjePalette.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                )
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 18)
     }
 }
 
@@ -3499,64 +4950,6 @@ struct CartMainShopEmptyState: View {
     }
 }
 
-struct CookbookSectionTabItem: Identifiable {
-    let section: CookbookSection
-
-    var id: CookbookSection { section }
-}
-
-struct CookbookSectionTabs: View {
-    @Binding var selection: CookbookSection
-    let tabs: [CookbookSectionTabItem]
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(tabs) { tab in
-                let isSelected = selection == tab.section
-
-                VStack(spacing: 8) {
-                    Text(tab.section.title)
-                        .font(.system(size: isSelected ? 16 : 15, weight: isSelected ? .bold : .semibold))
-                        .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText.opacity(0.94))
-                        .opacity(isSelected ? 1 : 0.76)
-
-                    Capsule(style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    OunjePalette.softCream.opacity(0.95),
-                                    OunjePalette.accent.opacity(0.72)
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: isSelected ? 72 : 24, height: isSelected ? 3 : 1.5)
-                        .opacity(isSelected ? 1 : 0.18)
-                        .shadow(color: OunjePalette.accent.opacity(isSelected ? 0.18 : 0), radius: 8, y: 2)
-                        .animation(OunjeMotion.quickSpring, value: isSelected)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .contentShape(Rectangle())
-                .highPriorityGesture(TapGesture().onEnded {
-                    guard selection != tab.section else { return }
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
-                        selection = tab.section
-                    }
-                })
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(tab.section.title)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 56)
-        .contentShape(Rectangle())
-    }
-}
-
 struct FilterTagButton: View {
     let title: String
     let isSelected: Bool
@@ -3770,33 +5163,6 @@ struct CollapsibleSavedSearchBar: View {
         }
         .animation(.easeInOut(duration: 0.18), value: isExpanded)
         .animation(.easeInOut(duration: 0.18), value: hasQuery)
-    }
-}
-
-struct CookbookPreppedEmptyState: View {
-    let title: String
-    let detail: String
-    let symbolName: String
-
-    var body: some View {
-        VStack(spacing: 18) {
-            ShareToOunjeEmptyArtwork(maxWidth: 210, maxHeight: 260)
-                .padding(.top, 8)
-
-            VStack(spacing: 8) {
-                BiroScriptDisplayText(title, size: 28, color: OunjePalette.primaryText)
-
-                Text(detail)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: 290)
-        }
-        .frame(maxWidth: .infinity, minHeight: 280, alignment: .center)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 22)
     }
 }
 
@@ -4251,6 +5617,19 @@ struct CartFlatIngredientTile: View {
 actor CartArtworkImageRepository {
     static let shared = CartArtworkImageRepository()
 
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 12
+        configuration.httpMaximumConnectionsPerHost = 4
+        configuration.urlCache = URLCache(
+            memoryCapacity: 16 * 1_024 * 1_024,
+            diskCapacity: 96 * 1_024 * 1_024
+        )
+        return URLSession(configuration: configuration)
+    }()
+
     private var cache: [String: UIImage] = [:]
     private var inFlight: [String: Task<UIImage?, Never>] = [:]
 
@@ -4264,54 +5643,65 @@ actor CartArtworkImageRepository {
             inFlight[key] = nil
             if let image {
                 cache[key] = image
+                trimCacheIfNeeded()
             }
             return image
         }
 
-        let task = Task<UIImage?, Never> {
-            do {
-                var request = URLRequest(url: url)
-                request.cachePolicy = .returnCacheDataElseLoad
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200 ... 299).contains(httpResponse.statusCode),
-                      let image = UIImage(data: data) else {
-                    return nil
-                }
-                return image
-            } catch {
-                return nil
-            }
-        }
+        let task = Task.detached(priority: .utility) { await Self.loadThumbnail(from: url) }
 
         inFlight[key] = task
         let image = await task.value
         inFlight[key] = nil
         if let image {
             cache[key] = image
+            trimCacheIfNeeded()
         }
         return image
     }
 
     func prewarm(urls: [URL]) {
-        for url in urls {
+        for url in urls.prefix(12) {
             let key = url.absoluteString
             guard cache[key] == nil, inFlight[key] == nil else { continue }
-            inFlight[key] = Task<UIImage?, Never> {
-                do {
-                    var request = URLRequest(url: url)
-                    request.cachePolicy = .returnCacheDataElseLoad
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    guard let httpResponse = response as? HTTPURLResponse,
-                          (200 ... 299).contains(httpResponse.statusCode),
-                          let image = UIImage(data: data) else {
-                        return nil
-                    }
-                    return image
-                } catch {
-                    return nil
-                }
+            inFlight[key] = Task.detached(priority: .utility) { await Self.loadThumbnail(from: url) }
+        }
+    }
+
+    private func trimCacheIfNeeded() {
+        guard cache.count > 96 else { return }
+        for key in cache.keys.prefix(cache.count - 96) {
+            cache[key] = nil
+        }
+    }
+
+    private static func loadThumbnail(from url: URL) async -> UIImage? {
+        do {
+            var request = URLRequest(url: url)
+            request.cachePolicy = .returnCacheDataElseLoad
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200 ... 299).contains(httpResponse.statusCode),
+                  data.count <= 12 * 1_024 * 1_024,
+                  let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+                return nil
             }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: 192
+            ]
+            guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                options as CFDictionary
+            ) else {
+                return nil
+            }
+            return UIImage(cgImage: thumbnail)
+        } catch {
+            return nil
         }
     }
 }
@@ -4334,7 +5724,13 @@ final class CartArtworkImageLoader: ObservableObject {
         }
 
         currentKey = key
-        image = await CartArtworkImageRepository.shared.image(for: url)
+        let loadedImage = await CartArtworkImageRepository.shared.image(for: url)
+        guard currentKey == key else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            image = loadedImage
+        }
     }
 
     static func prewarm(urls: [URL]) {
@@ -4454,11 +5850,20 @@ struct CartGroceryLineItemRow: View {
             VStack(alignment: .trailing, spacing: 3) {
                 if isShoppingListMode {
                     Button(action: { onToggleChecked?() }) {
-                        Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 27, weight: .semibold))
-                            .foregroundStyle(isChecked ? OunjePalette.accent : OunjePalette.secondaryText.opacity(0.72))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Circle())
+                        if isChecked {
+                            Image(systemName: "checkmark.circle.fill")
+                                .symbolRenderingMode(.palette)
+                                .font(.system(size: 27, weight: .semibold))
+                                .foregroundStyle(OunjePalette.background, OunjePalette.softCream)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Circle())
+                        } else {
+                            Image(systemName: "circle")
+                                .font(.system(size: 27, weight: .semibold))
+                                .foregroundStyle(OunjePalette.secondaryText.opacity(0.72))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Circle())
+                        }
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(isChecked ? "Mark \(item.name) as not picked" : "Mark \(item.name) as picked")
@@ -4558,6 +5963,8 @@ struct CartGroceryLineItemRow: View {
 
 enum CartQuantityFormatter {
     struct MainShopDisplayComponents {
+        let amount: Double
+        let amountText: String
         let roundedCount: Int
         let unitLabel: String
     }
@@ -4602,6 +6009,8 @@ enum CartQuantityFormatter {
         let unitTokens = Array(tokens.dropFirst())
         let unitLabel = unitTokens.isEmpty ? "units" : unitTokens.joined(separator: " ")
         return MainShopDisplayComponents(
+            amount: baseAmount,
+            amountText: normalizedAmount(baseAmount),
             roundedCount: roundedCount,
             unitLabel: unitLabel
         )

@@ -1,66 +1,22 @@
-# Ounje VM Deploy
+# Ounje VM Retirement
 
-The VM is private worker infrastructure. It should not serve the public API, terminate TLS, or receive traffic from the app. Render owns public HTTP requests; Supabase owns durable state, recipe ingestion jobs, and automation queues.
+The rented Ubuntu VM is no longer part of Ounje's production architecture. Render owns the public API and the managed recipe-ingestion and automation workers; Supabase owns durable job state; Redis wakes recipe workers. Migration `20260822030626_retire_vm_recipe_ingestion_claims.sql` prevents legacy VM identities from claiming recipe work.
 
-## Process
+## Before Shutdown
 
-- `ounje-automation-worker.service`: claims `automation_jobs` rows from Supabase and runs long browser/autonomous work such as Instacart cart building.
-- `ounje-recipe-ingestion-worker.service`: wakes from Redis when Render enqueues a recipe import, claims `recipe_ingestion_jobs` rows from Supabase, and runs TikTok/IG/web media extraction, scraping, OpenAI extraction/completion, recipe persistence, artifacts, and AI usage logging.
+1. Apply the Render worker claim migration and deploy the services described in [render-deploy.md](/Users/davejaga/Desktop/startups/ounje/docs/render-deploy.md).
+2. Confirm a Render worker has completed controlled TikTok, Instagram, web, photo, and duplicate imports.
+3. Confirm the Render automation worker has completed an Instacart job.
+4. Inspect Supabase and wait until no live `recipe_ingestion_jobs` row (`processing`, `fetching`, `parsing`, or `normalized`) has a `worker_id` beginning with `vm_recipe_ingest`, and no `automation_jobs.locked_by` begins with `vm_automation`.
+5. Confirm the Render import-health cron reports a healthy queue.
 
-The old VM API/nginx path is intentionally out of the production architecture. The app talks to Render only; the VM sleeps on Redis and only performs a sparse safety sweep when no wake event arrives.
+## Shutdown
 
-## VM Setup
+1. Stop and disable `ounje-recipe-ingestion-worker`, `ounje-automation-worker`, and `ounje-growth-outreach-worker` on Ubuntu.
+2. Keep the VM powered off for the agreed observation window; do not delete it yet.
+3. If imports or automation regress, repair the managed worker. The retired `vm_recipe_ingest*` identity is no longer eligible to claim jobs.
+4. After the observation window, cancel the VM and revoke its Supabase, Redis, OpenAI, browser-provider, and SSH credentials.
 
-1. Install Node 22 LTS and clone the repo to `/opt/ounje`.
-2. Install system media/browser dependencies:
-   ```bash
-   sudo apt-get update
-   sudo apt-get install -y ffmpeg tesseract-ocr python3 python3-pip
-   sudo python3 -m pip install --break-system-packages -U yt-dlp
-   cd /opt/ounje
-   YOUTUBE_DL_SKIP_DOWNLOAD=true npm install
-   npx playwright install --with-deps chromium
-   ```
-3. Create `/etc/ounje/ounje.env`.
-4. Copy both files in [deploy/systemd](/Users/davejaga/Desktop/startups/ounje/deploy/systemd) into `/etc/systemd/system/`.
-5. Run `sudo systemctl daemon-reload`.
-6. Run `sudo systemctl enable --now ounje-automation-worker ounje-recipe-ingestion-worker`.
+## Final Cleanup
 
-## Required Env
-
-Add these to `/etc/ounje/ounje.env`:
-
-```bash
-SUPABASE_URL=...
-SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-REDIS_URL=...
-OPENAI_API_KEY=...
-BROWSER_USE_API_KEY=...
-LUMBOX_API_KEY=...
-AGENTSIM_API_KEY=...
-TWO_CAPTCHA_API_KEY=...
-RECIPE_IMAGE_BUCKET=...
-OUNJE_ENABLE_AI_CALL_LOGGING=true
-RECIPE_INGESTION_WORKER_CONCURRENCY=1
-RECIPE_INGESTION_WORKER_WAKE_MODE=redis
-RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS=60000
-YOUTUBE_DL_BINARY=/usr/local/bin/yt-dlp
-```
-
-The worker also needs any provider/browser-session secrets used by the existing automation stack. It does not need `PORT`, `HOST`, nginx, or a public domain.
-
-## Manual Check
-
-```bash
-cd /opt/ounje
-YOUTUBE_DL_SKIP_DOWNLOAD=true npm install
-node server/scripts/automation_worker.mjs --once --worker-id vm_manual_check
-node server/scripts/recipe_ingestion_worker.mjs --once --worker-id vm_recipe_ingest_manual_check
-# or keep it running manually:
-npm run recipes:ingestion-worker:vm
-```
-
-If no jobs are queued, the one-shot command exits cleanly after claiming nothing. To test the full path, enqueue an Instacart run through Render, then run the command above and watch the matching `automation_jobs`, `instacart_run_logs`, and `grocery_orders` rows update in Supabase.
-
-For recipe ingestion, enqueue a TikTok/IG URL through Render, then watch the matching `recipe_ingestion_jobs` row move from `queued` to `processing`, `fetching`, `parsing`, `normalized`, and finally `saved` or `failed`. Confirm `worker_id` starts with `vm_recipe_ingest`, `recipe_ingestion_artifacts` has rows for the job, and `ai_call_logs.job_id` contains the OpenAI calls.
+The VM claim allowance was removed by `20260822030626_retire_vm_recipe_ingestion_claims.sql`. After the machine is cancelled, revoke its Supabase, Redis, OpenAI, browser-provider, and SSH credentials, then remove the legacy VM scripts and systemd units.

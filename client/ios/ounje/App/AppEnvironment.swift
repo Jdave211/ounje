@@ -190,7 +190,7 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var isGenerating = false
     @Published var isRefreshingPrepRecipes = false
     @Published private(set) var latestPlanRevision = 0
-    /// The batch the user currently has selected in PrepTabView. nil means
+    /// The plan batch currently selected across Recipes and Cart. nil means
     /// the legacy single-batch view (plan has no named batches yet).
     @Published var activeBatchID: UUID? = nil
     @Published private(set) var isRefreshingMainShopSnapshot = false
@@ -198,12 +198,6 @@ final class MealPlanningAppStore: ObservableObject {
     @Published var hasResolvedInitialState = false
     @Published var lastOnboardingStep = 0
     @Published private(set) var isCompletingOnboarding = false
-    /// One-shot signal: set once right after a new user finishes onboarding with a
-    /// non-empty prep. The shell consumes it to bounce the user to the Prep tab,
-    /// toast "Your prep is ready", and point at the add-recipe button. Guarded by
-    /// `firstPrepCoachShownKey` so it only ever fires once per device.
-    @Published var pendingFirstPrepCoach = false
-    static let firstPrepCoachShownKey = "ounje-first-prep-coach-shown-v1"
     @Published private(set) var authSessionNilMetrics: [String: Int] = [:]
 
     private let planner = MealPlanningAgent()
@@ -212,6 +206,7 @@ final class MealPlanningAppStore: ObservableObject {
     private var latestPlanArtifactRefreshTask: Task<Void, Never>?
     private var recurringPrepToggleRecipeIDs = Set<String>()
     private var lastLocalPrepMutationAt: Date?
+    private var deletedPrepBatchIDs = Set<UUID>()
     /// Guard against two concurrent calls to maybeStartInstacartRunIfNeeded
     /// (e.g., realtime event + background poll arriving within the same second).
     private var isAutoshopRunInFlight = false
@@ -232,6 +227,7 @@ final class MealPlanningAppStore: ObservableObject {
     private let liveUserIDKey = "agentic-live-user-id-v1"
     private let instacartProviderConnectionKeyPrefix = "agentic-instacart-provider-connected-v1"
     private let hiddenMainShopItemsKeyPrefix = "agentic-hidden-main-shop-items-v1"
+    private let deletedPrepBatchIDsKeyPrefix = "agentic-deleted-prep-batches-v1"
     private let authKeychainService = "net.ounje.auth"
     private let authKeychainAccount = "agentic-auth-session-v1"
     static let googleDevUserIDKey = "agentic-google-dev-user-id-v1"
@@ -267,6 +263,7 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private var authRefreshTask: Task<AuthSessionRefreshOutcome, Never>?
+    private var shareImportAuthorizationRefreshTask: Task<Void, Never>?
     private var authSessionNeedsReauthentication = false
     private var lastTransientAuthRefreshFailureAt: Date?
     private var freshUserDataSessionNilCounts: [FreshUserDataSessionNilReason: Int] = [:]
@@ -1559,6 +1556,71 @@ final class MealPlanningAppStore: ObservableObject {
         return latestPlan?.id == plan.id ? latestPlan : plan
     }
 
+    /// Installs one editorially-defined preset used by the first-session guide.
+    /// The local cache is updated before any network work so the plan appears
+    /// immediately. Recipe selection has already happened in the versioned
+    /// preset catalog; this method only derives the cart for those fixed recipes.
+    @discardableResult
+    func installFirstRunGuidePresetPlan(
+        details: [RecipeDetailData],
+        title: String?,
+        planID: UUID,
+        preserveExistingPlans: Bool = false
+    ) -> MealPlan? {
+        if let latestPlan,
+           latestPlan.batches?.contains(where: { $0.id == planID && !$0.recipes.isEmpty }) == true {
+            return latestPlan
+        }
+        guard let profile, !details.isEmpty else { return nil }
+
+        let plannedRecipes = details.map { detail in
+            let recipe = importedRecipePlanModel(from: detail)
+            return PlannedRecipe(
+                recipe: recipe,
+                servings: max(1, recipe.servings),
+                carriedFromPreviousPlan: false
+            )
+        }
+        let presetPlan = planner.buildPlanCartOnly(
+            profile: profile,
+            recipes: plannedRecipes,
+            history: planHistory
+        )
+        let resolvedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let starterBatch = PrepBatch(
+            id: planID,
+            name: resolvedTitle?.isEmpty == false ? resolvedTitle ?? "Starter" : "Starter",
+            recipes: presetPlan.recipes,
+            groceryItems: presetPlan.groceryItems,
+            recurringRecipeIDs: presetPlan.recurringRecipeIDs,
+            createdAt: .now
+        )
+
+        let installedPlan: MealPlan
+        if preserveExistingPlans, var existingPlan = latestPlan {
+            var batches = existingPlan.batches ?? []
+            batches.removeAll { $0.id == planID }
+            batches.append(starterBatch)
+            existingPlan.batches = batches
+            existingPlan.activeBatchID = planID
+            existingPlan.generatedAt = .now
+            installedPlan = planMirroringPrimeBatch(existingPlan, preferredBatchID: planID)
+        } else {
+            var newPlan = presetPlan
+            newPlan.id = planID
+            newPlan.batches = [starterBatch]
+            newPlan.activeBatchID = starterBatch.id
+            installedPlan = newPlan
+        }
+        updateCurrentPlanCache(with: installedPlan, persistRemote: false)
+
+        Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            _ = await self.persistLatestPlanRemotelyIfPossible(installedPlan)
+        }
+        return installedPlan
+    }
+
     private func planHydratedWithRecipeDetailsIfNeeded(_ plan: MealPlan, refreshProviders: Bool) async -> MealPlan {
         guard let profile, !plan.recipes.isEmpty else { return plan }
 
@@ -2048,18 +2110,34 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func planPreservingKnownPrepBatches(_ newPlan: MealPlan, from previousPlan: MealPlan?) -> MealPlan {
         guard let previousPlan,
-              let previousBatches = previousPlan.batches,
-              !previousBatches.isEmpty,
-              prepBatchStructureScore(for: previousPlan) > prepBatchStructureScore(for: newPlan)
+              let knownPreviousBatches = previousPlan.batches,
+              !knownPreviousBatches.isEmpty
         else {
             return newPlan
         }
 
-        let activeBatchID = resolvedPrimeBatchID(in: previousPlan) ?? previousBatches.first?.id
+        let deletedBatchIDs = deletedPrepBatchIDs
+            .union(previousPlan.deletedBatchIDs ?? [])
+            .union(newPlan.deletedBatchIDs ?? [])
+        let previousBatches = knownPreviousBatches.filter { !deletedBatchIDs.contains($0.id) }
+        guard !previousBatches.isEmpty,
+              prepBatchStructureScore(for: previousPlan) > prepBatchStructureScore(for: newPlan)
+        else {
+            var plan = newPlan
+            plan.deletedBatchIDs = Array(deletedBatchIDs).sorted { $0.uuidString < $1.uuidString }
+            return plan
+        }
+
+        let previousActiveBatchID = resolvedPrimeBatchID(in: previousPlan)
+        let activeBatchID = previousActiveBatchID.flatMap { candidate in
+            previousBatches.contains(where: { $0.id == candidate }) ? candidate : nil
+        } ?? previousBatches.first?.id
         guard let activeBatchID,
               let activeIndex = previousBatches.firstIndex(where: { $0.id == activeBatchID })
         else {
-            return newPlan
+            var plan = newPlan
+            plan.deletedBatchIDs = Array(deletedBatchIDs).sorted { $0.uuidString < $1.uuidString }
+            return plan
         }
 
         let preservedBatches = previousBatches
@@ -2080,6 +2158,7 @@ final class MealPlanningAppStore: ObservableObject {
 
         var plan = newPlan
         plan.activeBatchID = activeBatchID
+        plan.deletedBatchIDs = Array(deletedBatchIDs).sorted { $0.uuidString < $1.uuidString }
         plan.batches = [activeBatch] + preservedBatches
         return planMirroringPrimeBatch(plan, preferredBatchID: activeBatchID)
     }
@@ -2247,7 +2326,8 @@ final class MealPlanningAppStore: ObservableObject {
         // generatePlan() is the dominant latency source (10–30 s of LLM inference);
         // membership refresh should not serialize behind it.
         async let membershipRefresh: Void = refreshMembershipEntitlement(trigger: "post-onboarding")
-        if profile.isPlanningReady {
+        let usesFirstRunGuide = FirstRunGuideCatalog.seedRecipeID(in: profile) != nil
+        if profile.isPlanningReady, !usesFirstRunGuide {
             // The first post-onboarding candidate fetch is the most failure-prone moment
             // (cold backend, slow LLM curation). A single empty/timed-out attempt used to
             // leave new users with no prep at all, so retry a few times with backoff
@@ -2255,7 +2335,10 @@ final class MealPlanningAppStore: ObservableObject {
             let maxOnboardingPlanAttempts = 3
             var onboardingPlanAttempt = 0
             while onboardingPlanAttempt < maxOnboardingPlanAttempts {
-                let generated = await generatePlan(options: onboardingPrepGenerationOptions(for: profile))
+                // Compatibility fallback for onboarding sessions created before
+                // the guide catalog existed. Current first-run users fetch a
+                // named preset through FirstRunGuideCoordinator instead.
+                let generated = await generatePlan()
                 if let generated, !generated.recipes.isEmpty { break }
                 onboardingPlanAttempt += 1
                 if onboardingPlanAttempt < maxOnboardingPlanAttempts {
@@ -2263,15 +2346,6 @@ final class MealPlanningAppStore: ObservableObject {
                 }
             }
             await ensureOnboardingUsualPrepBatch(profile: profile)
-
-            // First-run coach: if the new user now has a prep, ask the shell to bounce
-            // them to the Prep tab with a "your prep is ready" toast + a pointer at the
-            // add button. Fires at most once per device.
-            if latestPlan?.recipes.isEmpty == false,
-               !UserDefaults.standard.bool(forKey: Self.firstPrepCoachShownKey) {
-                UserDefaults.standard.set(true, forKey: Self.firstPrepCoachShownKey)
-                pendingFirstPrepCoach = true
-            }
         }
         await membershipRefresh
 
@@ -2299,34 +2373,10 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    private func onboardingPrepGenerationOptions(for profile: UserProfile) -> PrepGenerationOptions {
-        let topSignals = [
-            profile.trimmedPreferredName,
-            profile.userFacingCuisineTitles.first,
-            profile.favoriteFoods.prefix(3).joined(separator: ", "),
-            profile.dietaryPatterns.joined(separator: ", "),
-            profile.budgetSummary
-        ]
-        .compactMap { signal -> String? in
-            let trimmed = signal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return trimmed.isEmpty ? nil : trimmed
-        }
-
-        let userPrompt = topSignals.isEmpty
-            ? nil
-            : "Seed the first prep from onboarding signals: \(topSignals.joined(separator: "; ")). Keep it to three recipes."
-
-        return PrepGenerationOptions(
-            focus: .balanced,
-            targetRecipeCount: 3,
-            userPrompt: userPrompt
-        )
-    }
-
     private func ensureOnboardingUsualPrepBatch(profile: UserProfile) async {
         guard var plan = latestPlan, !plan.recipes.isEmpty else { return }
         var existingBatches = plan.batches ?? []
-        let seedRecipes = Array(plan.recipes.prefix(3))
+        let seedRecipes = plan.recipes
         let seededPlan = planner.rebuildPlanCartOnly(
             profile: profile,
             basePlan: plan,
@@ -2414,6 +2464,51 @@ final class MealPlanningAppStore: ObservableObject {
         await syncPrepMutationToAutomation(trigger: "prep_recipe_removed", forceCartSync: true)
     }
 
+    func removeRecipe(recipeID: String, fromPrepBatch batchID: UUID) async {
+        guard let profile,
+              var plan = latestPlan,
+              var batches = plan.batches,
+              let targetIndex = batches.firstIndex(where: { $0.id == batchID }),
+              let removedRecipe = batches[targetIndex].recipes.first(where: { $0.recipe.id == recipeID })
+        else { return }
+
+        batches[targetIndex].recipes.removeAll { $0.recipe.id == recipeID }
+        let rebuiltTargetPlan = planner.rebuildPlanCartOnly(
+            profile: profile,
+            basePlan: plan,
+            recipes: batches[targetIndex].recipes,
+            history: planHistory,
+            recurringRecipeIDs: batches[targetIndex].recurringRecipeIDs ?? resolvedRecurringRecipeIDs(for: plan)
+        )
+        batches[targetIndex].recipes = rebuiltTargetPlan.recipes
+        batches[targetIndex].groceryItems = rebuiltTargetPlan.groceryItems
+        batches[targetIndex].recurringRecipeIDs = rebuiltTargetPlan.recurringRecipeIDs
+
+        let override = PrepRecipeOverride(
+            recipe: removedRecipe.recipe,
+            servings: removedRecipe.servings,
+            isIncludedInPrep: false
+        )
+        cachePrepRecipeOverride(override)
+
+        plan.batches = batches
+        plan.generatedAt = Date()
+        lastLocalPrepMutationAt = .now
+        let primeBatchID = resolvedPrimeBatchID(in: plan)
+        let updatedPlan = planMirroringPrimeBatch(plan, preferredBatchID: primeBatchID)
+        updateCurrentPlanCache(
+            with: updatedPlan,
+            persistRemote: false,
+            allowBatchContraction: true
+        )
+
+        _ = await persistLatestPlanRemotelyIfPossible(updatedPlan)
+        await persistPrepRecipeOverrideIfPossible(override)
+        if primeBatchID == batchID {
+            await syncPrepMutationToAutomation(trigger: "prep_recipe_removed", forceCartSync: true)
+        }
+    }
+
     func reorderLatestPlanRecipes(recipeIDs orderedRecipeIDs: [String]) async {
         guard let latestPlan, !isGenerating else { return }
         guard orderedRecipeIDs.count == latestPlan.recipes.count else { return }
@@ -2444,6 +2539,8 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     func resetAll() {
+        shareImportAuthorizationRefreshTask?.cancel()
+        shareImportAuthorizationRefreshTask = nil
         let previousUserID = resolvedLiveUserID ?? authSession?.userID ?? cachedLiveUserID
         authStateRevision += 1
         authSessionNeedsReauthentication = false
@@ -2454,6 +2551,7 @@ final class MealPlanningAppStore: ObservableObject {
         profile = nil
         latestPlan = nil
         planHistory = []
+        deletedPrepBatchIDs = []
         completedMealPrepCycles = []
         recurringPrepRecipes = []
         automationState = nil
@@ -2586,6 +2684,8 @@ final class MealPlanningAppStore: ObservableObject {
     }
 
     private func clearPersistedAuthIdentity() {
+        shareImportAuthorizationRefreshTask?.cancel()
+        shareImportAuthorizationRefreshTask = nil
         authSessionNeedsReauthentication = false
         authSession = nil
         cachedLiveUserID = nil
@@ -2942,9 +3042,27 @@ final class MealPlanningAppStore: ObservableObject {
     /// Creates a new named batch on the latest plan and selects it.
     @discardableResult
     func addPrepBatch(name: String? = nil) -> UUID? {
-        guard var plan = latestPlan else { return nil }
+        let now = Date()
+        var plan: MealPlan
+        if let latestPlan {
+            plan = latestPlan
+        } else {
+            let cadence = profile?.cadence ?? .weekly
+            plan = MealPlan(
+                id: UUID(),
+                generatedAt: now,
+                periodStart: now,
+                periodEnd: now.adding(days: cadence.dayInterval),
+                cadence: cadence,
+                recipes: [],
+                groceryItems: [],
+                providerQuotes: [],
+                pipeline: [],
+                batches: []
+            )
+        }
         var currentBatches = plan.batches ?? []
-        if currentBatches.isEmpty {
+        if currentBatches.isEmpty, !plan.recipes.isEmpty {
             // Migrate existing `recipes` into an intent-based default on first named-prep creation.
             let seedBatch = PrepBatch(
                 name: "Usual",
@@ -2961,7 +3079,7 @@ final class MealPlanningAppStore: ObservableObject {
         if let trimmedName, !trimmedName.isEmpty {
             resolvedName = trimmedName
         } else {
-            resolvedName = "New Prep \(newIndex)"
+            resolvedName = "New Plan \(newIndex)"
         }
         let newBatch = PrepBatch(name: resolvedName)
         currentBatches.append(newBatch)
@@ -3104,15 +3222,30 @@ final class MealPlanningAppStore: ObservableObject {
         updateCurrentPlanCache(with: plan, persistRemote: true, allowBatchContraction: true)
     }
 
-    /// Renames a batch. No-op if no batch with that id exists.
+    /// Renames a plan batch. Legacy single-plan data is migrated in place to a
+    /// named batch so every current plan can use the same naming surface.
     func renamePrepBatch(id: UUID, to name: String) {
-        guard var plan = latestPlan,
-              var batches = plan.batches,
-              let idx = batches.firstIndex(where: { $0.id == id })
-        else { return }
-        batches[idx].name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Batch \(idx + 1)"
-            : name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var plan = latestPlan else { return }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var batches = plan.batches ?? []
+
+        if let idx = batches.firstIndex(where: { $0.id == id }) {
+            batches[idx].name = trimmedName.isEmpty ? "Plan \(idx + 1)" : trimmedName
+        } else if batches.isEmpty, plan.id == id {
+            batches = [
+                PrepBatch(
+                    id: id,
+                    name: trimmedName.isEmpty ? "Usual" : trimmedName,
+                    recipes: plan.recipes,
+                    groceryItems: plan.groceryItems,
+                    recurringRecipeIDs: plan.recurringRecipeIDs
+                )
+            ]
+            plan.activeBatchID = id
+        } else {
+            return
+        }
+
         plan.batches = batches
         plan.generatedAt = Date()
         lastLocalPrepMutationAt = .now
@@ -3122,15 +3255,37 @@ final class MealPlanningAppStore: ObservableObject {
     /// Deletes a batch while keeping batch-mode canonical once it has been enabled.
     func deletePrepBatch(id: UUID) {
         guard var plan = latestPlan,
-              var batches = plan.batches
+              var batches = plan.batches,
+              batches.contains(where: { $0.id == id })
         else { return }
         batches.removeAll { $0.id == id }
+        deletedPrepBatchIDs.insert(id)
+        saveDeletedPrepBatchIDs()
+        plan.deletedBatchIDs = Array(
+            Set((plan.deletedBatchIDs ?? []) + Array(deletedPrepBatchIDs))
+        ).sorted { $0.uuidString < $1.uuidString }
+        lastLocalPrepMutationAt = .now
+
         if batches.isEmpty {
-            plan.recipes = []
-            plan.groceryItems = []
-            plan.recurringRecipeIDs = nil
-            plan.batches = []
-            plan.activeBatchID = nil
+            let deletedPlanID = plan.id
+            latestPlan = nil
+            activeBatchID = nil
+            planHistory.removeAll { $0.id == deletedPlanID }
+            latestPlanRevision += 1
+            saveHistory()
+
+            Task(priority: .userInitiated) { [weak self] in
+                guard let self, let session = await self.freshUserDataSession() else { return }
+                do {
+                    try await SupabaseMealPrepCycleService.shared.deleteMealPrepCycle(
+                        userID: session.userID,
+                        planID: deletedPlanID,
+                        accessToken: session.accessToken
+                    )
+                } catch {
+                    print("[MealPlanningAppStore] Failed to delete meal prep cycle \(deletedPlanID): \(error.localizedDescription)")
+                }
+            }
         } else {
             plan.batches = batches
             if activeBatchID == id {
@@ -3138,10 +3293,19 @@ final class MealPlanningAppStore: ObservableObject {
             } else {
                 plan.activeBatchID = activeBatchID
             }
+            plan.generatedAt = Date()
+            let contractedPlan = planMirroringPrimeBatch(plan, preferredBatchID: plan.activeBatchID)
+            updateCurrentPlanCache(
+                with: contractedPlan,
+                persistRemote: false,
+                allowBatchContraction: true
+            )
+
+            Task(priority: .userInitiated) { [weak self] in
+                guard let self else { return }
+                _ = await self.persistLatestPlanRemotelyIfPossible(contractedPlan)
+            }
         }
-        plan.generatedAt = Date()
-        lastLocalPrepMutationAt = .now
-        updateCurrentPlanCache(with: plan, persistRemote: true)
     }
 
     func toggleRecurringPrepRecipe(_ recipe: Recipe) async -> Bool {
@@ -3426,7 +3590,13 @@ final class MealPlanningAppStore: ObservableObject {
                 userID: userID,
                 accessToken: accessToken
             )
-            var usableFetched = usablePersistedPlans(from: fetched)
+            let remoteDeletedBatchIDs = Set(fetched.flatMap { $0.deletedBatchIDs ?? [] })
+            if !remoteDeletedBatchIDs.isSubset(of: deletedPrepBatchIDs) {
+                deletedPrepBatchIDs.formUnion(remoteDeletedBatchIDs)
+                saveDeletedPrepBatchIDs()
+            }
+            let fetchedWithoutDeletedBatches = fetched.compactMap(planApplyingDeletedPrepBatches)
+            var usableFetched = usablePersistedPlans(from: fetchedWithoutDeletedBatches)
             guard !usableFetched.isEmpty else {
                 remoteMealPrepCycleLoadState = .empty
                 return .empty
@@ -5095,9 +5265,18 @@ final class MealPlanningAppStore: ObservableObject {
         guard let data = try? encoder.encode(authSession) else { return }
         authSessionNeedsReauthentication = false
         cachedLiveUserID = authSession.userID
+        let existingSharedSession = sharedDefaults?
+            .data(forKey: sharedAuthSessionKey)
+            .flatMap { try? JSONDecoder().decode(SharedAuthSessionRecord.self, from: $0) }
         let sharedSessionData = try? encoder.encode(SharedAuthSessionRecord(
             userID: authSession.userID,
-            accessToken: authSession.accessToken
+            accessToken: authSession.accessToken,
+            shareImportAuthorization: existingSharedSession?.userID == authSession.userID
+                ? existingSharedSession?.shareImportAuthorization
+                : nil,
+            shareImportAuthorizationExpiresAt: existingSharedSession?.userID == authSession.userID
+                ? existingSharedSession?.shareImportAuthorizationExpiresAt
+                : nil
         ))
         UserDefaults.standard.set(data, forKey: authSessionKey)
         UserDefaults.standard.synchronize()
@@ -5112,6 +5291,61 @@ final class MealPlanningAppStore: ObservableObject {
         }
         sharedDefaults?.synchronize()
         saveAuthSessionToKeychain(data)
+        refreshShareImportAuthorizationIfNeeded(for: authSession, existing: existingSharedSession)
+    }
+
+    private func refreshShareImportAuthorizationIfNeeded(
+        for authSession: AuthSession,
+        existing: SharedAuthSessionRecord?
+    ) {
+        let accessToken = authSession.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !accessToken.isEmpty else { return }
+
+        let existingToken = existing?.shareImportAuthorization?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let refreshThreshold = Date().addingTimeInterval(30 * 24 * 60 * 60)
+        if existing?.userID == authSession.userID,
+           !existingToken.isEmpty,
+           let expiresAt = existing?.shareImportAuthorizationExpiresAt,
+           expiresAt > refreshThreshold {
+            return
+        }
+        guard shareImportAuthorizationRefreshTask == nil else { return }
+
+        let userID = authSession.userID
+        shareImportAuthorizationRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.shareImportAuthorizationRefreshTask = nil }
+            do {
+                let authorization = try await RecipeImportAPIService.shared.createShareImportAuthorization(
+                    userID: userID,
+                    accessToken: accessToken
+                )
+                guard !Task.isCancelled, self.authSession?.userID == userID else { return }
+                guard let expiresAt = Self.shareImportAuthorizationDate(from: authorization.expiresAt) else { return }
+
+                let sharedRecord = SharedAuthSessionRecord(
+                    userID: userID,
+                    accessToken: self.authSession?.accessToken,
+                    shareImportAuthorization: authorization.token,
+                    shareImportAuthorizationExpiresAt: expiresAt
+                )
+                if let sharedData = try? JSONEncoder().encode(sharedRecord) {
+                    self.sharedDefaults?.set(sharedData, forKey: self.sharedAuthSessionKey)
+                    self.sharedDefaults?.synchronize()
+                }
+            } catch {
+                // A later session refresh retries provisioning. Normal app auth is unaffected.
+            }
+        }
+    }
+
+    private static func shareImportAuthorizationDate(from value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        return ISO8601DateFormatter().date(from: value)
     }
 
     private func providerConnectionStateKey(for userID: String?) -> String? {
@@ -5321,10 +5555,72 @@ final class MealPlanningAppStore: ObservableObject {
         Self.normalizedCartKey(itemName)
     }
 
+    func correctMainShopItemName(originalName: String, correctedName: String) {
+        let originalKey = Self.normalizedCartKey(originalName)
+        let corrected = correctedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var plan = latestPlan, !originalKey.isEmpty, !corrected.isEmpty else { return }
+
+        var groceries = plan.groceryItems
+        var matchedItem = false
+        for index in groceries.indices {
+            let itemKey = Self.normalizedCartKey(groceries[index].name)
+            let hasSourceMatch = groceries[index].sourceIngredients.contains {
+                let sourceKey = Self.normalizedCartKey($0.ingredientName)
+                return sourceKey == originalKey
+                    || sourceKey.contains(originalKey)
+                    || originalKey.contains(sourceKey)
+            }
+            guard itemKey == originalKey
+                    || itemKey.contains(originalKey)
+                    || originalKey.contains(itemKey)
+                    || hasSourceMatch else {
+                continue
+            }
+            groceries[index].name = corrected
+            matchedItem = true
+        }
+
+        if !matchedItem {
+            groceries.append(
+                GroceryItem(
+                    name: corrected,
+                    amount: 1,
+                    unit: "item",
+                    estimatedPrice: 0
+                )
+            )
+        }
+
+        plan.groceryItems = groceries
+        if var batches = plan.batches,
+           let activeBatchID = plan.activeBatchID ?? self.activeBatchID,
+           let activeIndex = batches.firstIndex(where: { $0.id == activeBatchID }) {
+            batches[activeIndex].groceryItems = groceries
+            plan.batches = batches
+        }
+        plan.mainShopSnapshot = nil
+        plan.generatedAt = Date()
+        lastLocalPrepMutationAt = .now
+        updateCurrentPlanCache(with: plan, persistRemote: true)
+
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.refreshLatestPlanMainShopSnapshotIfNeeded(forceRebuild: true)
+            await self.syncPrepMutationToAutomation(trigger: "cart_item_corrected", forceCartSync: true)
+        }
+    }
+
     private func saveHistory() {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(planHistory) else { return }
         UserDefaults.standard.set(data, forKey: historyStorageKey(for: activeHistoryUserID))
+    }
+
+    private func saveDeletedPrepBatchIDs() {
+        guard let data = try? JSONEncoder().encode(deletedPrepBatchIDs.map(\.uuidString).sorted()) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: deletedPrepBatchIDsStorageKey(for: activeHistoryUserID))
     }
 
     private func saveCompletedMealPrepCycleCache() {
@@ -5426,6 +5722,7 @@ final class MealPlanningAppStore: ObservableObject {
             ?? fallbackKeys.compactMap { defaults.data(forKey: $0) }.first
 
         activeHistoryUserID = userID
+        loadDeletedPrepBatchIDs(for: userID)
 
         guard let data,
               let decodedHistory = try? JSONDecoder().decode([MealPlan].self, from: data)
@@ -5443,6 +5740,16 @@ final class MealPlanningAppStore: ObservableObject {
         if defaults.data(forKey: primaryKey) == nil {
             defaults.set(data, forKey: primaryKey)
         }
+    }
+
+    private func loadDeletedPrepBatchIDs(for userID: String?) {
+        guard let data = UserDefaults.standard.data(forKey: deletedPrepBatchIDsStorageKey(for: userID)),
+              let values = try? JSONDecoder().decode([String].self, from: data)
+        else {
+            deletedPrepBatchIDs = []
+            return
+        }
+        deletedPrepBatchIDs = Set(values.compactMap(UUID.init(uuidString:)))
     }
 
     private static func matchesOwnedMainShopItem(_ ownedValue: String, candidate: String) -> Bool {
@@ -5538,6 +5845,10 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func historyStorageKey(for userID: String?) -> String {
         "\(historyKeyPrefix)-\(userID ?? "guest")"
+    }
+
+    private func deletedPrepBatchIDsStorageKey(for userID: String?) -> String {
+        "\(deletedPrepBatchIDsKeyPrefix)-\(userID ?? "guest")"
     }
 
     private func completedHistoryStorageKey(for userID: String?) -> String {
@@ -5702,9 +6013,39 @@ final class MealPlanningAppStore: ObservableObject {
         history.filter(isUsablePersistedPlan)
     }
 
+    private func planApplyingDeletedPrepBatches(_ inputPlan: MealPlan) -> MealPlan? {
+        let planDeletedBatchIDs = Set(inputPlan.deletedBatchIDs ?? [])
+        let allDeletedBatchIDs = deletedPrepBatchIDs.union(planDeletedBatchIDs)
+        guard !allDeletedBatchIDs.isEmpty,
+              let existingBatches = inputPlan.batches,
+              !existingBatches.isEmpty
+        else {
+            return inputPlan
+        }
+
+        let remainingBatches = existingBatches.filter { !allDeletedBatchIDs.contains($0.id) }
+        guard remainingBatches.count != existingBatches.count else {
+            var plan = inputPlan
+            plan.deletedBatchIDs = Array(allDeletedBatchIDs).sorted { $0.uuidString < $1.uuidString }
+            return plan
+        }
+        guard !remainingBatches.isEmpty else { return nil }
+
+        var plan = inputPlan
+        plan.batches = remainingBatches
+        plan.deletedBatchIDs = Array(allDeletedBatchIDs).sorted { $0.uuidString < $1.uuidString }
+        let preferredBatchID = plan.activeBatchID.flatMap { activeID in
+            remainingBatches.contains(where: { $0.id == activeID }) ? activeID : nil
+        } ?? remainingBatches.first?.id
+        plan.activeBatchID = preferredBatchID
+        return planMirroringPrimeBatch(plan, preferredBatchID: preferredBatchID)
+    }
+
     private func plansPreservingRichestKnownBatches(_ plans: [MealPlan]) -> [MealPlan] {
         guard let latestPlan = plans.first,
-              let richestBatchPlan = plans.max(by: { lhs, rhs in
+              let richestBatchPlan = plans
+              .filter({ $0.id == latestPlan.id })
+              .max(by: { lhs, rhs in
                   prepBatchStructureScore(for: lhs) < prepBatchStructureScore(for: rhs)
               })
         else {
@@ -5767,4 +6108,6 @@ final class MealPlanningAppStore: ObservableObject {
 private struct SharedAuthSessionRecord: Codable {
     let userID: String
     let accessToken: String?
+    let shareImportAuthorization: String?
+    let shareImportAuthorizationExpiresAt: Date?
 }

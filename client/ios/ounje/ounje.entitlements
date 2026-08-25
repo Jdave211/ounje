@@ -13,6 +13,8 @@
     <key>com.apple.developer.associated-domains</key>
     <array>
       <string>applinks:ounje-idbl.onrender.com</string>
+      <string>applinks:ounje-recipe.vercel.app</string>
+      <string>applinks:ounje-recipe-share.vercel.app</string>
     </array>
     <!--
       APNs environment.

@@ -239,17 +239,25 @@ function primaryBatchFromPlan(plan, fallbackName = "Usual") {
   };
 }
 
-function mergePlanWithRicherBatchStructure(latestPlan, richerPlan) {
+export function mergePlanWithRicherBatchStructure(latestPlan, richerPlan) {
   const richerBatches = planBatches(richerPlan);
-  const latestBatches = planBatches(latestPlan);
   if (!latestPlan || batchStructureScore(richerPlan) <= batchStructureScore(latestPlan)) return latestPlan;
 
-  const preservedTail = richerBatches.slice(1).map((batch) => ({
-    ...batch,
-    recipes: Array.isArray(batch?.recipes) ? batch.recipes : [],
-    groceryItems: Array.isArray(batch?.groceryItems) ? batch.groceryItems : [],
-    recurringRecipeIDs: Array.isArray(batch?.recurringRecipeIDs) ? batch.recurringRecipeIDs : null,
-  }));
+  const deletedBatchIDs = new Set(
+    (Array.isArray(latestPlan?.deletedBatchIDs) ? latestPlan.deletedBatchIDs : [])
+      .map(normalizeText)
+      .filter(Boolean)
+  );
+
+  const preservedTail = richerBatches
+    .slice(1)
+    .filter((batch) => !deletedBatchIDs.has(normalizeText(batch?.id)))
+    .map((batch) => ({
+      ...batch,
+      recipes: Array.isArray(batch?.recipes) ? batch.recipes : [],
+      groceryItems: Array.isArray(batch?.groceryItems) ? batch.groceryItems : [],
+      recurringRecipeIDs: Array.isArray(batch?.recurringRecipeIDs) ? batch.recurringRecipeIDs : null,
+    }));
   const tailRecipeIDs = new Set(
     preservedTail
       .flatMap((batch) => Array.isArray(batch?.recipes) ? batch.recipes : [])
@@ -273,6 +281,7 @@ function mergePlanWithRicherBatchStructure(latestPlan, richerPlan) {
   return {
     ...latestPlan,
     activeBatchID,
+    deletedBatchIDs: [...deletedBatchIDs],
     batches,
     recipes: latestPrimaryBatch.recipes ?? [],
     groceryItems: latestPrimaryBatch.groceryItems ?? [],

@@ -3,14 +3,14 @@ import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { repairStaleRecipeIngestionJobs, runRecipeIngestionWorkerBatch } from "../lib/recipe-ingestion.js";
-import { getRedisClient, redisConfigStatus } from "../lib/redis-cache.js";
-import { getServiceRoleSupabase } from "../lib/supabase-clients.js";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
+const { repairStaleRecipeIngestionJobs, runRecipeIngestionWorkerBatch } = await import("../lib/recipe-ingestion.js");
+const { getRedisClient, redisConfigStatus } = await import("../lib/redis-cache.js");
+const { getServiceRoleSupabase } = await import("../lib/supabase-clients.js");
 
 function argValue(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -19,18 +19,22 @@ function argValue(name, fallback = null) {
 }
 
 async function checkRedis() {
-  const status = redisConfigStatus();
-  if (!status.configured) {
-    return { configured: false, ok: false, reason: "REDIS_URL is not configured" };
-  }
+  try {
+    const status = redisConfigStatus();
+    if (!status.configured) {
+      return { configured: false, ok: false, reason: "REDIS_URL is not configured" };
+    }
 
-  const client = await getRedisClient();
-  if (!client) {
-    return { configured: true, ok: false, reason: "Redis client unavailable" };
-  }
+    const client = await getRedisClient();
+    if (!client) {
+      return { configured: true, ok: false, reason: "Redis client unavailable" };
+    }
 
-  const pong = await client.ping();
-  return { configured: true, ok: pong === "PONG", pong };
+    const pong = await client.ping();
+    return { configured: true, ok: pong === "PONG", pong };
+  } catch (error) {
+    return { configured: true, ok: false, reason: error.message };
+  }
 }
 
 function secondsSince(value) {
@@ -85,17 +89,34 @@ const badWorkerProcessed = await runRecipeIngestionWorkerBatch({
 const stale = await repairStaleRecipeIngestionJobs({
   staleAfterMinutes,
   limit: staleLimit,
-  dryRun: true,
+  dryRun: false,
   workerID: "recipe_ingestion_health_check",
 });
 const redis = await checkRedis();
+const queueBeforeRecovery = await checkQueueAge(maxQueuedAgeSeconds);
+let fallbackProcessed = 0;
+let fallbackError = null;
+if (!queueBeforeRecovery.ok) {
+  try {
+    fallbackProcessed = await runRecipeIngestionWorkerBatch({
+      workerID: "render_recipe_ingest_health",
+      batchSize: 2,
+    });
+  } catch (error) {
+    fallbackError = error.message;
+  }
+}
 const queue = await checkQueueAge(maxQueuedAgeSeconds);
-const ok = badWorkerProcessed === 0 && stale.actions.length === 0 && redis.ok && queue.ok;
+const ok = badWorkerProcessed === 0 && queue.ok && fallbackError == null;
 
 console.log(JSON.stringify({
   ok,
+  degraded: !redis.ok,
   redis,
   queue,
+  queue_before_recovery: queueBeforeRecovery,
+  fallback_processed: fallbackProcessed,
+  fallback_error: fallbackError,
   bad_worker_claim_blocked: badWorkerProcessed === 0,
   bad_worker_processed: badWorkerProcessed,
   stale,

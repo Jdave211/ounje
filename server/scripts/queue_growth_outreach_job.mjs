@@ -25,13 +25,15 @@ function parseArgs(argv) {
 
 function normalizeMode(value) {
   const mode = String(value ?? "").trim().toLowerCase();
-  if (mode === "quora" || mode === "roundups" || mode === "both") return mode;
+  if (mode === "quora" || mode === "roundups" || mode === "both" || mode === "creator" || mode === "creators" || mode === "all") {
+    return mode === "creator" ? "creators" : mode;
+  }
   return "both";
 }
 
 const args = parseArgs(process.argv);
 if (!args.userID) {
-  console.error("Usage: node server/scripts/queue_growth_outreach_job.mjs --user-id <auth_user_uuid> [--mode both|quora|roundups]");
+  console.error("Usage: node server/scripts/queue_growth_outreach_job.mjs --user-id <auth_user_uuid> [--mode both|quora|roundups|creators|all]");
   process.exit(1);
 }
 

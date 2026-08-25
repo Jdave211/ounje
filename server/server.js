@@ -78,6 +78,22 @@ app.use(maybeBlockNonEssentialDuringDegraded);
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(serverDir, "..");
 
+app.get("/recipe-assets/slee-handwriting.otf", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.sendFile(path.join(repoRoot, "client/ios/ounje/Supporting/Fonts/Slee_handwritting-Regular.otf"));
+});
+
+app.get("/recipe-assets/ounje-wordmark.png", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.sendFile(path.join(repoRoot, "client/ios/ounje/Images.xcassets/OunjeLaunchWordmark.imageset/image@3x.png"));
+});
+
+app.get("/favicon.ico", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.type("image/png");
+  res.sendFile(path.join(repoRoot, "client/ios/ounje/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png"));
+});
+
 const SUPABASE_URL = String(process.env.SUPABASE_URL ?? "").trim();
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
 const HEALTHZ_CACHE_TTL_MS = Math.max(

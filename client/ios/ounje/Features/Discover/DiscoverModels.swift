@@ -167,6 +167,10 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable, Sendable {
     let heroImageURLString: String?
     let recipeURLString: String?
     let source: String?
+    var averageRating: Double? = nil
+    var ratingCount: Int? = nil
+    var bayesianRating: Double? = nil
+    var coldStartRating: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -184,6 +188,10 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable, Sendable {
         case heroImageURLString = "hero_image_url"
         case recipeURLString = "recipe_url"
         case source
+        case averageRating = "average_rating"
+        case ratingCount = "rating_count"
+        case bayesianRating = "bayesian_rating"
+        case coldStartRating = "cold_start_rating"
     }
 
     var imageURL: URL? {
@@ -212,8 +220,10 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable, Sendable {
         if let authorHandle = Self.displayableCreatorHandle(authorHandle) {
             return authorHandle
         }
-        if let authorName, !authorName.isEmpty, !Self.isOpaqueNumericCreator(authorName) { return authorName }
-        return "Source pending"
+        if let authorName = Self.displayableCreatorHandle(authorName) {
+            return authorName
+        }
+        return "@ounje"
     }
 
     var filterLabel: String {
@@ -293,10 +303,19 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable, Sendable {
         let withoutAt = raw
             .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !withoutAt.isEmpty, !isOpaqueNumericCreator(withoutAt) else {
+        guard !withoutAt.isEmpty,
+              !isOpaqueNumericCreator(withoutAt),
+              !isPlaceholderCreator(withoutAt) else {
             return nil
         }
         return "@\(withoutAt)"
+    }
+
+    private static func isPlaceholderCreator(_ value: String) -> Bool {
+        let normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized == "source pending" || normalized == "ounje source"
     }
 
     private static func isOpaqueNumericCreator(_ value: String) -> Bool {
@@ -313,6 +332,44 @@ struct DiscoverRecipeCardData: Identifiable, Codable, Hashable, Sendable {
             cookTimeMinutes: cookTimeMinutes
         )
         return minutes > 0 ? formattedRecipeCookTime(minutes: minutes) : nil
+    }
+
+    var ratingDisplayText: String {
+        guard let displayRating else {
+            return "New"
+        }
+        let boundedRating = min(max(displayRating, 0), 5)
+        return String(format: "%.1f", boundedRating)
+    }
+
+    var displayRating: Double? {
+        if let bayesianRating, bayesianRating.isFinite { return bayesianRating }
+        if let coldStartRating, coldStartRating.isFinite { return coldStartRating }
+        if let averageRating, averageRating.isFinite { return averageRating }
+        return nil
+    }
+
+    var ratingCountDisplayText: String? {
+        let count = max(0, ratingCount ?? 0)
+        guard count > 0 else { return nil }
+        if count >= 1_000 {
+            let compact = Double(count) / 1_000
+            return compact >= 10 ? "\(Int(compact))K" : String(format: "%.1fK", compact)
+        }
+        return "\(count)"
+    }
+
+    var hasCommunityRatings: Bool {
+        averageRating != nil && (ratingCount ?? 0) > 0
+    }
+
+    func applyingRating(_ summary: RecipeRatingSummary) -> DiscoverRecipeCardData {
+        var updated = self
+        updated.averageRating = summary.averageRating
+        updated.ratingCount = summary.ratingCount
+        updated.bayesianRating = summary.bayesianRating
+        updated.coldStartRating = summary.coldStartRating
+        return updated
     }
 
     var displayTitle: String {
@@ -668,6 +725,13 @@ struct DiscoverOnboardingFeedMixer {
             default:
                 score += 0.2
             }
+        }
+
+        let ratingCount = max(0, recipe.ratingCount ?? 0)
+        if let weightedRating = recipe.displayRating {
+            let qualityLift = ((weightedRating - 3.8) * 3.0)
+                + min(1.5, log1p(Double(ratingCount)) * 0.28)
+            score += min(3.0, max(-1.5, qualityLift))
         }
 
         return score

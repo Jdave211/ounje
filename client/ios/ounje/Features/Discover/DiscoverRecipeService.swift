@@ -9,6 +9,22 @@ final class SupabaseDiscoverRecipeService {
         let windowsFetched: Int
     }
 
+    private struct DiscoverRecipeRatingRow: Decodable {
+        let id: String
+        let averageRating: Double?
+        let ratingCount: Int
+        let bayesianRating: Double
+        let coldStartRating: Double
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case averageRating = "average_rating"
+            case ratingCount = "rating_count"
+            case bayesianRating = "bayesian_rating"
+            case coldStartRating = "cold_start_rating"
+        }
+    }
+
     private actor CatalogCache {
         private var catalogPoolCache: [String: CatalogPoolResult] = [:]
         private var recipeCountCache: (count: Int, fetchedAt: Date)?
@@ -62,7 +78,11 @@ final class SupabaseDiscoverRecipeService {
         "hero_image_url",
         "recipe_url",
         "source",
-        "discover_brackets"
+        "discover_brackets",
+        "average_rating",
+        "rating_count",
+        "bayesian_rating",
+        "cold_start_rating"
     ].joined(separator: ",")
 
     private let catalogCache = CatalogCache()
@@ -120,6 +140,23 @@ final class SupabaseDiscoverRecipeService {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedFilter = DiscoverPreset.normalizedKey(for: filter)
 
+        // Browsing should be a cheap catalog operation. Keep the heavier Render
+        // ranking path for explicit searches, where semantic retrieval is useful.
+        if normalizedQuery.isEmpty {
+            if normalizedFilter == "all" {
+                return try await fetchRotatedCatalogFeed(
+                    limit: limit,
+                    offset: offset,
+                    sessionSeed: sessionSeed
+                )
+            }
+            return try await fetchBracketRecipesFallback(
+                filter: filter,
+                limit: limit,
+                offset: offset
+            )
+        }
+
         var lastError: Error?
         for candidateBaseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
@@ -150,7 +187,10 @@ final class SupabaseDiscoverRecipeService {
                     }
                 }
 
-                return response
+                if response.recipes.allSatisfy({ $0.displayRating != nil }) {
+                    return response
+                }
+                return await hydrateCommunityRatings(in: response)
             } catch {
                 lastError = error
                 debugLogDiscoverFallback(
@@ -162,41 +202,6 @@ final class SupabaseDiscoverRecipeService {
                     error: error
                 )
             }
-        }
-
-        if normalizedQuery.isEmpty {
-            if normalizedFilter != "all" {
-                let fallback = try await fetchBracketRecipesFallback(filter: filter, limit: limit, offset: offset)
-                debugLogDiscoverFallback(
-                    "all render candidates failed; bracket fallback",
-                    filter: filter,
-                    offset: offset,
-                    recipes: fallback.recipes.count,
-                    mode: fallback.rankingMode
-                )
-                return fallback
-            }
-
-            let directFeed = try await fetchRotatedCatalogFeed(
-                limit: limit,
-                offset: offset,
-                sessionSeed: sessionSeed
-            )
-            debugLogDiscoverFallback(
-                "all render candidates failed; feed fallback",
-                filter: filter,
-                offset: offset,
-                recipes: directFeed.recipes.count,
-                mode: "supabase_direct_fallback"
-            )
-            return DiscoverRankedRecipesResponse(
-                recipes: directFeed.recipes,
-                filters: directFeed.filters,
-                rankingMode: "supabase_direct_fallback",
-                totalAvailable: directFeed.totalAvailable,
-                hasMore: directFeed.hasMore,
-                nextOffset: directFeed.nextOffset
-            )
         }
 
         throw lastError ?? SupabaseProfileStateError.invalidResponse
@@ -229,6 +234,49 @@ final class SupabaseDiscoverRecipeService {
                 )
             }
         }
+    }
+
+    private func hydrateCommunityRatings(
+        in response: DiscoverRankedRecipesResponse
+    ) async -> DiscoverRankedRecipesResponse {
+        let recipeIDs = Array(Set(response.recipes.map(\.id))).filter { !$0.hasPrefix("uir_") }
+        guard !recipeIDs.isEmpty else { return response }
+        let joinedIDs = recipeIDs.joined(separator: ",")
+        let select = "id,average_rating,rating_count,bayesian_rating,cold_start_rating"
+        guard let url = URL(
+            string: "\(SupabaseConfig.url)/rest/v1/recipes?select=\(select)&id=in.(\(joinedIDs))"
+        ) else { return response }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+
+        guard let (data, urlResponse) = try? await URLSession.shared.data(for: request),
+              let httpResponse = urlResponse as? HTTPURLResponse,
+              (200 ... 299).contains(httpResponse.statusCode),
+              let rows = try? JSONDecoder().decode([DiscoverRecipeRatingRow].self, from: data)
+        else { return response }
+
+        let ratings = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+        let hydratedRecipes = response.recipes.map { recipe -> DiscoverRecipeCardData in
+            guard let row = ratings[recipe.id] else { return recipe }
+            var updated = recipe
+            updated.averageRating = row.averageRating
+            updated.ratingCount = row.ratingCount
+            updated.bayesianRating = row.bayesianRating
+            updated.coldStartRating = row.coldStartRating
+            return updated
+        }
+        return DiscoverRankedRecipesResponse(
+            recipes: hydratedRecipes,
+            filters: response.filters,
+            rankingMode: response.rankingMode,
+            totalAvailable: response.totalAvailable,
+            hasMore: response.hasMore,
+            nextOffset: response.nextOffset
+        )
     }
 
     private func fetchRankedRecipes(
@@ -299,7 +347,11 @@ final class SupabaseDiscoverRecipeService {
             "hero_image_url",
             "recipe_url",
             "source",
-            "discover_brackets"
+            "discover_brackets",
+            "average_rating",
+            "rating_count",
+            "bayesian_rating",
+            "cold_start_rating"
         ].joined(separator: ",")
         let fetchLimit = max(1, limit + 1)
         guard let encodedSelect = select.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
@@ -346,16 +398,50 @@ final class SupabaseDiscoverRecipeService {
     ) async throws -> DiscoverRankedRecipesResponse {
         let normalizedLimit = max(1, limit)
         let normalizedOffset = max(0, offset)
-        let fetched = try await fetchRecipes(limit: normalizedLimit + 1, offset: normalizedOffset)
-        let pageRecipes = Array(fetched.prefix(normalizedLimit))
-        let hasMore = fetched.count > normalizedLimit
+        let totalCount = try await fetchRecipeCount(forceRefresh: forceRefresh)
+        guard totalCount > 0, normalizedOffset < totalCount else {
+            return DiscoverRankedRecipesResponse(
+                recipes: [],
+                filters: DiscoverPreset.allTitles,
+                rankingMode: "supabase_rotated_catalog",
+                totalAvailable: totalCount,
+                hasMore: false,
+                nextOffset: nil
+            )
+        }
+
+        let rotationStart = Int(
+            deterministicCatalogOrderScore(id: "catalog-start", seed: sessionSeed) % UInt64(totalCount)
+        )
+        let pageCount = min(normalizedLimit, totalCount - normalizedOffset)
+        let physicalOffset = (rotationStart + normalizedOffset) % totalCount
+        let firstCount = min(pageCount, totalCount - physicalOffset)
+
+        var pageRecipes = try await fetchRecipes(
+            limit: firstCount,
+            offset: physicalOffset,
+            orderClause: "id.asc"
+        )
+        let remainingCount = pageCount - pageRecipes.count
+        if remainingCount > 0 {
+            let wrappedRecipes = try await fetchRecipes(
+                limit: remainingCount,
+                offset: 0,
+                orderClause: "id.asc"
+            )
+            pageRecipes.append(contentsOf: wrappedRecipes)
+        }
+
+        pageRecipes = deduplicatedRecipes(pageRecipes)
+        let nextOffset = normalizedOffset + pageRecipes.count
+        let hasMore = nextOffset < totalCount
         return DiscoverRankedRecipesResponse(
             recipes: pageRecipes,
             filters: DiscoverPreset.allTitles,
-            rankingMode: "supabase_direct_page_fallback",
-            totalAvailable: nil,
+            rankingMode: "supabase_rotated_catalog",
+            totalAvailable: totalCount,
             hasMore: hasMore,
-            nextOffset: hasMore ? normalizedOffset + pageRecipes.count : nil
+            nextOffset: hasMore ? nextOffset : nil
         )
     }
 

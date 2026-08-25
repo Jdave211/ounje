@@ -69,7 +69,6 @@
 		DAD00000000000000000011 /* ounje/Features/Discover/Views/DiscoverLoadingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000011 /* ounje/Features/Discover/Views/DiscoverLoadingViews.swift */; };
 		DAD00000000000000000012 /* ounje/Features/Discover/Views/DiscoverRecipeFeedContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000012 /* ounje/Features/Discover/Views/DiscoverRecipeFeedContentView.swift */; };
 		DAD00000000000000000013 /* ounje/Features/Onboarding/Models/OnboardingRecipeEditDemoCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000013 /* ounje/Features/Onboarding/Models/OnboardingRecipeEditDemoCatalog.swift */; };
-		DAD00000000000000000014 /* ounje/OnboardingRecipeEditDemoCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000014 /* ounje/OnboardingRecipeEditDemoCatalog.json */; };
 		DAD00000000000000000015 /* run_forrest_run_white.lottie in Resources */ = {isa = PBXBuildFile; fileRef = DAE00000000000000000015 /* run_forrest_run_white.lottie */; };
 		EA0100010000000000000001 /* Biro_Script_reduced.ttf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000002 /* Biro_Script_reduced.ttf */; };
 		EA0100010000000000000003 /* Slee_handwritting-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = EA0100010000000000000004 /* Slee_handwritting-Regular.otf */; };
@@ -81,6 +80,11 @@
 		F10000000000000000000011 /* wumpus_hi.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000000E /* wumpus_hi.lottie */; };
 		F10000000000000000000012 /* driving_car.lottie in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000013 /* driving_car.lottie */; };
 		F10000000000000000000014 /* DotLottie in Frameworks */ = {isa = PBXBuildFile; productRef = F10000000000000000000015 /* DotLottie */; };
+		FA10000000000000000000001 /* ounje/Features/FirstRunGuide/FirstRunGuideModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB10000000000000000000001 /* ounje/Features/FirstRunGuide/FirstRunGuideModels.swift */; };
+		FA10000000000000000000002 /* ounje/Features/FirstRunGuide/FirstRunGuideCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB10000000000000000000002 /* ounje/Features/FirstRunGuide/FirstRunGuideCoordinator.swift */; };
+		FA10000000000000000000003 /* ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB10000000000000000000003 /* ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift */; };
+		FA10000000000000000000004 /* ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json in Resources */ = {isa = PBXBuildFile; fileRef = FB10000000000000000000004 /* ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json */; };
+		FA10000000000000000000005 /* ounje/Resources/Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FB10000000000000000000005 /* ounje/Resources/Images.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -164,7 +168,6 @@
 		DAE00000000000000000011 /* ounje/Features/Discover/Views/DiscoverLoadingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/Views/DiscoverLoadingViews.swift; sourceTree = "<group>"; };
 		DAE00000000000000000012 /* ounje/Features/Discover/Views/DiscoverRecipeFeedContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Discover/Views/DiscoverRecipeFeedContentView.swift; sourceTree = "<group>"; };
 		DAE00000000000000000013 /* ounje/Features/Onboarding/Models/OnboardingRecipeEditDemoCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Onboarding/Models/OnboardingRecipeEditDemoCatalog.swift; sourceTree = "<group>"; };
-		DAE00000000000000000014 /* ounje/OnboardingRecipeEditDemoCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ounje/OnboardingRecipeEditDemoCatalog.json; sourceTree = "<group>"; };
 		DAE00000000000000000015 /* run_forrest_run_white.lottie */ = {isa = PBXFileReference; lastKnownFileType = file; name = run_forrest_run_white.lottie; path = ounje/run_forrest_run_white.lottie; sourceTree = "<group>"; };
 		EA0100010000000000000002 /* Biro_Script_reduced.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = Biro_Script_reduced.ttf; path = ounje/Supporting/Fonts/Biro_Script_reduced.ttf; sourceTree = "<group>"; };
 		EA0100010000000000000004 /* Slee_handwritting-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "Slee_handwritting-Regular.otf"; path = "ounje/Supporting/Fonts/Slee_handwritting-Regular.otf"; sourceTree = "<group>"; };
@@ -183,6 +186,11 @@
 		F1A2B3C40100000100000009 /* ounje/Features/Cart/MainShopSnapshotBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/Cart/MainShopSnapshotBuilder.swift; sourceTree = "<group>"; };
 		F1A2B3C4010000010000000A /* ounje/Core/Models/RecipeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Models/RecipeModels.swift; sourceTree = "<group>"; };
 		F1A2B3C4010000010000000B /* ounje/Core/Models/GroceryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Core/Models/GroceryModels.swift; sourceTree = "<group>"; };
+		FB10000000000000000000001 /* ounje/Features/FirstRunGuide/FirstRunGuideModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/FirstRunGuide/FirstRunGuideModels.swift; sourceTree = "<group>"; };
+		FB10000000000000000000002 /* ounje/Features/FirstRunGuide/FirstRunGuideCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/FirstRunGuide/FirstRunGuideCoordinator.swift; sourceTree = "<group>"; };
+		FB10000000000000000000003 /* ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift; sourceTree = "<group>"; };
+		FB10000000000000000000004 /* ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json; sourceTree = "<group>"; };
+		FB10000000000000000000005 /* ounje/Resources/Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ounje/Resources/Images.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -212,6 +220,7 @@
 				DAC00000000000000000005 /* Features */,
 				DAC00000000000000000027 /* ShareExtensionShared */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
+				FB10000000000000000000005 /* ounje/Resources/Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */,
 				2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */,
@@ -226,7 +235,6 @@
 				F10000000000000000000004 /* rbutton.riv */,
 				F10000000000000000000006 /* liquid.riv */,
 				F10000000000000000000008 /* skills.riv */,
-				DAE00000000000000000014 /* ounje/OnboardingRecipeEditDemoCatalog.json */,
 			);
 			name = ounje;
 			sourceTree = "<group>";
@@ -311,6 +319,7 @@
 		DAC00000000000000000005 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				FC10000000000000000000001 /* FirstRunGuide */,
 				DAC00000000000000000011 /* Onboarding */,
 				DAC00000000000000000012 /* Prep */,
 				DAC00000000000000000006 /* Discover */,
@@ -568,6 +577,17 @@
 			name = Components;
 			sourceTree = "<group>";
 		};
+		FC10000000000000000000001 /* FirstRunGuide */ = {
+			isa = PBXGroup;
+			children = (
+				FB10000000000000000000001 /* ounje/Features/FirstRunGuide/FirstRunGuideModels.swift */,
+				FB10000000000000000000002 /* ounje/Features/FirstRunGuide/FirstRunGuideCoordinator.swift */,
+				FB10000000000000000000003 /* ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift */,
+				FB10000000000000000000004 /* ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json */,
+			);
+			name = FirstRunGuide;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -657,6 +677,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FA10000000000000000000004 /* ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json in Resources */,
+				FA10000000000000000000005 /* ounje/Resources/Images.xcassets in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* OunjeLaunch.storyboard in Resources */,
 				07EB3EBF5B17A79F7E31BF2A /* PrivacyInfo.xcprivacy in Resources */,
@@ -671,7 +693,6 @@
 				F10000000000000000000003 /* rbutton.riv in Resources */,
 				F10000000000000000000005 /* liquid.riv in Resources */,
 				F10000000000000000000007 /* skills.riv in Resources */,
-				DAD00000000000000000014 /* ounje/OnboardingRecipeEditDemoCatalog.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -716,6 +737,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FA10000000000000000000001 /* ounje/Features/FirstRunGuide/FirstRunGuideModels.swift in Sources */,
+				FA10000000000000000000002 /* ounje/Features/FirstRunGuide/FirstRunGuideCoordinator.swift in Sources */,
+				FA10000000000000000000003 /* ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift in Sources */,
 				DAA00000000000000000012 /* ounje/App/OunjeApp.swift in Sources */,
 				DAA00000000000000000013 /* ounje/App/AppRootView.swift in Sources */,
 				DAA00000000000000000014 /* ounje/App/AppTab.swift in Sources */,
@@ -811,7 +835,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -839,7 +863,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_VERSION = 5.0;
@@ -979,7 +1003,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;
@@ -1007,7 +1031,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;

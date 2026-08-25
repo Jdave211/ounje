@@ -4,10 +4,13 @@ import assert from "node:assert/strict";
 process.env.OPENAI_API_KEY = "";
 
 const {
+  buildCreatorSearchQueries,
   buildQuoraSearchQueries,
   buildRoundupSearchQueries,
+  composeFallbackCreatorOutreach,
   composeFallbackQuoraAnswer,
   composeFallbackRoundupPitch,
+  evaluateCreatorCandidateHeuristic,
   evaluateQuoraCandidateHeuristic,
   loadGrowthOutreachConfig,
 } = await import("../lib/growth-outreach-agent.js");
@@ -16,6 +19,7 @@ const config = await loadGrowthOutreachConfig();
 
 assert.ok(buildQuoraSearchQueries(config).length >= 3, "expected Quora discovery queries");
 assert.ok(buildRoundupSearchQueries(config).length >= 3, "expected roundup discovery queries");
+assert.ok(buildCreatorSearchQueries(config).length >= 3, "expected creator discovery queries");
 
 const strongCandidate = {
   title: "What is the best app to turn recipes into a grocery list?",
@@ -47,5 +51,24 @@ const pitch = composeFallbackRoundupPitch({
 assert.match(pitch.body, /Hi Alex/);
 assert.match(pitch.body, /Ounje/);
 assert.match(pitch.body, /\* /, "pitch should include bullet points");
+
+const creatorCandidate = {
+  title: "Meal Prep with Maya (@mealprepmaya) • Instagram photos and videos",
+  url: "https://www.instagram.com/mealprepmaya/",
+  snippet: "Food creator sharing meal prep, easy dinner recipes, grocery hauls, and UGC collaborations.",
+};
+const creatorEvaluation = evaluateCreatorCandidateHeuristic(creatorCandidate, config);
+assert.equal(creatorEvaluation.platform, "instagram");
+assert.equal(creatorEvaluation.handle, "@mealprepmaya");
+assert.ok(creatorEvaluation.relevanceScore >= 0.42, `expected creator relevance, got ${creatorEvaluation.relevanceScore}`);
+assert.equal(creatorEvaluation.blockedReason, null);
+
+const creatorDraft = composeFallbackCreatorOutreach({
+  handle: "@mealprepmaya",
+  outreachAngle: "Saved TikTok Recipe Rescue",
+}, config.app);
+assert.match(creatorDraft.messageBody, /I work on Ounje/i);
+assert.match(creatorDraft.messageBody, /paid UGC|promotion test/i);
+assert.match(creatorDraft.briefSummary, /Saved TikTok Recipe Rescue/);
 
 console.log("growth outreach agent tests passed");

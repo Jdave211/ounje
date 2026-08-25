@@ -14,13 +14,13 @@ struct PlannedRecipe: Identifiable, Codable, Hashable {
     var carriedFromPreviousPlan: Bool
 }
 
-struct GroceryItemSource: Codable, Hashable {
+struct GroceryItemSource: Codable, Hashable, Sendable {
     var recipeID: String
     var ingredientName: String
     var unit: String
 }
 
-struct GroceryItem: Identifiable, Codable, Hashable {
+struct GroceryItem: Identifiable, Codable, Hashable, Sendable {
     var id: String {
         "\(name.lowercased())::\(unit.lowercased())"
     }
@@ -232,6 +232,9 @@ struct MealPlan: Identifiable, Codable, Hashable {
     var mainShopSnapshot: MainShopSnapshot? = nil
     var recurringRecipeIDs: [String]? = nil
     var activeBatchID: UUID? = nil
+    /// Batch IDs explicitly deleted by the user. Persisted with the plan so
+    /// bootstrap repair never restores a deleted batch from older cycles.
+    var deletedBatchIDs: [UUID]? = nil
     /// Named batches. When non-nil, the UI renders these instead of `recipes`
     /// directly. `recipes` / `groceryItems` mirror the active batch so legacy
     /// cart and automation flows only act on the user's prime prep.
@@ -248,14 +251,14 @@ struct MealPlan: Identifiable, Codable, Hashable {
     }
 }
 
-struct MainShopSnapshot: Codable, Hashable {
+struct MainShopSnapshot: Codable, Hashable, Sendable {
     var signature: String
     var generatedAt: Date
     var items: [MainShopSnapshotItem]
     var coverageSummary: MainShopCoverageSummary?
 }
 
-struct MainShopSnapshotItem: Identifiable, Codable, Hashable {
+struct MainShopSnapshotItem: Identifiable, Codable, Hashable, Sendable {
     var id: String {
         "\(name.lowercased())::\(quantityText.lowercased())::\(supportingText?.lowercased() ?? "")"
     }
@@ -275,7 +278,7 @@ struct MainShopSnapshotItem: Identifiable, Codable, Hashable {
     var coverageState: String? = nil
 }
 
-struct MainShopCoverageSummary: Codable, Hashable {
+struct MainShopCoverageSummary: Codable, Hashable, Sendable {
     var totalBaseUses: Int
     var accountedBaseUses: Int
     var uncoveredBaseLabels: [String]

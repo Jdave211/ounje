@@ -1,73 +1,27 @@
 # Ounje Render Deploy
 
-Render is the public API and control plane. The app should call Render plus Supabase realtime only; it should never call the VM directly.
+Render is Ounje's public API and private worker platform. The app talks to Render and Supabase Realtime only; it never calls a worker directly.
 
-This backend should run on Render as one public service:
+## Services
 
-- `ounje-api` as the web service
+- `ounje-api`: validates requests, enqueues work, and serves the app API.
+- `ounje-recipe-ingestion`: claims recipe imports and performs social/media extraction, OCR, transcription, OpenAI processing, and recipe persistence.
+- `ounje-automation`: claims long browser tasks such as Instacart cart building.
+- `ounje-recipe-ingestion-health`: runs every five minutes and fails when Redis, the queue, or a live import is unhealthy.
 
-The repo root includes [render.yaml](/Users/davejaga/Desktop/startups/ounje/render.yaml) so Render can sync the API service from the same branch.
+The two workers use the shared Docker image in [Dockerfile](/Users/davejaga/Desktop/startups/ounje/Dockerfile). It contains Chromium, `yt-dlp`, FFmpeg, and OCR dependencies. Recipe imports use caption and page evidence first; when that evidence already contains ingredients and preparation, the worker skips downloading the video. Set `RECIPE_INGESTION_SOCIAL_VIDEO_EAGER=true` only to force video evidence for every social import.
 
-## Why one service
+Growth outreach is intentionally not deployed as a continuous service. Run its explicit script or schedule a separate job when it is needed.
 
-The API process should stay focused on request traffic. Recipe ingestion is long-running media/browser/OpenAI work and does not run in the Render web process.
+## Required Secrets
 
-`POST /v1/recipe/imports` validates the request, creates a Supabase `recipe_ingestion_jobs` row, and returns `202`. The private VM recipe ingestion worker claims that job from Supabase and writes artifacts/results back.
+The Blueprint in [render.yaml](/Users/davejaga/Desktop/startups/ounje/render.yaml) lists every environment variable for each service. Configure the same Supabase, Redis, OpenAI, recipe-media, grocery-provider, and browser-provider secrets on the worker that consumes them. Keep `OUNJE_ENABLE_RECIPE_INGESTION_POLLING=false` on `ounje-api` so it remains enqueue-only.
 
-Instacart/browser automation is not run synchronously on Render. `POST /v1/instacart/runs` validates the request, creates a Supabase `automation_jobs` row plus a grocery order/run log, and returns `202`. The private VM automation worker claims that job from Supabase and writes progress/results back.
+## Cutover
 
-## Health check
-
-Render should use:
-
-- `GET /healthz`
-
-That endpoint verifies required env is present and that the API can make a lightweight Supabase query before Render marks the service healthy.
-
-## Required secrets
-
-Set these in the Render API service:
-
-- `OPENAI_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `REDIS_URL`
-- `KROGER_CLIENT_ID`
-- `KROGER_CLIENT_SECRET`
-- `BROWSER_USE_API_KEY`
-- `LUMBOX_API_KEY`
-- `AGENTSIM_API_KEY`
-- `IFRAMELY_API_KEY`
-- `TWO_CAPTCHA_API_KEY`
-- `RECIPE_IMAGE_BUCKET`
-- `OUNJE_FOUNDER_SLACK_WEBHOOK_URL` for founder-only subscription lifecycle alerts
-
-Also keep these API runtime flags:
-
-- `OUNJE_ENABLE_RECIPE_INGESTION_POLLING=false`
-- `YOUTUBE_DL_SKIP_DOWNLOAD=true`
-
-## Supabase migration
-
-Before or with the Render cutover, apply the pending migrations that add user-scoped realtime broadcasts, the durable automation queue, and VM-owned recipe ingestion claims:
-
-- [supabase/migrations/2026042901_realtime_user_broadcasts.sql](/Users/davejaga/Desktop/startups/ounje/supabase/migrations/2026042901_realtime_user_broadcasts.sql)
-- [supabase/migrations/2026043002_automation_jobs.sql](/Users/davejaga/Desktop/startups/ounje/supabase/migrations/2026043002_automation_jobs.sql)
-- [supabase/migrations/2026050402_recipe_ingestion_vm_worker_claims.sql](/Users/davejaga/Desktop/startups/ounje/supabase/migrations/2026050402_recipe_ingestion_vm_worker_claims.sql)
-
-Those migrations close the current gap where:
-
-- `entitlement.updated` is handled by the app but was never emitted
-- meal prep mutations done directly in Supabase had no matching realtime broadcast back to the app
-
-## Deploy flow
-
-1. Sync the Blueprint in Render from `render.yaml`.
-2. Apply the pending Supabase migration.
-3. Deploy the web service.
-4. Suspend or delete any existing `ounje-recipe-ingestion` Render worker in the Render dashboard.
-5. Verify `GET /healthz` returns `200`.
-6. Verify recipe generation, discover search, recipe import enqueueing, and Instacart enqueueing against the Render-hosted API.
-7. Start the VM recipe ingestion worker and verify queued recipe imports move from `queued` to `processing`/`saved` or `failed` in Supabase.
-8. Start the VM automation worker and verify queued Instacart jobs move from `queued` to `running`/`succeeded` or `failed` in Supabase.
+1. Apply [20260820120000_allow_render_recipe_ingestion_workers.sql](/Users/davejaga/Desktop/startups/ounje/supabase/migrations/20260820120000_allow_render_recipe_ingestion_workers.sql), then [20260822030626_retire_vm_recipe_ingestion_claims.sql](/Users/davejaga/Desktop/startups/ounje/supabase/migrations/20260822030626_retire_vm_recipe_ingestion_claims.sql). Only `render_recipe_ingest*` identities may claim recipe work after cutover.
+2. Sync the Blueprint and deploy `ounje-api`, `ounje-recipe-ingestion`, `ounje-automation`, and the health cron.
+3. Verify `GET /healthz`, then queue TikTok, Instagram, web, photo, and duplicate-link imports. Confirm the recipe worker claims them and each reaches `saved` or `failed` with artifacts and AI logs.
+4. Verify an Instacart run is claimed by `render_automation_worker` and completes as expected.
+5. Verify the health cron stays green and a deliberately stale import becomes `retryable` within 15 minutes.
+6. Keep the VM workers up only through this validation window. Once no active lease or automation lock belongs to a VM worker, follow [the retirement runbook](/Users/davejaga/Desktop/startups/ounje/docs/vm-deploy.md).

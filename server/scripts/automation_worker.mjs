@@ -11,6 +11,7 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 const DEFAULT_IDLE_SLEEP_MS = 15_000;
 const DEFAULT_LOCK_SECONDS = 600;
 const DEFAULT_BATCH_SIZE = 1;
+let shuttingDown = false;
 
 function parseArgs(argv) {
   const args = {
@@ -82,9 +83,16 @@ async function processJob(job, { workerID, lockSeconds, automationJobs, instacar
 
 async function main() {
   const args = parseArgs(process.argv);
-  const workerID = args.workerID ?? `vm_automation_worker_${process.pid}`;
+  const workerID = args.workerID ?? `automation_worker_${process.pid}`;
   const automationJobs = await import("../lib/automation-jobs.js");
   const instacartRunner = await import("../api/v1/instacart.js");
+  const requestShutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[automation-worker] shutdown requested signal=${signal} worker=${workerID}`);
+  };
+  process.once("SIGTERM", () => requestShutdown("SIGTERM"));
+  process.once("SIGINT", () => requestShutdown("SIGINT"));
 
   do {
     const jobs = await automationJobs.claimAutomationJobs({
@@ -109,8 +117,8 @@ async function main() {
       });
     }
 
-    if (args.once) break;
-  } while (true);
+    if (args.once || shuttingDown) break;
+  } while (!shuttingDown);
 }
 
 main().catch((error) => {

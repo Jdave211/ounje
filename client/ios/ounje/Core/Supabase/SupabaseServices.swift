@@ -1325,6 +1325,37 @@ final class SupabaseMealPrepCycleService {
         await SupabaseUserBootstrapService.shared.invalidateServerCache(userID: userID, accessToken: accessToken)
     }
 
+    func deleteMealPrepCycle(userID: String, planID: UUID, accessToken: String?) async throws {
+        guard let encodedUserID = userID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(
+                string: "\(SupabaseConfig.url)/rest/v1/meal_prep_cycles?user_id=eq.\(encodedUserID)&plan_id=eq.\(planID.uuidString)"
+              ) else {
+            throw SupabaseMealPrepCyclesError.invalidRequest
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        try SupabaseUserDataRequest.applyHeaders(to: &request, accessToken: accessToken)
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+
+        let (data, httpResponse) = try await perform(request)
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let fallback = "Failed to delete prep cycle (\(httpResponse.statusCode))."
+            throw SupabaseMealPrepCyclesError.requestFailed(
+                SupabaseUserDataRequest.message(
+                    from: data,
+                    statusCode: httpResponse.statusCode,
+                    fallback: fallback
+                )
+            )
+        }
+
+        await SupabaseUserBootstrapService.shared.invalidateServerCache(
+            userID: userID,
+            accessToken: accessToken
+        )
+    }
+
     private func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         var r = request
         if r.timeoutInterval <= 0 { r.timeoutInterval = 12 }
@@ -1369,7 +1400,8 @@ final class SupabaseMealPrepCycleService {
         let snapshotItems = plan.mainShopSnapshot?.items ?? []
 
         for item in snapshotItems {
-            let canonicalKey = item.canonicalKey ?? normalizedCartKey(item.name)
+            let identity = ShoppingIngredientCanonicalizer.match(for: item.canonicalKey ?? item.name)
+            let canonicalKey = identity.key
             guard !canonicalKey.isEmpty else { continue }
             if payloadsByKey[canonicalKey] != nil { continue }
 
@@ -1377,7 +1409,7 @@ final class SupabaseMealPrepCycleService {
                 userID: userID,
                 planID: plan.id,
                 canonicalKey: canonicalKey,
-                name: item.name,
+                name: identity.displayName,
                 quantityText: item.quantityText,
                 supportingText: item.supportingText,
                 imageURL: item.imageURLString,
@@ -1395,7 +1427,8 @@ final class SupabaseMealPrepCycleService {
         }
 
         for groceryItem in plan.groceryItems {
-            let canonicalKey = normalizedCartKey(groceryItem.name)
+            let identity = ShoppingIngredientCanonicalizer.match(for: groceryItem.name)
+            let canonicalKey = identity.key
             guard !canonicalKey.isEmpty else { continue }
             if payloadsByKey[canonicalKey] != nil { continue }
 
@@ -1403,7 +1436,7 @@ final class SupabaseMealPrepCycleService {
                 userID: userID,
                 planID: plan.id,
                 canonicalKey: canonicalKey,
-                name: groceryItem.name,
+                name: identity.displayName,
                 quantityText: CartQuantityFormatter.format(amount: groceryItem.amount, unit: groceryItem.unit),
                 supportingText: mainShopFallbackSupportingText(for: groceryItem),
                 imageURL: nil,
@@ -1432,7 +1465,9 @@ final class SupabaseMealPrepCycleService {
         var seenKeys = Set<String>()
 
         for snapshotItem in snapshotItems {
-            let canonicalMainShopKey = snapshotItem.canonicalKey ?? normalizedCartKey(snapshotItem.name)
+            let canonicalMainShopKey = ShoppingIngredientCanonicalizer.match(
+                for: snapshotItem.canonicalKey ?? snapshotItem.name
+            ).key
             guard !canonicalMainShopKey.isEmpty,
                   let mainShopItemID = mainShopLookup[canonicalMainShopKey]
             else { continue }

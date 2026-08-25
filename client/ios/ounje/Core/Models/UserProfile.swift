@@ -803,7 +803,7 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .free:
             return "Discovery, saved recipes, and guided planning."
         case .plus:
-            return "Unlimited imports, prep planning, and cart sync."
+            return "Unlimited imports, recipe plans, and cart sync."
         case .autopilot:
             return "Legacy beta access. New plans use Plus."
         case .foundingLifetime:
@@ -816,7 +816,7 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .free:
             return "Free"
         case .plus:
-            return "$7.99"
+            return "$4.99"
         case .autopilot:
             return "$7.99"
         case .foundingLifetime:
@@ -862,7 +862,7 @@ enum OunjePricingTier: String, CaseIterable, Codable, Identifiable {
         case .free:
             return "Planning only"
         case .plus:
-            return "Social imports, prep plans, and cart sync"
+            return "Social imports, recipe plans, and cart sync"
         case .autopilot:
             return "Legacy beta mapped to Plus"
         case .foundingLifetime:
@@ -969,9 +969,9 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
     var displayPriceText: String {
         switch (tier, cadence) {
         case (.plus, .monthly):
-            return "$7.99"
+            return "$4.99"
         case (.plus, .yearly):
-            return "$69.99"
+            return "$49.99"
         case (.autopilot, .monthly):
             return "$7.99"
         case (.autopilot, .yearly):
@@ -996,7 +996,7 @@ struct OunjeMembershipPlan: Hashable, Codable, Identifiable {
         guard cadence == .yearly else { return nil }
         switch tier {
         case .plus:
-            return "Save 27%"
+            return "Save 17%"
         case .autopilot:
             return "Save 27%"
         case .free, .foundingLifetime:

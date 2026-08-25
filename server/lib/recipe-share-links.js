@@ -5,8 +5,7 @@ dotenv.config({ path: new URL("../.env", import.meta.url).pathname });
 
 const SUPABASE_URL = String(process.env.SUPABASE_URL ?? "").trim();
 const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
-const PUBLIC_BASE_URL = String(process.env.OUNJE_PUBLIC_BASE_URL ?? "https://ounje-idbl.onrender.com").replace(/\/+$/, "");
-const APP_DOWNLOAD_URL = String(process.env.OUNJE_APP_DOWNLOAD_URL ?? PUBLIC_BASE_URL).trim();
+const PUBLIC_BASE_URL = String(process.env.OUNJE_PUBLIC_BASE_URL ?? "https://ounje-recipe.vercel.app").replace(/\/+$/, "");
 
 function requireShareLinkConfig() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -172,12 +171,46 @@ function readableSource(value) {
   return raw;
 }
 
+function creatorLabel(value) {
+  const source = readableSource(value);
+  if (!source) return "";
+  return `@${source.replace(/^@+/, "")}`;
+}
+
+function positiveNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function metricValue(primary, fallback = null, suffix = "") {
+  const numeric = positiveNumber(primary);
+  if (numeric != null) {
+    const rounded = Math.round(numeric * 10) / 10;
+    return `${rounded}${suffix}`;
+  }
+  const text = String(fallback ?? "").trim();
+  return text || "&mdash;";
+}
+
+function ingredientMonogram(value) {
+  const words = String(value ?? "")
+    .split(/[^A-Za-z0-9]+/)
+    .filter((word) => word.length > 1);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return "OU";
+}
+
+function safeJSONForHTML(value) {
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
+}
+
 export function renderRecipeSharePage(link) {
   const snapshot = link?.snapshot_json ?? {};
   const detail = snapshot.recipe_detail ?? {};
   const card = snapshot.recipe_card ?? {};
   const title = String(detail.title ?? card.title ?? "Ounje recipe").trim();
-  const description = String(detail.description ?? card.description ?? "Open this recipe in Ounje.").trim();
+  const description = String(detail.description ?? card.description ?? "").trim();
   const imageURL = absoluteURL(
     detail.hero_image_url
       ?? detail.discover_card_image_url
@@ -188,33 +221,83 @@ export function renderRecipeSharePage(link) {
   const steps = Array.isArray(detail.steps) ? detail.steps : [];
   const appURL = link?.app_url ?? "";
   const webURL = link?.web_url ?? "";
-  const downloadURL = absoluteURL(APP_DOWNLOAD_URL) || PUBLIC_BASE_URL;
-  const source = [
+  const creator = [
     detail.author_handle,
     detail.author_name,
     card.author_handle,
     card.author_name,
-    detail.source_platform,
-    detail.source,
-  ].map(readableSource).find(Boolean) ?? "";
-  const metaPills = [
-    detail.cook_time_text,
-    detail.servings_text,
-    Number.isFinite(Number(detail.calories_kcal)) ? `${Math.round(Number(detail.calories_kcal))} kcal` : null,
-  ].filter(Boolean);
+  ].map(creatorLabel).find(Boolean) ?? "@ounje";
+  const originalURL = [
+    detail.original_recipe_url,
+    detail.recipe_url,
+    card.recipe_url,
+  ].map(absoluteURL).find(Boolean) ?? "";
 
-  const pillHTML = metaPills.map((pill) => `<span>${escapeHTML(pill)}</span>`).join("");
-  const ingredientHTML = ingredients.slice(0, 14).map((ingredient) => {
+  const servingsCount = positiveNumber(detail.servings_count);
+  const servings = servingsCount
+    ? String(Math.round(servingsCount))
+    : String(detail.servings_text ?? "").trim();
+  const metrics = [
+    { label: "Cooktime", value: String(detail.cook_time_text ?? "").trim() || "&mdash;" },
+    { label: "Serving", value: servings || "&mdash;" },
+    { label: "Calories", value: metricValue(detail.calories_kcal, detail.est_calories_text, " kcal") },
+    { label: "Protein", value: metricValue(detail.protein_g, detail.protein_text, "g") },
+    { label: "Carbs", value: metricValue(detail.carbs_g, detail.carbs_text, "g") },
+    { label: "Fats", value: metricValue(detail.fat_g, detail.fats_text, "g") },
+    { label: "Type", value: String(detail.recipe_type ?? detail.category ?? detail.subcategory ?? "").trim() || "&mdash;" },
+    { label: "Cuisine", value: String(detail.cuisine_tags?.[0] ?? detail.category ?? detail.subcategory ?? "").trim() || "&mdash;" },
+    { label: "Source", value: String(detail.source_platform ?? detail.source ?? "Ounje").trim() || "Ounje" },
+  ];
+
+  const metricHTML = metrics.map((metric) => `
+    <div class="metric">
+      <span>${escapeHTML(metric.label)}</span>
+      <strong>${metric.value === "&mdash;" ? metric.value : escapeHTML(metric.value)}</strong>
+    </div>`).join("");
+
+  const ingredientHTML = ingredients.map((ingredient) => {
     const name = ingredient.display_name ?? ingredient.name ?? "";
     const quantity = ingredient.quantity_text ?? "";
-    return `<li><span>${escapeHTML(name)}</span>${quantity ? `<small>${escapeHTML(quantity)}</small>` : ""}</li>`;
+    const ingredientImageURL = absoluteURL(ingredient.image_url ?? ingredient.imageURL ?? "");
+    return `<li class="ingredient">
+      <div class="ingredient-image">
+        <span aria-hidden="true">${escapeHTML(ingredientMonogram(name))}</span>
+        ${ingredientImageURL ? `<img src="${escapeHTML(ingredientImageURL)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ""}
+      </div>
+      <strong>${escapeHTML(name)}</strong>
+      ${quantity ? `<small>${escapeHTML(quantity)}</small>` : ""}
+    </li>`;
   }).join("");
-  const stepHTML = steps.slice(0, 5).map((step, index) => {
+  const stepHTML = steps.map((step, index) => {
     const text = step.text ?? step.instruction_text ?? "";
-    return `<li><span>${index + 1}</span><p>${escapeHTML(text)}</p></li>`;
+    const number = positiveNumber(step.number ?? step.step_number) ?? index + 1;
+    const tip = String(step.tip_text ?? step.tipText ?? "").trim();
+    return `<li class="step">
+      <span class="step-number">${String(Math.round(number)).padStart(2, "0")}</span>
+      <div><p>${escapeHTML(text)}</p>${tip ? `<small>${escapeHTML(tip)}</small>` : ""}</div>
+    </li>`;
   }).join("");
-  const ingredientOverflow = ingredients.length > 14 ? `<p class="overflow">+${ingredients.length - 14} more ingredients in the app</p>` : "";
-  const stepOverflow = steps.length > 5 ? `<p class="overflow">Open in Ounje for the full cook mode.</p>` : "";
+
+  const recipeSchema = {
+    "@context": "https://schema.org",
+    "@type": "Recipe",
+    name: title,
+    description,
+    image: imageURL || undefined,
+    author: creator ? { "@type": "Person", name: creator } : undefined,
+    recipeYield: servings || undefined,
+    recipeIngredient: ingredients.map((ingredient) => {
+      const name = ingredient.display_name ?? ingredient.name ?? "";
+      const quantity = ingredient.quantity_text ?? "";
+      return [quantity, name].filter(Boolean).join(" ");
+    }),
+    recipeInstructions: steps.map((step, index) => ({
+      "@type": "HowToStep",
+      position: index + 1,
+      text: step.text ?? step.instruction_text ?? "",
+    })),
+    url: webURL || undefined,
+  };
 
   return `<!doctype html>
 <html lang="en">
@@ -229,101 +312,235 @@ export function renderRecipeSharePage(link) {
   <meta property="og:url" content="${escapeHTML(webURL)}">
   ${imageURL ? `<meta property="og:image" content="${escapeHTML(imageURL)}">` : ""}
   <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/favicon.ico">
+  <link rel="canonical" href="${escapeHTML(webURL)}">
+  <script type="application/ld+json">${safeJSONForHTML(recipeSchema)}</script>
   <style>
-    :root { color-scheme: dark; background: #080b09; color: #f7f3ec; }
+    @font-face {
+      font-family: "Ounje Hand";
+      src: url("/recipe-assets/slee-handwriting.otf") format("opentype");
+      font-display: swap;
+    }
+    :root {
+      color-scheme: dark;
+      background: #121212;
+      color: #fff;
+      --background: #121212;
+      --panel: #1e1e1e;
+      --surface: #2e2e2e;
+      --cream: #e9e0d2;
+      --muted: #8a8a8a;
+      --stroke: rgba(255,255,255,.08);
+      --accent: #1e5a3e;
+    }
     * { box-sizing: border-box; }
+    html { background: var(--background); }
     body {
       margin: 0;
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at 18% 0%, rgba(43, 116, 74, .42), transparent 30%),
-        radial-gradient(circle at 95% 10%, rgba(244, 178, 91, .18), transparent 26%),
-        #080b09;
-      color: #f7f3ec;
+      background: var(--background);
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      letter-spacing: 0;
     }
-    main { width: min(100%, 1040px); margin: 0 auto; padding: 24px 16px 54px; }
-    .shell {
-      min-height: calc(100svh - 48px);
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
-      gap: 18px;
-      align-items: stretch;
+    a { color: inherit; }
+    .topbar {
+      width: min(100% - 32px, 820px);
+      height: 74px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
-    .card, .panel {
-      border: 1px solid rgba(255,255,255,.11);
-      background: linear-gradient(180deg, rgba(30,32,30,.96), rgba(13,15,13,.98));
-      box-shadow: 0 28px 80px rgba(0,0,0,.38);
+    .wordmark {
+      font-family: "Ounje Hand", cursive;
+      color: var(--cream);
+      font-size: 34px;
+      line-height: 1;
     }
-    .card { position: relative; overflow: hidden; border-radius: 34px; min-height: 640px; }
-    .media { position: absolute; inset: 0; background: #1d1f1d; }
-    .media img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .media:after {
-      content: "";
+    .open-app {
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 14px;
+      border: 1px solid var(--stroke);
+      border-radius: 7px;
+      background: var(--panel);
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    main {
+      width: min(100% - 28px, 820px);
+      margin: 0 auto;
+      padding-bottom: 80px;
+    }
+    .hero {
+      height: 340px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-image {
       position: absolute;
-      inset: 0;
-      background: linear-gradient(180deg, rgba(0,0,0,.06), rgba(0,0,0,.18) 36%, rgba(0,0,0,.86));
+      width: 410px;
+      height: 410px;
+      top: -78px;
+      right: -12px;
+      border-radius: 50%;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: 0 14px 34px rgba(0,0,0,.24);
     }
-    .card-copy { position: absolute; inset: auto 22px 22px; }
-    .brand { display: inline-flex; align-items: center; gap: 8px; color: #dff6df; font-weight: 900; letter-spacing: .01em; margin-bottom: 14px; }
-    .brand:before { content: ""; width: 10px; height: 10px; border-radius: 999px; background: #62d276; box-shadow: 0 0 22px rgba(98,210,118,.95); }
-    h1 { margin: 0; font-size: clamp(42px, 9vw, 86px); line-height: .9; letter-spacing: -.055em; text-wrap: balance; }
-    .summary { color: #e4ded4; font-size: 17px; line-height: 1.48; max-width: 620px; margin: 14px 0 0; }
-    .source { color: #9d988f; margin-top: 14px; font-size: 14px; font-weight: 700; }
-    .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-    .pills span { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.1); border-radius: 999px; padding: 8px 11px; color: #f4efe6; font-size: 13px; font-weight: 800; }
-    .panel { border-radius: 28px; padding: 20px; align-self: stretch; display: flex; flex-direction: column; }
-    .panel h2 { font-size: 22px; margin: 0 0 14px; letter-spacing: -.02em; }
-    .panel-copy { color: #aaa49b; line-height: 1.45; margin: 0 0 18px; }
-    .actions { display: grid; gap: 10px; margin-bottom: 20px; }
-    .cta {
-      display: flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 18px;
-      border-radius: 18px; color: white; text-decoration: none; font-weight: 900;
+    .hero-image img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .hero-fallback {
+      width: 100%; height: 100%; display: grid; place-items: center;
+      color: var(--muted); font-family: "Ounje Hand", cursive; font-size: 34px;
     }
-    .cta.primary { background: #1f6b46; }
-    .cta.secondary { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); }
-    section { margin-top: 18px; }
-    h3 { font-size: 16px; margin: 0 0 8px; color: #f6f0e8; }
-    ul, ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-    li { border-top: 1px solid rgba(255,255,255,.08); padding: 10px 0; color: #ede8df; }
-    li small { display: block; color: #948f88; margin-top: 3px; }
-    ol li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; }
-    ol span { color: #63d471; font-weight: 900; }
-    ol p { margin: 0; color: #d9d3cb; line-height: 1.42; }
-    .overflow { color: #8d877d; font-size: 13px; margin: 10px 0 0; }
-    footer { margin-top: auto; padding-top: 18px; color: #77726b; font-size: 12px; }
-    @media (max-width: 820px) {
-      main { padding: 12px 12px 38px; }
-      .shell { grid-template-columns: 1fr; }
-      .card { min-height: 72svh; border-radius: 30px; }
-      .panel { border-radius: 26px; }
+    .intro { max-width: 720px; padding-top: 12px; }
+    h1 {
+      margin: 0;
+      max-width: 760px;
+      font-family: "Ounje Hand", cursive;
+      font-size: clamp(44px, 9vw, 72px);
+      font-weight: 400;
+      line-height: .96;
+      overflow-wrap: anywhere;
+      text-wrap: balance;
+    }
+    .byline { margin-top: 14px; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .creator { color: var(--muted); font-size: 15px; font-weight: 500; }
+    .original { color: var(--cream); font-size: 15px; text-underline-offset: 3px; }
+    .separator { color: var(--muted); }
+    .summary { color: var(--muted); font-size: 14px; font-weight: 500; line-height: 1.55; margin: 18px 0 0; max-width: 700px; }
+    .section { margin-top: 52px; }
+    .section-title {
+      color: var(--cream);
+      font-family: ui-serif, Georgia, serif;
+      font-size: 28px;
+      font-weight: 400;
+      line-height: 1.15;
+      margin: 0 0 18px;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border: 1px solid var(--stroke);
+    }
+    .metric {
+      min-height: 94px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      border-right: 1px solid var(--stroke);
+      border-bottom: 1px solid var(--stroke);
+    }
+    .metric:nth-child(3n) { border-right: 0; }
+    .metric:nth-last-child(-n + 3) { border-bottom: 0; }
+    .metric span { color: var(--muted); font-size: 14px; font-weight: 500; }
+    .metric strong { color: #fff; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+    .ingredients {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 28px 18px;
+    }
+    .ingredient { min-width: 0; }
+    .ingredient-image {
+      position: relative;
+      aspect-ratio: 1;
+      overflow: hidden;
+      border-radius: 8px;
+      background: var(--panel);
+      display: grid;
+      place-items: center;
+      color: var(--cream);
+      font-family: "Ounje Hand", cursive;
+      font-size: 24px;
+    }
+    .ingredient-image img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .ingredient > strong {
+      display: block;
+      margin-top: 10px;
+      font-family: "Ounje Hand", cursive;
+      font-size: 19px;
+      font-weight: 400;
+      line-height: 1.05;
+      overflow-wrap: anywhere;
+    }
+    .ingredient > small { display: block; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.3; margin-top: 5px; }
+    .steps { list-style: none; margin: 0; padding: 0; }
+    .step {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      gap: 20px;
+      padding: 24px 0;
+      border-top: 1px solid var(--stroke);
+    }
+    .step-number { color: var(--cream); font-family: "Ounje Hand", cursive; font-size: 34px; line-height: 1; }
+    .step p { margin: 0; font-size: 18px; line-height: 1.55; }
+    .step small { display: block; color: var(--muted); font-size: 14px; font-weight: 500; line-height: 1.45; margin-top: 10px; }
+    footer { padding-top: 58px; text-align: center; color: var(--muted); font-size: 12px; }
+    @media (max-width: 640px) {
+      .topbar { width: calc(100% - 28px); height: 68px; }
+      .wordmark { font-size: 30px; }
+      .open-app { min-height: 38px; }
+      .hero { height: 248px; }
+      .hero-image { width: 310px; height: 310px; top: -62px; right: -38px; }
+      .intro { padding-top: 8px; }
+      h1 { font-size: clamp(42px, 14vw, 62px); line-height: .94; }
+      .section { margin-top: 46px; }
+      .ingredients { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 12px; }
+      .ingredient > strong { font-size: 16px; }
+      .step { grid-template-columns: 42px minmax(0, 1fr); gap: 12px; }
+      .step p { font-size: 17px; }
+    }
+    @media (max-width: 380px) {
+      .ingredients { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
 <body>
+  <header class="topbar">
+    <span class="wordmark">ounje</span>
+    <a class="open-app" href="${escapeHTML(appURL)}">Open in Ounje</a>
+  </header>
   <main>
-    <div class="shell">
-      <article class="card">
-        ${imageURL ? `<div class="media"><img src="${escapeHTML(imageURL)}" alt="${escapeHTML(title)}"></div>` : `<div class="media"></div>`}
-        <div class="card-copy">
-          <div class="brand">Ounje recipe card</div>
-          <h1>${escapeHTML(title)}</h1>
-          ${description ? `<p class="summary">${escapeHTML(description)}</p>` : ""}
-          ${source ? `<div class="source">From ${escapeHTML(source)}</div>` : ""}
-          ${pillHTML ? `<div class="pills">${pillHTML}</div>` : ""}
-        </div>
-      </article>
-      <aside class="panel">
-        <h2>Cook this in Ounje</h2>
-        <p class="panel-copy">Open the recipe in the app for cook mode, prep planning, grocery sync, and AI edits.</p>
-        <div class="actions">
-          <a class="cta primary" href="${escapeHTML(appURL)}">Open recipe</a>
-          <a class="cta secondary" href="${escapeHTML(downloadURL)}">Download Ounje</a>
-        </div>
-        ${ingredientHTML ? `<section><h3>Ingredients</h3><ul>${ingredientHTML}</ul>${ingredientOverflow}</section>` : ""}
-        ${stepHTML ? `<section><h3>Preview steps</h3><ol>${stepHTML}</ol>${stepOverflow}</section>` : ""}
-        <footer>Shared from Ounje. Install the app to save or adapt this recipe.</footer>
-      </aside>
+    <div class="hero" aria-hidden="true">
+      <div class="hero-image">
+        ${imageURL ? `<img src="${escapeHTML(imageURL)}" alt="">` : `<div class="hero-fallback">ounje</div>`}
+      </div>
     </div>
+
+    <article>
+      <div class="intro">
+        <h1>${escapeHTML(title)}</h1>
+        <div class="byline">
+          <span class="creator">${escapeHTML(creator)}</span>
+          ${originalURL ? `<span class="separator">&bull;</span><a class="original" href="${escapeHTML(originalURL)}" rel="noopener noreferrer">See original link</a>` : ""}
+        </div>
+        ${description ? `<p class="summary">${escapeHTML(description)}</p>` : ""}
+      </div>
+
+      <section class="section" aria-labelledby="details-heading">
+        <h2 class="section-title" id="details-heading">Details</h2>
+        <div class="metrics">${metricHTML}</div>
+      </section>
+
+      ${ingredientHTML ? `<section class="section" aria-labelledby="ingredients-heading">
+        <h2 class="section-title" id="ingredients-heading">Ingredients</h2>
+        <ul class="ingredients">${ingredientHTML}</ul>
+      </section>` : ""}
+
+      ${stepHTML ? `<section class="section" aria-labelledby="steps-heading">
+        <h2 class="section-title" id="steps-heading">Cooking Steps</h2>
+        <ol class="steps">${stepHTML}</ol>
+      </section>` : ""}
+    </article>
+
+    <footer>Shared from Ounje</footer>
   </main>
 </body>
 </html>`;

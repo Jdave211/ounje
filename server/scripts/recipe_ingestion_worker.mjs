@@ -3,7 +3,11 @@ import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { RECIPE_IMPORT_WAKE_CHANNEL, runRecipeIngestionWorkerBatch } from "../lib/recipe-ingestion.js";
+import {
+  RECIPE_IMPORT_WAKE_CHANNEL,
+  repairStaleRecipeIngestionJobs,
+  runRecipeIngestionWorkerBatch,
+} from "../lib/recipe-ingestion.js";
 import { getRedisClient, redisConfigStatus } from "../lib/redis-cache.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,9 +17,11 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const DEFAULT_BATCH_SIZE = 3;
 const DEFAULT_IDLE_SLEEP_MS = 20_000;
-const DEFAULT_WAKE_TIMEOUT_MS = 60_000;
+const DEFAULT_WAKE_TIMEOUT_MS = 15_000;
 const MAX_WAKE_TIMEOUT_MS = 60_000;
 const MAX_EMPTY_QUEUE_SLEEP_MS = 10 * 60 * 1000;
+const DEFAULT_STALE_REPAIR_INTERVAL_MS = 5 * 60 * 1000;
+let shuttingDown = false;
 
 function parseArgs(argv) {
   const args = {
@@ -29,6 +35,17 @@ function parseArgs(argv) {
         10_000,
         Number.parseInt(process.env.RECIPE_INGESTION_WORKER_WAKE_TIMEOUT_MS ?? "", 10) || DEFAULT_WAKE_TIMEOUT_MS
       )
+    ),
+    staleAfterMinutes: Math.max(
+      1,
+      Number.parseInt(process.env.RECIPE_INGESTION_STALE_AFTER_MINUTES ?? "15", 10) || 15
+    ),
+    staleRepairIntervalMs: Math.max(
+      60_000,
+      Number.parseInt(
+        process.env.RECIPE_INGESTION_STALE_REPAIR_INTERVAL_MS ?? "",
+        10
+      ) || DEFAULT_STALE_REPAIR_INTERVAL_MS
     ),
     workerID: null,
   };
@@ -98,14 +115,49 @@ async function waitForRedisWake(channel, timeoutMs) {
   });
 }
 
+async function repairStaleImports({ workerID, staleAfterMinutes }) {
+  try {
+    const result = await repairStaleRecipeIngestionJobs({
+      staleAfterMinutes,
+      workerID,
+    });
+    if (result.actions.length > 0) {
+      console.warn(
+        `[recipe-ingestion-worker] repaired_stale=${result.actions.length} worker=${workerID}`
+      );
+    }
+  } catch (error) {
+    console.warn(
+      `[recipe-ingestion-worker] stale repair failed worker=${workerID}: ${error.message}`
+    );
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv);
-  const workerID = args.workerID ?? `vm_recipe_ingest_${process.pid}`;
+  const workerID = args.workerID ?? `recipe_ingest_${process.pid}`;
   let emptyQueueSleepMs = args.idleSleepMs;
+  let lastStaleRepairAt = 0;
   const wakeMode = args.wakeMode === "redis" ? "redis" : "poll";
   console.log(`[recipe-ingestion-worker] started worker=${workerID} wakeMode=${wakeMode}`);
 
+  const requestShutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[recipe-ingestion-worker] shutdown requested signal=${signal} worker=${workerID}`);
+  };
+  process.once("SIGTERM", () => requestShutdown("SIGTERM"));
+  process.once("SIGINT", () => requestShutdown("SIGINT"));
+
   do {
+    if (Date.now() - lastStaleRepairAt >= args.staleRepairIntervalMs) {
+      lastStaleRepairAt = Date.now();
+      await repairStaleImports({
+        workerID,
+        staleAfterMinutes: args.staleAfterMinutes,
+      });
+    }
+
     const processed = await runRecipeIngestionWorkerBatch({
       workerID,
       batchSize: args.batchSize,
@@ -113,7 +165,7 @@ async function main() {
 
     console.log(`[recipe-ingestion-worker] processed=${processed} worker=${workerID}`);
 
-    if (args.once) {
+    if (args.once || shuttingDown) {
       break;
     }
 
@@ -121,6 +173,9 @@ async function main() {
       if (wakeMode === "redis") {
         const wake = await waitForRedisWake(RECIPE_IMPORT_WAKE_CHANNEL, args.wakeTimeoutMs);
         console.log(`[recipe-ingestion-worker] idle wake=${wake.reason} worker=${workerID}`);
+        if (!["redis_wake", "safety_sweep"].includes(wake.reason)) {
+          await sleep(args.idleSleepMs);
+        }
       } else {
         await sleep(emptyQueueSleepMs);
         emptyQueueSleepMs = Math.min(
@@ -131,7 +186,7 @@ async function main() {
     } else {
       emptyQueueSleepMs = args.idleSleepMs;
     }
-  } while (true);
+  } while (!shuttingDown);
 }
 
 main().then(() => {

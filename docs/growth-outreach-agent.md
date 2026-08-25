@@ -1,14 +1,17 @@
 # Growth Outreach Agent
 
-The growth outreach worker finds reviewable Quora and roundup-list opportunities for Ounje. It is intentionally human-in-the-loop:
+The growth outreach worker finds reviewable Quora, roundup-list, and creator outreach opportunities for Ounje. It is intentionally human-in-the-loop:
 
 - It discovers 10-15 relevant Quora questions before drafting answers.
 - It drafts Quora answers that answer the question first and disclose affiliation.
 - It runs generated answers through a humanizer pass so drafts read less like generic LLM copy.
 - It discovers 10-15 relevant roundup posts before drafting inclusion pitches.
+- It discovers public TikTok and Instagram creator profiles that match Ounje's content angles.
+- It drafts creator outreach for paid UGC or promotion tests.
+- It emits `Computer Use` execution plans that pause before any send action.
 - It stores candidates and drafts in Supabase for review.
 - It can also run in local artifact mode, writing temp JSON files under `tmp/growth-outreach/`.
-- It does not auto-post to Quora, bypass login flows, scrape around bot controls, or send outreach emails.
+- It does not auto-post to Quora, bypass login flows, scrape around bot controls, or send outreach automatically.
 
 ## Policy Guardrails
 
@@ -21,6 +24,8 @@ The worker encodes that as:
 - standalone answers that can be understood without clicking a link.
 - medical, allergy, weight-loss, and eating-disorder topic avoidance.
 - draft thresholds so it researches a set of opportunities before writing.
+- `Computer Use` execution plans that stop for final human confirmation before sending a creator DM.
+- no bypassing messaging restrictions, captchas, rate limits, or anti-spam warnings.
 
 ## Files
 
@@ -31,6 +36,7 @@ The worker encodes that as:
 - `server/scripts/run_growth_outreach_local.mjs` runs without Supabase and writes local JSON artifacts.
 - `deploy/systemd/ounje-growth-outreach-worker.service` is the production worker unit.
 - `supabase/migrations/20260517150934_growth_outreach_agent.sql` creates the review tables.
+- `supabase/migrations/20260605183500_growth_outreach_creators.sql` extends the run modes and adds creator review tables.
 
 ## Environment
 
@@ -55,7 +61,7 @@ Recommended:
 Optional scheduling:
 
 - `GROWTH_OUTREACH_AUTO_ENQUEUE_USER_ID=<auth.users.id>`
-- `GROWTH_OUTREACH_AUTO_ENQUEUE_MODE=both|quora|roundups`
+- `GROWTH_OUTREACH_AUTO_ENQUEUE_MODE=both|quora|roundups|creators|all`
 - `GROWTH_OUTREACH_INTERVAL_HOURS=168`
 
 Optional local artifact mode:
@@ -76,7 +82,7 @@ Optional app/profile overrides:
 Queue one run:
 
 ```bash
-npm run growth:queue-outreach -- --user-id <auth_user_uuid> --mode both
+npm run growth:queue-outreach -- --user-id <auth_user_uuid> --mode creators
 ```
 
 Process one queued job:
@@ -94,7 +100,7 @@ npm run growth:outreach-worker
 Run without the app database:
 
 ```bash
-npm run growth:outreach-local -- --mode both
+npm run growth:outreach-local -- --mode creators
 ```
 
 Open a headed Quora login browser:
@@ -128,3 +134,22 @@ Roundups:
 3. Review `roundup_pitch_drafts`.
 4. Send manually from the founder or company email.
 5. Mark the pitch as `sent`, then use follow-up drafts only if appropriate.
+
+Creators:
+
+1. Review `creator_profile_candidates` and reject low-fit, minor-focused, agency, or brand accounts.
+2. Review `creator_outreach_drafts`.
+3. Edit the opener for any creator-specific nuance or budget context.
+4. Use the draft's `execution_plan` in a logged-in browser session with `Computer Use`.
+5. Stop for final human confirmation before clicking Send.
+6. Mark the draft as `sent` only after the message is actually delivered.
+
+## Local Creator Artifacts
+
+When local mode runs with `--mode creators`, it writes:
+
+- `creator-candidates.json`
+- `creator-outreach-drafts.json`
+- `creator-computer-use-playbook.json`
+
+The playbook is the handoff artifact for desktop execution. It records which profile to open, which draft to paste, and where the confirmation boundary is.

@@ -47,7 +47,9 @@ function normalizeText(value) {
 
 function normalizeMode(value) {
   const mode = normalizeText(value).toLowerCase();
-  if (mode === "quora" || mode === "roundups" || mode === "both") return mode;
+  if (mode === "quora" || mode === "roundups" || mode === "both" || mode === "creator" || mode === "creators" || mode === "all") {
+    return mode === "creator" ? "creators" : mode;
+  }
   return "both";
 }
 

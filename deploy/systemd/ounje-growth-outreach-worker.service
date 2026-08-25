@@ -2,6 +2,8 @@
 Description=Ounje growth outreach worker
 After=network-online.target
 Wants=network-online.target
+# Outreach is not app-critical. Keep this legacy daemon explicitly opt-in.
+ConditionPathExists=/etc/ounje/enable-growth-outreach
 
 [Service]
 Type=simple

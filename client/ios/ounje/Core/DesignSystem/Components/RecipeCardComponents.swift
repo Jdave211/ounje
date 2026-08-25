@@ -216,6 +216,71 @@ enum DiscoverRemoteRecipeCardLayout {
     }
 }
 
+struct RecipeCommunityStars: View {
+    let averageRating: Double?
+    let ratingCount: Int
+    let size: CGFloat
+    var showsValue = true
+
+    private let filledColor = Color(red: 0.98, green: 0.72, blue: 0.22)
+
+    private var displayedHalfSteps: Int {
+        guard let averageRating else { return 0 }
+        let clampedRating = min(max(averageRating, 0), 5)
+        let wholeStars = Int(clampedRating.rounded(.down))
+        let fraction = clampedRating - Double(wholeStars)
+
+        if fraction < 0.25 {
+            return wholeStars * 2
+        }
+        if fraction < 0.75 {
+            return wholeStars * 2 + 1
+        }
+        return min(10, wholeStars * 2 + 2)
+    }
+
+    private func symbolName(for position: Int) -> String {
+        let fullThreshold = position * 2
+        if displayedHalfSteps >= fullThreshold {
+            return "star.fill"
+        }
+        if displayedHalfSteps == fullThreshold - 1 {
+            return "star.leadinghalf.filled"
+        }
+        return "star"
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            HStack(spacing: 1) {
+                ForEach(1 ... 5, id: \.self) { position in
+                    Image(systemName: symbolName(for: position))
+                        .font(.system(size: size, weight: .bold))
+                        .foregroundStyle(
+                            displayedHalfSteps >= (position * 2 - 1)
+                                ? filledColor
+                                : OunjePalette.softCream.opacity(0.72)
+                        )
+                }
+            }
+
+            if showsValue {
+                Text(averageRating.map { String(format: "%.1f", $0) } ?? "New")
+                    .font(.system(size: max(9, size - 0.5), weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            ratingCount > 0
+                ? "Rated \(String(format: "%.1f", averageRating ?? 0)) out of 5 from \(ratingCount) ratings"
+                : "Recipe score \(String(format: "%.1f", averageRating ?? 0)) out of 5"
+        )
+    }
+}
+
 struct DiscoverRemoteRecipeCard: View {
     let recipe: DiscoverRecipeCardData
     let showsSaveAction: Bool
@@ -305,14 +370,16 @@ struct DiscoverRemoteRecipeCard: View {
                 .frame(maxWidth: .infinity, minHeight: layout.titleHeight, maxHeight: layout.titleHeight, alignment: .topLeading)
                 .modifier(RecipeTitleTransitionModifier(transitionContext: transitionContext))
 
-                HStack(spacing: 5) {
-                    Image(systemName: "clock")
-                        .font(.system(size: layout.metadataIconSize, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                    Text(recipe.compactCookTime ?? recipe.filterLabel)
-                        .font(.system(size: layout.metadataTextSize, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
+                HStack {
+                    Spacer(minLength: 0)
+                    RecipeCommunityStars(
+                        averageRating: recipe.displayRating,
+                        ratingCount: recipe.ratingCount ?? 0,
+                        size: layout.metadataIconSize,
+                        showsValue: false
+                    )
                 }
+                .font(.system(size: layout.metadataTextSize, weight: .medium))
             }
             .frame(maxWidth: .infinity, minHeight: layout.detailsHeight, maxHeight: layout.detailsHeight, alignment: .topLeading)
             .padding(.horizontal, 2)
@@ -496,32 +563,200 @@ final class DiscoverRecipeImageLoader: ObservableObject {
             isLoading = false
         }
 
-        // Fast path: check the prefetch cache before hitting the network.
         for url in candidates {
-            if let cached = await ImagePrefetcher.shared.cachedImage(for: url.absoluteString) {
-                image = cached
+            if let fetched = await ImagePrefetcher.shared.image(for: url.absoluteString) {
+                image = fetched
                 return
             }
         }
 
         image = nil
+    }
+}
 
-        for url in candidates {
-            do {
-                var request = URLRequest(url: url)
-                request.cachePolicy = .returnCacheDataElseLoad
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200 ... 299).contains(httpResponse.statusCode),
-                      let fetched = UIImage(data: data)
-                else {
-                    continue
+/// A library-specific recipe tile: the food visual carries the card instead of
+/// sitting in a separate circular treatment used by the Discover feed.
+struct RecipeLibraryVisualCard: View {
+    let recipe: DiscoverRecipeCardData
+    let topAction: DiscoverRemoteRecipeCardTopAction?
+    let guideTargetID: FirstRunGuideTargetID?
+    let selectionState: Bool?
+    let selectionAction: (() -> Void)?
+    let onSelect: () -> Void
+
+    @StateObject private var loader = DiscoverRecipeImageLoader()
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+
+    private let visualHeight: CGFloat = 176
+    private let visualCornerRadius: CGFloat = 24
+
+    private var resolvedTypographyStyle: RecipeTypographyStyle {
+        RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+    }
+
+    private var isOunjeNativeRecipe: Bool {
+        [recipe.source, recipe.category, recipe.recipeType]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .contains { $0.localizedCaseInsensitiveCompare("Ounje") == .orderedSame }
+    }
+
+    init(
+        recipe: DiscoverRecipeCardData,
+        topAction: DiscoverRemoteRecipeCardTopAction? = nil,
+        guideTargetID: FirstRunGuideTargetID? = nil,
+        selectionState: Bool? = nil,
+        selectionAction: (() -> Void)? = nil,
+        onSelect: @escaping () -> Void
+    ) {
+        self.recipe = recipe
+        self.topAction = topAction
+        self.guideTargetID = guideTargetID
+        self.selectionState = selectionState
+        self.selectionAction = selectionAction
+        self.onSelect = onSelect
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: onSelect) {
+                VStack(alignment: .leading, spacing: 6) {
+                    imageSurface
+                        .frame(maxWidth: .infinity)
+                        .frame(height: visualHeight)
+                        .background(OunjePalette.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: visualCornerRadius, style: .continuous)
+                                .stroke(.white.opacity(0.09), lineWidth: 1)
+                        )
+                        .clipped()
+                        .firstRunGuideTarget(guideTargetID)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        RecipeTypographyTitleText(
+                            recipe.displayTitle,
+                            size: 16,
+                            color: OunjePalette.primaryText,
+                            style: resolvedTypographyStyle
+                        )
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.78)
+                        .frame(maxWidth: .infinity, minHeight: 20, maxHeight: 40, alignment: .topLeading)
+                        .padding(.trailing, 4)
+                        .clipped()
+
+                        Text(recipe.authorLabel)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(OunjePalette.secondaryText)
+                            .lineLimit(1)
+                            .padding(.top, 0)
+                    }
+                    .padding(.horizontal, 2)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(OunjeCardPressButtonStyle())
 
-                image = fetched
-                return
-            } catch {
-                continue
+            if let isSelected = selectionState, let selectionAction {
+                Button(action: selectionAction) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                isSelected
+                                    ? OunjePalette.accent
+                                    : OunjePalette.background.opacity(0.82)
+                            )
+
+                        Circle()
+                            .stroke(
+                                isSelected
+                                    ? OunjePalette.softCream
+                                    : OunjePalette.softCream.opacity(0.96),
+                                lineWidth: 2.4
+                            )
+
+                        if isSelected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 14, weight: .black))
+                                .foregroundStyle(OunjePalette.softCream)
+                        }
+                    }
+                    .frame(width: 34, height: 34)
+                    .contentShape(Circle())
+                    .shadow(color: .black.opacity(0.58), radius: 5, y: 2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    isSelected
+                        ? "Remove \(recipe.displayTitle) from selection"
+                        : "Select \(recipe.displayTitle)"
+                )
+                .accessibilityValue(isSelected ? "Selected" : "Not selected")
+                .padding(9)
+            } else if let topAction {
+                Button(action: topAction.action) {
+                    Image(systemName: topAction.systemName)
+                        .font(.system(size: topAction.symbolSize, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(width: topAction.frameSize, height: topAction.frameSize)
+                        .background {
+                            if topAction.showsBackground {
+                                Circle()
+                                    .fill(OunjePalette.background.opacity(0.78))
+                                    .overlay(Circle().stroke(.white.opacity(0.16), lineWidth: 1))
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(topAction.accessibilityLabel)
+                .padding(9)
+            }
+        }
+        .accessibilityLabel(recipe.displayTitle)
+        .task(id: recipe.imageCandidates.map(\.absoluteString).joined(separator: "|")) {
+            await loader.load(from: recipe.imageCandidates)
+        }
+    }
+
+    @ViewBuilder
+    private var imageSurface: some View {
+        if let image = loader.image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .colorMultiply(isOunjeNativeRecipe ? Color(hex: "858982") : .white)
+                .saturation(isOunjeNativeRecipe ? 0.9 : 1)
+                .brightness(isOunjeNativeRecipe ? -0.04 : 0)
+                .overlay {
+                    if isOunjeNativeRecipe {
+                        ZStack {
+                            Color.black.opacity(0.08)
+                            LinearGradient(
+                                colors: [
+                                    Color.clear,
+                                    OunjePalette.surface.opacity(0.18)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        }
+                    }
+                }
+        } else if loader.isLoading {
+            Rectangle()
+                .fill(OunjePalette.surface)
+                .overlay {
+                    ProgressView()
+                        .tint(OunjePalette.softCream)
+                }
+        } else {
+            ZStack {
+                OunjePalette.surface
+                Text(recipe.emoji)
+                    .font(.system(size: 56))
             }
         }
     }

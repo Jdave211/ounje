@@ -204,8 +204,6 @@ struct SleeRecipeCardTitleText: View {
                     Text(remainderText)
                         .recipeCardTitleFont(size)
                         .foregroundStyle(color)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.84)
                 }
             } else {
                 Text(text)
@@ -213,6 +211,13 @@ struct SleeRecipeCardTitleText: View {
                     .foregroundStyle(color)
             }
         }
+        .lineLimit(2)
+        .truncationMode(.tail)
+        .minimumScaleFactor(0.72)
+        .allowsTightening(true)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
     }
@@ -319,11 +324,23 @@ private struct RecipeCardTitleModifier: ViewModifier {
                 .tracking(0.1)
                 .foregroundStyle(OunjePalette.primaryText.opacity(0.78))
                 .offset(x: 0.45, y: 0.35)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .minimumScaleFactor(0.72)
+                .allowsTightening(true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             content
                 .font(.custom("Slee_handwritting-Regular", size: size))
                 .tracking(0.1)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .minimumScaleFactor(0.72)
+                .allowsTightening(true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
     }
 }
 

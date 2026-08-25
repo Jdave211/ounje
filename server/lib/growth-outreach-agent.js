@@ -20,6 +20,8 @@ const QUORA_CANDIDATES_TABLE = "quora_question_candidates";
 const QUORA_DRAFTS_TABLE = "quora_answer_drafts";
 const ROUNDUP_OPPORTUNITIES_TABLE = "roundup_list_opportunities";
 const ROUNDUP_DRAFTS_TABLE = "roundup_pitch_drafts";
+const CREATOR_CANDIDATES_TABLE = "creator_profile_candidates";
+const CREATOR_DRAFTS_TABLE = "creator_outreach_drafts";
 const BROWSER_USE_BASE = "https://api.browser-use.com/api/v3";
 
 const GROWTH_JOB_KIND = "growth_outreach_run";
@@ -33,6 +35,7 @@ const HUMANIZER_SYSTEM_PROMPT = [
   "Do not make the answer more promotional. Ounje should appear only where it naturally helps the reader.",
 ].join(" ");
 let warnedMissingSearchProvider = false;
+let browserUseUnavailable = false;
 
 function normalizeText(value, maxLength = 0) {
   const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
@@ -158,6 +161,7 @@ export async function loadGrowthOutreachConfig({ configPath = DEFAULT_CONFIG_PAT
     app: mergeAppConfig({ ...(base.app ?? {}), ...(overrides.app ?? {}) }),
     quora: { ...(base.quora ?? {}), ...(overrides.quora ?? {}) },
     roundups: { ...(base.roundups ?? {}), ...(overrides.roundups ?? {}) },
+    creators: { ...(base.creators ?? {}), ...(overrides.creators ?? {}) },
   };
 }
 
@@ -184,6 +188,24 @@ export function buildRoundupSearchQueries(config = {}) {
     "best meal planning apps",
     "best recipe organizer apps",
     "best grocery list apps for meal prep",
+  ];
+}
+
+export function buildCreatorSearchQueries(config = {}) {
+  const queries = asArray(config.creators?.queries)
+    .map((query) => normalizeText(query))
+    .filter(Boolean);
+  if (queries.length) return queries;
+
+  return [
+    'site:tiktok.com/@ "saved recipes" creator',
+    'site:tiktok.com/@ "meal prep" creator',
+    'site:tiktok.com/@ "easy dinner" creator',
+    'site:tiktok.com/@ "restaurant copycat" creator',
+    'site:instagram.com "recipe developer" "meal prep"',
+    'site:instagram.com "food creator" "easy dinner"',
+    'site:instagram.com "grocery haul" "recipes"',
+    'site:instagram.com "ugc creator" food app',
   ];
 }
 
@@ -285,6 +307,142 @@ function evaluateRoundupCandidateHeuristic(candidate) {
   return {
     relevanceScore: Number(score.toFixed(2)),
     fitReason: `Matched ${roundupMatches} roundup/list signals and ${fitMatches} Ounje category signals.`,
+  };
+}
+
+function inferCreatorPlatform(urlValue) {
+  try {
+    const url = new URL(urlValue);
+    const host = url.hostname.toLowerCase();
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (host.includes("tiktok.com") && parts[0]?.startsWith("@")) return "tiktok";
+    if (host.includes("instagram.com")) {
+      const blocked = new Set(["p", "reel", "reels", "explore", "accounts", "stories", "direct"]);
+      if (parts[0] && !blocked.has(parts[0].toLowerCase())) return "instagram";
+    }
+  } catch {}
+  return null;
+}
+
+function inferCreatorHandle(urlValue) {
+  try {
+    const url = new URL(urlValue);
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (url.hostname.toLowerCase().includes("tiktok.com") && parts[0]?.startsWith("@")) return parts[0];
+    if (url.hostname.toLowerCase().includes("instagram.com") && parts[0]) return `@${parts[0].replace(/^@+/, "")}`;
+  } catch {}
+  return "";
+}
+
+function detectCreatorAngle(haystack) {
+  if (haystack.includes("restaurant") || haystack.includes("takeout") || haystack.includes("copycat")) {
+    return "Restaurant Meal Memory";
+  }
+  if (haystack.includes("fridge") || haystack.includes("pantry") || haystack.includes("leftover")) {
+    return "Fridge-To-Dinner";
+  }
+  if (haystack.includes("caption") || haystack.includes("screenshot")) {
+    return "Recipe Caption Chaos";
+  }
+  if (haystack.includes("meal prep") || haystack.includes("weekly")) {
+    return "Meal Prep From Cravings";
+  }
+  return "Saved TikTok Recipe Rescue";
+}
+
+function buildCreatorExecutionPlan(candidate, draft) {
+  return {
+    executor: "computer-use",
+    app: "Dia",
+    review_required: true,
+    profile_url: candidate.profileURL,
+    platform: candidate.platform,
+    handle: candidate.handle,
+    message_preview: draft.messageBody,
+    steps: [
+      `Open ${candidate.platform} profile ${candidate.profileURL} in Dia.`,
+      "Confirm the profile still fits Ounje's creator criteria and is not obviously a minor-focused account.",
+      "Open the direct-message composer only if the account allows messages without bypassing platform controls.",
+      "Paste the approved initial outreach draft.",
+      "Stop and require final human confirmation before clicking Send.",
+    ],
+    guardrails: [
+      "Do not bypass login walls, captchas, or rate limits.",
+      "Do not send more than one cold opener per creator unless the follow-up is explicitly approved.",
+      "Abort if the account is a brand, agency, or clearly unrelated to food/cooking/meal content.",
+      "Abort if messaging is unavailable or the platform warns about automation/spam behavior.",
+    ],
+  };
+}
+
+export function evaluateCreatorCandidateHeuristic(candidate, config = {}) {
+  const title = normalizeText(candidate?.title);
+  const snippet = normalizeText(candidate?.snippet);
+  const url = normalizeURL(candidate?.url);
+  const platform = inferCreatorPlatform(url);
+  const handle = inferCreatorHandle(url);
+  const haystack = `${title} ${snippet} ${url}`.toLowerCase();
+
+  const foodMatches = keywordCount(haystack, [
+    "recipe",
+    "recipes",
+    "meal prep",
+    "mealprepping",
+    "easy dinner",
+    "grocery",
+    "cooking",
+    "food",
+    "restaurant",
+    "copycat",
+    "fridge",
+    "pantry",
+    "home chef",
+    "weeknight",
+  ]);
+  const creatorMatches = keywordCount(haystack, [
+    "creator",
+    "ugc",
+    "content creator",
+    "video",
+    "reels",
+    "tiktok",
+    "instagram",
+    "food creator",
+    "recipe developer",
+  ]);
+  const avoidMatches = keywordCount(haystack, [
+    "agency",
+    "marketing agency",
+    "memes",
+    "fan page",
+    "news",
+    "restaurant chain",
+    "brand account",
+    "giveaway",
+    ...asArray(config.creators?.avoid_topics).map((item) => normalizeText(item).toLowerCase()),
+  ]);
+
+  let score = 0.16;
+  if (platform) score += 0.18;
+  if (handle) score += 0.08;
+  score += foodMatches * 0.07;
+  score += creatorMatches * 0.05;
+  if (haystack.includes("ugc")) score += 0.08;
+  if (avoidMatches > 0) score -= Math.min(0.5, avoidMatches * 0.16);
+  score = clamp(score, 0, 0.98);
+
+  const angle = detectCreatorAngle(haystack);
+  return {
+    platform,
+    handle,
+    relevanceScore: Number(score.toFixed(2)),
+    fitReason: `Matched ${foodMatches} food-fit signals and ${creatorMatches} creator-fit signals for the ${angle} angle.`,
+    outreachAngle: angle,
+    blockedReason: !platform || !handle
+      ? "Not a clear public TikTok/Instagram creator profile."
+      : avoidMatches > 0
+        ? "Profile looks like a brand, agency, or low-fit account; skip unless manually reviewed."
+        : null,
   };
 }
 
@@ -397,6 +555,7 @@ function parseBrowserUseSearchOutput(output) {
 }
 
 async function searchWithBrowserUse(query, limit, { logger = console } = {}) {
+  if (browserUseUnavailable) return null;
   const headers = browserUseHeaders();
   if (!headers) return null;
 
@@ -409,6 +568,7 @@ async function searchWithBrowserUse(query, limit, { logger = console } = {}) {
       body: JSON.stringify({}),
     });
     if (!createResponse.ok) {
+      if (createResponse.status === 402) browserUseUnavailable = true;
       throw new Error(`browser-use createSession ${createResponse.status}: ${await createResponse.text().catch(() => createResponse.statusText)}`);
     }
     const created = await createResponse.json();
@@ -729,21 +889,26 @@ async function discoverQuoraCandidatesWithPlaywright(config, { logger = console 
   return uniqueByURL(candidates).slice(0, target);
 }
 
-async function searchWeb(query, { limit = DEFAULT_SEARCH_LIMIT, logger = console } = {}) {
+export async function searchWeb(query, { limit = DEFAULT_SEARCH_LIMIT, logger = console } = {}) {
   const provider = getEnv("GROWTH_SEARCH_PROVIDER").toLowerCase();
   const forcedProvider = Boolean(provider);
   const providers = provider ? [provider] : ["serper", "brave", "serpapi", "browser-use", "playwright"];
 
   for (const candidateProvider of providers) {
-    let results = null;
-    if (candidateProvider === "serper") results = await searchWithSerper(query, limit);
-    else if (candidateProvider === "brave") results = await searchWithBrave(query, limit);
-    else if (candidateProvider === "serpapi") results = await searchWithSerpAPI(query, limit);
-    else if (candidateProvider === "browser-use") results = await searchWithBrowserUse(query, limit, { logger });
-    else if (candidateProvider === "playwright") results = await searchWithPlaywright(query, limit, { logger });
-    else throw new Error(`Unsupported GROWTH_SEARCH_PROVIDER: ${candidateProvider}`);
+    try {
+      let results = null;
+      if (candidateProvider === "serper") results = await searchWithSerper(query, limit);
+      else if (candidateProvider === "brave") results = await searchWithBrave(query, limit);
+      else if (candidateProvider === "serpapi") results = await searchWithSerpAPI(query, limit);
+      else if (candidateProvider === "browser-use") results = await searchWithBrowserUse(query, limit, { logger });
+      else if (candidateProvider === "playwright") results = await searchWithPlaywright(query, limit, { logger });
+      else throw new Error(`Unsupported GROWTH_SEARCH_PROVIDER: ${candidateProvider}`);
 
-    if (Array.isArray(results) && (results.length > 0 || forcedProvider)) return results;
+      if (Array.isArray(results) && (results.length > 0 || forcedProvider)) return results;
+    } catch (error) {
+      logger.warn(`[growth-outreach] ${candidateProvider} search failed for "${query}": ${error.message}`);
+      if (forcedProvider) return [];
+    }
   }
 
   if (!warnedMissingSearchProvider) {
@@ -802,6 +967,40 @@ async function discoverRoundupOpportunities(config, { logger = console } = {}) {
     .slice(0, target);
 }
 
+async function discoverCreatorCandidates(config, { logger = console } = {}) {
+  const target = clamp(config.creators?.candidate_target ?? 20, 1, 50);
+  const queries = buildCreatorSearchQueries(config);
+  const candidates = [];
+
+  for (const query of queries) {
+    if (candidates.length >= target) break;
+    const results = await searchWeb(query, { limit: DEFAULT_SEARCH_LIMIT, logger });
+    for (const result of results) {
+      const url = normalizeURL(result.url);
+      if (!url) continue;
+      const evaluation = evaluateCreatorCandidateHeuristic(result, config);
+      if (evaluation.relevanceScore < clamp(config.creators?.min_relevance_score ?? 0.42, 0, 1)) continue;
+      if (evaluation.blockedReason) continue;
+      candidates.push({
+        platform: evaluation.platform,
+        handle: evaluation.handle,
+        profileURL: url,
+        displayName: normalizeText(result.title, 240),
+        bioSnippet: normalizeText(result.snippet, 1500),
+        sourceQuery: query,
+        searchProvider: result.source,
+        fitReason: evaluation.fitReason,
+        outreachAngle: evaluation.outreachAngle,
+        relevanceScore: evaluation.relevanceScore,
+      });
+    }
+  }
+
+  return uniqueByURL(candidates.map((item) => ({ ...item, url: item.profileURL })))
+    .map(({ url, ...item }) => ({ ...item, profileURL: url }))
+    .slice(0, target);
+}
+
 function inferSiteName(urlValue) {
   try {
     return new URL(urlValue).hostname.replace(/^www\./, "");
@@ -831,6 +1030,7 @@ function hasSearchProviderConfigured() {
     || getEnv("SERPER_API_KEY")
     || getEnv("BRAVE_SEARCH_API_KEY")
     || getEnv("SERPAPI_API_KEY")
+    || getEnv("BROWSER_USE_API_KEY")
   );
 }
 
@@ -993,6 +1193,27 @@ ${app?.contactName ?? "Dave"}`;
   };
 }
 
+export function composeFallbackCreatorOutreach(candidate, app) {
+  const handle = normalizeText(candidate?.handle) || "there";
+  const angle = normalizeText(candidate?.outreachAngle) || "Saved TikTok Recipe Rescue";
+  const appName = app?.name ?? "Ounje";
+  const appURL = app?.publicURL ?? "https://ounje-idbl.onrender.com";
+  const body = `Hey ${handle} — I work on ${appName}. Your food content feels like a strong fit for a creator brief we are testing around ${angle.toLowerCase()}.
+
+${appName} helps people take a saved recipe video, meal photo, craving, or fridge ingredient list and turn it into a recipe plus grocery list. I think there is a clean piece of UGC here where the viewer sees the food input first, then the Ounje output.
+
+If you are open to paid UGC or a promotion test, I can send over a tight brief with a couple of angles that fit your style.
+
+App link in case you want quick context: ${appURL}`;
+
+  return {
+    messageBody: body,
+    followUpBody: `Hey ${handle} — following up in case food app partnerships or UGC are handled here. If the ${angle.toLowerCase()} angle is interesting, I can send the brief over.`,
+    offerSummary: "Paid UGC or promotion test focused on visible food-input-to-recipe/grocery transformation.",
+    briefSummary: `${angle} brief showing a food input going into Ounje and a recipe/grocery output coming back out.`,
+  };
+}
+
 async function draftQuoraAnswer(candidate, app, { openai = null, logger = console } = {}) {
   if (!openai) {
     const body = ensureAffiliationDisclosure(await humanizeDraftText(composeFallbackQuoraAnswer(candidate, app), {
@@ -1117,6 +1338,98 @@ async function draftRoundupPitch(opportunity, app, { openai = null, logger = con
   };
 }
 
+async function draftCreatorOutreach(candidate, app, { openai = null, logger = console } = {}) {
+  if (!openai) {
+    const fallback = composeFallbackCreatorOutreach(candidate, app);
+    const messageBody = await humanizeDraftText(fallback.messageBody, {
+      kind: "creator_outreach",
+      app,
+      logger,
+    });
+    const followUpBody = await humanizeDraftText(fallback.followUpBody, {
+      kind: "creator_followup",
+      app,
+      logger,
+    });
+    return {
+      messageBody,
+      followUpBody,
+      offerSummary: fallback.offerSummary,
+      briefSummary: fallback.briefSummary,
+      executionPlan: buildCreatorExecutionPlan(candidate, { messageBody }),
+      confidenceNotes: "Fallback creator outreach draft generated without OpenAI; verify creator fit and send manually.",
+      complianceNotes: [
+        "Draft is for review only and is not auto-sent.",
+        "Computer Use plan must stop for human confirmation before sending.",
+        "Do not claim a paid budget or deliverables that have not been approved.",
+      ],
+    };
+  }
+
+  const model = getEnv("GROWTH_OUTREACH_OPENAI_MODEL") || DEFAULT_OPENAI_MODEL;
+  const response = await withAIUsageContext({
+    operation: "growth_outreach.creator_outreach_draft",
+  }, () => openai.chat.completions.create({
+    model,
+    temperature: 0.45,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: "You draft concise, human founder outreach DMs for food creators. Be direct. Do not fake familiarity, metrics, campaign budgets, or deliverables. Keep it useful, specific, and brief.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "Draft a creator outreach message in JSON with keys message_body, follow_up_body, offer_summary, brief_summary, confidence_notes, compliance_notes.",
+          creator: candidate,
+          app,
+          rules: [
+            "This is cold outreach for TikTok or Instagram creators.",
+            "State affiliation clearly once.",
+            "Offer either a paid UGC test or a promotion test without inventing exact rates.",
+            "Reference the creator angle that best matches the profile.",
+            "No hypey marketing language, no spammy urgency, no fake personalization.",
+          ],
+        }),
+      },
+    ],
+  }));
+
+  const parsed = extractJSON(response.choices?.[0]?.message?.content);
+  if (!parsed?.message_body) {
+    logger.warn("[growth-outreach] OpenAI returned an invalid creator outreach draft; using fallback");
+    return draftCreatorOutreach(candidate, app, { openai: null, logger });
+  }
+
+  const messageBody = await humanizeDraftText(parsed.message_body, {
+    openai,
+    kind: "creator_outreach",
+    app,
+    logger,
+  });
+  const followUpBody = await humanizeDraftText(parsed.follow_up_body, {
+    openai,
+    kind: "creator_followup",
+    app,
+    logger,
+  });
+
+  return {
+    messageBody,
+    followUpBody,
+    offerSummary: normalizeText(parsed.offer_summary, 500),
+    briefSummary: normalizeText(parsed.brief_summary, 500),
+    executionPlan: buildCreatorExecutionPlan(candidate, { messageBody }),
+    confidenceNotes: normalizeText(parsed.confidence_notes) || "Human review required before sending.",
+    complianceNotes: [
+      ...asArray(parsed.compliance_notes).map((item) => normalizeText(item)).filter(Boolean),
+      "LLM humanizer pass applied.",
+      "Must stop for human confirmation before sending through Computer Use.",
+    ],
+  };
+}
+
 async function createRun(supabase, { job, config, mode }) {
   const { data, error } = await supabase
     .from(RUNS_TABLE)
@@ -1129,6 +1442,7 @@ async function createRun(supabase, { job, config, mode }) {
         mode,
         quora: config.quora,
         roundups: config.roundups,
+        creators: config.creators,
         app: {
           name: config.app.name,
           publicURL: config.app.publicURL,
@@ -1257,8 +1571,72 @@ async function insertRoundupPitch(supabase, { opportunity, pitch }) {
 
 function normalizeMode(value) {
   const mode = normalizeText(value).toLowerCase();
-  if (mode === "quora" || mode === "roundups" || mode === "both") return mode;
+  if (mode === "quora" || mode === "roundups" || mode === "both" || mode === "creator" || mode === "creators" || mode === "all") {
+    return mode === "creator" ? "creators" : mode;
+  }
   return "both";
+}
+
+function modeIncludes(mode, channel) {
+  if (mode === "all") return true;
+  if (mode === "both") return channel === "quora" || channel === "roundups";
+  return mode === channel;
+}
+
+async function upsertCreatorCandidate(supabase, { userID, runID, candidate }) {
+  const { data, error } = await supabase
+    .from(CREATOR_CANDIDATES_TABLE)
+    .upsert({
+      user_id: userID,
+      run_id: runID,
+      platform: candidate.platform,
+      profile_url: candidate.profileURL,
+      handle: candidate.handle,
+      display_name: candidate.displayName,
+      bio_snippet: candidate.bioSnippet,
+      source_query: candidate.sourceQuery,
+      relevance_score: candidate.relevanceScore,
+      fit_reason: candidate.fitReason,
+      outreach_angle: candidate.outreachAngle,
+      status: "candidate",
+      metadata: {
+        searchProvider: candidate.searchProvider,
+      },
+    }, { onConflict: "user_id,profile_url" })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function insertCreatorDraft(supabase, { candidate, draft }) {
+  const { data, error } = await supabase
+    .from(CREATOR_DRAFTS_TABLE)
+    .insert({
+      user_id: candidate.user_id,
+      run_id: candidate.run_id,
+      creator_candidate_id: candidate.id,
+      platform: candidate.platform,
+      profile_url: candidate.profile_url,
+      handle: candidate.handle,
+      message_body: draft.messageBody,
+      follow_up_body: draft.followUpBody,
+      offer_summary: draft.offerSummary,
+      brief_summary: draft.briefSummary,
+      execution_plan: draft.executionPlan,
+      confidence_notes: draft.confidenceNotes,
+      compliance_notes: draft.complianceNotes,
+      status: "pending_review",
+    })
+    .select("*")
+    .single();
+  if (error) throw error;
+  const { error: updateError } = await supabase
+    .from(CREATOR_CANDIDATES_TABLE)
+    .update({ status: "drafted" })
+    .eq("id", candidate.id);
+  if (updateError) throw updateError;
+  return data;
 }
 
 export async function executeGrowthOutreachJob(job, { logger = console, configOverrides = {} } = {}) {
@@ -1291,11 +1669,13 @@ export async function executeGrowthOutreachJob(job, { logger = console, configOv
     quoraDrafts: 0,
     roundupOpportunities: 0,
     roundupPitchDrafts: 0,
+    creatorCandidates: 0,
+    creatorDrafts: 0,
     warnings: [],
   };
 
   try {
-    if (mode === "quora" || mode === "both") {
+    if (modeIncludes(mode, "quora")) {
       const discovered = await discoverQuoraCandidates(config, { logger });
       const rows = [];
       for (const candidate of discovered) {
@@ -1325,7 +1705,7 @@ export async function executeGrowthOutreachJob(job, { logger = console, configOv
       }
     }
 
-    if (mode === "roundups" || mode === "both") {
+    if (modeIncludes(mode, "roundups")) {
       const discovered = await discoverRoundupOpportunities(config, { logger });
       const rows = [];
       for (const opportunity of discovered) {
@@ -1355,12 +1735,44 @@ export async function executeGrowthOutreachJob(job, { logger = console, configOv
       }
     }
 
+    if (modeIncludes(mode, "creators")) {
+      const discovered = await discoverCreatorCandidates(config, { logger });
+      const rows = [];
+      for (const candidate of discovered) {
+        rows.push(await upsertCreatorCandidate(supabase, { userID: job.userID, runID: run.id, candidate }));
+      }
+      summary.creatorCandidates = rows.length;
+
+      const minBeforeDrafting = clamp(config.creators?.min_candidates_before_drafting ?? 8, 1, 50);
+      if (rows.length >= minBeforeDrafting) {
+        const draftTarget = clamp(config.creators?.draft_target ?? 8, 0, 25);
+        const selected = rows
+          .slice()
+          .sort((a, b) => Number(b.relevance_score ?? 0) - Number(a.relevance_score ?? 0))
+          .slice(0, draftTarget);
+        for (const row of selected) {
+          const draft = await draftCreatorOutreach({
+            platform: row.platform,
+            handle: row.handle,
+            profileURL: row.profile_url,
+            displayName: row.display_name,
+            bioSnippet: row.bio_snippet,
+            outreachAngle: row.outreach_angle,
+          }, config.app, { openai, logger });
+          await insertCreatorDraft(supabase, { candidate: row, draft });
+          summary.creatorDrafts += 1;
+        }
+      } else {
+        summary.warnings.push(`Creator discovery found ${rows.length} profiles; drafting requires at least ${minBeforeDrafting}.`);
+      }
+    }
+
     await updateRun(supabase, run.id, {
       status: "succeeded",
       completed_at: new Date().toISOString(),
       summary,
     });
-    logger.log(`[growth-outreach] completed run=${run.id} quora=${summary.quoraCandidates}/${summary.quoraDrafts} roundups=${summary.roundupOpportunities}/${summary.roundupPitchDrafts}`);
+    logger.log(`[growth-outreach] completed run=${run.id} quora=${summary.quoraCandidates}/${summary.quoraDrafts} roundups=${summary.roundupOpportunities}/${summary.roundupPitchDrafts} creators=${summary.creatorCandidates}/${summary.creatorDrafts}`);
     return summary;
   } catch (error) {
     await updateRun(supabase, run.id, {
@@ -1403,6 +1815,7 @@ export async function executeLocalGrowthOutreachRun({
       mode,
       quora: config.quora,
       roundups: config.roundups,
+      creators: config.creators,
       app: {
         name: config.app.name,
         publicURL: config.app.publicURL,
@@ -1426,6 +1839,8 @@ export async function executeLocalGrowthOutreachRun({
     quoraDrafts: 0,
     roundupOpportunities: 0,
     roundupPitchDrafts: 0,
+    creatorCandidates: 0,
+    creatorDrafts: 0,
     warnings: [],
   };
 
@@ -1433,9 +1848,12 @@ export async function executeLocalGrowthOutreachRun({
   const quoraDraftRows = [];
   const roundupRows = [];
   const roundupDraftRows = [];
+  const creatorRows = [];
+  const creatorDraftRows = [];
+  const creatorPlaybookRows = [];
 
   try {
-    if (mode === "quora" || mode === "both") {
+    if (modeIncludes(mode, "quora")) {
       const discovered = await discoverQuoraCandidates(config, { logger });
       for (const candidate of discovered) {
         quoraRows.push({
@@ -1497,7 +1915,7 @@ export async function executeLocalGrowthOutreachRun({
       await writeJSONFile(path.join(runDir, "quora-answer-drafts.json"), quoraDraftRows);
     }
 
-    if (mode === "roundups" || mode === "both") {
+    if (modeIncludes(mode, "roundups")) {
       const discovered = await discoverRoundupOpportunities(config, { logger });
       for (const opportunity of discovered) {
         roundupRows.push({
@@ -1559,6 +1977,82 @@ export async function executeLocalGrowthOutreachRun({
 
       await writeJSONFile(path.join(runDir, "roundup-opportunities.json"), roundupRows);
       await writeJSONFile(path.join(runDir, "roundup-pitch-drafts.json"), roundupDraftRows);
+    }
+
+    if (modeIncludes(mode, "creators")) {
+      const discovered = await discoverCreatorCandidates(config, { logger });
+      for (const candidate of discovered) {
+        creatorRows.push({
+          id: makeLocalID("creator_candidate"),
+          run_id: runID,
+          platform: candidate.platform,
+          profile_url: candidate.profileURL,
+          handle: candidate.handle,
+          display_name: candidate.displayName,
+          bio_snippet: candidate.bioSnippet,
+          source_query: candidate.sourceQuery,
+          relevance_score: candidate.relevanceScore,
+          fit_reason: candidate.fitReason,
+          outreach_angle: candidate.outreachAngle,
+          status: "candidate",
+          metadata: {
+            searchProvider: candidate.searchProvider,
+          },
+          created_at: new Date().toISOString(),
+        });
+      }
+      summary.creatorCandidates = creatorRows.length;
+
+      const minBeforeDrafting = clamp(config.creators?.min_candidates_before_drafting ?? 8, 1, 50);
+      if (creatorRows.length >= minBeforeDrafting) {
+        const draftTarget = clamp(config.creators?.draft_target ?? 8, 0, 25);
+        const selected = creatorRows
+          .slice()
+          .sort((a, b) => Number(b.relevance_score ?? 0) - Number(a.relevance_score ?? 0))
+          .slice(0, draftTarget);
+
+        for (const row of selected) {
+          const draft = await draftCreatorOutreach({
+            platform: row.platform,
+            handle: row.handle,
+            profileURL: row.profile_url,
+            displayName: row.display_name,
+            bioSnippet: row.bio_snippet,
+            outreachAngle: row.outreach_angle,
+          }, config.app, { openai, logger });
+          row.status = "drafted";
+          creatorDraftRows.push({
+            id: makeLocalID("creator_draft"),
+            run_id: runID,
+            creator_candidate_id: row.id,
+            platform: row.platform,
+            profile_url: row.profile_url,
+            handle: row.handle,
+            message_body: draft.messageBody,
+            follow_up_body: draft.followUpBody,
+            offer_summary: draft.offerSummary,
+            brief_summary: draft.briefSummary,
+            execution_plan: draft.executionPlan,
+            confidence_notes: draft.confidenceNotes,
+            compliance_notes: draft.complianceNotes,
+            status: "ready_to_review",
+            created_at: new Date().toISOString(),
+          });
+          creatorPlaybookRows.push({
+            profile_url: row.profile_url,
+            handle: row.handle,
+            platform: row.platform,
+            execution_plan: draft.executionPlan,
+          });
+          summary.creatorDrafts += 1;
+        }
+      } else {
+        summary.warnings.push(`Creator discovery found ${creatorRows.length} profiles; drafting requires at least ${minBeforeDrafting}.`);
+      }
+
+      await writeJSONFile(path.join(runDir, "creator-candidates.json"), creatorRows);
+      await writeJSONFile(path.join(runDir, "creator-outreach-drafts.json"), creatorDraftRows);
+      await writeJSONFile(path.join(runDir, "creator-computer-use-playbook.json"), creatorPlaybookRows);
     }
 
     run.status = "succeeded";

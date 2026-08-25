@@ -1,0 +1,283 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "seed_recipe_id": "3675f30d-65f1-4394-9621-75dd1c98e641",
+      "preset_plan_ids": [
+        "weeknight-chicken-v1",
+        "wraps-and-taco-night-v1",
+        "chicken-around-the-world-v1",
+        "one-pan-chicken-comfort-v1"
+      ],
+      "display_copy": {
+        "suggestion_title": "A good place to start",
+        "plan_title": "Starter"
+      }
+    },
+    {
+      "seed_recipe_id": "c3a7bd77-6894-4069-9113-149c0adf71d4",
+      "preset_plan_ids": [
+        "comfort-favourites-v1",
+        "banana-bakes-v1",
+        "cozy-brunch-v1",
+        "dessert-night-v1"
+      ],
+      "display_copy": {
+        "suggestion_title": "A good place to start",
+        "plan_title": "Starter"
+      }
+    },
+    {
+      "seed_recipe_id": "5e72d6d2-e8c2-46c8-a2cb-50043b392842",
+      "preset_plan_ids": [
+        "fresh-and-easy-v1",
+        "summer-taco-night-v1",
+        "crispy-snack-night-v1",
+        "backyard-favourites-v1"
+      ],
+      "display_copy": {
+        "suggestion_title": "A good place to start",
+        "plan_title": "Starter"
+      }
+    },
+    {
+      "seed_recipe_id": "388d1cfb-fe0a-4643-a3e5-887ff4e56624",
+      "preset_plan_ids": [
+        "bold-flavours-v1",
+        "big-flavour-chicken-v1",
+        "hearty-spiced-comfort-v1",
+        "rice-bowl-nights-v1"
+      ],
+      "display_copy": {
+        "suggestion_title": "A good place to start",
+        "plan_title": "Starter"
+      }
+    }
+  ],
+  "plan_presets": [
+    {
+      "id": "weeknight-chicken-v1",
+      "title": "Spaghetti night",
+      "recipe_ids": [
+        "3675f30d-65f1-4394-9621-75dd1c98e641",
+        "11ab692e-e056-44bf-a2a2-33fa3d9f187a",
+        "6c1fc816-0657-4527-b493-9b423e865b18",
+        "616e6169-b107-40c7-ae4a-b198f2d04855"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["spaghetti", "pasta", "quick", "one pot", "comfort"]
+    },
+    {
+      "id": "wraps-and-taco-night-v1",
+      "title": "Pasta favourites",
+      "recipe_ids": [
+        "3675f30d-65f1-4394-9621-75dd1c98e641",
+        "11ab692e-e056-44bf-a2a2-33fa3d9f187a",
+        "616e6169-b107-40c7-ae4a-b198f2d04855",
+        "6c1fc816-0657-4527-b493-9b423e865b18"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["pasta", "spaghetti", "mac and cheese", "easy", "family"]
+    },
+    {
+      "id": "chicken-around-the-world-v1",
+      "title": "Big-flavour pasta",
+      "recipe_ids": [
+        "3675f30d-65f1-4394-9621-75dd1c98e641",
+        "6c1fc816-0657-4527-b493-9b423e865b18",
+        "11ab692e-e056-44bf-a2a2-33fa3d9f187a",
+        "616e6169-b107-40c7-ae4a-b198f2d04855"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["spaghetti", "pasta", "bold", "garlic", "jollof"]
+    },
+    {
+      "id": "one-pan-chicken-comfort-v1",
+      "title": "Comfort pasta rotation",
+      "recipe_ids": [
+        "3675f30d-65f1-4394-9621-75dd1c98e641",
+        "11ab692e-e056-44bf-a2a2-33fa3d9f187a",
+        "6c1fc816-0657-4527-b493-9b423e865b18",
+        "616e6169-b107-40c7-ae4a-b198f2d04855"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["comfort", "pasta", "spaghetti", "weeknight", "family"]
+    },
+    {
+      "id": "comfort-favourites-v1",
+      "title": "Comfort favourites",
+      "recipe_ids": [
+        "c3a7bd77-6894-4069-9113-149c0adf71d4",
+        "592e534a-dbda-47ce-bd38-c7f418187192",
+        "8a107adf-8bf7-4135-a5d2-ecf3707c34cd",
+        "5c6550ed-8957-4cf1-ade5-8ab4c75b99c4"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": ["shellfish", "peanut"],
+      "selection_tags": ["comfort", "chocolate", "biscoff", "sweet", "baking"]
+    },
+    {
+      "id": "banana-bakes-v1",
+      "title": "Banana bakes",
+      "recipe_ids": [
+        "c3a7bd77-6894-4069-9113-149c0adf71d4",
+        "5c6550ed-8957-4cf1-ade5-8ab4c75b99c4",
+        "9822bcef-c872-46d0-94c6-7bfd78cfe8db",
+        "592e534a-dbda-47ce-bd38-c7f418187192"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": ["shellfish", "peanut"],
+      "selection_tags": ["banana", "fruit", "baking", "sweet", "family"]
+    },
+    {
+      "id": "cozy-brunch-v1",
+      "title": "Cozy brunch",
+      "recipe_ids": [
+        "c3a7bd77-6894-4069-9113-149c0adf71d4",
+        "b174eaf6-082b-4cb2-b21e-8cca03782abb",
+        "ff7efaa4-4363-4f9f-a6f4-2d775e07ff57",
+        "2ae8a59f-5630-47fa-b9be-4dd7d17ea16f"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": ["shellfish", "peanut"],
+      "selection_tags": ["breakfast", "brunch", "cinnamon", "cozy", "weekend"]
+    },
+    {
+      "id": "dessert-night-v1",
+      "title": "Dessert night",
+      "recipe_ids": [
+        "c3a7bd77-6894-4069-9113-149c0adf71d4",
+        "2ae8a59f-5630-47fa-b9be-4dd7d17ea16f",
+        "3aaa62a6-a136-4148-b460-77c03456016d",
+        "b174eaf6-082b-4cb2-b21e-8cca03782abb"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": ["shellfish", "peanut"],
+      "selection_tags": ["dessert", "cookies", "lemon", "italian", "indulgent"]
+    },
+    {
+      "id": "fresh-and-easy-v1",
+      "title": "Peri-peri favourites",
+      "recipe_ids": [
+        "5e72d6d2-e8c2-46c8-a2cb-50043b392842",
+        "70e8a89d-404c-44df-8203-37393e7453cc",
+        "78ab05c1-2ab2-4df7-9057-4d514504968b",
+        "1e778914-4c80-4837-bb6b-01b8b80b4573"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["peri-peri", "chicken", "spicy", "wings", "skewers"]
+    },
+    {
+      "id": "summer-taco-night-v1",
+      "title": "Sticky spicy chicken",
+      "recipe_ids": [
+        "5e72d6d2-e8c2-46c8-a2cb-50043b392842",
+        "b46298c8-cb68-457b-880c-c3c25450f8aa",
+        "9321ffbb-3ecf-48e8-baa7-3884642ac049",
+        "70e8a89d-404c-44df-8203-37393e7453cc"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["chicken", "spicy", "sticky", "wings", "bold"]
+    },
+    {
+      "id": "crispy-snack-night-v1",
+      "title": "Crispy chicken night",
+      "recipe_ids": [
+        "5e72d6d2-e8c2-46c8-a2cb-50043b392842",
+        "bcbed7e8-726a-44ce-bfba-5b6e8d96cf56",
+        "78ab05c1-2ab2-4df7-9057-4d514504968b",
+        "9cadb4f5-10cb-436e-8010-5d7fdb7b911e"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["crispy", "chicken", "skewers", "fries", "sharing"]
+    },
+    {
+      "id": "backyard-favourites-v1",
+      "title": "Chicken and chips",
+      "recipe_ids": [
+        "5e72d6d2-e8c2-46c8-a2cb-50043b392842",
+        "1e778914-4c80-4837-bb6b-01b8b80b4573",
+        "9321ffbb-3ecf-48e8-baa7-3884642ac049",
+        "9cadb4f5-10cb-436e-8010-5d7fdb7b911e"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["chicken", "chips", "wings", "casual", "family"]
+    },
+    {
+      "id": "bold-flavours-v1",
+      "title": "Cinnamon bakes",
+      "recipe_ids": [
+        "388d1cfb-fe0a-4643-a3e5-887ff4e56624",
+        "c79e65f9-7a60-4a42-9b4a-501b6818c120",
+        "88e24342-386c-4b6c-88f0-5fbc0e2513dd",
+        "da054ecf-f4da-42f4-967d-ecd564e3fac6"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["cinnamon", "rolls", "pastry", "sweet", "baking"]
+    },
+    {
+      "id": "big-flavour-chicken-v1",
+      "title": "Sweet brunch bakes",
+      "recipe_ids": [
+        "388d1cfb-fe0a-4643-a3e5-887ff4e56624",
+        "b174eaf6-082b-4cb2-b21e-8cca03782abb",
+        "c79e65f9-7a60-4a42-9b4a-501b6818c120",
+        "da054ecf-f4da-42f4-967d-ecd564e3fac6"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["brunch", "cinnamon", "brioche", "pancakes", "weekend"]
+    },
+    {
+      "id": "hearty-spiced-comfort-v1",
+      "title": "Strawberry and cream",
+      "recipe_ids": [
+        "388d1cfb-fe0a-4643-a3e5-887ff4e56624",
+        "592e534a-dbda-47ce-bd38-c7f418187192",
+        "5c6550ed-8957-4cf1-ade5-8ab4c75b99c4",
+        "88e24342-386c-4b6c-88f0-5fbc0e2513dd"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["strawberry", "cheesecake", "cream", "pastry", "dessert"]
+    },
+    {
+      "id": "rice-bowl-nights-v1",
+      "title": "Cozy weekend sweets",
+      "recipe_ids": [
+        "388d1cfb-fe0a-4643-a3e5-887ff4e56624",
+        "c79e65f9-7a60-4a42-9b4a-501b6818c120",
+        "b174eaf6-082b-4cb2-b21e-8cca03782abb",
+        "5c6550ed-8957-4cf1-ade5-8ab4c75b99c4"
+      ],
+      "dietary_compatibility_tags": ["omnivore"],
+      "allergen_exclusions": [],
+      "selection_tags": ["cinnamon", "strawberry", "banana", "brunch", "baking"]
+    }
+  ],
+  "safe_suggestion_ids_by_diet": {
+    "vegetarian": [
+      "9492925c-8a00-432c-9a08-eb253f44dacd",
+      "4715d456-9286-432d-a004-6bfb40e8bfe7",
+      "cab55d85-da14-4026-b66f-97727e21d8e4",
+      "25edf56b-7004-468a-a92c-90567e37cbb6"
+    ],
+    "vegan": [],
+    "gluten-free": [
+      "cab55d85-da14-4026-b66f-97727e21d8e4",
+      "a318a1e8-7b5e-46c7-a328-2552323f29b7",
+      "674c32b5-b124-438a-a9a5-21bc724ecdd3"
+    ],
+    "dairy-free": [],
+    "keto": []
+  }
+}

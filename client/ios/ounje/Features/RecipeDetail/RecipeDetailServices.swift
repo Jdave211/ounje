@@ -446,27 +446,22 @@ struct RecipeSourceProvenance: Codable, Hashable {
         case evidenceBundle = "evidence_bundle"
     }
 
-    var upstreamURLStrings: [String] {
+    var originalSourceURLStrings: [String] {
         let primaryCandidates: [String?] = [
             originalSocialSource?.urlString,
-            originalSocialSource?.attachedVideoURLString,
             originalSocialSource?.canonicalURLString,
             originalSocialSource?.sourceURLString,
             evidenceBundle?.originalSocialSource?.urlString,
-            evidenceBundle?.originalSocialSource?.attachedVideoURLString,
             evidenceBundle?.originalSocialSource?.canonicalURLString,
             evidenceBundle?.originalSocialSource?.sourceURLString,
             urlString,
-            attachedVideoURLString,
             canonicalURLString,
             sourceURLString,
             evidenceBundle?.urlString,
-            evidenceBundle?.attachedVideoURLString,
             evidenceBundle?.canonicalURLString,
             evidenceBundle?.sourceURLString
         ]
-        let referenceCandidates: [String?] = evidenceBundle?.referenceURLStrings ?? []
-        return uniqueURLStrings(primaryCandidates + referenceCandidates)
+        return uniqueURLStrings(primaryCandidates)
     }
 
     private func uniqueURLStrings(_ values: [String?]) -> [String] {
@@ -624,24 +619,47 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
         return URL(string: attachedVideoURLString)
     }
 
+    var shouldRefreshHostedVideo: Bool {
+        if let attachedVideoURL, Self.isDirectVideoURL(attachedVideoURL) {
+            return false
+        }
+
+        let sourceHint = [
+            source,
+            sourcePlatform,
+            attachedVideoURLString,
+            originalRecipeURLString,
+            recipeURLString,
+        ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        return sourceHint.contains("tiktok.com")
+            || sourceHint.contains("instagram.com")
+            || sourceHint.contains("tiktok")
+            || sourceHint.contains("instagram")
+    }
+
+    var hasCoreRecipeContent: Bool {
+        !ingredients.isEmpty && !steps.isEmpty
+    }
+
+    var needsOptionalEnrichment: Bool {
+        shouldRefreshDisplayMacros || shouldRefreshHostedVideo
+    }
+
     var sourceDisplayLine: String? {
         if let authorHandle = Self.displayableCreatorHandle(authorHandle) {
             return authorHandle
         }
-        if let authorName,
-           !authorName.isEmpty,
-           !Self.isOpaqueNumericCreator(authorName) {
+        if let authorName = Self.displayableCreatorHandle(authorName) {
             return authorName
         }
-        if let source, !source.isEmpty, source.lowercased() != "withjulienne" { return source.capitalized }
         return nil
     }
 
     var authorLine: String {
         if let sourceDisplayLine { return sourceDisplayLine }
-        if let sourcePlatform, !sourcePlatform.isEmpty { return sourcePlatform }
-        if let source, !source.isEmpty { return source.capitalized }
-        return "Ounje source"
+        return "@ounje"
     }
 
     var displayServings: Int {
@@ -877,6 +895,10 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
         return URL(string: normalized)
     }
 
+    private static func isDirectVideoURL(_ url: URL) -> Bool {
+        ["mp4", "m4v", "mov", "m3u8"].contains(url.pathExtension.lowercased())
+    }
+
     private static func displayableCreatorHandle(_ value: String?) -> String? {
         guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return nil
@@ -884,10 +906,19 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
         let withoutAt = raw
             .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !withoutAt.isEmpty, !isOpaqueNumericCreator(withoutAt) else {
+        guard !withoutAt.isEmpty,
+              !isOpaqueNumericCreator(withoutAt),
+              !isPlaceholderCreator(withoutAt) else {
             return nil
         }
-        return withoutAt.hasPrefix("@") ? withoutAt : "@\(withoutAt)"
+        return "@\(withoutAt)"
+    }
+
+    private static func isPlaceholderCreator(_ value: String) -> Bool {
+        let normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized == "source pending" || normalized == "ounje source"
     }
 
     private static func isOpaqueNumericCreator(_ value: String) -> Bool {
@@ -975,6 +1006,15 @@ struct RecipeDetailRelatedResponse: Decodable {
     let recipes: [DiscoverRecipeCardData]
 }
 
+private enum RecipeShareWebsite {
+    static let host = "ounje-recipe.vercel.app"
+
+    static func url(for shareID: String) -> URL? {
+        let encodedShareID = shareID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? shareID
+        return URL(string: "https://\(host)/r/\(encodedShareID)")
+    }
+}
+
 struct RecipeShareLinkResponse: Decodable {
     let shareID: String
     let recipeID: String?
@@ -991,7 +1031,7 @@ struct RecipeShareLinkResponse: Decodable {
     }
 
     var shareURL: URL? {
-        URL(string: webURLString ?? urlString)
+        RecipeShareWebsite.url(for: shareID) ?? URL(string: webURLString ?? urlString)
     }
 }
 
@@ -1137,6 +1177,7 @@ enum RecipeWebVideoActionKind: Equatable {
     case none
     case togglePlayback
     case seek(seconds: Double)
+    case resumeAt(seconds: Double)
     case pause
 }
 
@@ -1172,11 +1213,14 @@ final class RecipeDetailViewModel: ObservableObject {
     ) async -> String? {
         if let detail,
            (detail.id == recipeID || detail.id == initialDetailID),
-           !detail.shouldRefreshDisplayMacros {
+           detail.hasCoreRecipeContent {
             let fallbackID = similarFallbackRecipeID ?? (detail.id == recipeID ? nil : recipeID)
             scheduleSimilarRecipesLoad(for: detail.id, fallbackRecipeID: fallbackID, accessToken: accessToken)
             scheduleMacroEnrichmentIfNeeded(for: detail, accessToken: accessToken)
             scheduleImageEnrichmentIfNeeded(for: detail, accessToken: accessToken)
+            if detail.needsOptionalEnrichment {
+                scheduleOptionalDetailRefresh(for: recipeID, accessToken: accessToken)
+            }
             return nil
         }
 
@@ -1203,10 +1247,26 @@ final class RecipeDetailViewModel: ObservableObject {
             similarRecipes = []
             hasLoadedSimilarRecipes = false
             let message = error.localizedDescription
-            if !(deferAuthorizationError && SupabaseUserDataRequest.isAuthorizationFailure(message: message)) {
+            if detail == nil,
+               !(deferAuthorizationError && SupabaseUserDataRequest.isAuthorizationFailure(message: message)) {
                 errorMessage = message
             }
             return message
+        }
+    }
+
+    private func scheduleOptionalDetailRefresh(for recipeID: String, accessToken: String?) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let refreshed = try? await RecipeDetailService.shared.fetchRecipeDetail(
+                id: recipeID,
+                forceRefresh: true,
+                accessToken: accessToken
+            ), refreshed.hasCoreRecipeContent else { return }
+            guard self.detail?.id == recipeID || self.initialDetailID == recipeID else { return }
+            self.detail = refreshed
+            self.scheduleMacroEnrichmentIfNeeded(for: refreshed, accessToken: accessToken)
+            self.scheduleImageEnrichmentIfNeeded(for: refreshed, accessToken: accessToken)
         }
     }
 
@@ -1409,13 +1469,16 @@ actor RecipeDetailService {
     }
 
     func fetchRecipeDetail(id: String, forceRefresh: Bool = false, accessToken: String? = nil) async throws -> RecipeDetailData {
-        if !forceRefresh, let cached = cache[id], shouldUseCachedDetail(cached, accessToken: accessToken) {
+        let memoryFallback = cache[id]
+        let diskFallback = await RecipeDetailDiskCache.shared.detail(for: id)
+
+        if !forceRefresh, let cached = memoryFallback, shouldUseCachedDetail(cached) {
             return cached
         }
 
         if !forceRefresh,
-           let persisted = await RecipeDetailDiskCache.shared.detail(for: id),
-           shouldUseCachedDetail(persisted, accessToken: accessToken) {
+           let persisted = diskFallback,
+           shouldUseCachedDetail(persisted) {
             cache[id] = persisted
             return persisted
         }
@@ -1440,83 +1503,51 @@ actor RecipeDetailService {
             return detail
         } catch {
             inFlightDetailLoads[id] = nil
+            if let fallback = [memoryFallback, diskFallback]
+                .compactMap({ $0 })
+                .first(where: { $0.hasCoreRecipeContent }) {
+                cache[id] = fallback
+                return fallback
+            }
             throw error
         }
     }
 
-    private func shouldUseCachedDetail(_ detail: RecipeDetailData, accessToken: String?) -> Bool {
-        guard !detail.shouldRefreshDisplayMacros else { return false }
-
-        // Lightweight card previews are intentionally sparse. Do not let them
-        // satisfy a detail fetch, or source/video fields can stay missing.
-        guard !detail.ingredients.isEmpty || !detail.steps.isEmpty else { return false }
-
-        if hasVideoSourceHint(detail), !hasAnySourceURL(detail) {
-            return false
-        }
-
-        return true
-    }
-
-    private func hasAnySourceURL(_ detail: RecipeDetailData) -> Bool {
-        let directValues = [
-            detail.attachedVideoURLString,
-            detail.originalRecipeURLString,
-            detail.recipeURLString,
-            detail.authorURLString
-        ]
-
-        let provenanceValues = (detail.sourceProvenance?.upstreamURLStrings ?? []).map(Optional.some)
-
-        return (directValues + provenanceValues)
-            .contains { value in
-                guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
-                    return false
-                }
-                return URL(string: value) != nil
-            }
-    }
-
-    private func hasVideoSourceHint(_ detail: RecipeDetailData) -> Bool {
-        let haystack = [
-            detail.sourcePlatform,
-            detail.source,
-            detail.authorURLString,
-            detail.originalRecipeURLString,
-            detail.attachedVideoURLString,
-            detail.recipeURLString
-        ]
-            .compactMap { $0?.lowercased() }
-            .joined(separator: " ")
-
-        return haystack.contains("tiktok")
-            || haystack.contains("instagram")
-            || haystack.contains("youtube")
-            || haystack.contains("youtu.be")
+    private func shouldUseCachedDetail(_ detail: RecipeDetailData) -> Bool {
+        detail.hasCoreRecipeContent
     }
 
     private func fetchRecipeDetailUncached(id: String, accessToken: String? = nil) async throws -> RecipeDetailData {
-        if let cached = cache[id], shouldUseCachedDetail(cached, accessToken: accessToken) {
-            return cached
-        }
-
         if let onboardingDetail = await OnboardingRecipeEditDemoService.shared.adaptedDetail(for: id) {
             cache[id] = onboardingDetail
             return onboardingDetail
         }
 
-        let baseDetail: RecipeDetailData
+        var baseDetail: RecipeDetailData
         if id.hasPrefix("uir_") {
-            // Imported recipes are owned user data. Keep the phone off the
-            // direct PostgREST/RLS detail path and let the backend do one
-            // owner-verified service-role read plus cache lookup.
-            baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
+            // Prefer the owner-verified backend projection, but keep the
+            // authenticated RLS path as a last-resort read so a transient API
+            // or cache failure cannot strand an imported recipe at its preview.
+            do {
+                baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
+            } catch {
+                baseDetail = try await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)
+            }
         } else {
             do {
                 baseDetail = try await fetchRecipeDetailFromBackend(id: id, accessToken: accessToken)
             } catch {
                 baseDetail = try await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken)
             }
+        }
+
+        // The API's shared detail cache can briefly outlive a video backfill.
+        // When it still points at a social page, verify the current row and
+        // prefer its hosted media so playback does not fall back to TikTok.
+        if baseDetail.shouldRefreshHostedVideo,
+           let currentDetail = try? await fetchRecipeDetailFromSupabase(id: id, accessToken: accessToken),
+           !currentDetail.shouldRefreshHostedVideo {
+            baseDetail = currentDetail
         }
 
         if id.hasPrefix("uir_") {
@@ -1620,6 +1651,7 @@ actor RecipeDetailService {
                 .compactMap { URL(string: $0)?.host?.lowercased() }
         )
         guard configuredHosts.contains(host)
+            || host == RecipeShareWebsite.host
             || host == "ounje.com"
             || host.hasSuffix(".ounje.com")
             || host == "ounje.app"
@@ -2158,7 +2190,7 @@ actor RecipeDetailService {
 actor RecipeDetailDiskCache {
     static let shared = RecipeDetailDiskCache()
 
-    private let schemaVersion = 1
+    private let schemaVersion = 2
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -2295,24 +2327,45 @@ actor PlannedRecipeRefreshService {
 actor RecipeVideoResolveService {
     static let shared = RecipeVideoResolveService()
 
-    private var cache: [String: RecipeResolvedVideoData] = [:]
+    private struct CacheEntry {
+        let video: RecipeResolvedVideoData
+        let resolvedAt: Date
+    }
 
-    func resolveVideo(from sourceURL: URL) async throws -> RecipeResolvedVideoData {
+    private var cache: [String: CacheEntry] = [:]
+
+    func resolveVideo(from sourceURL: URL, forceRefresh: Bool = false) async throws -> RecipeResolvedVideoData {
         let cacheKey = sourceURL.absoluteString
-        if let cached = cache[cacheKey] {
-            return cached
+        if !forceRefresh,
+           let cached = cache[cacheKey],
+           Date().timeIntervalSince(cached.resolvedAt) < cacheLifetime(for: cached.video) {
+            return cached.video
         }
 
-        let resolved = try await fetchResolvedVideoFromBackend(sourceURL: sourceURL)
-        cache[cacheKey] = resolved
+        let resolved = try await fetchResolvedVideoFromBackend(
+            sourceURL: sourceURL,
+            forceRefresh: forceRefresh
+        )
+        cache[cacheKey] = CacheEntry(video: resolved, resolvedAt: Date())
         return resolved
     }
 
-    private func fetchResolvedVideoFromBackend(sourceURL: URL) async throws -> RecipeResolvedVideoData {
+    private func cacheLifetime(for video: RecipeResolvedVideoData) -> TimeInterval {
+        video.supportsNativePlayback ? 90 : 30 * 60
+    }
+
+    private func fetchResolvedVideoFromBackend(
+        sourceURL: URL,
+        forceRefresh: Bool
+    ) async throws -> RecipeResolvedVideoData {
         var lastError: Error?
         for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
             do {
-                return try await fetchResolvedVideoFromBackend(baseURL: baseURL, sourceURL: sourceURL)
+                return try await fetchResolvedVideoFromBackend(
+                    baseURL: baseURL,
+                    sourceURL: sourceURL,
+                    forceRefresh: forceRefresh
+                )
             } catch {
                 lastError = error
             }
@@ -2321,21 +2374,28 @@ actor RecipeVideoResolveService {
         throw lastError ?? SupabaseProfileStateError.invalidResponse
     }
 
-    private func fetchResolvedVideoFromBackend(baseURL: String, sourceURL: URL) async throws -> RecipeResolvedVideoData {
+    private func fetchResolvedVideoFromBackend(
+        baseURL: String,
+        sourceURL: URL,
+        forceRefresh: Bool
+    ) async throws -> RecipeResolvedVideoData {
         guard
             var components = URLComponents(string: "\(baseURL)/v1/recipe/video/resolve")
         else {
             throw SupabaseProfileStateError.invalidRequest
         }
 
-        components.queryItems = [URLQueryItem(name: "url", value: sourceURL.absoluteString)]
+        components.queryItems = [
+            URLQueryItem(name: "url", value: sourceURL.absoluteString),
+            URLQueryItem(name: "force", value: forceRefresh ? "1" : "0")
+        ]
         guard let url = components.url else {
             throw SupabaseProfileStateError.invalidRequest
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 10
+        request.timeoutInterval = 16
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -2598,5 +2658,271 @@ struct SupabaseRecipeStepIngredientRow: Decodable {
         case displayName = "display_name"
         case quantityText = "quantity_text"
         case sortOrder = "sort_order"
+    }
+}
+
+extension Notification.Name {
+    static let ounjeRecipeRatingChanged = Notification.Name("ounje.recipe.rating.changed")
+}
+
+struct RecipeRatingSummary: Codable, Sendable {
+    let recipeID: String
+    let averageRating: Double?
+    let ratingCount: Int
+    let bayesianRating: Double
+    let coldStartRating: Double
+    let yourRating: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+        case averageRating = "average_rating"
+        case ratingCount = "rating_count"
+        case bayesianRating = "bayesian_rating"
+        case coldStartRating = "cold_start_rating"
+        case yourRating = "your_rating"
+    }
+}
+
+struct UserRecipeRatingStats: Sendable, Equatable {
+    let ratingCount: Int
+    let averageRating: Double?
+
+    static let empty = UserRecipeRatingStats(ratingCount: 0, averageRating: nil)
+}
+
+private struct RecipeRatingUpdateRequest: Encodable {
+    let rating: Int
+}
+
+private struct RecipeRatingAggregateRow: Decodable {
+    let id: String
+    let averageRating: Double?
+    let ratingCount: Int
+    let bayesianRating: Double
+    let coldStartRating: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case averageRating = "average_rating"
+        case ratingCount = "rating_count"
+        case bayesianRating = "bayesian_rating"
+        case coldStartRating = "cold_start_rating"
+    }
+}
+
+private struct RecipeRatingUserRow: Decodable {
+    let rating: Int
+}
+
+private struct RecipeRatingUpsertRow: Encodable {
+    let recipeID: String
+    let userID: String
+    let rating: Int
+
+    enum CodingKeys: String, CodingKey {
+        case recipeID = "recipe_id"
+        case userID = "user_id"
+        case rating
+    }
+}
+
+actor RecipeRatingService {
+    static let shared = RecipeRatingService()
+
+    func fetch(recipeID: String, userID: String, accessToken: String) async throws -> RecipeRatingSummary {
+        do {
+            return try await perform(recipeID: recipeID, accessToken: accessToken, rating: nil)
+        } catch {
+            return try await fetchFromSupabase(recipeID: recipeID, userID: userID, accessToken: accessToken)
+        }
+    }
+
+    func submit(recipeID: String, userID: String, rating: Int, accessToken: String) async throws -> RecipeRatingSummary {
+        do {
+            return try await perform(recipeID: recipeID, accessToken: accessToken, rating: rating)
+        } catch {
+            try await upsertToSupabase(recipeID: recipeID, userID: userID, rating: rating, accessToken: accessToken)
+            return try await fetchFromSupabase(recipeID: recipeID, userID: userID, accessToken: accessToken)
+        }
+    }
+
+    func fetchUserStats(userID: String, accessToken: String) async throws -> UserRecipeRatingStats {
+        let rows: [RecipeRatingUserRow] = try await performSupabaseRequest(
+            path: "recipe_ratings?select=rating&user_id=eq.\(userID)",
+            accessToken: accessToken
+        )
+        guard !rows.isEmpty else { return .empty }
+        let total = rows.reduce(0) { $0 + $1.rating }
+        return UserRecipeRatingStats(
+            ratingCount: rows.count,
+            averageRating: Double(total) / Double(rows.count)
+        )
+    }
+
+    private func perform(recipeID: String, accessToken: String, rating: Int?) async throws -> RecipeRatingSummary {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.candidateBaseURLs {
+            do {
+                let encodedID = recipeID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? recipeID
+                guard let url = URL(string: "\(baseURL)/v1/recipe/\(encodedID)/rating") else {
+                    throw SupabaseProfileStateError.invalidRequest
+                }
+
+                var request = URLRequest(url: url)
+                request.httpMethod = rating == nil ? "GET" : "PUT"
+                request.timeoutInterval = 12
+                request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+                if let rating {
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.httpBody = try JSONEncoder().encode(RecipeRatingUpdateRequest(rating: rating))
+                }
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw SupabaseProfileStateError.invalidResponse
+                }
+                guard (200 ... 299).contains(httpResponse.statusCode) else {
+                    let payload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+                    let fallback = "Could not \(rating == nil ? "load" : "save") this rating."
+                    throw SupabaseProfileStateError.requestFailed(payload?.message ?? payload?.error ?? fallback)
+                }
+                return try JSONDecoder().decode(RecipeRatingSummary.self, from: data)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? SupabaseProfileStateError.invalidResponse
+    }
+
+    private func fetchFromSupabase(
+        recipeID: String,
+        userID: String,
+        accessToken: String
+    ) async throws -> RecipeRatingSummary {
+        let aggregatePath = "recipes?select=id,average_rating,rating_count,bayesian_rating,cold_start_rating&id=eq.\(recipeID)&limit=1"
+        let userPath = "recipe_ratings?select=rating&recipe_id=eq.\(recipeID)&user_id=eq.\(userID)&limit=1"
+        async let aggregateRows: [RecipeRatingAggregateRow] = performSupabaseRequest(
+            path: aggregatePath,
+            accessToken: SupabaseConfig.anonKey
+        )
+        async let userRows: [RecipeRatingUserRow] = performSupabaseRequest(
+            path: userPath,
+            accessToken: accessToken
+        )
+        let (aggregates, ratings) = try await (aggregateRows, userRows)
+        guard let aggregate = aggregates.first else {
+            throw SupabaseProfileStateError.requestFailed("Recipe could not be found.")
+        }
+        return RecipeRatingSummary(
+            recipeID: aggregate.id,
+            averageRating: aggregate.averageRating,
+            ratingCount: aggregate.ratingCount,
+            bayesianRating: aggregate.bayesianRating,
+            coldStartRating: aggregate.coldStartRating,
+            yourRating: ratings.first?.rating
+        )
+    }
+
+    private func upsertToSupabase(
+        recipeID: String,
+        userID: String,
+        rating: Int,
+        accessToken: String
+    ) async throws {
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipe_ratings?on_conflict=recipe_id,user_id") else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 12
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
+        request.httpBody = try JSONEncoder().encode(
+            RecipeRatingUpsertRow(recipeID: recipeID, userID: userID, rating: rating)
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let payload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            throw SupabaseProfileStateError.requestFailed(payload?.message ?? payload?.error ?? "Could not save this rating.")
+        }
+    }
+
+    private func performSupabaseRequest<Response: Decodable>(
+        path: String,
+        accessToken: String
+    ) async throws -> Response {
+        guard let encodedPath = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(SupabaseConfig.url)/rest/v1/\(encodedPath)")
+        else {
+            throw SupabaseProfileStateError.invalidRequest
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 12
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SupabaseProfileStateError.invalidResponse
+        }
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            let payload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+            throw SupabaseProfileStateError.requestFailed(payload?.message ?? payload?.error ?? "Could not load ratings.")
+        }
+        return try JSONDecoder().decode(Response.self, from: data)
+    }
+}
+
+@MainActor
+final class RecipeRatingViewModel: ObservableObject {
+    @Published private(set) var summary: RecipeRatingSummary?
+    @Published private(set) var isLoading = false
+    @Published private(set) var isSubmitting = false
+    @Published private(set) var errorMessage: String?
+
+    var selectedRating: Int? { summary?.yourRating }
+
+    func load(recipeID: String, userID: String, accessToken: String) async {
+        guard !isLoading, !recipeID.isEmpty, !accessToken.isEmpty else { return }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            summary = try await RecipeRatingService.shared.fetch(
+                recipeID: recipeID,
+                userID: userID,
+                accessToken: accessToken
+            )
+        } catch {
+            errorMessage = "Ratings are unavailable right now."
+        }
+    }
+
+    @discardableResult
+    func submit(recipeID: String, userID: String, rating: Int, accessToken: String) async -> Bool {
+        guard (1 ... 5).contains(rating), !isSubmitting else { return false }
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            let updated = try await RecipeRatingService.shared.submit(
+                recipeID: recipeID,
+                userID: userID,
+                rating: rating,
+                accessToken: accessToken
+            )
+            summary = updated
+            NotificationCenter.default.post(name: .ounjeRecipeRatingChanged, object: updated)
+            return true
+        } catch {
+            errorMessage = "Your rating could not be saved."
+            return false
+        }
     }
 }

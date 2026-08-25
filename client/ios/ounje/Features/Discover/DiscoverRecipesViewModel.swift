@@ -45,14 +45,14 @@ final class DiscoverRecipesViewModel: ObservableObject {
     private var lastBaseRotationAt: Date?
     private var lastLoadedFilter = DiscoverPreset.all.title
     private var feedbackRevision = 0
-    private let stagedPageSize = 12
-    private var currentFeedLimit = 12
+    private let stagedPageSize = 24
+    private var currentFeedLimit = 24
     private var currentFeedOffset = 0
     private let shelfCacheTTL: TimeInterval = 12 * 60 * 60
     private let shelfCacheStoreKey = "ounje-discover-shelf-cache-v2"
-    private let shelfCacheSchemaVersion = "2026-05-09-onboarding-blend"
+    private let shelfCacheSchemaVersion = "2026-08-25-fast-rotated-feed"
     private let recipeCatalogVersion = "ounje-recipes-v1"
-    private let rankingConfigVersion = "ranked-discover-v2-onboarding-profile"
+    private let rankingConfigVersion = "direct-discover-v1-varied-cold-start"
 
     init() {
         filters = Self.stableFilters
@@ -92,7 +92,8 @@ final class DiscoverRecipesViewModel: ObservableObject {
         limit: Int? = nil,
         offset: Int = 0,
         appendResults: Bool = false,
-        forceNetwork: Bool = false
+        forceNetwork: Bool = false,
+        allowsStoredShelf: Bool = true
     ) async {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let hadExistingRecipes = !recipes.isEmpty
@@ -135,7 +136,8 @@ final class DiscoverRecipesViewModel: ObservableObject {
         }
 
         let canUseStoredShelf = DiscoverPreset.normalizedKey(for: selectedFilter) == "all"
-        if canUseStoredShelf,
+        if allowsStoredShelf,
+           canUseStoredShelf,
            !appendResults,
            !forceNetwork,
            let storedShelf = storedShelf(for: shelfKey),
@@ -381,7 +383,16 @@ final class DiscoverRecipesViewModel: ObservableObject {
         if rotateBaseFeed {
             invalidateBaseFeedRotation()
         }
-        await refresh(profile: profile, query: query, feedContext: feedContext, behaviorSeeds: behaviorSeeds, limit: currentFeedLimit, offset: 0, forceNetwork: forceNetwork)
+        await refresh(
+            profile: profile,
+            query: query,
+            feedContext: feedContext,
+            behaviorSeeds: behaviorSeeds,
+            limit: currentFeedLimit,
+            offset: 0,
+            forceNetwork: forceNetwork,
+            allowsStoredShelf: !rotateBaseFeed
+        )
     }
 
     func resetFeedPagination() {
@@ -414,8 +425,6 @@ final class DiscoverRecipesViewModel: ObservableObject {
     }
 
     func beginManualRefreshPresentation() {
-        isTransitioningFeed = true
-        hasResolvedInitialLoad = false
         errorMessage = nil
     }
 
@@ -428,6 +437,46 @@ final class DiscoverRecipesViewModel: ObservableObject {
         guard feedbackRevision != normalized else { return }
         feedbackRevision = normalized
         lastLoadKey = nil
+    }
+
+    func applyCommunityRating(_ summary: RecipeRatingSummary) {
+        recipes = recipes.map { recipe in
+            recipe.id == summary.recipeID ? recipe.applyingRating(summary) : recipe
+        }
+        responseCache = responseCache.mapValues { entry in
+            InMemoryDiscoverCacheEntry(
+                recipes: entry.recipes.map { recipe in
+                    recipe.id == summary.recipeID ? recipe.applyingRating(summary) : recipe
+                },
+                filters: entry.filters,
+                hasMoreRecipes: entry.hasMoreRecipes,
+                nextOffset: entry.nextOffset
+            )
+        }
+        updateStoredShelves(with: summary)
+        lastLoadKey = nil
+    }
+
+    private func updateStoredShelves(with summary: RecipeRatingSummary) {
+        guard let data = UserDefaults.standard.data(forKey: shelfCacheStoreKey),
+              var store = try? JSONDecoder().decode(DiscoverShelfCacheStore.self, from: data)
+        else { return }
+
+        store.entries = store.entries.mapValues { entry in
+            DiscoverShelfCacheEntry(
+                key: entry.key,
+                recipes: entry.recipes.map { recipe in
+                    recipe.id == summary.recipeID ? recipe.applyingRating(summary) : recipe
+                },
+                filters: entry.filters,
+                hasMoreRecipes: entry.hasMoreRecipes,
+                nextOffset: entry.nextOffset,
+                storedAt: entry.storedAt
+            )
+        }
+        if let updatedData = try? JSONEncoder().encode(store) {
+            UserDefaults.standard.set(updatedData, forKey: shelfCacheStoreKey)
+        }
     }
 
     private func cacheKey(

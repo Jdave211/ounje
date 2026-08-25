@@ -10,27 +10,26 @@ struct OnboardingRecipeEditDemoRecipe: Identifiable {
     func resolvedOptionFixtures(
         selectedDietaryPatterns: Set<String>
     ) -> [OnboardingRecipeEditDemoOptionFixture] {
-        let defaultFixtures = defaultResolvedFixtures
+        let preferredFixtures = preferredIntentOrder.compactMap { preferredIntent in
+            optionFixtures.first(where: { $0.intent == preferredIntent })
+        }
+        let orderedFixtures = preferredFixtures + optionFixtures.filter { fixture in
+            !preferredIntentOrder.contains(fixture.intent)
+        }
         let selectedDiets = Set(selectedDietaryPatterns.map(Self.normalizedDietName))
         guard !selectedDiets.isEmpty else {
-            return Array(defaultFixtures.prefix(4))
+            return Array(orderedFixtures.prefix(4))
         }
 
         let dietFixtures = dietFixturePriority.compactMap { entry -> OnboardingRecipeEditDemoOptionFixture? in
             let diet = entry.diet
             let intent = entry.intent
             guard selectedDiets.contains(diet) else { return nil }
-            if let existingFixture = defaultFixtures.first(where: { $0.intent == intent }) {
-                return existingFixture
-            }
-            if intent == .dairyFree {
-                return .dairyFreeFixture(for: self)
-            }
-            return nil
+            return optionFixtures.first(where: { $0.intent == intent })
         }
 
         var seenIntents = Set<String>()
-        let prioritizedFixtures = (dietFixtures + defaultFixtures).filter { fixture in
+        let prioritizedFixtures = (dietFixtures + orderedFixtures).filter { fixture in
             guard !seenIntents.contains(fixture.intent.rawValue) else { return false }
             seenIntents.insert(fixture.intent.rawValue)
             return true
@@ -39,24 +38,8 @@ struct OnboardingRecipeEditDemoRecipe: Identifiable {
         return Array(prioritizedFixtures.prefix(4))
     }
 
-    private var defaultResolvedFixtures: [OnboardingRecipeEditDemoOptionFixture] {
-        var fixtures = optionFixtures
-
-        if let lowCaloriesFixture = OnboardingRecipeEditDemoOptionFixture.lowCaloriesFixture(for: self),
-           !fixtures.contains(where: { $0.intent == lowCaloriesFixture.intent }) {
-            fixtures.insert(lowCaloriesFixture, at: min(1, fixtures.count))
-        }
-
-        if let healthyFixture = OnboardingRecipeEditDemoOptionFixture.healthyFixture(for: self),
-           !fixtures.contains(where: { $0.intent == healthyFixture.intent }) {
-            fixtures.append(healthyFixture)
-        }
-
-        return fixtures
-    }
-
     fileprivate var allDemoFixtures: [OnboardingRecipeEditDemoOptionFixture] {
-        defaultResolvedFixtures
+        optionFixtures
     }
 
     private static func normalizedDietName(_ value: String) -> String {
@@ -72,6 +55,17 @@ struct OnboardingRecipeEditDemoRecipe: Identifiable {
             ("dairyfree", .dairyFree),
             ("glutenfree", .glutenFree),
         ]
+    }
+
+    private var preferredIntentOrder: [RecipeAlterationIntent] {
+        switch card.id {
+        case "c3a7bd77-6894-4069-9113-149c0adf71d4":
+            return [.lessSugar, .lowCalories, .moreProtein, .dairyFree]
+        case "e2c0da0d-047c-440b-b96d-a5730f403072":
+            return [.lessSugar, .lowCalories, .moreProtein, .spicy]
+        default:
+            return [.healthier, .moreProtein, .lowCalories, .mealPrep]
+        }
     }
 }
 
@@ -145,50 +139,7 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
     var id: String { "\(recipeID)::\(intent.rawValue)" }
 
     var oneLineChangeSummary: String {
-        switch (recipeID, intent) {
-        case ("cdf56b03-71e8-4386-acb1-262837286a36", .moreProtein):
-            return "Added Greek yogurt, added more eggs, removed powdered sugar."
-        case ("cdf56b03-71e8-4386-acb1-262837286a36", .lowCalories):
-            return "Cut sugar and cream cheese, added Greek yogurt, kept the custard."
-        case ("cdf56b03-71e8-4386-acb1-262837286a36", .healthier):
-            return "Added whole-grain bread, added Greek yogurt, removed added sugar."
-        case ("cdf56b03-71e8-4386-acb1-262837286a36", .lessSugar):
-            return "Removed powdered sugar, removed granulated sugar."
-        case ("cdf56b03-71e8-4386-acb1-262837286a36", .quick):
-            return "No overnight chill, shorter bake, simpler prep."
-        case ("cdf56b03-71e8-4386-acb1-262837286a36", .dairyFree):
-            return "Added coconut milk, added dairy-free cream cheese, removed dairy milk."
-        case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .moreProtein):
-            return "Added black beans, adjusted chicken."
-        case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .lowCalories):
-            return "Trimmed oil, used skinless chicken, steamed rice, air-fried plantain."
-        case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .spicy):
-            return "Added cayenne, added lime, added more heat."
-        case ("b1bd5a95-dab3-436e-89c8-fb4df52b8fb7", .mealPrep):
-            return "Separate components, extra sauce, reheat-friendly steps."
-        case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .moreProtein):
-            return "Added shredded chicken, added Greek yogurt."
-        case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .lowCalories):
-            return "Reduced pasta and oil, added more spinach, kept anchovy-Parmesan flavor."
-        case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .keto):
-            return "Removed pasta, added spinach, added lemon."
-        case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .lighter):
-            return "Removed olive oil, removed Parmesan, added basil."
-        case ("eaa85ffd-1a66-44e9-84e7-2c7d4b950390", .dairyFree):
-            return "Added nutritional yeast, added pasta water, removed Parmesan."
-        case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .lessSugar):
-            return "Removed powdered sugar, removed granulated sugar."
-        case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .lowCalories):
-            return "Thinner shortbread, less butter and sugar, brighter guava-lemon filling."
-        case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .glutenFree):
-            return "Added gluten-free flour."
-        case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .lighter):
-            return "Removed butter, removed sugar, added coconut oil."
-        case ("4bcf072c-b95d-49fa-9997-d2749a118a15", .dairyFree):
-            return "Added plant butter, added coconut oil, removed dairy butter."
-        default:
-            return changeSummary ?? preplannedSummary
-        }
+        changeSummary ?? preplannedSummary
     }
 
     func makeResponse(from recipe: OnboardingRecipeEditDemoRecipe) -> RecipeAdaptationResponse {
@@ -242,7 +193,7 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
                 ingredientID: baseIngredient?.ingredientID,
                 displayName: parsed.displayName,
                 quantityText: parsed.quantityText,
-                imageURLString: baseIngredient?.imageURLString ?? Self.commonIngredientImageURLString(for: parsed.displayName),
+                imageURLString: Self.commonIngredientImageURLString(for: parsed.displayName) ?? baseIngredient?.imageURLString,
                 sortOrder: index
             )
         }
@@ -295,7 +246,7 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
             originalRecipeURLString: baseDetail.originalRecipeURLString,
             attachedVideoURLString: nil,
             sourceProvenance: baseDetail.sourceProvenance,
-            detailFootnote: changeSummary ?? preplannedSummary,
+            detailFootnote: nil,
             imageCaption: baseDetail.imageCaption,
             dietaryTags: adaptedRecipe.dietaryFit,
             flavorTags: baseDetail.flavorTags,
@@ -392,33 +343,83 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
 
     fileprivate static func commonIngredientImageURLString(for displayName: String) -> String? {
         let normalized = normalizedName(displayName)
-        let mappings: [(keywords: [String], url: String)] = [
-            (["chicken thigh", "chicken thighs"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchicken_thigh.jpg?alt=media&token=c66a2a2c-33cd-4d6d-9d99-58475be7c85a?t=1774248428264"),
-            (["tomato", "tomatoes"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Ftomato.jpg?alt=media&token=526e27f3-043c-472b-9220-2929f93bb4e5?t=1774234594733"),
-            (["red bell pepper", "bell pepper"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fred_bell_pepper.jpg?alt=media&token=01e19356-1a36-49bb-b34f-5b68777f05bf?t=1774244049104"),
-            (["habanero", "habanero pepper"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fpeppers.jpg?alt=media&token=961e8efd-b228-4fa2-9606-272265b43eb3?t=1774257567466"),
-            (["chicken stock", "chicken broth", "bouillon"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchicken_broth.jpg?alt=media&token=25dd3691-0b85-44a9-98b9-8aa562f6162b?t=1774249822040"),
-            (["onion", "onions"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fonion.jpg?alt=media&token=4d27c4bf-c973-4d6a-9b52-5f0a53fbd388?t=1774248318388"),
-            (["thyme"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fthyme.jpg?alt=media&token=8a29f820-749a-4420-87e8-ff90dbf01403?t=1774330873604"),
-            (["black pepper"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fblack_pepper.jpg?alt=media&token=965f8bc2-ada6-465f-a0fc-6b81bdc692a7?t=1774299971368"),
-            (["curry powder"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fyellow_curry.jpg?alt=media&token=6a659c8e-6375-4a7e-8d75-126c565a5cec?t=1774249108854"),
-            (["salt"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsalt.jpg?alt=media&token=0140d2fd-6e8a-4b50-8a82-19b316ccc8d7?t=1774330872713"),
-            (["white rice", "rice"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Frice.jpg?alt=media&token=5aa0fdcd-c942-4e76-9eed-c7e2dacc6ad7?t=1774248318327"),
-            (["water"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fwater.jpg?alt=media&token=ef1b81ea-f561-46ee-af79-dea3714ca564?t=1774234689901"),
-            (["plantain", "plantains"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fplantain.jpg?alt=media&token=2b145f14-d438-43e9-a9c2-c87237a8b44f?t=1774337486500"),
-            (["black beans"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fblack_beans.jpg?alt=media&token=b7be5a94-a7bd-4c20-8fee-989aee96f567?t=1774247130413"),
-            (["lime juice", "lime"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Flime.jpg?alt=media&token=8baf258f-277b-4976-afdc-99229c41b136?t=1774250162863"),
-            (["yogurt", "coconut milk", "almond milk"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fmilk.jpg?alt=media&token=0dd8a299-f10b-4842-9999-ced50ef93c21?t=1774248091433"),
-            (["almond flour", "gluten free flour", "oat flour"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fflour.jpg?alt=media&token=0c58143c-815d-40bb-80cc-9a3b3c34b681?t=1774256493345"),
-            (["coconut oil", "avocado oil", "olive oil", "frying oil", "neutral oil"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Folive_oil.jpg?alt=media&token=c2d859ad-887e-422a-af1a-6d1c2b642fcb?t=1774330870925"),
-            (["plant butter"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fbutter.jpg?alt=media&token=0d3b0fec-a623-457d-80a8-3da7db42fdb3?t=1774256492999"),
-            (["mozzarella", "ricotta", "cheese"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fparmesan_cheese.jpg?alt=media&token=41595f2d-19cc-4781-ba5b-92c2e1e9a732?t=1774330872651"),
-            (["cauliflower rice"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Frice.jpg?alt=media&token=5aa0fdcd-c942-4e76-9eed-c7e2dacc6ad7?t=1774248318327"),
-            (["chile", "chili", "pepper", "cayenne"], "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchili_flakes.jpg?alt=media&token=5e372122-e466-4fac-a826-56f4156b2ec4?t=1774331841546")
+        let mappings: [(keywords: [String], imageName: String)] = [
+            (["boneless skinless chicken breast", "skinless chicken breast", "chicken breast"], "chicken_breast"),
+            (["boneless skinless chicken thigh", "boneless chicken thigh"], "boneless_skinless_chicken_thigh"),
+            (["skinless chicken thigh", "chicken thigh", "chicken leg"], "chicken_thigh"),
+            (["chicken stock", "chicken broth", "bouillon"], "chicken_broth"),
+            (["jollof tomato base", "tomato base", "tomato sauce"], "tomato_sauce"),
+            (["peri peri sauce", "peri-peri sauce", "hot sauce"], "hot_sauce"),
+            (["biscoff cookies", "biscoff cookie"], "biscuits"),
+            (["biscoff spread"], "caramel_sauce"),
+            (["all purpose flour", "all-purpose flour", "gluten free flour", "almond flour", "oat flour", "protein powder", "flour"], "flour"),
+            (["baking powder"], "baking_powder"),
+            (["baking soda"], "baking_soda"),
+            (["brown sugar", "light brown sugar"], "brown_sugar"),
+            (["powdered sugar"], "powdered_sugar"),
+            (["egg white", "egg yolk", "hard boiled egg", "egg", "eggs"], "egg"),
+            (["greek yogurt", "nonfat greek yogurt", "plain yogurt", "yogurt"], "greek_yogurt"),
+            (["condensed milk"], "condensed_milk"),
+            (["half and half", "half-and-half", "heavy cream", "whipping cream"], "heavy_cream"),
+            (["buttermilk"], "buttermilk"),
+            (["oat milk", "almond milk", "low fat milk", "milk"], "milk"),
+            (["unsalted butter", "plant butter", "butter"], "butter"),
+            (["vegetable oil"], "vegetable_oil"),
+            (["coconut oil"], "coconut_oil"),
+            (["avocado oil"], "avocado_oil"),
+            (["extra virgin olive oil", "olive oil", "frying oil", "neutral oil", "oil"], "olive_oil"),
+            (["lemon juice", "lemon zest", "lemon"], "lemon"),
+            (["lime juice", "lime"], "lime"),
+            (["watermelon"], "watermelon"),
+            (["banana", "bananas"], "bananas"),
+            (["potato chips", "oven chips", "potato", "potatoes"], "potatoes"),
+            (["cauliflower rice"], "cauliflower"),
+            (["white rice", "cooked rice", "rice"], "rice"),
+            (["red bell pepper"], "red_bell_pepper"),
+            (["green bell pepper"], "green_bell_pepper"),
+            (["bell pepper"], "red_bell_pepper"),
+            (["habanero pepper", "habanero", "red chilies", "red chilis", "chili pepper"], "chili_peppers"),
+            (["chili powder", "chilli powder"], "chilli_powder"),
+            (["chili flakes", "chilli flakes", "red pepper flakes"], "chili_flakes"),
+            (["cayenne"], "cayenne"),
+            (["smoked paprika", "paprika"], "paprika"),
+            (["white pepper", "black pepper", "pepper"], "black_pepper"),
+            (["garlic powder", "garlic granules"], "garlic_powder"),
+            (["garlic paste", "garlic cloves", "garlic clove", "garlic"], "garlic"),
+            (["red onion"], "red_onion"),
+            (["white onion", "onion", "onions"], "onion"),
+            (["courgette", "courgettes", "zucchini"], "courgettes"),
+            (["carrot", "carrots"], "carrot"),
+            (["frozen peas", "peas"], "peas"),
+            (["baby spinach", "spinach"], "spinach"),
+            (["fresh ginger", "ginger"], "ginger"),
+            (["fresh mint", "mint"], "mint"),
+            (["chia seeds", "chia"], "chia_seeds"),
+            (["dried oregano", "oregano"], "oregano"),
+            (["ground cumin", "cumin"], "cumin"),
+            (["curry powder"], "yellow_curry"),
+            (["bay leaves", "bay leaf"], "bay_leaf"),
+            (["thyme"], "thyme"),
+            (["cinnamon"], "cinnamon"),
+            (["vanilla extract", "vanilla"], "vanilla_extract"),
+            (["sugar"], "sugar"),
+            (["salt"], "salt"),
+            (["ice"], "ice"),
+            (["water"], "water"),
+            (["tomato", "tomatoes"], "tomato"),
+            (["plantain", "plantains"], "plantain"),
+            (["black beans"], "black_beans"),
+            (["mozzarella"], "mozzarella"),
+            (["ricotta"], "ricotta_cheese"),
+            (["cheese"], "parmesan_cheese")
         ]
-        return mappings.first { entry in
+        guard let imageName = mappings.first(where: { entry in
             entry.keywords.contains { normalized.contains($0) }
-        }?.url
+        })?.imageName else {
+            return nil
+        }
+
+        return "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2F\(imageName).jpg?alt=media"
     }
 
     private static func matchingIngredientRefs(
@@ -834,38 +835,17 @@ struct OnboardingRecipeEditDemoOptionFixture: Decodable, Identifiable {
 actor OnboardingRecipeEditDemoService {
     static let shared = OnboardingRecipeEditDemoService()
 
-    private var cachedRecipes: [OnboardingRecipeEditDemoRecipe]?
-
-    func loadRecipes(forceRefresh: Bool = false) async -> [OnboardingRecipeEditDemoRecipe] {
-        if !forceRefresh, let cachedRecipes {
-            return cachedRecipes
-        }
-
-        guard let catalog = loadCatalog() else {
-            return []
-        }
-
-        let fixturesByRecipeID = Dictionary(grouping: catalog.fixtures, by: \.recipeID)
-        let resolvedRecipes = catalog.baseRecipes
-            .map { baseRecipe in
-                baseRecipe.makeRecipe(
-                    fixtures: Self.orderedFixtures(
-                        for: baseRecipe.id,
-                        fixtures: fixturesByRecipeID[baseRecipe.id] ?? []
-                    )
-                )
-            }
-            .sorted { lhs, rhs in
-                Self.recipeOrderIndex(for: lhs.id) < Self.recipeOrderIndex(for: rhs.id)
-            }
-
-        cachedRecipes = resolvedRecipes
-        return resolvedRecipes
+    static let preloadedRecipes: [OnboardingRecipeEditDemoRecipe] = importedRecipeCards.map { card in
+        OnboardingRecipeEditDemoRecipe(
+            card: card,
+            detail: preloadedDetail(for: card),
+            optionFixtures: importedRecipeFixtures(for: card.id)
+        )
     }
 
     func adaptedDetail(for recipeID: String) async -> RecipeDetailData? {
         guard recipeID.hasPrefix("onboarding-demo-") else { return nil }
-        let recipes = await loadRecipes()
+        let recipes = Self.preloadedRecipes
 
         for recipe in recipes {
             for fixture in recipe.optionFixtures {
@@ -886,49 +866,798 @@ actor OnboardingRecipeEditDemoService {
         return nil
     }
 
-    private func loadCatalog() -> OnboardingRecipeEditDemoCatalogResource? {
-        guard let url = Bundle.main.url(forResource: "OnboardingRecipeEditDemoCatalog", withExtension: "json"),
-              let data = try? Data(contentsOf: url)
-        else {
-            return nil
+    private struct PreloadedRecipeContent {
+        let servings: Int
+        let caloriesKcal: Double
+        let proteinG: Double
+        let carbsG: Double
+        let fatG: Double
+        let ingredients: [(name: String, quantity: String?)]
+        let steps: [String]
+    }
+
+    private static func preloadedDetail(for card: DiscoverRecipeCardData) -> RecipeDetailData {
+        let content = preloadedContent(for: card.id)
+        let ingredients = content.ingredients.enumerated().map { index, ingredient in
+            RecipeDetailIngredient(
+                id: "onboarding-base-ingredient-\(card.id)-\(index)",
+                ingredientID: nil,
+                displayName: ingredient.name,
+                quantityText: ingredient.quantity,
+                imageURLString: OnboardingRecipeEditDemoOptionFixture.commonIngredientImageURLString(for: ingredient.name),
+                sortOrder: index
+            )
+        }
+        let steps = content.steps.enumerated().map { index, text in
+            RecipeDetailStep(
+                number: index + 1,
+                text: text,
+                tipText: nil,
+                ingredientRefs: [],
+                ingredients: []
+            )
         }
 
-        return try? JSONDecoder().decode(OnboardingRecipeEditDemoCatalogResource.self, from: data)
+        return RecipeDetailData(
+            id: card.id,
+            title: card.title,
+            description: card.description ?? "",
+            authorName: card.authorName,
+            authorHandle: card.authorHandle,
+            authorURLString: card.recipeURLString,
+            source: card.source,
+            sourcePlatform: card.source,
+            category: card.category,
+            subcategory: nil,
+            recipeType: card.recipeType,
+            skillLevel: nil,
+            cookTimeText: card.cookTimeText,
+            servingsText: "\(content.servings) servings",
+            servingSizeText: nil,
+            dailyDietText: nil,
+            estCostText: nil,
+            estCaloriesText: "~\(Int(content.caloriesKcal.rounded())) kcal per serving",
+            carbsText: nil,
+            proteinText: nil,
+            fatsText: nil,
+            caloriesKcal: content.caloriesKcal,
+            proteinG: content.proteinG,
+            carbsG: content.carbsG,
+            fatG: content.fatG,
+            prepTimeMinutes: nil,
+            cookTimeMinutes: card.cookTimeMinutes,
+            heroImageURLString: card.heroImageURLString,
+            discoverCardImageURLString: card.imageURLString,
+            recipeURLString: card.recipeURLString,
+            originalRecipeURLString: card.recipeURLString,
+            attachedVideoURLString: nil,
+            sourceProvenance: nil,
+            detailFootnote: nil,
+            imageCaption: nil,
+            dietaryTags: [],
+            flavorTags: [],
+            cuisineTags: card.id == "c51e1c2d-57e5-4623-9af8-7b91adc86470" ? ["Nigerian"] : [],
+            occasionTags: [],
+            mainProtein: [
+                "5e72d6d2-e8c2-46c8-a2cb-50043b392842",
+                "c51e1c2d-57e5-4623-9af8-7b91adc86470"
+            ].contains(card.id) ? "Chicken" : nil,
+            cookMethod: nil,
+            ingredients: ingredients,
+            steps: steps,
+            servingsCount: content.servings
+        )
     }
 
-    private static func orderedFixtures(
-        for recipeID: String,
-        fixtures: [OnboardingRecipeEditDemoOptionFixture]
-    ) -> [OnboardingRecipeEditDemoOptionFixture] {
-        let preferredOrder = fixtureIntentOrderByRecipeID[recipeID] ?? []
-        let orderIndexByIntent = Dictionary(uniqueKeysWithValues: preferredOrder.enumerated().map { ($1, $0) })
-        return fixtures.sorted { lhs, rhs in
-            let lhsIndex = orderIndexByIntent[lhs.intent] ?? Int.max
-            let rhsIndex = orderIndexByIntent[rhs.intent] ?? Int.max
-            if lhsIndex != rhsIndex {
-                return lhsIndex < rhsIndex
-            }
-            return lhs.intent.rawValue < rhs.intent.rawValue
+    private static func preloadedContent(for recipeID: String) -> PreloadedRecipeContent {
+        switch recipeID {
+        case "5e72d6d2-e8c2-46c8-a2cb-50043b392842":
+            return PreloadedRecipeContent(
+                servings: 4,
+                caloriesKcal: 720,
+                proteinG: 44,
+                carbsG: 67,
+                fatG: 30,
+                ingredients: [
+                    ("Chicken legs", "1.25 kg or 6"),
+                    ("Oil", "1 tbsp"),
+                    ("Salt", "1 tsp"),
+                    ("Black pepper", "2 tsp"),
+                    ("Garlic powder", "2 tsp"),
+                    ("Paprika", "2 tsp"),
+                    ("Peri-peri sauce", "4 tbsp"),
+                    ("Lemon juice", "Juice of 1 lemon"),
+                    ("Potatoes", "800-900 g"),
+                    ("White pepper", "1 tbsp"),
+                    ("Chili powder", "1 tsp"),
+                    ("Sugar", "1 tsp")
+                ],
+                steps: [
+                    "Blend garlic powder, paprika, and some of the peri-peri sauce.",
+                    "Add the lemon juice, salt, pepper, paprika, garlic powder, and sugar.",
+                    "Drizzle in the oil while blending to emulsify the sauce.",
+                    "Coat the chicken legs with the peri-peri mixture.",
+                    "Marinate for at least 1 hour, then place the chicken skin-side down on a tray.",
+                    "Bake at 200 degrees C for 40 to 45 minutes.",
+                    "Peel and slice the potatoes, then wash off the excess starch.",
+                    "Boil the potatoes in salted water for 8 minutes.",
+                    "Flip the chicken after 25 minutes, brush with more sauce, and return it to the oven.",
+                    "Drain and dry the potatoes, then fry for 6 minutes.",
+                    "Raise the oil temperature and fry the chips again for 4 minutes.",
+                    "Mix salt, white pepper, paprika, chili powder, garlic powder, and sugar into peri-salt.",
+                    "Toss the hot chips with the peri-salt.",
+                    "Serve the chicken with the chips and extra peri-peri sauce."
+                ]
+            )
+        case "c3a7bd77-6894-4069-9113-149c0adf71d4":
+            return PreloadedRecipeContent(
+                servings: 10,
+                caloriesKcal: 360,
+                proteinG: 5,
+                carbsG: 52,
+                fatG: 15,
+                ingredients: [
+                    ("Brown sugar", "1/4 cup (50 g)"),
+                    ("Butter", "1/4 cup (57 g), melted"),
+                    ("Bananas", "3 medium, mashed"),
+                    ("Lemon juice", "1 tbsp"),
+                    ("Unsalted butter", "1/4 cup (57 g)"),
+                    ("Sugar", "1/2 cup (100 g)"),
+                    ("Vegetable oil", "1/4 cup (60 g)"),
+                    ("Egg", "1"),
+                    ("Egg white", "1"),
+                    ("All-purpose flour", "1 3/4 cups (220 g)"),
+                    ("Baking powder", "1 1/2 tsp"),
+                    ("Baking soda", "1/2 tsp"),
+                    ("Salt", "1/2 tsp"),
+                    ("Buttermilk", "1/2 cup (120 g)"),
+                    ("Biscoff cookies", "10, chopped")
+                ],
+                steps: [
+                    "Whisk flour, chopped Biscoff cookies, brown sugar, cinnamon, and salt for the topping.",
+                    "Pour over the melted butter, mix with a fork, and set aside.",
+                    "Mash the bananas with the lemon juice.",
+                    "Mix in the butter and sugar.",
+                    "Mix in the vegetable oil, egg, and egg white.",
+                    "Whisk flour, baking powder, baking soda, and salt in a separate bowl.",
+                    "Fold half of the dry mixture into the banana mixture.",
+                    "Mix in the buttermilk, then fold in the remaining dry mixture.",
+                    "Fold in the chopped Biscoff cookies.",
+                    "Pour the batter into a 9-by-5-inch loaf pan.",
+                    "Cover the batter with the prepared topping.",
+                    "Bake at 350 degrees F for 60 to 65 minutes.",
+                    "Cool before slicing and optionally drizzle with melted Biscoff spread."
+                ]
+            )
+        case "e2c0da0d-047c-440b-b96d-a5730f403072":
+            return PreloadedRecipeContent(
+                servings: 2,
+                caloriesKcal: 260,
+                proteinG: 5,
+                carbsG: 46,
+                fatG: 8,
+                ingredients: [
+                    ("Watermelon", "4 cups"),
+                    ("Condensed milk", "3 tbsp"),
+                    ("Half-and-half", "1/4 cup"),
+                    ("Lime juice", "Juice of 1/2 lime"),
+                    ("Salt", "Pinch")
+                ],
+                steps: [
+                    "Cut the watermelon into chunks.",
+                    "Add the watermelon to a blender.",
+                    "Add the condensed milk.",
+                    "Add the half-and-half.",
+                    "Add the lime juice.",
+                    "Add a pinch of salt.",
+                    "Blend until completely smooth.",
+                    "Serve immediately."
+                ]
+            )
+        case "c51e1c2d-57e5-4623-9af8-7b91adc86470":
+            return PreloadedRecipeContent(
+                servings: 4,
+                caloriesKcal: 760,
+                proteinG: 47,
+                carbsG: 78,
+                fatG: 28,
+                ingredients: [
+                    ("Chicken thighs", "7"),
+                    ("Olive oil", "2 tbsp"),
+                    ("Jollof tomato base", "1/4 cup"),
+                    ("Garlic paste", "1 tsp"),
+                    ("Oregano", "1 tsp"),
+                    ("Paprika", "1 tsp"),
+                    ("Cumin", "1/2 tsp"),
+                    ("Garlic granules", "1 tsp"),
+                    ("Black pepper", "1/2 tsp"),
+                    ("Salt", "To taste"),
+                    ("Chili flakes", "To taste"),
+                    ("Rice", "2 cups, washed"),
+                    ("Onion", "1, chopped"),
+                    ("Garlic", "2 cloves, minced"),
+                    ("Ground white pepper", "1 tsp"),
+                    ("Bay leaves", "2"),
+                    ("Curry powder", "1 tsp"),
+                    ("Thyme", "1 tsp"),
+                    ("Chicken stock", "2-3 cups")
+                ],
+                steps: [
+                    "Combine the oil, garlic paste, oregano, paprika, cumin, garlic granules, pepper, salt, and chili flakes.",
+                    "Coat the chicken thighs in the marinade.",
+                    "Preheat the air fryer to 180 degrees C.",
+                    "Arrange the chicken in a single layer.",
+                    "Air-fry for 20 to 25 minutes, turning halfway, until golden and cooked through.",
+                    "Heat oil in a pot and soften the onion and garlic.",
+                    "Add the jollof tomato base and fry briefly.",
+                    "Add white pepper, bay leaves, curry powder, and thyme.",
+                    "Stir in the washed rice and coat it in the sauce.",
+                    "Pour in the chicken stock and bring to a boil.",
+                    "Cover and cook on low until the rice is tender and the liquid is absorbed.",
+                    "Rest the rice for 5 minutes.",
+                    "Fluff the rice with a fork.",
+                    "Serve the air-fried chicken over the jollof rice."
+                ]
+            )
+        default:
+            return PreloadedRecipeContent(
+                servings: 4,
+                caloriesKcal: 0,
+                proteinG: 0,
+                carbsG: 0,
+                fatG: 0,
+                ingredients: [],
+                steps: []
+            )
         }
     }
 
-    private static func recipeOrderIndex(for recipeID: String) -> Int {
-        baseRecipeOrder.firstIndex(of: recipeID) ?? Int.max
+    private static let importedRecipeCards: [DiscoverRecipeCardData] = [
+        DiscoverRecipeCardData(
+            id: "5e72d6d2-e8c2-46c8-a2cb-50043b392842",
+            title: "Peri-Peri Chicken with Peri-Salted Chips",
+            description: "Spicy grilled peri-peri chicken with seasoned chips.",
+            authorName: "dishesandbeats",
+            authorHandle: "@dishesandbeats",
+            category: "Dinner",
+            recipeType: "Main course",
+            cookTimeText: "40-45 minutes",
+            cookTimeMinutes: 61,
+            publishedDate: nil,
+            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/peri-peri-chicken-with-peri-salted-chips/card/7e53e064f923d9822ed08823.jpg",
+            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/peri-peri-chicken-with-peri-salted-chips/hero/7e53e064f923d9822ed08823.jpg",
+            recipeURLString: "https://www.tiktok.com/@dishesandbeats/video/7639147193617681686",
+            source: "TikTok"
+        ),
+        DiscoverRecipeCardData(
+            id: "c3a7bd77-6894-4069-9113-149c0adf71d4",
+            title: "Biscoff Banana Bread",
+            description: "Banana bread finished with Biscoff spread and cookies.",
+            authorName: "emijuju",
+            authorHandle: "@emijuju",
+            category: "Dessert",
+            recipeType: "Baking",
+            cookTimeText: "60-65 minutes",
+            cookTimeMinutes: 65,
+            publishedDate: nil,
+            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/biscoff-banana-bread/hero/90780d141f292102b4e4b928.jpg",
+            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/biscoff-banana-bread/hero/90780d141f292102b4e4b928.jpg",
+            recipeURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-videos/a11310fd870947a2ca94.mp4",
+            source: "TikTok"
+        ),
+        DiscoverRecipeCardData(
+            id: "e2c0da0d-047c-440b-b96d-a5730f403072",
+            title: "Watermelon Drink",
+            description: "A refreshing watermelon drink with a creamy twist.",
+            authorName: "Chef Fatty",
+            authorHandle: "@itscheffatty",
+            category: "Beverage",
+            recipeType: "Drink",
+            cookTimeText: nil,
+            cookTimeMinutes: 0,
+            publishedDate: nil,
+            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/watermelon-drink/hero/7d8b8c8b4b7e6440d005ef5b.jpg",
+            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/watermelon-drink/hero/7d8b8c8b4b7e6440d005ef5b.jpg",
+            recipeURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-videos/dc6e92ead77f84efc255.mp4",
+            source: "TikTok"
+        ),
+        DiscoverRecipeCardData(
+            id: "c51e1c2d-57e5-4623-9af8-7b91adc86470",
+            title: "Airfryer Chicken Thighs with Jollof Rice",
+            description: "Air-fried seasoned chicken thighs served with Nigerian jollof rice.",
+            authorName: "on_todays_bake",
+            authorHandle: "@on_todays_bake",
+            category: "Dinner",
+            recipeType: "Main course",
+            cookTimeText: "20-25 minutes",
+            cookTimeMinutes: 25,
+            publishedDate: nil,
+            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/airfryer-chicken-thighs-with-jollof-rice/card/bc601b7b5f48bb642c76a94e.jpg",
+            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/airfryer-chicken-thighs-with-jollof-rice/hero/bc601b7b5f48bb642c76a94e.jpg",
+            recipeURLString: "https://www.tiktok.com/@on_todays_bake/video/7613740233862958358",
+            source: "TikTok"
+        ),
+    ]
+
+    private static func importedRecipeFixtures(for recipeID: String) -> [OnboardingRecipeEditDemoOptionFixture] {
+        switch recipeID {
+        case "5e72d6d2-e8c2-46c8-a2cb-50043b392842":
+            return [
+                fixture(
+                    recipeID: recipeID,
+                    intent: .healthier,
+                    summary: "Kept the peri-peri flavor, used skinless chicken, reduced the oil, and added roasted peppers alongside the chips.",
+                    title: "Healthier Peri-Peri Chicken & Chips",
+                    cookTime: "45 minutes",
+                    ingredients: [
+                        "4 skinless chicken thighs",
+                        "3 red chilies",
+                        "1 red bell pepper",
+                        "4 garlic cloves",
+                        "1 lemon, juiced",
+                        "1 tbsp olive oil",
+                        "1 tsp smoked paprika",
+                        "1 tsp dried oregano",
+                        "600 g potatoes, cut into chips",
+                        "Salt"
+                    ],
+                    steps: [
+                        "Blend chilies, bell pepper, garlic, lemon, olive oil, paprika, oregano, and salt into a peri-peri sauce.",
+                        "Coat the chicken with most of the sauce and marinate for at least 20 minutes.",
+                        "Toss the potato chips with a small spoonful of sauce and spread them on a lined tray.",
+                        "Bake the chips at 425 degrees F until crisp, turning once, about 30 to 35 minutes.",
+                        "Grill or air-fry the chicken until browned and cooked through, then serve with the remaining sauce and chips."
+                    ],
+                    substitutions: ["Skinless chicken reduces excess fat.", "Oven-crisped chips replace deep-fried chips."],
+                    dietaryFit: ["Healthy", "High-Protein", "Dinner"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .mealPrep,
+                    summary: "Turned the same peri-peri chicken into a reheat-friendly meal-prep bowl.",
+                    title: "Peri-Peri Chicken Meal-Prep Bowls",
+                    cookTime: "45 minutes",
+                    ingredients: [
+                        "4 boneless chicken thighs",
+                        "1 cup peri-peri sauce",
+                        "2 cups cooked rice",
+                        "2 bell peppers, sliced",
+                        "1 red onion, sliced",
+                        "1 tbsp olive oil",
+                        "1 lemon"
+                    ],
+                    steps: [
+                        "Marinate the chicken in half of the peri-peri sauce for 20 minutes.",
+                        "Roast the peppers and onion with olive oil until tender.",
+                        "Grill or air-fry the chicken until cooked through, then rest and slice it.",
+                        "Divide rice, vegetables, and chicken between containers.",
+                        "Pack the remaining sauce and lemon separately, then chill once cool."
+                    ],
+                    substitutions: ["Rice and roasted vegetables replace chips for easier reheating."],
+                    dietaryFit: ["Meal Prep", "High-Protein", "Dinner"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .moreProtein,
+                    summary: "Raised the chicken portion and added a Greek-yogurt peri sauce for more protein without losing the original flavor.",
+                    title: "High-Protein Peri-Peri Chicken & Chips",
+                    cookTime: "30 minutes",
+                    ingredients: [
+                        "6 boneless skinless chicken thighs",
+                        "1/2 cup peri-peri sauce",
+                        "3/4 cup plain Greek yogurt",
+                        "1 lemon, juiced",
+                        "1 tbsp olive oil",
+                        "600 g frozen oven chips",
+                        "1 tsp paprika",
+                        "1/2 tsp garlic powder",
+                        "1/2 tsp white pepper",
+                        "Salt"
+                    ],
+                    steps: [
+                        "Heat the oven and spread the chips on a tray so they can crisp while the chicken cooks.",
+                        "Coat the chicken with peri-peri sauce, lemon juice, and half of the olive oil.",
+                        "Air-fry or pan-sear the chicken until browned and cooked through, about 16 to 20 minutes.",
+                        "Mix the Greek yogurt with two spoonfuls of peri-peri sauce for a high-protein dip.",
+                        "Mix paprika, garlic powder, white pepper, and salt into a quick peri-salt.",
+                        "Toss the hot chips with the peri-salt and serve with the chicken and remaining sauce."
+                    ],
+                    substitutions: ["A larger lean-chicken portion raises protein.", "Greek yogurt replaces a mayonnaise-based dip."],
+                    dietaryFit: ["High-Protein", "Dinner"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .lowCalories,
+                    summary: "Reduced the chips and oil, then filled out the plate with peppers, onion, and courgette roasted in peri-peri juices.",
+                    title: "Lower-Calorie Peri-Peri Chicken & Chips",
+                    cookTime: "45 minutes",
+                    ingredients: [
+                        "4 skinless chicken breasts",
+                        "3/4 cup peri-peri sauce",
+                        "1 lemon, juiced",
+                        "300 g potatoes, cut into wedges",
+                        "2 bell peppers, sliced",
+                        "1 red onion, cut into wedges",
+                        "1 courgette, sliced",
+                        "1 tbsp olive oil",
+                        "1 tsp paprika",
+                        "Salt"
+                    ],
+                    steps: [
+                        "Coat the chicken with peri-peri sauce, lemon juice, paprika, and salt.",
+                        "Spread the potatoes on a tray with half of the olive oil and roast for 15 minutes.",
+                        "Add the peppers, onion, courgette, and chicken to the tray.",
+                        "Roast until the vegetables caramelize and the chicken is cooked through, turning once.",
+                        "Finish with the remaining peri-peri sauce and serve directly from the tray."
+                    ],
+                    substitutions: ["Lean chicken and a smaller chip portion lower calories.", "Roasted vegetables add volume with the same seasoning."],
+                    dietaryFit: ["Lower Calorie", "High-Protein", "Dinner"]
+                ),
+            ]
+        case "c3a7bd77-6894-4069-9113-149c0adf71d4":
+            return [
+                fixture(
+                    recipeID: recipeID,
+                    intent: .lessSugar,
+                    summary: "Reduced the added sugar and Biscoff topping while keeping the caramelized biscuit flavor.",
+                    title: "Less-Sugar Biscoff Banana Bread",
+                    cookTime: "60 minutes",
+                    ingredients: [
+                        "3 very ripe bananas",
+                        "2 large eggs",
+                        "1/3 cup Greek yogurt",
+                        "1/3 cup Biscoff spread",
+                        "1/4 cup brown sugar",
+                        "1 1/2 cups all-purpose flour",
+                        "1 tsp baking soda",
+                        "1 tsp cinnamon",
+                        "1/4 tsp salt",
+                        "3 Biscoff cookies, chopped"
+                    ],
+                    steps: [
+                        "Mash the bananas, then whisk in eggs, Greek yogurt, Biscoff spread, and brown sugar.",
+                        "Fold in flour, baking soda, cinnamon, and salt just until combined.",
+                        "Pour into a lined loaf pan and scatter the chopped cookies over the top.",
+                        "Bake at 350 degrees F until a tester comes out mostly clean, about 50 to 60 minutes.",
+                        "Cool before slicing so the loaf sets cleanly."
+                    ],
+                    substitutions: ["Ripe banana supplies more of the sweetness.", "Greek yogurt replaces part of the butter or oil."],
+                    dietaryFit: ["Less Sugar", "Dessert", "Baking"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .moreProtein,
+                    summary: "Added Greek yogurt and protein powder without losing the Biscoff banana-bread texture.",
+                    title: "Protein Biscoff Banana Bread",
+                    cookTime: "60 minutes",
+                    ingredients: [
+                        "3 ripe bananas",
+                        "2 large eggs",
+                        "3/4 cup Greek yogurt",
+                        "1/3 cup Biscoff spread",
+                        "1 cup all-purpose flour",
+                        "1/2 cup vanilla protein powder",
+                        "1 tsp baking soda",
+                        "1/2 tsp cinnamon",
+                        "1/4 tsp salt",
+                        "4 Biscoff cookies, chopped"
+                    ],
+                    steps: [
+                        "Whisk mashed bananas, eggs, Greek yogurt, and Biscoff spread until smooth.",
+                        "Fold in flour, protein powder, baking soda, cinnamon, and salt.",
+                        "Transfer to a lined loaf pan and finish with chopped Biscoff cookies.",
+                        "Bake at 350 degrees F for 50 to 60 minutes, tenting the top if it browns early.",
+                        "Cool fully before slicing."
+                    ],
+                    substitutions: ["Greek yogurt and protein powder raise the protein content."],
+                    dietaryFit: ["High-Protein", "Dessert", "Baking"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .dairyFree,
+                    summary: "Replaced butter and buttermilk with plant-based alternatives while retaining the soft banana crumb and Biscoff topping.",
+                    title: "Dairy-Free Biscoff Banana Bread",
+                    cookTime: "60 minutes",
+                    ingredients: [
+                        "3 ripe bananas",
+                        "1/3 cup light brown sugar",
+                        "1/3 cup neutral oil",
+                        "2 large eggs",
+                        "1/2 cup oat milk",
+                        "1 tsp lemon juice",
+                        "1 3/4 cups all-purpose flour",
+                        "1 1/2 tsp baking powder",
+                        "1/2 tsp baking soda",
+                        "1/2 tsp salt",
+                        "8 Biscoff cookies, chopped"
+                    ],
+                    steps: [
+                        "Stir the oat milk and lemon juice together and leave for 5 minutes.",
+                        "Whisk mashed banana, brown sugar, oil, and eggs until smooth.",
+                        "Fold in flour, baking powder, baking soda, salt, and the oat-milk mixture.",
+                        "Fold in most of the chopped cookies, then pour the batter into a lined loaf pan.",
+                        "Top with the remaining cookies and bake at 350 degrees F for 55 to 65 minutes."
+                    ],
+                    substitutions: ["Neutral oil replaces butter.", "Acidified oat milk replaces buttermilk."],
+                    dietaryFit: ["Dairy-Free", "Dessert", "Baking"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .lowCalories,
+                    summary: "Reduced the spread, cookies, sugar, and fat while keeping ripe banana and warm spice at the center of the loaf.",
+                    title: "Lower-Calorie Biscoff Banana Bread",
+                    cookTime: "60 minutes",
+                    ingredients: [
+                        "3 ripe bananas",
+                        "2 tbsp brown sugar",
+                        "1/3 cup Biscoff spread",
+                        "2 large eggs",
+                        "3/4 cup nonfat Greek yogurt",
+                        "1 1/2 cups all-purpose flour",
+                        "1 tsp baking soda",
+                        "1/2 tsp salt",
+                        "1 tsp cinnamon",
+                        "3 Biscoff cookies, chopped"
+                    ],
+                    steps: [
+                        "Whisk mashed banana, brown sugar, Biscoff spread, eggs, and Greek yogurt until combined.",
+                        "Whisk the flour, baking soda, salt, and cinnamon separately.",
+                        "Fold the dry mixture into the banana mixture just until no flour streaks remain.",
+                        "Transfer to a lined loaf pan and scatter the chopped cookies over the top.",
+                        "Bake at 350 degrees F until the center is set, about 50 to 60 minutes, then cool fully."
+                    ],
+                    substitutions: ["Nonfat Greek yogurt replaces butter or oil.", "A thinner Biscoff layer and fewer cookies lower calories."],
+                    dietaryFit: ["Lower Calorie", "Dessert", "Baking"]
+                ),
+            ]
+        case "e2c0da0d-047c-440b-b96d-a5730f403072":
+            return [
+                fixture(
+                    recipeID: recipeID,
+                    intent: .lowCalories,
+                    summary: "Kept the creamy watermelon finish with nonfat yogurt, lime, and no added sweetener.",
+                    title: "Lower-Calorie Watermelon Drink",
+                    cookTime: "10 minutes",
+                    ingredients: [
+                        "4 cups seedless watermelon",
+                        "1/2 cup nonfat Greek yogurt",
+                        "1 lime, juiced",
+                        "1 cup ice",
+                        "Pinch of salt"
+                    ],
+                    steps: [
+                        "Blend watermelon, Greek yogurt, lime juice, salt, and ice until smooth.",
+                        "Taste and add more lime if needed.",
+                        "Pour into cold glasses and serve immediately."
+                    ],
+                    substitutions: ["Nonfat Greek yogurt replaces a heavier cream base.", "Ripe watermelon provides all of the sweetness."],
+                    dietaryFit: ["Lower Calorie", "Drink", "Quick"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .spicy,
+                    summary: "Added lime, ginger, and a touch of chili for a sharper watermelon cooler.",
+                    title: "Spicy Watermelon Lime Cooler",
+                    cookTime: "10 minutes",
+                    ingredients: [
+                        "4 cups seedless watermelon",
+                        "1 lime, juiced",
+                        "1 tsp fresh ginger",
+                        "1 small pinch cayenne",
+                        "1 cup ice",
+                        "Pinch of salt"
+                    ],
+                    steps: [
+                        "Blend watermelon, lime juice, ginger, cayenne, salt, and ice until smooth.",
+                        "Taste and adjust the chili carefully.",
+                        "Serve immediately over fresh ice."
+                    ],
+                    substitutions: ["Lime and ginger sharpen the drink without extra sweetness."],
+                    dietaryFit: ["Spicy", "Drink", "Quick"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .lessSugar,
+                    summary: "Removed condensed milk and let ripe watermelon provide the sweetness, balanced with lime and a pinch of salt.",
+                    title: "No-Added-Sugar Watermelon Cooler",
+                    cookTime: "5 minutes",
+                    ingredients: [
+                        "4 cups very ripe seedless watermelon",
+                        "1/2 lime, juiced",
+                        "1 cup ice",
+                        "Pinch of salt",
+                        "Fresh mint"
+                    ],
+                    steps: [
+                        "Blend watermelon, lime juice, ice, and salt until smooth.",
+                        "Taste and add another squeeze of lime only if the watermelon is very sweet.",
+                        "Pour into cold glasses and finish with mint."
+                    ],
+                    substitutions: ["Ripe watermelon replaces condensed milk as the sweetener.", "Ice keeps the drink full-bodied without cream."],
+                    dietaryFit: ["Less Sugar", "Dairy-Free", "Drink"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .moreProtein,
+                    summary: "Added strained yogurt for a creamy watermelon smoothie with substantially more protein than the original drink.",
+                    title: "Protein Watermelon Yogurt Smoothie",
+                    cookTime: "5 minutes",
+                    ingredients: [
+                        "4 cups seedless watermelon",
+                        "1 cup plain Greek yogurt",
+                        "1/2 lime, juiced",
+                        "1 tbsp chia seeds",
+                        "1 cup ice",
+                        "Pinch of salt"
+                    ],
+                    steps: [
+                        "Blend watermelon, Greek yogurt, lime juice, chia seeds, ice, and salt until smooth.",
+                        "Rest for 2 minutes so the chia begins to thicken the drink.",
+                        "Blend once more, then serve immediately."
+                    ],
+                    substitutions: ["Greek yogurt replaces condensed milk and half-and-half while adding protein.", "Chia adds body and a smaller protein boost."],
+                    dietaryFit: ["High-Protein", "Drink", "Quick"]
+                ),
+            ]
+        case "c51e1c2d-57e5-4623-9af8-7b91adc86470":
+            return [
+                fixture(
+                    recipeID: recipeID,
+                    intent: .healthier,
+                    summary: "Kept the jollof flavor and crisp chicken while reducing the oil, using skinless thighs, and balancing the plate with vegetables.",
+                    title: "Healthier Airfryer Chicken & Jollof Rice",
+                    cookTime: "35 minutes",
+                    ingredients: [
+                        "6 skinless chicken thighs",
+                        "1 tbsp olive oil",
+                        "1 tsp paprika",
+                        "1 tsp garlic granules",
+                        "1/2 tsp cumin",
+                        "2 cups rice, washed",
+                        "1 onion, chopped",
+                        "2 garlic cloves, minced",
+                        "1/4 cup jollof tomato base",
+                        "2 cups chicken stock",
+                        "1 tsp curry powder",
+                        "1 tsp thyme",
+                        "Salt"
+                    ],
+                    steps: [
+                        "Coat the chicken with olive oil, paprika, garlic, cumin, and salt.",
+                        "Air-fry at 180 degrees C until browned and cooked through, turning halfway.",
+                        "Soften the onion and garlic, then fry the jollof tomato base with curry powder and thyme.",
+                        "Stir in the rice and stock, cover, and cook on low until tender.",
+                        "Fluff the rice and serve with the air-fried chicken."
+                    ],
+                    substitutions: ["Skinless thighs and less oil lighten the dish without removing the jollof seasoning."],
+                    dietaryFit: ["Healthy", "Nigerian", "High-Protein"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .mealPrep,
+                    summary: "Turned the chicken and jollof rice into portions that chill and reheat cleanly.",
+                    title: "Chicken & Jollof Rice Meal Prep",
+                    cookTime: "40 minutes",
+                    ingredients: [
+                        "7 chicken thighs",
+                        "2 tbsp olive oil",
+                        "1 tsp paprika",
+                        "1 tsp garlic granules",
+                        "2 cups rice, washed",
+                        "1 onion, chopped",
+                        "2 garlic cloves, minced",
+                        "1/4 cup jollof tomato base",
+                        "2 cups chicken stock",
+                        "1 tsp curry powder",
+                        "1 tsp thyme"
+                    ],
+                    steps: [
+                        "Season and air-fry the chicken until cooked through.",
+                        "Fry the onion, garlic, tomato base, curry powder, and thyme until fragrant.",
+                        "Add rice and stock, then cover and cook on low until tender.",
+                        "Rest and fluff the rice while the chicken cools slightly.",
+                        "Portion the chicken and rice into containers, then chill once cool."
+                    ],
+                    substitutions: ["Portioned chicken and rice make the TikTok dinner suitable for reheating."],
+                    dietaryFit: ["Meal Prep", "Nigerian", "High-Protein"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .moreProtein,
+                    summary: "Raised the lean chicken portion and slightly reduced the rice so each serving carries more protein while staying recognizably jollof.",
+                    title: "High-Protein Chicken & Jollof Rice",
+                    cookTime: "40 minutes",
+                    ingredients: [
+                        "8 skinless chicken thighs",
+                        "1 tbsp olive oil",
+                        "1 tsp paprika",
+                        "1 tsp garlic granules",
+                        "1 lime, juiced",
+                        "1 1/2 cups rice, washed",
+                        "1 onion, chopped",
+                        "2 garlic cloves, minced",
+                        "1/3 cup jollof tomato base",
+                        "2 cups chicken stock",
+                        "1 tsp curry powder",
+                        "1 tsp thyme",
+                        "Salt"
+                    ],
+                    steps: [
+                        "Mix olive oil, paprika, garlic, lime juice, and salt into a marinade.",
+                        "Coat the chicken in the marinade and air-fry at 180 degrees C until cooked through.",
+                        "Soften the onion and garlic, then fry the jollof tomato base until concentrated.",
+                        "Add curry powder, thyme, rice, and stock, then cover and cook on low until tender.",
+                        "Fluff the rice and serve with the chicken, keeping extra lime nearby to balance the heat."
+                    ],
+                    substitutions: ["More skinless chicken and a slightly smaller rice portion increase protein per serving."],
+                    dietaryFit: ["High-Protein", "Nigerian", "Dinner"]
+                ),
+                fixture(
+                    recipeID: recipeID,
+                    intent: .lowCalories,
+                    summary: "Reduced the rice and oil, then added peppers, carrots, peas, and spinach for a filling lower-calorie plate.",
+                    title: "Lower-Calorie Chicken & Jollof Rice",
+                    cookTime: "45 minutes",
+                    ingredients: [
+                        "6 chicken thighs",
+                        "1 tbsp olive oil",
+                        "1 tsp paprika",
+                        "1 1/4 cups rice, washed",
+                        "1 onion, chopped",
+                        "1 red bell pepper, diced",
+                        "2 carrots, diced",
+                        "1 cup frozen peas",
+                        "2 cups baby spinach",
+                        "1/3 cup jollof tomato base",
+                        "2 cups chicken stock",
+                        "1 tsp curry powder",
+                        "1 tsp thyme",
+                        "Salt"
+                    ],
+                    steps: [
+                        "Season the chicken with paprika, salt, and half of the olive oil, then air-fry until cooked through.",
+                        "Soften the onion, bell pepper, and carrots in the remaining oil.",
+                        "Fry the jollof tomato base with curry powder and thyme until concentrated.",
+                        "Stir in the rice and stock, cover, and cook on low until nearly tender.",
+                        "Fold in peas and spinach for the final 5 minutes, then fluff and serve with the chicken."
+                    ],
+                    substitutions: ["A smaller rice portion and more vegetables lower calories without changing the jollof base."],
+                    dietaryFit: ["Lower Calorie", "Nigerian", "High-Protein"]
+                ),
+            ]
+        default:
+            return []
+        }
     }
 
-    private static let baseRecipeOrder = [
-        "cdf56b03-71e8-4386-acb1-262837286a36",
-        "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7",
-        "eaa85ffd-1a66-44e9-84e7-2c7d4b950390",
-        "4bcf072c-b95d-49fa-9997-d2749a118a15",
-    ]
-
-    private static let fixtureIntentOrderByRecipeID: [String: [RecipeAlterationIntent]] = [
-        "cdf56b03-71e8-4386-acb1-262837286a36": [.moreProtein, .lessSugar, .quick],
-        "b1bd5a95-dab3-436e-89c8-fb4df52b8fb7": [.moreProtein, .spicy, .mealPrep],
-        "eaa85ffd-1a66-44e9-84e7-2c7d4b950390": [.moreProtein, .keto, .lighter],
-        "4bcf072c-b95d-49fa-9997-d2749a118a15": [.lessSugar, .glutenFree, .lighter],
-    ]
+    private static func fixture(
+        recipeID: String,
+        intent: RecipeAlterationIntent,
+        summary: String,
+        title: String,
+        cookTime: String,
+        ingredients: [String],
+        steps: [String],
+        substitutions: [String],
+        dietaryFit: [String]
+    ) -> OnboardingRecipeEditDemoOptionFixture {
+        OnboardingRecipeEditDemoOptionFixture(
+            recipeID: recipeID,
+            intent: intent,
+            preplannedSummary: summary,
+            adaptedRecipe: RecipeAdaptationRecipe(
+                title: title,
+                summary: summary,
+                cookTimeText: cookTime,
+                ingredients: ingredients,
+                steps: steps,
+                substitutions: substitutions,
+                pairingNotes: [],
+                dietaryFit: dietaryFit
+            ),
+            changeSummary: summary
+        )
+    }
 }
 
 private struct OnboardingRecipeEditDemoCatalogResource: Decodable {

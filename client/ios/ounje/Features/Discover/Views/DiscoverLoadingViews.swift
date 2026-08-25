@@ -57,7 +57,7 @@ struct PullStretchRefreshIndicator: View {
     var body: some View {
         HStack(spacing: 9) {
             if phase == .refreshing {
-                DiscoverRiveLoader(size: 18)
+                DiscoverRiveLoader(size: 18, tint: .white)
             } else if phase == .complete {
                 Image(systemName: "checkmark")
                     .font(.system(size: 12, weight: .bold))

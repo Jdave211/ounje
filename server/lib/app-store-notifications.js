@@ -18,7 +18,6 @@ const FOUNDER_SLACK_TIMEOUT_MS = 2_500;
 const APPLE_ROOT_CERTIFICATE_URLS = [
   "https://www.apple.com/certificateauthority/AppleRootCA-G3.cer",
   "https://www.apple.com/certificateauthority/AppleRootCA-G2.cer",
-  "https://www.apple.com/certificateauthority/AppleRootCA.cer",
 ];
 
 export const APP_STORE_PRODUCT_IDS_BY_TIER = {

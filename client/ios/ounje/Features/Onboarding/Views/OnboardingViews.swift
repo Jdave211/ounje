@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UIKit
 
 struct FirstLoginOnboardingView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
@@ -79,9 +80,9 @@ struct FirstLoginOnboardingView: View {
     @State private var paywallWarmupStage = 0
     @State private var recipeStylePreviewRecipe: DiscoverRecipeCardData?
     @State private var isRecipeStylePreviewLoading = false
-    @State private var recipeEditDemoRecipes: [OnboardingRecipeEditDemoRecipe] = []
-    @State private var isRecipeEditDemoLoading = false
+    private let recipeEditDemoRecipes = OnboardingRecipeEditDemoService.preloadedRecipes
     @State private var selectedRecipeEditDemoRecipe: OnboardingRecipeEditDemoRecipe?
+    @State private var selectedFirstRunGuideSeedRecipeID: String?
     @State private var hasCompletedRecipeEditDemo = false
     @State private var didChooseRecipeTypographyStyle = false
     @State private var shouldUseBudgetGuardrail = false
@@ -139,12 +140,10 @@ struct FirstLoginOnboardingView: View {
 
     private let foodChallengeOptions = [
         "Cook new things",
-        "Spend less on groceries",
         "Save time & energy shopping",
         "Eat less takeout",
         "Stick to a diet",
-        "Find good eats",
-        "Learn to cook better"
+        "Find good eats"
     ]
 
     private let equipmentOptions = [
@@ -291,7 +290,7 @@ struct FirstLoginOnboardingView: View {
         case "Spend less on groceries", "Eat less takeout":
             return OnboardingSolutionProfile(
                 headline: "Ounje was made for\n\(personaPhrase)",
-                subtitle: "Turn cravings into cheaper preps, smarter swaps, and carts that waste less.",
+                subtitle: "Turn cravings into cheaper meals, smarter swaps, and carts that waste less.",
                 metrics: [
                     .init(value: "AI", label: "CHEAPER SWAPS"),
                     .init(value: "1", label: "SMART CART"),
@@ -315,7 +314,7 @@ struct FirstLoginOnboardingView: View {
         case "Cook new things", "Find good eats":
             return OnboardingSolutionProfile(
                 headline: "Ounje was made for\n\(personaPhrase)",
-                subtitle: "Pull food from TikTok, Instagram, photos, and Discover so prep stops repeating itself.",
+                subtitle: "Pull food from TikTok, Instagram, photos, and Discover so your plans stop repeating themselves.",
                 metrics: [
                     .init(value: "TT", label: "TO RECIPE"),
                     .init(value: "IG", label: "TO PREP"),
@@ -327,9 +326,9 @@ struct FirstLoginOnboardingView: View {
         case "Save time & energy shopping":
             return OnboardingSolutionProfile(
                 headline: "Ounje was made for\n\(personaPhrase)",
-                subtitle: "Ounje plans the prep, builds the shop list, and can fill Instacart when you choose.",
+                subtitle: "Ounje organizes the recipes, builds the shop list, and can fill Instacart when you choose.",
                 metrics: [
-                    .init(value: "1", label: "PREP PLAN"),
+                    .init(value: "1", label: "RECIPE PLAN"),
                     .init(value: "1", label: "SHOP LIST"),
                     .init(value: "YOU", label: "APPROVE BUYING")
                 ],
@@ -339,11 +338,11 @@ struct FirstLoginOnboardingView: View {
         case "Stick to a diet":
             return OnboardingSolutionProfile(
                 headline: "Ounje was made for\n\(personaPhrase)",
-                subtitle: "Save any recipe, then ask Ounje to make it fit the way you eat.",
+                subtitle: "Save any recipe, then remix it to fit the way you eat.",
                 metrics: [
                     .init(value: "AI", label: "RECIPE EDITS"),
                     .init(value: "ANY", label: "DIET STYLE"),
-                    .init(value: "1", label: "CONNECTED PREP")
+                    .init(value: "1", label: "CONNECTED PLAN")
                 ],
                 reviewer: reviewerNames[reviewerIndex],
                 review: "I could keep the food I liked and still make it match how I wanted to eat."
@@ -351,7 +350,7 @@ struct FirstLoginOnboardingView: View {
         default:
             return OnboardingSolutionProfile(
                 headline: "Ounje was made for\n\(personaPhrase)",
-                subtitle: "Save what looks good, let Ounje plan the prep, and keep the cart connected to your week.",
+                subtitle: "Save what looks good, build a plan, and keep the cart connected to your week.",
                 metrics: [
                     .init(value: "AI", label: "MEAL PLANS"),
                     .init(value: "4+", label: "LINKED RECIPES"),
@@ -368,7 +367,7 @@ struct FirstLoginOnboardingView: View {
 
         if selected.contains("Spend less on groceries") || selected.contains("Eat less takeout") {
             return [
-                ("Make recipes cheaper", "Ask Ounje for swaps that keep the dish close without wasting your budget."),
+                ("Make recipes cheaper", "Let Ounje find swaps that keep the dish close without wasting your budget."),
                 ("Plan recipes that overlap", "Your prep can share ingredients, so one shop list stretches further."),
                 ("Build the cart when ready", "Ounje organizes the groceries; you still review before spending.")
             ]
@@ -377,7 +376,7 @@ struct FirstLoginOnboardingView: View {
         if selected.contains("Learn to cook better") {
             return [
                 ("Turn cravings into steps", "Import a recipe and get it cleaned into a cookable plan."),
-                ("Rewrite what feels hard", "Ask Ounje to simplify, speed up, or adjust the method."),
+                ("Rewrite what feels hard", "Remix the recipe to simplify, speed up, or adjust the method."),
                 ("Cook from your taste", "Learn through food you already want to eat.")
             ]
         }
@@ -385,30 +384,30 @@ struct FirstLoginOnboardingView: View {
         if selected.contains("Cook new things") || selected.contains("Find good eats") {
             return [
                 ("Pull food from anywhere", "Save TikTok, Instagram, YouTube, Discover, or a food photo."),
-                ("Make it fit your week", "Ounje turns inspiration into recipes, prep, and servings."),
-                ("Keep the rotation fresh", "Ask for spicy, lighter, high-protein, or totally new versions.")
+                ("Make it fit your week", "Ounje turns inspiration into recipes, plans, and the right servings."),
+                ("Keep the rotation fresh", "Try spicy, lighter, high-protein, or totally new versions.")
             ]
         }
 
         if selected.contains("Save time & energy shopping") {
             return [
-                ("Start from one good idea", "Ounje turns saved recipes into a full prep plan."),
+                ("Start from one good idea", "Ounje turns saved recipes into a plan you can shop."),
                 ("Collapse it into one list", "Ingredients merge into a smarter grocery list automatically."),
-                ("Shop only when you choose", "Autoshop can fill Instacart, but you always approve checkout.")
+                ("Shop only when you choose", "Ounje can fill Instacart, but you always approve checkout.")
             ]
         }
 
         if selected.contains("Stick to a diet") {
             return [
-                ("Keep the recipe", "Ask Ounje to adapt meals without losing the original idea."),
+                ("Keep the recipe", "Remix meals without losing the original idea."),
                 ("Respect your rules", "Diet choices and allergies stay attached to your profile."),
-                ("Plan from there", "Edited recipes can go straight into prep and the grocery list.")
+                ("Plan from there", "Edited recipes can go straight into a plan and its grocery list.")
             ]
         }
 
         return [
             ("Save the food you want", "From social videos, Discover, or photos."),
-            ("Let Ounje shape the prep", "Recipes, servings, and grocery logic stay connected."),
+            ("Let Ounje shape the plan", "Recipes, servings, and grocery logic stay connected."),
             ("Cook with less planning", "You focus on the kitchen; Ounje handles the busywork.")
         ]
     }
@@ -534,11 +533,6 @@ struct FirstLoginOnboardingView: View {
             if newStep == .recipeEditIntro {
                 scheduleRecipeUpgradeIntroAdvance()
             }
-            if newStep == .recipeEditDemo {
-                Task {
-                    await loadRecipeEditDemoIfNeeded()
-                }
-            }
             if newStep == .paywallIntro {
                 resetPaywallWarmup()
             }
@@ -578,7 +572,6 @@ struct FirstLoginOnboardingView: View {
                OunjePricingTier(rawValue: selectedTierRawValue) == nil {
                 selectedTierRawValue = UserProfile.starter.pricingTier.rawValue
             }
-            loadOnboardingProviders()
             schedulePresetSelectionPulse()
             if currentStep == .solution {
                 scheduleSolutionTypewriterTransition()
@@ -588,11 +581,6 @@ struct FirstLoginOnboardingView: View {
             }
             if currentStep == .recipeEditIntro {
                 scheduleRecipeUpgradeIntroAdvance()
-            }
-            if currentStep == .recipeEditDemo {
-                Task {
-                    await loadRecipeEditDemoIfNeeded()
-                }
             }
             if currentStep == .paywallIntro {
                 resetPaywallWarmup()
@@ -1100,7 +1088,7 @@ struct FirstLoginOnboardingView: View {
         VStack {
             Spacer(minLength: 0)
 
-            Text("Upgrade any recipe to fit YOU!")
+            Text("Upgrade any recipe to fit you")
                 .font(.system(size: 35, weight: .black, design: .rounded))
                 .foregroundStyle(OunjePalette.primaryText)
                 .multilineTextAlignment(.center)
@@ -1129,56 +1117,19 @@ struct FirstLoginOnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 320)
 
-            Text("Choose one card and Ounje will walk you through a guided recipe edit.")
+            Text("Choose one to see how Ounje can upgrade it.")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(OunjePalette.secondaryText)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 320)
 
-            if isRecipeEditDemoLoading && recipeEditDemoRecipes.isEmpty {
-                VStack(spacing: 14) {
-                    ProgressView()
-                        .tint(currentStepAccent)
-                    Text("Loading demo recipes")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 40)
-            } else if recipeEditDemoRecipes.isEmpty {
-                VStack(spacing: 14) {
-                    Text("We couldn't load the demo right now.")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(OunjePalette.primaryText)
-
-                    Button {
-                        Task {
-                            await loadRecipeEditDemoIfNeeded(forceRefresh: true)
-                        }
-                    } label: {
-                        Text("Try again")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 18)
-                            .frame(height: 42)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(currentStepAccent)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 40)
-            } else {
-                OnboardingRecipeEditDemoPickerGrid(
-                    recipes: recipeEditDemoRecipes,
-                    onSelect: openRecipeEditDemo
-                )
-                .frame(maxWidth: 360)
-                .padding(.top, 6)
-            }
+            OnboardingRecipeEditDemoPickerGrid(
+                recipes: recipeEditDemoRecipes,
+                onSelect: openRecipeEditDemo
+            )
+            .frame(maxWidth: 360)
+            .padding(.top, 6)
         }
         .padding(.top, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -1216,7 +1167,7 @@ struct FirstLoginOnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 330)
 
-            Text("Share any recipe, video, or picture to Ounje and we turn it into something you can make.")
+            Text("Share any recipe, video, or photo to Ounje. It becomes a recipe in the background.")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(OunjePalette.secondaryText)
                 .multilineTextAlignment(.center)
@@ -1271,22 +1222,22 @@ struct FirstLoginOnboardingView: View {
         private let stages: [ShareImportShowcaseStage] = [
             .init(
                 imageName: "OnboardingShareImportVideo",
-                title: "Find recipe and click share",
+                title: "Tap Share on the recipe",
                 imageOffsetX: 0
             ),
             .init(
                 imageName: "OnboardingShareImportSendTo",
-                title: "Select more to find Ounje",
+                title: "Swipe the app row, then tap More",
                 imageOffsetX: 0
             ),
             .init(
                 imageName: "OnboardingShareImportAppRow",
-                title: "Click and share to Ounje",
+                title: "Tap Ounje",
                 imageOffsetX: -18
             ),
             .init(
                 imageName: "OnboardingShareImportSuggestions",
-                title: "Ounje remembers",
+                title: "Ounje imports it in the background",
                 imageOffsetX: 18
             )
         ]
@@ -1380,14 +1331,14 @@ struct FirstLoginOnboardingView: View {
         let onSelect: (OnboardingRecipeEditDemoRecipe) -> Void
 
         private let spacing: CGFloat = 12
-        private let layout: DiscoverRemoteRecipeCardLayout = .compact
+        private let cardHeight: CGFloat = 204
 
         var body: some View {
             GeometryReader { proxy in
                 let displayedRecipes = Array(recipes.prefix(4))
-                let gridWidth = min(proxy.size.width, 360)
+                let gridWidth = min(proxy.size.width, 328)
                 let cardWidth = (gridWidth - spacing) / 2
-                let gridHeight = (layout.cardHeight * 2) + spacing
+                let gridHeight = (cardHeight * 2) + spacing
 
                 ZStack(alignment: .topLeading) {
                     LazyVGrid(
@@ -1398,16 +1349,13 @@ struct FirstLoginOnboardingView: View {
                         spacing: spacing
                     ) {
                         ForEach(displayedRecipes) { demoRecipe in
-                            DiscoverRemoteRecipeCard(
+                            OnboardingRecipeEditDemoCard(
                                 recipe: demoRecipe.card,
-                                showsSaveAction: false,
-                                showsTopActions: false,
-                                showsImageLoadingSkeleton: false,
-                                layout: layout
+                                width: cardWidth
                             ) {
                                 onSelect(demoRecipe)
                             }
-                            .frame(width: cardWidth, height: layout.cardHeight)
+                            .frame(width: cardWidth, height: cardHeight, alignment: .top)
                         }
                     }
                     .frame(width: gridWidth, height: gridHeight, alignment: .top)
@@ -1415,14 +1363,78 @@ struct FirstLoginOnboardingView: View {
                     OnboardingRecipeCardCueOverlay(
                         cardCount: displayedRecipes.count,
                         cardWidth: cardWidth,
-                        cardHeight: layout.cardHeight,
+                        cardHeight: cardHeight,
                         spacing: spacing
                     )
                 }
                 .frame(width: gridWidth, height: gridHeight, alignment: .topLeading)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
-            .frame(height: (layout.cardHeight * 2) + spacing)
+            .frame(height: (cardHeight * 2) + spacing)
+        }
+    }
+
+    private struct OnboardingRecipeEditDemoCard: View {
+        let recipe: DiscoverRecipeCardData
+        let width: CGFloat
+        let onSelect: () -> Void
+
+        @StateObject private var loader = DiscoverRecipeImageLoader()
+
+        private let visualCornerRadius: CGFloat = 22
+
+        var body: some View {
+            Button(action: onSelect) {
+                VStack(alignment: .leading, spacing: 7) {
+                    imageSurface
+                        .frame(width: width, height: width)
+                        .background(OunjePalette.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: visualCornerRadius, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: visualCornerRadius, style: .continuous)
+                                .stroke(.white.opacity(0.09), lineWidth: 1)
+                        )
+                        .clipped()
+
+                    SleeRecipeCardTitleText(
+                        recipe.displayTitle,
+                        size: 16,
+                        color: OunjePalette.primaryText
+                    )
+                    .frame(width: width, alignment: .topLeading)
+                    .frame(minHeight: 36, maxHeight: 39, alignment: .topLeading)
+                }
+                .frame(width: width, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(OunjeCardPressButtonStyle())
+            .accessibilityLabel(recipe.displayTitle)
+            .task(id: recipe.imageCandidates.map(\.absoluteString).joined(separator: "|")) {
+                await loader.load(from: recipe.imageCandidates)
+            }
+        }
+
+        @ViewBuilder
+        private var imageSurface: some View {
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if loader.isLoading {
+                Rectangle()
+                    .fill(OunjePalette.surface)
+                    .overlay {
+                        ProgressView()
+                            .tint(OunjePalette.softCream)
+                    }
+            } else {
+                ZStack {
+                    OunjePalette.surface
+                    Text(recipe.emoji)
+                        .font(.system(size: 42))
+                }
+            }
         }
     }
 
@@ -1529,7 +1541,7 @@ struct FirstLoginOnboardingView: View {
                     .animation(.spring(response: 0.56, dampingFraction: 0.86), value: solutionHelpVisibleCount)
 
                 VStack(spacing: 0) {
-                    Text("+500 people have already\nachieved their food goals\nwith Ounje")
+                    Text("People are already\nachieving their food goals\nwith Ounje")
                         .font(.system(size: 33, weight: .black, design: .rounded))
                         .foregroundStyle(OunjePalette.primaryText)
                         .multilineTextAlignment(.center)
@@ -1545,7 +1557,7 @@ struct FirstLoginOnboardingView: View {
                     VStack(spacing: 13) {
                         OnboardingSocialProofCard(
                             title: "Finally making all those TikTok recipes",
-                            detail: "I stopped saving food and forgetting it. Ounje turns videos into real ingredients, steps, and prep.",
+                            detail: "I stopped saving food and forgetting it. Ounje turns videos into real ingredients and usable steps.",
                             author: "- @fitbytay_",
                             accent: currentStepAccent
                         )
@@ -1569,7 +1581,7 @@ struct FirstLoginOnboardingView: View {
 
                         OnboardingSocialProofCard(
                             title: "Meal planning finally feels lighter",
-                            detail: "My prep and grocery list stay connected, so weeknights stop feeling chaotic.",
+                            detail: "My plan and grocery list stay connected, so weeknights stop feeling chaotic.",
                             author: "- @jane.cooks.quick",
                             accent: currentStepAccent
                         )
@@ -1625,17 +1637,13 @@ struct FirstLoginOnboardingView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 326)
 
-                VStack(spacing: 8) {
-                    Text("We added our team’s handwriting style to make recipes and cookbooks feel more personal.")
-
-                    Text("Handwritten text can be harder to read for some people, so we also made a cleaner standard style.")
-                }
-                .font(.system(size: 14.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(OunjePalette.secondaryText)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 344)
+                Text("Choose the writing style that feels most like you.")
+                    .font(.system(size: 14.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 344)
             }
 
             let previewRecipe = recipeStylePreviewRecipe ?? staticRecipeStylePreviewRecipe
@@ -1653,6 +1661,11 @@ struct FirstLoginOnboardingView: View {
                 }
             }
             .frame(maxWidth: 352)
+
+            Text("*change anytime in settings")
+                .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                .foregroundStyle(OunjePalette.secondaryText.opacity(0.82))
+                .padding(.top, 10)
         }
         .task {
             await loadRecipeStylePreviewIfNeeded()
@@ -2346,10 +2359,6 @@ struct FirstLoginOnboardingView: View {
         }
     }
 
-    private var canSubmit: Bool {
-        budgetPerCycle >= 25
-    }
-
     private var canAdvanceCurrentStep: Bool {
         switch currentStep {
         case .identity:
@@ -2691,26 +2700,16 @@ struct FirstLoginOnboardingView: View {
         }
     }
 
-    @MainActor
-    private func loadRecipeEditDemoIfNeeded(forceRefresh: Bool = false) async {
-        if isRecipeEditDemoLoading { return }
-        if !forceRefresh, !recipeEditDemoRecipes.isEmpty { return }
-
-        isRecipeEditDemoLoading = true
-        let recipes = await OnboardingRecipeEditDemoService.shared.loadRecipes(forceRefresh: forceRefresh)
-        recipeEditDemoRecipes = recipes
-        isRecipeEditDemoLoading = false
-    }
-
     private func openRecipeEditDemo(_ demoRecipe: OnboardingRecipeEditDemoRecipe) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        selectedFirstRunGuideSeedRecipeID = demoRecipe.id
         selectedRecipeEditDemoRecipe = demoRecipe
     }
 
     private func completeRecipeEditDemo() {
         hasCompletedRecipeEditDemo = true
         selectedRecipeEditDemoRecipe = nil
-        moveForward(to: .ordering)
+        advance()
     }
 
     private func toggleFoodChallenge(_ option: String) {
@@ -3144,7 +3143,7 @@ struct FirstLoginOnboardingView: View {
             selectedFoodPersona.isEmpty ? nil : "Describes me: \(selectedFoodPersona)",
             selectedFoodChallengeList.isEmpty ? nil : "Food goals: \(selectedFoodChallengeList.joined(separator: "; "))",
             didChooseRecipeTypographyStyle ? "\(RecipeTypographyPreferenceStore.profileSignalPrefix) \(selectedRecipeTypographyStyle.rawValue)" : nil,
-            "Budget considered: \(shouldUseBudgetGuardrail ? "Yes" : "No")"
+            selectedFirstRunGuideSeedRecipeID.map { "\(FirstRunGuideCatalog.profileSeedSignalPrefix) \($0)" }
         ]
         .compactMap { $0 }
     }
@@ -3167,8 +3166,6 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func finishOnboardingOrPresentPaywall() {
-        guard canSubmit else { return }
-
         let completedProfile = draftProfile
         let completedStep = SetupStep.completedRawValue
         Task(priority: .utility) {
@@ -3230,6 +3227,7 @@ struct FirstLoginOnboardingView: View {
             currentStep = SetupStep.resumeStep(from: store.lastOnboardingStep)
         }
         hasCompletedRecipeEditDemo = currentStep.index > SetupStep.recipeEditDemo.index
+        selectedFirstRunGuideSeedRecipeID = FirstRunGuideCatalog.seedRecipeID(in: sourceProfile)
 
         preferredName = sourceProfile.trimmedPreferredName
             ?? store.authSession?.displayName?.components(separatedBy: .whitespacesAndNewlines).first
@@ -3511,7 +3509,7 @@ struct FirstLoginOnboardingView: View {
         // Store a versioned step number instead of the enum raw value. The raw
         // values contain retired onboarding pages and are kept only so older
         // profile rows can still be decoded safely.
-        private static let currentStorageBase = 100
+        private static let currentStorageBase = 200
 
         static var allCases: [SetupStep] {
             [
@@ -3521,12 +3519,8 @@ struct FirstLoginOnboardingView: View {
                 .solutionWays,
                 .shareImport,
                 .allergies,
-                .diets,
                 .recipeEditIntro,
                 .recipeEditDemo,
-                .ordering,
-                .address,
-                .budget,
                 .recipeStyle,
                 .paywallIntro
             ]
@@ -3819,6 +3813,26 @@ struct FirstLoginOnboardingView: View {
 
         private static func legacyStep(for rawValue: Int) -> SetupStep? {
             switch rawValue {
+            case 101:
+                return .identity
+            case 102:
+                return .challenge
+            case 103:
+                return .solution
+            case 104:
+                return .solutionWays
+            case 105:
+                return .shareImport
+            case 106:
+                return .allergies
+            case 107, 108:
+                return .recipeEditIntro
+            case 109:
+                return .recipeEditDemo
+            case 110, 111, 112, 113:
+                return .recipeStyle
+            case 114:
+                return .paywallIntro
             case 1:
                 return .identity
             case 2:
@@ -3832,17 +3846,17 @@ struct FirstLoginOnboardingView: View {
             case 5, 6:
                 return .allergies
             case 13:
-                return .diets
+                return .recipeEditIntro
             case 15:
                 return .recipeEditIntro
             case 14:
                 return .recipeEditDemo
             case 10:
-                return .ordering
+                return .recipeStyle
             case 11:
-                return .address
+                return .recipeStyle
             case 7, 8, 9:
-                return .budget
+                return .recipeStyle
             case 12:
                 return .recipeStyle
             case 16:
@@ -3992,7 +4006,7 @@ private struct OnboardingTestimonialsPage: View {
     private let testimonials: [Testimonial] = [
         .init(
             headline: "Finally making all those TikTok recipes",
-            body: "I stopped saving food and forgetting it. Ounje turns videos into real ingredients, steps, and prep.",
+            body: "I stopped saving food and forgetting it. Ounje turns videos into real ingredients and usable steps.",
             handle: "@fitbytay_"
         ),
         .init(
@@ -4002,7 +4016,7 @@ private struct OnboardingTestimonialsPage: View {
         ),
         .init(
             headline: "Meal planning finally feels lighter",
-            body: "My prep and grocery list stay connected, so weeknights stop feeling chaotic.",
+            body: "My plan and grocery list stay connected, so weeknights stop feeling chaotic.",
             handle: "@jane.cooks.quick"
         ),
     ]
@@ -4017,7 +4031,7 @@ private struct OnboardingTestimonialsPage: View {
                 let cardWidth = min(proxy.size.width - 52, 320)
 
                 VStack(spacing: 12) {
-                    Text("+500 people have already achieved their food goals with Ounje")
+                    Text("People are already achieving their food goals with Ounje")
                         .font(.system(size: 21, weight: .black, design: .rounded))
                         .foregroundStyle(OunjePalette.primaryText)
                         .multilineTextAlignment(.center)

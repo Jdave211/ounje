@@ -357,6 +357,16 @@ struct RecipeImportRequestPayload: Encodable {
     }
 }
 
+struct ShareRecipeImportAuthorization: Decodable {
+    let token: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case expiresAt = "expires_at"
+    }
+}
+
 final class RecipeImportAPIService {
     static let shared = RecipeImportAPIService()
 
@@ -400,6 +410,41 @@ final class RecipeImportAPIService {
                     attachments: attachments,
                     photoContext: photoContext
                 )
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RecipeImportServiceError.invalidRequest
+    }
+
+    func createShareImportAuthorization(
+        userID: String,
+        accessToken: String
+    ) async throws -> ShareRecipeImportAuthorization {
+        var lastError: Error?
+        for baseURL in OunjeDevelopmentServer.workerCandidateBaseURLs {
+            do {
+                guard let url = URL(string: "\(baseURL)/v1/recipe/imports/share-authorization") else {
+                    throw RecipeImportServiceError.invalidRequest
+                }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.timeoutInterval = 20
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                applyAuthHeaders(to: &request, userID: userID, accessToken: accessToken)
+                request.httpBody = Data("{}".utf8)
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw RecipeImportServiceError.invalidResponse
+                }
+                guard (200 ... 299).contains(httpResponse.statusCode) else {
+                    let errorPayload = try? JSONDecoder().decode(SupabaseRestErrorResponse.self, from: data)
+                    let fallback = "Share import setup failed (\(httpResponse.statusCode))."
+                    throw RecipeImportServiceError.requestFailed(errorPayload?.message ?? errorPayload?.error ?? fallback)
+                }
+                return try JSONDecoder().decode(ShareRecipeImportAuthorization.self, from: data)
             } catch {
                 lastError = error
             }
@@ -526,7 +571,8 @@ final class RecipeImportAPIService {
     ) async throws -> RecipeImportCompletedPage {
         var components = URLComponents(string: "\(baseURL)/v1/recipe/imports/completed") ?? URLComponents()
         components.queryItems = [
-            URLQueryItem(name: "user_id", value: userID)
+            URLQueryItem(name: "user_id", value: userID),
+            URLQueryItem(name: "limit", value: "60")
         ]
         guard let url = components.url else {
             throw RecipeImportServiceError.invalidRequest

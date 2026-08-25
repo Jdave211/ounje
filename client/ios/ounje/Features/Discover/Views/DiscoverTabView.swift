@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UIKit
 
 extension Notification.Name {
     static let ounjeDiscoverTabTapped = Notification.Name("ounje.discover.tab.tapped")
@@ -24,8 +25,10 @@ struct DiscoverTabView: View {
     @State private var hasPresentedPullRefreshCue = false
     @State private var discoverPullDistance: CGFloat = 0
     @State private var discoverPullBaseline: CGFloat?
-    @State private var hasTriggeredCurrentPullRefresh = false
-    @State private var filterRailResetToken = UUID()
+    @State private var isDiscoverAtTop = true
+    @State private var isPullGestureActive = false
+    @State private var hasCrossedRefreshThreshold = false
+    @State private var isShowingRefreshComplete = false
     @State private var lastAppliedDiscoverFeedKey: String?
 
     private static let feedTopAnchorID = "discover-feed-top-anchor"
@@ -34,10 +37,6 @@ struct DiscoverTabView: View {
         GridItem(.flexible(), spacing: 16, alignment: .top),
         GridItem(.flexible(), spacing: 16, alignment: .top)
     ]
-
-    private var filters: [String] {
-        viewModel.filters
-    }
 
     private var filteredRecipes: [DiscoverRecipeCardData] {
         viewModel.recipes
@@ -69,19 +68,8 @@ struct DiscoverTabView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     DiscoverHeaderView(
                         searchText: $searchText,
-                        filters: filters,
-                        selectedFilter: viewModel.selectedFilter,
-                        resetToken: filterRailResetToken,
                         onSubmitSearch: submitDiscoverSearch
-                    ) { filter in
-                        let didChangeFilter = viewModel.selectedFilter != filter
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.84)) {
-                            viewModel.selectFilter(filter, isSearching: isSearching)
-                        }
-                        if didChangeFilter {
-                            scrollDiscoverFeedToTop(feedProxy)
-                        }
-                    }
+                    )
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
@@ -102,7 +90,8 @@ struct DiscoverTabView: View {
                                     phase: discoverPullRefreshPhase,
                                     pullDistance: discoverPullDistance
                                 )
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                                .allowsHitTesting(false)
                             }
 
                             discoverRecipeFeedContent
@@ -116,9 +105,15 @@ struct DiscoverTabView: View {
                     .onPreferenceChange(PullStretchRefreshOffsetPreferenceKey.self) { value in
                         updateDiscoverPullDistance(value)
                     }
-                    .refreshable {
-                        await refreshDiscoverFromPull()
-                    }
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                updateDiscoverPullGesture(value)
+                            }
+                            .onEnded { _ in
+                                finishDiscoverPullGesture()
+                            }
+                    )
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
                 .onAppear {
@@ -132,6 +127,10 @@ struct DiscoverTabView: View {
                     resetDiscoverToFeedIfNeeded(feedProxy)
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ounjeRecipeRatingChanged)) { notification in
+            guard let summary = notification.object as? RecipeRatingSummary else { return }
+            viewModel.applyCommunityRating(summary)
         }
         .task(id: discoverFeedKey) {
             guard !isSearching else { return }
@@ -248,6 +247,7 @@ struct DiscoverTabView: View {
     private var shouldShowDiscoverPullIndicator: Bool {
         isShowingPullRefreshCue
             || isManualRefreshing
+            || isShowingRefreshComplete
             || (!isSearching && viewModel.isTransitioningFeed && !visibleRecipes.isEmpty)
             || discoverPullDistance > 6
     }
@@ -255,6 +255,9 @@ struct DiscoverTabView: View {
     private var discoverPullRefreshPhase: PullStretchRefreshPhase {
         if isManualRefreshing || (viewModel.isTransitioningFeed && !visibleRecipes.isEmpty) {
             return .refreshing
+        }
+        if isShowingRefreshComplete {
+            return .complete
         }
         if discoverPullDistance >= 62 {
             return .release
@@ -272,19 +275,37 @@ struct DiscoverTabView: View {
 
         let baseline = discoverPullBaseline ?? offset
         let distance = max(0, offset - baseline)
+        isDiscoverAtTop = offset >= baseline - 1
+        guard !isPullGestureActive else { return }
+        applyDiscoverPullDistance(distance)
+    }
+
+    private func updateDiscoverPullGesture(_ value: DragGesture.Value) {
+        guard isDiscoverAtTop, !isManualRefreshing else { return }
+        isPullGestureActive = true
+        applyDiscoverPullDistance(max(0, value.translation.height))
+    }
+
+    private func applyDiscoverPullDistance(_ distance: CGFloat) {
         discoverPullDistance = distance > 1 ? distance : 0
 
-        if discoverPullDistance < 8, !isManualRefreshing {
-            hasTriggeredCurrentPullRefresh = false
+        if discoverPullDistance >= 62, !hasCrossedRefreshThreshold, !isManualRefreshing {
+            hasCrossedRefreshThreshold = true
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
+
+    private func finishDiscoverPullGesture() {
+        let shouldRefresh = hasCrossedRefreshThreshold
+            && !isManualRefreshing
+            && !viewModel.isLoading
+        isPullGestureActive = false
+        hasCrossedRefreshThreshold = false
+        withAnimation(.easeOut(duration: 0.18)) {
+            discoverPullDistance = 0
         }
 
-        guard discoverPullDistance >= 78,
-              !hasTriggeredCurrentPullRefresh,
-              !isManualRefreshing,
-              !viewModel.isLoading
-        else { return }
-
-        hasTriggeredCurrentPullRefresh = true
+        guard shouldRefresh else { return }
         Task {
             await refreshDiscoverFromPull()
         }
@@ -293,7 +314,7 @@ struct DiscoverTabView: View {
     private func refreshDiscoverFromPull() async {
         guard !isManualRefreshing else { return }
         isManualRefreshing = true
-        defer { isManualRefreshing = false }
+        isShowingRefreshComplete = false
 
         // A cleared search field must mean "refresh the feed", even if a previous
         // submitted query is still hanging around from an older search session.
@@ -305,20 +326,24 @@ struct DiscoverTabView: View {
         let refreshQuery = normalizedDraftSearchText.isEmpty ? "" : normalizedSearchText
         viewModel.updateFeedbackRevision(discoverFeedbackRevision)
         viewModel.beginManualRefreshPresentation()
-        let refreshStartedAt = Date()
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        await environmentModel.refresh(profile: store.profile)
+        let currentContext = environmentModel.feedContext
         await viewModel.forceReload(
             profile: store.profile,
             query: refreshQuery,
-            feedContext: environmentModel.feedContext,
+            feedContext: currentContext,
             behaviorSeeds: [],
             rotateBaseFeed: refreshQuery.isEmpty,
-            forceNetwork: true
+            forceNetwork: false
         )
-        let elapsed = Date().timeIntervalSince(refreshStartedAt)
-        if elapsed < 0.20 {
-            try? await Task.sleep(nanoseconds: UInt64((0.20 - elapsed) * 1_000_000_000))
+        Task {
+            await environmentModel.refresh(profile: store.profile)
+        }
+        isManualRefreshing = false
+        isShowingRefreshComplete = true
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        try? await Task.sleep(nanoseconds: 650_000_000)
+        withAnimation(.easeOut(duration: 0.18)) {
+            isShowingRefreshComplete = false
         }
     }
 
@@ -335,14 +360,9 @@ struct DiscoverTabView: View {
             searchText = ""
         }
 
-        if normalizedSearchText.isEmpty, !filters.contains(viewModel.selectedFilter) {
-            viewModel.selectedFilter = DiscoverPreset.all.title
-        }
-
         if viewModel.selectedFilter != DiscoverPreset.all.title {
             viewModel.selectFilter(DiscoverPreset.all.title, isSearching: false)
         }
-        filterRailResetToken = UUID()
 
         scrollDiscoverFeedToTop(proxy)
 
@@ -416,7 +436,7 @@ struct DiscoverTabView: View {
 
     private func shouldPrefetch(after recipe: DiscoverRecipeCardData) -> Bool {
         guard let currentIndex = visibleRecipes.firstIndex(where: { $0.id == recipe.id }) else { return false }
-        let thresholdIndex = max(visibleRecipes.count - 4, 0)
+        let thresholdIndex = max(visibleRecipes.count - 10, 0)
         return currentIndex >= thresholdIndex
     }
 

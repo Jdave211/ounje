@@ -15,6 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 export const RECIPE_INGESTION_MODEL = process.env.RECIPE_INGESTION_MODEL ?? "gpt-4o-mini";
+export const SOCIAL_VIDEO_RECIPE_MODEL = process.env.SOCIAL_VIDEO_RECIPE_MODEL ?? "gpt-4.1-mini";
 export const RECIPE_SEARCH_SYNTHESIS_MODEL = process.env.RECIPE_SEARCH_SYNTHESIS_MODEL ?? "gpt-5-nano";
 export const RECIPE_IMPORT_COMPLETION_MODEL = process.env.RECIPE_IMPORT_COMPLETION_MODEL ?? "gpt-5-nano";
 export const RECIPE_WEB_REFERENCE_MODEL = process.env.RECIPE_WEB_REFERENCE_MODEL ?? "gpt-5-nano";

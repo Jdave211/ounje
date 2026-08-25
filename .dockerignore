@@ -1,0 +1,14 @@
+.env
+.env.local
+.git
+.DS_Store
+node_modules
+client/ios/build
+client/ios/DerivedData
+client/ios/Pods
+server/uploads
+server/logs
+tmp
+tmp-*
+output
+.playwright-cli

@@ -44,7 +44,7 @@ enum RecipeDetailOnboardingContext {
         selectedDietaryPatterns: Set<String>,
         onComplete: () -> Void
     )
-    case adaptedDemo(onContinue: () -> Void)
+    case adaptedDemo(baseDetail: RecipeDetailData, onContinue: () -> Void)
 
     var askMode: RecipeAskMode? {
         switch self {
@@ -69,8 +69,13 @@ enum RecipeDetailOnboardingContext {
     }
 
     var continueAction: (() -> Void)? {
-        guard case let .adaptedDemo(onContinue) = self else { return nil }
+        guard case let .adaptedDemo(_, onContinue) = self else { return nil }
         return onContinue
+    }
+
+    var comparisonBaseDetail: RecipeDetailData? {
+        guard case let .adaptedDemo(baseDetail, _) = self else { return nil }
+        return baseDetail
     }
 }
 
@@ -87,7 +92,9 @@ struct RecipeDetailExperienceView: View {
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var savedStore: SavedRecipesStore
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
     @StateObject private var viewModel: RecipeDetailViewModel
+    @StateObject private var ratingViewModel = RecipeRatingViewModel()
     @State private var relatedPresentedRecipe: PresentedRecipeDetail?
     @State private var servingsCount = 4
     @State private var baseServingsCount = 4
@@ -104,13 +111,21 @@ struct RecipeDetailExperienceView: View {
     @State private var showInlineVideoFullscreen = false
     @State private var shouldResumeInlineVideoAfterFullscreen = false
     @State private var inlineVideoPlayer: AVPlayer?
+    @State private var inlineVideoRecoveryTask: Task<Void, Never>?
+    @State private var inlineVideoRecoveryAttempts = 0
+    @State private var isRecoveringInlineVideo = false
     @State private var resolvedVideo: RecipeResolvedVideoData?
+    @State private var resolvedVideoInputURLString: String?
     @State private var isResolvingVideo = false
     @State private var webVideoAction: RecipeWebVideoAction = .none
+    @State private var webVideoCurrentTime: Double = 0
+    @State private var webVideoFullscreenStartTime: Double = 0
+    @State private var webVideoResumeTime: Double = 0
     @State private var detailChromeVisible = false
     @State private var hasScrolledAdaptedOnboardingRecipe = false
     @State private var adaptedOnboardingCueTarget: OnboardingAdaptedRecipeCueTarget = .save
     @State private var adaptedOnboardingCueTask: Task<Void, Never>?
+    @State private var detailRecoveryTask: Task<Void, Never>?
     @State private var recipeDetailScrollOffset: CGFloat = 0
 
     private let detailBackground = OunjePalette.background
@@ -141,28 +156,53 @@ struct RecipeDetailExperienceView: View {
         self.onOpenToastDestination = onOpenToastDestination
         self.onboardingContext = onboardingContext
         _toastCenter = ObservedObject(wrappedValue: toastCenter)
-        _viewModel = StateObject(wrappedValue: RecipeDetailViewModel(initialDetail: presentedRecipe.initialDetail))
-    }
-
-    private var localImportedPreviewDetail: RecipeDetailData? {
-        guard presentedRecipe.id.hasPrefix("uir_"), viewModel.detail == nil else { return nil }
-        return RecipeDetailData.lightweightPreview(from: presentedRecipe.recipeCard)
+        let launchDetail = presentedRecipe.initialDetail
+            ?? RecipeDetailData.lightweightPreview(from: presentedRecipe.recipeCard)
+        _viewModel = StateObject(wrappedValue: RecipeDetailViewModel(initialDetail: launchDetail))
     }
 
     private var detail: RecipeDetailData? {
-        viewModel.detail ?? localImportedPreviewDetail
+        viewModel.detail
     }
 
-    private var isShowingImportedPreviewDetail: Bool {
-        viewModel.detail == nil && localImportedPreviewDetail != nil
+    private var isShowingPreviewDetail: Bool {
+        detail?.hasCoreRecipeContent != true
     }
 
     private var recipeID: String {
         detail?.id ?? presentedRecipe.id
     }
 
+    private var currentPlannedRecipe: PlannedRecipe? {
+        if let plannedRecipe = presentedRecipe.plannedRecipe {
+            return plannedRecipe
+        }
+
+        let candidateIDs = Set([presentedRecipe.id, recipeID])
+        if let activeRecipe = store.activeBatch?.recipes.first(where: {
+            candidateIDs.contains($0.recipe.id)
+        }) {
+            return activeRecipe
+        }
+
+        return store.latestPlan?.recipes.first(where: {
+            candidateIDs.contains($0.recipe.id)
+        })
+    }
+
+    private var plannedServingContextKey: String {
+        guard let plannedRecipe = currentPlannedRecipe else {
+            return "\(recipeID)::unplanned"
+        }
+        return "\(plannedRecipe.recipe.id)::\(plannedRecipe.recipe.servings)::\(plannedRecipe.servings)"
+    }
+
     private var isImportedRecipe: Bool {
         recipeID.hasPrefix("uir_") || presentedRecipe.id.hasPrefix("uir_")
+    }
+
+    private var showsCommunityRating: Bool {
+        !isImportedRecipe && !isOnboardingDemo
     }
 
     @MainActor
@@ -181,24 +221,62 @@ struct RecipeDetailExperienceView: View {
             deferAuthorizationError: true
         )
 
-        guard let message = firstError, isRecipeDetailAuthorizationFailure(message) else {
+        guard let message = firstError else {
+            return
+        }
+
+        if isUnavailableImportedRecipe(message) {
+            scheduleRecipeDetailRecovery(accessToken: initialAccessToken)
+            return
+        }
+
+        guard isRecipeDetailAuthorizationFailure(message) else {
+            scheduleRecipeDetailRecovery(accessToken: initialAccessToken)
             return
         }
 
         guard let refreshedSession = await store.refreshAuthSessionAfterAuthorizationFailure() else {
-            await viewModel.load(
+            let retryError = await viewModel.load(
                 for: presentedRecipe.id,
                 similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
                 accessToken: initialAccessToken
             )
+            if retryError != nil {
+                scheduleRecipeDetailRecovery(accessToken: initialAccessToken)
+            }
             return
         }
 
-        await viewModel.load(
+        let retryError = await viewModel.load(
             for: presentedRecipe.id,
             similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
             accessToken: refreshedSession.accessToken
         )
+        if retryError != nil {
+            scheduleRecipeDetailRecovery(accessToken: refreshedSession.accessToken)
+        }
+    }
+
+    @MainActor
+    private func scheduleRecipeDetailRecovery(accessToken: String?) {
+        guard detail?.hasCoreRecipeContent != true else { return }
+        detailRecoveryTask?.cancel()
+        detailRecoveryTask = Task { @MainActor in
+            for delay in [1.0, 3.0, 8.0] {
+                do {
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, detail?.hasCoreRecipeContent != true else { return }
+                _ = await viewModel.load(
+                    for: presentedRecipe.id,
+                    similarFallbackRecipeID: presentedRecipe.adaptedFromRecipeID,
+                    accessToken: accessToken,
+                    deferAuthorizationError: true
+                )
+            }
+        }
     }
 
     private func isRecipeDetailAuthorizationFailure(_ message: String) -> Bool {
@@ -212,8 +290,16 @@ struct RecipeDetailExperienceView: View {
             || normalized.contains("403")
     }
 
+    private func isUnavailableImportedRecipe(_ message: String) -> Bool {
+        guard presentedRecipe.id.hasPrefix("uir_") else { return false }
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("recipe not found")
+            || normalized.contains("failed to load recipe detail (404)")
+            || normalized.contains(" 404")
+    }
+
     private var isInCurrentPrep: Bool {
-        store.latestPlan?.recipes.contains(where: { $0.recipe.id == recipeID }) ?? (presentedRecipe.plannedRecipe != nil)
+        currentPlannedRecipe != nil
     }
 
     private var replaceablePrepRecipeID: String? {
@@ -228,13 +314,13 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var primaryBottomActionTitle: String {
-        if replaceablePrepRecipeID != nil { return "Replace prep" }
-        return isInCurrentPrep ? "Remove" : "Add to prep"
+        if replaceablePrepRecipeID != nil { return "Replace in plan" }
+        return isInCurrentPrep ? "Remove" : "Add to plan"
     }
 
     private var ingredientSecondaryActionTitle: String {
-        if replaceablePrepRecipeID != nil { return "Replace in prep" }
-        return isInCurrentPrep ? "Remove from prep" : "Add to prep"
+        if replaceablePrepRecipeID != nil { return "Replace in plan" }
+        return isInCurrentPrep ? "Remove from plan" : "Add to plan"
     }
 
     private var prepTargetOptions: [RecipePrepTargetOption] {
@@ -290,6 +376,10 @@ struct RecipeDetailExperienceView: View {
         onboardingContinueAction != nil
     }
 
+    private var onboardingComparisonBaseDetail: RecipeDetailData? {
+        onboardingContext?.comparisonBaseDetail
+    }
+
     private var showsRecipeSaveAction: Bool {
         !isOnboardingDemo || isAdaptedOnboardingDemo
     }
@@ -320,6 +410,16 @@ struct RecipeDetailExperienceView: View {
     }
 
     private func handleRecipeSaveTap() {
+        if firstRunGuide.phase == .recipeSave {
+            if !savedStore.isSaved(presentedRecipe.recipeCard) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+                    savedStore.toggle(presentedRecipe.recipeCard)
+                }
+            }
+            firstRunGuide.advance(to: .recipeCommunity)
+            return
+        }
+
         withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
             savedStore.toggle(presentedRecipe.recipeCard)
         }
@@ -366,10 +466,9 @@ struct RecipeDetailExperienceView: View {
         let directURLStrings = [
             detail?.originalRecipeURLString,
             detail?.recipeURLString,
-            detail?.attachedVideoURLString,
             presentedRecipe.recipeCard.recipeURLString
         ].compactMap { $0 }
-        return ((detail?.sourceProvenance?.upstreamURLStrings ?? []) + directURLStrings)
+        return ((detail?.sourceProvenance?.originalSourceURLStrings ?? []) + directURLStrings)
         .compactMap(Self.normalizedSourceURL)
     }
 
@@ -391,16 +490,10 @@ struct RecipeDetailExperienceView: View {
 
     private var videoSourceURL: URL? {
         if let attachedVideoURL = detail?.attachedVideoURL,
-           Self.isUsableVideoSourceURL(attachedVideoURL) {
+           RecipeVideoURLResolver.supportsNativePlayback(attachedVideoURL) {
             return attachedVideoURL
         }
-
-        if let socialVideoURL = rawSourceURLCandidates.first(where: Self.isWatchableSocialVideoURL) {
-            return socialVideoURL
-        }
-
-        return rawSourceURLCandidates
-            .first(where: isJulienneVideoFallbackURL)
+        return nil
     }
 
     private var resolvedVideoURL: URL? {
@@ -420,36 +513,16 @@ struct RecipeDetailExperienceView: View {
 
     private static func isDisplayableOriginalURL(_ url: URL) -> Bool {
         guard !isJulienneURL(url) else { return false }
+        guard !RecipeVideoURLResolver.supportsNativePlayback(url) else { return false }
         if isSocialPlatformURL(url) {
             return isWatchableSocialVideoURL(url)
         }
         return true
     }
 
-    private static func isUsableVideoSourceURL(_ url: URL) -> Bool {
-        guard !isJulienneURL(url) else { return false }
-        return isWatchableSocialVideoURL(url) || RecipeVideoURLResolver.supportsNativePlayback(url)
-    }
-
     private static func isJulienneURL(_ url: URL) -> Bool {
         let host = url.host?.lowercased() ?? ""
         return host == "withjulienne.com" || host.hasSuffix(".withjulienne.com")
-    }
-
-    private func isJulienneVideoFallbackURL(_ url: URL) -> Bool {
-        guard Self.isJulienneURL(url) else { return false }
-        let sourceHints = [
-            detail?.sourcePlatform,
-            detail?.source,
-            presentedRecipe.recipeCard.source
-        ]
-        .compactMap { $0?.lowercased() }
-        .joined(separator: " ")
-
-        return sourceHints.contains("tiktok")
-            || sourceHints.contains("instagram")
-            || sourceHints.contains("youtube")
-            || sourceHints.contains("youtu.be")
     }
 
     private static func isSocialPlatformURL(_ url: URL) -> Bool {
@@ -482,8 +555,6 @@ struct RecipeDetailExperienceView: View {
         var items: [Any] = [titleText]
         if let url = externalURL {
             items.append(url)
-        } else if let fallback = resolvedVideoURL {
-            items.append(fallback)
         }
         return items
     }
@@ -491,9 +562,62 @@ struct RecipeDetailExperienceView: View {
     private var detailMetrics: [RecipeDetailMetric] {
         guard let detail else { return [] }
         return detail.detailsGrid.map { metric in
-            guard metric.title == "Serving" else { return metric }
-            return RecipeDetailMetric(title: metric.title, value: "\(max(1, servingsCount))")
+            if metric.title == "Serving" {
+                return RecipeDetailMetric(title: metric.title, value: "\(max(1, servingsCount))")
+            }
+
+            guard let baseDetail = onboardingComparisonBaseDetail else { return metric }
+            switch metric.title {
+            case "Calories":
+                return RecipeDetailMetric(
+                    title: metric.title,
+                    value: macroChangeText(
+                        before: baseDetail.caloriesKcal,
+                        after: detail.caloriesKcal,
+                        unit: "kcal"
+                    ) ?? metric.value
+                )
+            case "Protein":
+                return RecipeDetailMetric(
+                    title: metric.title,
+                    value: macroChangeText(
+                        before: baseDetail.proteinG,
+                        after: detail.proteinG,
+                        unit: "g"
+                    ) ?? metric.value
+                )
+            case "Carbs":
+                return RecipeDetailMetric(
+                    title: metric.title,
+                    value: macroChangeText(
+                        before: baseDetail.carbsG,
+                        after: detail.carbsG,
+                        unit: "g"
+                    ) ?? metric.value
+                )
+            case "Fats":
+                return RecipeDetailMetric(
+                    title: metric.title,
+                    value: macroChangeText(
+                        before: baseDetail.fatG,
+                        after: detail.fatG,
+                        unit: "g"
+                    ) ?? metric.value
+                )
+            default:
+                return metric
+            }
         }
+    }
+
+    private func macroChangeText(before: Double?, after: Double?, unit: String) -> String? {
+        guard let before, let after else { return nil }
+        let roundedBefore = Int(before.rounded())
+        let roundedAfter = Int(after.rounded())
+        guard roundedBefore != roundedAfter else {
+            return "\(roundedAfter) \(unit)"
+        }
+        return "\(roundedBefore) → \(roundedAfter) \(unit)"
     }
 
     private var ingredientItems: [RecipeDetailIngredient] {
@@ -521,11 +645,7 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var isLoadingResolvedDetail: Bool {
-        viewModel.isLoading && detail == nil
-    }
-
-    private var detailLoadFailed: Bool {
-        !viewModel.isLoading && detail == nil && viewModel.errorMessage != nil
+        viewModel.isLoading && detail?.hasCoreRecipeContent != true
     }
 
     private var isLoadingSimilarRecipes: Bool {
@@ -592,11 +712,11 @@ struct RecipeDetailExperienceView: View {
         Task {
             guard let preparedVideo = await prepareInlineVideoIfNeeded() else { return }
             if preparedVideo.supportsNativePlayback, let videoURL = preparedVideo.url {
-                let player = AVPlayer(url: videoURL)
-                configureRecipeVideoAudioPlayback(for: player)
-                player.play()
+                let player = makeRecipeVideoPlayer(url: videoURL)
                 await MainActor.run {
+                    inlineVideoRecoveryAttempts = 0
                     inlineVideoPlayer = player
+                    player.play()
                 }
             } else {
                 await MainActor.run {
@@ -613,6 +733,9 @@ struct RecipeDetailExperienceView: View {
     }
 
     private func closeInlineVideo() {
+        inlineVideoRecoveryTask?.cancel()
+        inlineVideoRecoveryTask = nil
+        isRecoveringInlineVideo = false
         pauseInlineVideo()
         inlineVideoPlayer?.replaceCurrentItem(with: nil)
         inlineVideoPlayer = nil
@@ -653,12 +776,35 @@ struct RecipeDetailExperienceView: View {
         webVideoAction = RecipeWebVideoAction(kind: .pause)
     }
 
-    private func prepareInlineVideoIfNeeded() async -> RecipeResolvedVideoData? {
-        if let resolvedVideo, resolvedVideo.url != nil, resolvedVideo.mode != .unavailable {
+    private func presentInlineVideoFullscreen() {
+        shouldResumeInlineVideoAfterFullscreen = false
+        if inlineVideoPlayer == nil {
+            webVideoFullscreenStartTime = webVideoCurrentTime
+            webVideoAction = RecipeWebVideoAction(kind: .pause)
+        }
+        showInlineVideoFullscreen = true
+    }
+
+    private func prepareInlineVideoIfNeeded(forceRefresh: Bool = false) async -> RecipeResolvedVideoData? {
+        guard let videoSourceURL else { return nil }
+        let requestedSourceURLString = videoSourceURL.absoluteString
+
+        if !forceRefresh,
+           let resolvedVideo,
+           resolvedVideoInputURLString == requestedSourceURLString,
+           resolvedVideo.url != nil,
+           resolvedVideo.mode != .unavailable {
             return resolvedVideo
         }
 
-        guard let videoSourceURL else { return nil }
+        if RecipeVideoURLResolver.supportsNativePlayback(videoSourceURL) {
+            let directVideo = RecipeVideoURLResolver.fallbackVideo(from: videoSourceURL)
+            await MainActor.run {
+                resolvedVideo = directVideo
+                resolvedVideoInputURLString = requestedSourceURLString
+            }
+            return directVideo
+        }
 
         await MainActor.run {
             isResolvingVideo = true
@@ -670,18 +816,93 @@ struct RecipeDetailExperienceView: View {
         }
 
         do {
-            let resolved = try await RecipeVideoResolveService.shared.resolveVideo(from: videoSourceURL)
-            await MainActor.run {
+            let backendVideo = try await RecipeVideoResolveService.shared.resolveVideo(
+                from: videoSourceURL,
+                forceRefresh: forceRefresh
+            )
+            let resolved = backendVideo.url == nil || backendVideo.mode == .unavailable
+                ? RecipeVideoURLResolver.fallbackVideo(from: videoSourceURL)
+                : backendVideo
+            return await MainActor.run {
+                guard self.videoSourceURL?.absoluteString == requestedSourceURLString else {
+                    return nil
+                }
                 resolvedVideo = resolved
+                resolvedVideoInputURLString = requestedSourceURLString
+                return resolved
             }
-            return resolved
         } catch {
             let fallback = RecipeVideoURLResolver.fallbackVideo(from: videoSourceURL)
-            await MainActor.run {
+            return await MainActor.run {
+                guard self.videoSourceURL?.absoluteString == requestedSourceURLString else {
+                    return nil
+                }
                 resolvedVideo = fallback
+                resolvedVideoInputURLString = requestedSourceURLString
+                return fallback
             }
-            return fallback
         }
+    }
+
+    private func makeRecipeVideoPlayer(url: URL) -> AVPlayer {
+        let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = 10
+        let player = AVPlayer(playerItem: item)
+        player.automaticallyWaitsToMinimizeStalling = true
+        configureRecipeVideoAudioPlayback(for: player)
+        return player
+    }
+
+    private func scheduleInlineVideoRecovery(for item: AVPlayerItem?) {
+        guard showInlineVideo,
+              let currentItem = inlineVideoPlayer?.currentItem,
+              item.map({ $0 === currentItem }) ?? true,
+              inlineVideoRecoveryAttempts < 2 else {
+            return
+        }
+
+        inlineVideoRecoveryTask?.cancel()
+        inlineVideoRecoveryTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled,
+                  showInlineVideo,
+                  inlineVideoPlayer?.timeControlStatus != .playing else {
+                return
+            }
+            await recoverInlineVideoPlayback()
+        }
+    }
+
+    @MainActor
+    private func recoverInlineVideoPlayback() async {
+        guard !isRecoveringInlineVideo,
+              let player = inlineVideoPlayer else {
+            return
+        }
+
+        isRecoveringInlineVideo = true
+        inlineVideoRecoveryAttempts += 1
+        defer { isRecoveringInlineVideo = false }
+
+        let resumeTime = player.currentTime()
+        guard let refreshedVideo = await prepareInlineVideoIfNeeded(forceRefresh: true),
+              let refreshedURL = refreshedVideo.url else {
+            return
+        }
+
+        guard refreshedVideo.supportsNativePlayback else {
+            player.pause()
+            inlineVideoPlayer = nil
+            return
+        }
+
+        let replacementItem = AVPlayerItem(url: refreshedURL)
+        replacementItem.preferredForwardBufferDuration = 10
+        player.replaceCurrentItem(with: replacementItem)
+        if resumeTime.isValid, resumeTime.seconds.isFinite, resumeTime.seconds > 0 {
+            await player.seek(to: resumeTime)
+        }
+        player.play()
     }
 
     var body: some View {
@@ -693,7 +914,7 @@ struct RecipeDetailExperienceView: View {
             let heroTopBleed = safeTop + (isImportedRecipe ? -16 : 18)
             let heroHeight = max(isImportedRecipe ? 216 : 198, heroSize - heroTopCrop + (isImportedRecipe ? 44 : 18))
             let topControlTop = max(safeTop + 26, 72)
-            let recipeToastTop = max(safeTop + 66, topControlTop + 48)
+            let recipeToastTop = safeTop + AppToastLayout.topInset
             let videoButtonTop = topControlTop + 82
             let ingredientGrid = Self.ingredientGridSpec(for: pageWidth)
             ScrollViewReader { proxy in
@@ -738,7 +959,11 @@ struct RecipeDetailExperienceView: View {
                             .frame(maxWidth: .infinity, alignment: .topLeading)
 
                             VStack(alignment: .leading, spacing: 30) {
-                                RecipeModalTitle(text: titleText, isAdapted: isAdaptedRecipe)
+                                RecipeModalTitle(
+                                    text: titleText,
+                                    isAdapted: isAdaptedRecipe,
+                                    styleOverride: isOnboardingDemo ? .playful : nil
+                                )
 
                                 VStack(alignment: .leading, spacing: 16) {
                                     if subtitleLine != nil || displayExternalURL != nil {
@@ -776,6 +1001,11 @@ struct RecipeDetailExperienceView: View {
                                                 ) {
                                                     handleRecipeSaveTap()
                                                 }
+                                                .firstRunGuideTarget(
+                                                    firstRunGuide.phase == .recipeSavedInfo ? .recipeSavedInfo : .recipeSave,
+                                                    enabled: firstRunGuide.phase == .recipeSave
+                                                        || firstRunGuide.phase == .recipeSavedInfo
+                                                )
                                                 .overlay(alignment: .topTrailing) {
                                                     if isAdaptedOnboardingDemo, adaptedOnboardingCueTarget == .save {
                                                         OnboardingSaveRecipeCueView()
@@ -786,10 +1016,14 @@ struct RecipeDetailExperienceView: View {
                                             }
 
                                             if showsRecipeAskAction {
-                                                RecipeDetailCompactActionButton(title: "Ask", systemImage: "sparkles", compact: true, iconTint: recipeAIEditedGold) {
+                                                RecipeDetailCompactActionButton(title: "Remix", systemImage: "sparkles", compact: true, iconTint: OunjePalette.softCream) {
                                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                                     showAskSheet = true
                                                 }
+                                                .firstRunGuideTarget(
+                                                    .recipeRemix,
+                                                    enabled: firstRunGuide.phase == .recipeRemix
+                                                )
                                                 .overlay(alignment: .topTrailing) {
                                                     if showsOnboardingAskCue && !showsFloatingOnboardingAskReturnCue {
                                                         OnboardingAskButtonCueView()
@@ -811,6 +1045,7 @@ struct RecipeDetailExperienceView: View {
                                                 }
                                             }
                                         }
+                                        .id("first-guide-recipe-actions")
                                     }
                                 }
                                 .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 12, delay: 0.04))
@@ -824,10 +1059,9 @@ struct RecipeDetailExperienceView: View {
                                         .modifier(RecipeDetailChromeRevealModifier(isVisible: detailChromeVisible, yOffset: 14, delay: 0.06))
                                 }
 
-                                if isShowingImportedPreviewDetail {
+                                if isShowingPreviewDetail {
                                     RecipeDetailHydratingState(
-                                        isLoading: viewModel.isLoading,
-                                        message: viewModel.errorMessage
+                                        isLoading: viewModel.isLoading
                                     ) {
                                         Task {
                                             await loadResolvedRecipeDetail()
@@ -839,12 +1073,6 @@ struct RecipeDetailExperienceView: View {
                                 Group {
                                     if isLoadingResolvedDetail {
                                         RecipeDetailLoadingSections()
-                                    } else if detailLoadFailed {
-                                        RecipeDetailLoadFailedState(message: viewModel.errorMessage ?? "We couldn't load the full recipe.") {
-                                            Task {
-                                                await loadResolvedRecipeDetail()
-                                            }
-                                        }
                                     } else {
                                         if !detailMetrics.isEmpty {
                                             VStack(alignment: .leading, spacing: 16) {
@@ -860,6 +1088,34 @@ struct RecipeDetailExperienceView: View {
                                                         .padding(.top, 2)
                                                 }
                                             }
+                                        }
+
+                                        if showsCommunityRating {
+                                            RecipeCommunityRatingSection(
+                                                averageRating: ratingViewModel.summary?.averageRating
+                                                    ?? presentedRecipe.recipeCard.averageRating,
+                                                ratingCount: ratingViewModel.summary?.ratingCount
+                                                    ?? presentedRecipe.recipeCard.ratingCount
+                                                    ?? 0,
+                                                selectedRating: ratingViewModel.selectedRating,
+                                                isSubmitting: ratingViewModel.isSubmitting,
+                                                errorMessage: ratingViewModel.errorMessage,
+                                                onSelectRating: submitCommunityRating
+                                            )
+                                            .id("first-guide-community")
+                                            .firstRunGuideTarget(
+                                                .recipeCommunity,
+                                                enabled: firstRunGuide.phase == .recipeCommunity
+                                            )
+                                            .onAppear {
+                                                guard firstRunGuide.phase == .recipeCommunity else { return }
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                                                    withAnimation(OunjeMotion.quickSpring) {
+                                                        proxy.scrollTo("first-guide-community", anchor: .center)
+                                                    }
+                                                }
+                                            }
+                                            .padding(.top, detailMetrics.isEmpty ? 6 : 20)
                                         }
 
                                         if !ingredientItems.isEmpty {
@@ -948,6 +1204,21 @@ struct RecipeDetailExperienceView: View {
                         }
                         shouldScrollToSteps = false
                     }
+                    .onChange(of: firstRunGuide.phase) { phase in
+                        guard phase == .recipeSave
+                            || phase == .recipeSavedInfo
+                            || phase == .recipeCommunity
+                            || phase == .recipeRemix else { return }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                            withAnimation(OunjeMotion.quickSpring) {
+                                if phase == .recipeCommunity {
+                                    proxy.scrollTo("first-guide-community", anchor: .center)
+                                } else {
+                                    proxy.scrollTo("first-guide-recipe-actions", anchor: .center)
+                                }
+                            }
+                        }
+                    }
 
                     if showsFloatingOnboardingAskReturnCue {
                         OnboardingAskReturnCueView()
@@ -974,11 +1245,19 @@ struct RecipeDetailExperienceView: View {
                         RecipeDetailTopIconButton(symbolName: "arrow.left") {
                             closeExperience()
                         }
+                        .firstRunGuideTarget(
+                            .recipeBack,
+                            enabled: firstRunGuide.phase == .recipeBack
+                        )
                         Spacer()
                         if !isOnboardingDemo {
                             RecipeDetailTopIconButton(symbolName: "arrow.up.right", isLoading: isPreparingShareLink) {
                                 handleShareTap()
                             }
+                            .firstRunGuideTarget(
+                                .recipeShare,
+                                enabled: firstRunGuide.phase == .recipeShare
+                            )
                         }
                     }
                     .padding(.horizontal, 20)
@@ -1008,21 +1287,21 @@ struct RecipeDetailExperienceView: View {
                     if showInlineVideo, let resolvedVideo, let resolvedURL = resolvedVideo.url {
                         VStack(alignment: .trailing, spacing: 10) {
                             VStack(spacing: 8) {
-                                HStack(spacing: 8) {
-                                    RecipeVideoControlButton(symbol: "backward.end.fill") {
-                                        seekInlineVideo(delta: -5)
-                                    }
+                                if !resolvedVideo.supportsNativePlayback {
+                                    HStack(spacing: 8) {
+                                        RecipeVideoControlButton(symbol: "backward.end.fill") {
+                                            seekInlineVideo(delta: -5)
+                                        }
 
-                                    RecipeVideoControlButton(symbol: "forward.end.fill") {
-                                        seekInlineVideo(delta: 5)
+                                        RecipeVideoControlButton(symbol: "forward.end.fill") {
+                                            seekInlineVideo(delta: 5)
+                                        }
                                     }
                                 }
 
                                 HStack(spacing: 8) {
                                     RecipeVideoControlButton(symbol: "arrow.up.left.and.arrow.down.right") {
-                                        pauseInlineVideo()
-                                        shouldResumeInlineVideoAfterFullscreen = false
-                                        showInlineVideoFullscreen = true
+                                        presentInlineVideoFullscreen()
                                     }
 
                                     RecipeVideoControlButton(symbol: "xmark") {
@@ -1035,10 +1314,17 @@ struct RecipeDetailExperienceView: View {
                                 video: resolvedVideo,
                                 url: resolvedURL,
                                 player: inlineVideoPlayer,
-                                webAction: $webVideoAction
-                            ) {
-                                togglePlayback()
-                            }
+                                webAction: $webVideoAction,
+                                initialWebPlaybackTime: 0,
+                                onWebPlaybackUpdate: { currentTime, _ in
+                                    guard !showInlineVideoFullscreen else { return }
+                                    webVideoCurrentTime = currentTime
+                                },
+                                onPlaybackFailure: {
+                                    scheduleInlineVideoRecovery(for: inlineVideoPlayer?.currentItem)
+                                },
+                                onTap: togglePlayback
+                            )
                         }
                         .padding(.trailing, 18)
                         .padding(.top, safeTop + 188)
@@ -1067,20 +1353,22 @@ struct RecipeDetailExperienceView: View {
                 triggerChromeReveal()
                 // Native servings = the count the recipe's ingredient amounts are written for.
                 // Chosen servings = what the user is cooking (a prep override, or native by default).
-                let nativeServings = presentedRecipe.plannedRecipe?.recipe.servings
+                let initialPlannedRecipe = currentPlannedRecipe
+                let nativeServings = initialPlannedRecipe?.recipe.servings
                     ?? viewModel.detail?.displayServings
                     ?? 4
-                let chosenServings = presentedRecipe.plannedRecipe?.servings ?? nativeServings
+                let chosenServings = initialPlannedRecipe?.servings ?? nativeServings
                 baseServingsCount = max(1, nativeServings)
                 servingsCount = max(1, chosenServings)
                 await loadResolvedRecipeDetail()
+                await loadCommunityRating()
                 // Re-anchor base to the resolved native count once detail loads so ingredient
                 // scaling stays correct — but don't clobber a serving the user changed mid-load.
                 if let resolvedNative = viewModel.detail?.displayServings {
                     let wasUnchanged = servingsCount == max(1, chosenServings)
                     baseServingsCount = max(1, resolvedNative)
-                    if presentedRecipe.plannedRecipe?.servings == nil, wasUnchanged {
-                        servingsCount = max(1, resolvedNative)
+                    if wasUnchanged {
+                        servingsCount = max(1, currentPlannedRecipe?.servings ?? resolvedNative)
                     }
                 }
             }
@@ -1162,14 +1450,24 @@ struct RecipeDetailExperienceView: View {
         .fullScreenCover(isPresented: $showInlineVideoFullscreen, onDismiss: {
             guard shouldResumeInlineVideoAfterFullscreen else { return }
             shouldResumeInlineVideoAfterFullscreen = false
-            togglePlayback()
+            if inlineVideoPlayer != nil {
+                inlineVideoPlayer?.play()
+            } else {
+                webVideoAction = RecipeWebVideoAction(kind: .resumeAt(seconds: webVideoResumeTime))
+            }
         }) {
             Group {
                 if let resolvedVideo, let resolvedURL = resolvedVideo.url {
                     RecipeFullscreenVideoExperience(
                         video: resolvedVideo,
                         url: resolvedURL,
+                        sharedPlayer: inlineVideoPlayer,
+                        initialWebPlaybackTime: webVideoFullscreenStartTime,
+                        onWebPlaybackUpdate: { currentTime, _ in
+                            webVideoCurrentTime = currentTime
+                        },
                         onMinimize: {
+                            webVideoResumeTime = webVideoCurrentTime
                             shouldResumeInlineVideoAfterFullscreen = true
                             showInlineVideoFullscreen = false
                         },
@@ -1184,11 +1482,22 @@ struct RecipeDetailExperienceView: View {
             }
         }
         .task(id: videoSourceURL?.absoluteString ?? "no-video") {
-            guard videoSourceURL != nil, !isOnboardingDemo else {
+            inlineVideoRecoveryTask?.cancel()
+            inlineVideoRecoveryTask = nil
+            pauseInlineVideo()
+            inlineVideoPlayer?.replaceCurrentItem(with: nil)
+            inlineVideoPlayer = nil
+            resolvedVideo = nil
+            resolvedVideoInputURLString = nil
+            showInlineVideo = false
+
+            guard let videoSourceURL, !isOnboardingDemo else {
                 resolvedVideo = nil
                 return
             }
-            _ = await prepareInlineVideoIfNeeded()
+            if RecipeVideoURLResolver.supportsNativePlayback(videoSourceURL) {
+                _ = await prepareInlineVideoIfNeeded()
+            }
         }
         .onAppear {
             triggerChromeReveal()
@@ -1196,15 +1505,32 @@ struct RecipeDetailExperienceView: View {
         .onDisappear {
             adaptedOnboardingCueTask?.cancel()
             adaptedOnboardingCueTask = nil
+            detailRecoveryTask?.cancel()
+            detailRecoveryTask = nil
+            inlineVideoRecoveryTask?.cancel()
+            inlineVideoRecoveryTask = nil
+            pauseInlineVideo()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemPlaybackStalled)) { notification in
+            scheduleInlineVideoRecovery(for: notification.object as? AVPlayerItem)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime)) { notification in
+            scheduleInlineVideoRecovery(for: notification.object as? AVPlayerItem)
         }
         .onChange(of: servingsCount) { newValue in
             guard isInCurrentPrep else { return }
-            guard newValue != baseServingsCount else { return }
+            guard currentPlannedRecipe?.servings != newValue else { return }
             Task { await persistPrepServingsChange(newValue) }
+        }
+        .onChange(of: plannedServingContextKey) { _ in
+            synchronizeServingsWithCurrentPlan()
         }
     }
 
     private func closeExperience() {
+        if firstRunGuide.phase == .recipeBack {
+            firstRunGuide.advance(to: .addRecipe)
+        }
         if let onDismiss {
             onDismiss()
         } else {
@@ -1225,7 +1551,7 @@ struct RecipeDetailExperienceView: View {
             relatedPresentedRecipe = PresentedRecipeDetail(recipeCard: recipe)
         case .appTab(.cart):
             onOpenCart()
-        case .appTab, .recipeImportQueue:
+        case .appTab, .plans, .recipeImportQueue:
             closeExperience()
         }
     }
@@ -1235,6 +1561,44 @@ struct RecipeDetailExperienceView: View {
         DispatchQueue.main.async {
             withAnimation(OunjeMotion.screenSpring.delay(0.01)) {
                 detailChromeVisible = true
+            }
+        }
+    }
+
+    @MainActor
+    private func loadCommunityRating() async {
+        guard showsCommunityRating,
+              let session = await store.freshUserDataSession(),
+              let token = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty
+        else { return }
+        await ratingViewModel.load(
+            recipeID: recipeID,
+            userID: session.userID,
+            accessToken: token
+        )
+    }
+
+    @MainActor
+    private func submitCommunityRating(_ rating: Int) {
+        Task {
+            guard let session = await store.freshUserDataSession(),
+                  let token = session.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !token.isEmpty
+            else { return }
+            let didSave = await ratingViewModel.submit(
+                recipeID: recipeID,
+                userID: session.userID,
+                rating: rating,
+                accessToken: token
+            )
+            if didSave {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                if firstRunGuide.phase == .recipeCommunity {
+                    firstRunGuide.advance(to: .recipeShare)
+                }
+            } else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
     }
@@ -1310,14 +1674,13 @@ struct RecipeDetailExperienceView: View {
         guard let detail else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let recipe = recipeFromDetail(detail)
-        baseServingsCount = max(1, servingsCount)
         let targetName = prepTargetOptions.first(where: { $0.batchID == targetBatchID })?.title ?? "prep"
         toastCenter.show(
             title: "Added to \(targetName)",
             subtitle: titleText,
             systemImage: "wand.and.stars",
             thumbnailURLString: toastPreviewImageURLString(for: detail),
-            destination: .appTab(.prep)
+            destination: .plans
         )
         Task {
             await Task.yield()
@@ -1345,13 +1708,12 @@ struct RecipeDetailExperienceView: View {
         guard let detail else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let recipe = recipeFromDetail(detail)
-        baseServingsCount = max(1, servingsCount)
         toastCenter.show(
             title: "Prep recipe replaced",
             subtitle: titleText,
             systemImage: "arrow.triangle.2.circlepath",
             thumbnailURLString: toastPreviewImageURLString(for: detail),
-            destination: .appTab(.prep)
+            destination: .plans
         )
         Task {
             await store.removeRecipeFromLatestPlan(recipeID: sourceRecipeID)
@@ -1364,14 +1726,23 @@ struct RecipeDetailExperienceView: View {
         guard let detail else { return }
         let recipe = recipeFromDetail(detail)
         await store.updateLatestPlan(with: recipe, servings: newServings)
-        baseServingsCount = max(1, newServings)
+    }
+
+    @MainActor
+    private func synchronizeServingsWithCurrentPlan() {
+        let plannedRecipe = currentPlannedRecipe
+        let nativeServings = viewModel.detail?.displayServings
+            ?? plannedRecipe?.recipe.servings
+            ?? baseServingsCount
+        baseServingsCount = max(1, nativeServings)
+        servingsCount = max(1, plannedRecipe?.servings ?? nativeServings)
     }
 
     @MainActor
     private func removeCurrentRecipeFromPrep() async {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let recipeToRestore = detail.map(recipeFromDetail)
-        let restoreServings = max(1, baseServingsCount)
+        let restoreServings = max(1, currentPlannedRecipe?.servings ?? servingsCount)
         toastCenter.show(
             title: "Removed from next prep",
             subtitle: titleText,
@@ -1592,39 +1963,81 @@ struct RecipeDetailExperienceView: View {
         }
 
         guard !ingredients.isEmpty else { return [] }
-        let tokens = Set(
-            step.text
-                .lowercased()
-                .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                .filter { $0.count > 2 }
-        )
+        let ignoredTokens: Set<String> = [
+            "and", "boneless", "chopped", "diced", "dried", "fresh", "frozen",
+            "ground", "large", "medium", "minced", "oven", "plain", "skinless",
+            "sliced", "small", "taste", "the", "with"
+        ]
+        let normalizedStep = normalizedIngredientMatchText(step.text)
+        let stepTokens = Set(normalizedStep.split(separator: " ").map(String.init))
+            .subtracting(ignoredTokens)
 
-        return ingredients.filter { ingredient in
-            let ingredientTokens = Set(
-                ingredient.lineText
-                    .lowercased()
-                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
-                    .filter { $0.count > 2 }
-            )
-            return !tokens.isDisjoint(with: ingredientTokens)
+        let rankedMatches = ingredients.enumerated().compactMap { offset, ingredient -> (line: String, isFullMatch: Bool, score: Double, position: Int, order: Int)? in
+            let normalizedName = normalizedIngredientMatchText(ingredient.displayTitle)
+            let significantNameTokens = normalizedName
+                .split(separator: " ")
+                .map(String.init)
+                .filter { !ignoredTokens.contains($0) }
+            let nameTokens = Set(significantNameTokens)
+            guard !nameTokens.isEmpty else { return nil }
+
+            let overlapCount = stepTokens.intersection(nameTokens).count
+            guard overlapCount > 0 else { return nil }
+
+            let phrase = significantNameTokens.joined(separator: " ")
+            let exactPhrase = normalizedStep.contains(normalizedName)
+                || (!phrase.isEmpty && normalizedStep.contains(phrase))
+            let isFullMatch = exactPhrase || overlapCount == nameTokens.count
+            let score = Double(overlapCount) / Double(nameTokens.count)
+            let matchedPhrase = normalizedStep.contains(normalizedName) ? normalizedName : phrase
+            let position = normalizedStep.range(of: matchedPhrase).map {
+                normalizedStep.distance(from: normalizedStep.startIndex, to: $0.lowerBound)
+            } ?? Int.max
+
+            return (ingredient.lineText, isFullMatch, score, position, offset)
         }
-        .prefix(4)
-        .map(\.lineText)
+
+        let fullMatches = rankedMatches.filter(\.isFullMatch)
+        let preferredMatches = fullMatches.isEmpty
+            ? rankedMatches.filter { $0.score >= 0.5 }
+            : fullMatches
+
+        return preferredMatches
+            .sorted { lhs, rhs in
+                if lhs.position != rhs.position { return lhs.position < rhs.position }
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                return lhs.order < rhs.order
+            }
+            .prefix(4)
+            .map(\.line)
+    }
+
+    private func normalizedIngredientMatchText(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9\\s]", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
 struct RecipeModalTitle: View {
     let text: String
     var isAdapted = false
+    var styleOverride: RecipeTypographyStyle? = nil
     @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
+
+    private var resolvedStyle: RecipeTypographyStyle {
+        styleOverride ?? RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             RecipeTypographyTitleText(
                 text,
-                size: RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue) == .clean ? 40 : 44,
+                size: resolvedStyle == .clean ? 40 : 44,
                 color: OunjePalette.primaryText,
-                style: RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+                style: resolvedStyle
             )
                 .multilineTextAlignment(.leading)
                 .lineSpacing(2)
@@ -1650,6 +2063,73 @@ struct RecipeDetailSectionHeader: View {
         Text(title)
             .font(.system(size: 28, weight: .regular, design: .serif))
             .foregroundStyle(OunjePalette.softCream)
+    }
+}
+
+struct RecipeCommunityRatingSection: View {
+    let averageRating: Double?
+    let ratingCount: Int
+    let selectedRating: Int?
+    let isSubmitting: Bool
+    let errorMessage: String?
+    let onSelectRating: (Int) -> Void
+
+    private var summaryText: String {
+        guard ratingCount > 0 else { return "Rate this recipe" }
+        guard let averageRating else { return "\(ratingCount) rating\(ratingCount == 1 ? "" : "s")" }
+        return String(format: "%.1f out of 5 · %d rating%@", averageRating, ratingCount, ratingCount == 1 ? "" : "s")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Divider()
+                .overlay(OunjePalette.stroke)
+
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                RecipeDetailSectionHeader(title: "Community")
+                Spacer(minLength: 8)
+                Text(summaryText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+
+            HStack(spacing: 12) {
+                Text(selectedRating == nil ? "Cooked it?" : "Your rating")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(OunjePalette.primaryText)
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 6) {
+                    ForEach(1 ... 5, id: \.self) { rating in
+                        Button {
+                            onSelectRating(rating)
+                        } label: {
+                            Image(systemName: rating <= (selectedRating ?? 0) ? "star.fill" : "star")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(
+                                    rating <= (selectedRating ?? 0)
+                                        ? recipeAIEditedGold
+                                        : OunjePalette.secondaryText
+                                )
+                                .frame(width: 32, height: 36)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSubmitting)
+                        .accessibilityLabel("Rate \(rating) out of 5")
+                    }
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+        }
     }
 }
 
@@ -1968,6 +2448,9 @@ struct RecipeInlineVideoCard: View {
     let url: URL
     let player: AVPlayer?
     @Binding var webAction: RecipeWebVideoAction
+    let initialWebPlaybackTime: Double
+    let onWebPlaybackUpdate: (Double, Bool) -> Void
+    let onPlaybackFailure: () -> Void
     let onTap: () -> Void
     @State private var showsLoadingOverlay = true
 
@@ -1977,18 +2460,22 @@ struct RecipeInlineVideoCard: View {
 
     var body: some View {
         ZStack {
-            Group {
-                if video.supportsNativePlayback, let player {
-                    RecipeNativeVideoView(player: player, videoGravity: .resizeAspectFill)
-                } else {
-                    RecipeInlineWebVideoView(video: video, url: url, action: $webAction)
-                }
-            }
-            .allowsHitTesting(false)
+            if video.supportsNativePlayback, let player {
+                RecipeNativeVideoView(player: player, videoGravity: .resizeAspectFill)
+            } else {
+                RecipeInlineWebVideoView(
+                    video: video,
+                    url: url,
+                    action: $webAction,
+                    initialPlaybackTime: initialWebPlaybackTime,
+                    onPlaybackUpdate: onWebPlaybackUpdate
+                )
+                    .allowsHitTesting(false)
 
-            Color.clear
-                .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .onTapGesture(perform: onTap)
+                Color.clear
+                    .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .onTapGesture(perform: onTap)
+            }
 
             if showsLoadingOverlay {
                 RecipeVideoLoadingOverlay(label: "Loading video")
@@ -2015,7 +2502,11 @@ struct RecipeInlineVideoCard: View {
                 for _ in 0..<80 {
                     guard !Task.isCancelled else { return }
                     let itemStatus = player.currentItem?.status
-                    if itemStatus == .readyToPlay || itemStatus == .failed || player.timeControlStatus == .playing {
+                    if itemStatus == .failed {
+                        onPlaybackFailure()
+                        return
+                    }
+                    if itemStatus == .readyToPlay || player.timeControlStatus == .playing {
                         break
                     }
                     try? await Task.sleep(nanoseconds: 150_000_000)
@@ -2078,11 +2569,18 @@ struct RecipeVideoControlButton: View {
 struct RecipeFullscreenVideoExperience: View {
     let video: RecipeResolvedVideoData
     let url: URL
+    let sharedPlayer: AVPlayer?
+    let initialWebPlaybackTime: Double
+    let onWebPlaybackUpdate: (Double, Bool) -> Void
     let onMinimize: () -> Void
     let onClose: () -> Void
 
-    @State private var player: AVPlayer?
+    @State private var ownedPlayer: AVPlayer?
     @State private var webAction: RecipeWebVideoAction = .none
+
+    private var activePlayer: AVPlayer? {
+        sharedPlayer ?? ownedPlayer
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -2091,27 +2589,20 @@ struct RecipeFullscreenVideoExperience: View {
 
                 Group {
                     if video.supportsNativePlayback {
-                        if let player {
-                            ZStack {
-                                RecipeNativeVideoView(player: player, videoGravity: .resizeAspect)
-                                    .allowsHitTesting(false)
-
-                                Color.clear
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        if player.timeControlStatus == .playing {
-                                            player.pause()
-                                        } else {
-                                            player.play()
-                                        }
-                                    }
-                            }
+                        if let player = activePlayer {
+                            RecipeNativeVideoView(player: player, videoGravity: .resizeAspect)
                         } else {
                             ProgressView()
                                 .tint(OunjePalette.softCream)
                         }
                     } else {
-                        RecipeInlineWebVideoView(video: video, url: url, action: $webAction)
+                        RecipeInlineWebVideoView(
+                            video: video,
+                            url: url,
+                            action: $webAction,
+                            initialPlaybackTime: initialWebPlaybackTime,
+                            onPlaybackUpdate: onWebPlaybackUpdate
+                        )
                     }
                 }
                 .frame(width: geometry.size.width, height: geometry.size.height)
@@ -2133,14 +2624,24 @@ struct RecipeFullscreenVideoExperience: View {
         .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .onAppear {
-            guard video.supportsNativePlayback, player == nil else { return }
-            let nextPlayer = AVPlayer(url: url)
+            guard video.supportsNativePlayback else { return }
+            if let sharedPlayer {
+                configureRecipeVideoAudioPlayback(for: sharedPlayer)
+                sharedPlayer.play()
+                return
+            }
+
+            guard ownedPlayer == nil else { return }
+            let item = AVPlayerItem(url: url)
+            item.preferredForwardBufferDuration = 10
+            let nextPlayer = AVPlayer(playerItem: item)
+            nextPlayer.automaticallyWaitsToMinimizeStalling = true
             configureRecipeVideoAudioPlayback(for: nextPlayer)
             nextPlayer.play()
-            player = nextPlayer
+            ownedPlayer = nextPlayer
         }
         .onDisappear {
-            player?.pause()
+            activePlayer?.pause()
             webAction = RecipeWebVideoAction(kind: .pause)
         }
     }
@@ -2266,9 +2767,11 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
     let video: RecipeResolvedVideoData
     let url: URL
     @Binding var action: RecipeWebVideoAction
+    let initialPlaybackTime: Double
+    let onPlaybackUpdate: (Double, Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(onPlaybackUpdate: onPlaybackUpdate)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -2285,12 +2788,23 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
         webView.scrollView.backgroundColor = UIColor.black
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
-        context.coordinator.render(video: video, url: url, in: webView)
+        context.coordinator.render(
+            video: video,
+            url: url,
+            initialPlaybackTime: initialPlaybackTime,
+            in: webView
+        )
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        context.coordinator.render(video: video, url: url, in: uiView)
+        context.coordinator.onPlaybackUpdate = onPlaybackUpdate
+        context.coordinator.render(
+            video: video,
+            url: url,
+            initialPlaybackTime: initialPlaybackTime,
+            in: uiView
+        )
 
         if context.coordinator.lastActionID != action.id {
             context.coordinator.lastActionID = action.id
@@ -2305,20 +2819,40 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
         var lastActionID: UUID?
+        var onPlaybackUpdate: (Double, Bool) -> Void
         private var loadedSignature: String?
         private var currentMode: RecipeResolvedVideoData.PlaybackMode = .unavailable
+        private var initialPlaybackTime: Double = 0
 
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {}
+        init(onPlaybackUpdate: @escaping (Double, Bool) -> Void) {
+            self.onPlaybackUpdate = onPlaybackUpdate
+        }
 
-        func render(video: RecipeResolvedVideoData, url: URL, in webView: WKWebView) {
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let payload = message.body as? [String: Any] else { return }
+            let currentTime = (payload["currentTime"] as? NSNumber)?.doubleValue ?? 0
+            let isPlaying = (payload["isPlaying"] as? NSNumber)?.boolValue ?? false
+            onPlaybackUpdate(max(0, currentTime), isPlaying)
+        }
+
+        func render(
+            video: RecipeResolvedVideoData,
+            url: URL,
+            initialPlaybackTime: Double,
+            in webView: WKWebView
+        ) {
             let signature = "\(video.mode.rawValue)|\(video.provider ?? "video")|\(url.absoluteString)"
             guard loadedSignature != signature else { return }
 
             loadedSignature = signature
             currentMode = video.mode
+            self.initialPlaybackTime = max(0, initialPlaybackTime)
 
             if video.usesHostedIframe {
-                webView.loadHTMLString(Self.iframeWrapperHTML(for: video, url: url), baseURL: URL(string: "https://iframe.ly"))
+                webView.loadHTMLString(
+                    Self.iframeWrapperHTML(for: video, url: url, initialPlaybackTime: initialPlaybackTime),
+                    baseURL: URL(string: "https://iframe.ly")
+                )
             } else {
                 webView.load(URLRequest(url: url))
             }
@@ -2335,6 +2869,8 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
                 script = "window.ounjeTogglePlayback && window.ounjeTogglePlayback();"
             case let .seek(seconds):
                 script = "window.ounjeSeekBy && window.ounjeSeekBy(\(seconds));"
+            case let .resumeAt(seconds):
+                script = "window.ounjeResumeAt && window.ounjeResumeAt(\(max(0, seconds)));"
             case .pause:
                 script = "window.ounjePauseVideo && window.ounjePauseVideo();"
             }
@@ -2379,7 +2915,10 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard currentMode != .iframe else { return }
-            webView.evaluateJavaScript(Self.videoOnlyJavaScript, completionHandler: nil)
+            webView.evaluateJavaScript(
+                Self.videoOnlyJavaScript(initialPlaybackTime: initialPlaybackTime),
+                completionHandler: nil
+            )
         }
 
         private func shouldAllow(url: URL) -> Bool {
@@ -2387,16 +2926,20 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
             return ["http", "https", "about", "data", "blob"].contains(scheme)
         }
 
-        private static func iframeWrapperHTML(for video: RecipeResolvedVideoData, url: URL) -> String {
+        private static func iframeWrapperHTML(
+            for video: RecipeResolvedVideoData,
+            url: URL,
+            initialPlaybackTime: Double
+        ) -> String {
             let source = htmlEscaped(url.absoluteString)
             let provider = (video.provider ?? "video").lowercased()
             if provider.contains("tiktok") {
-                return tiktokPlayerHTML(src: source)
+                return tiktokPlayerHTML(src: source, initialPlaybackTime: initialPlaybackTime)
             }
-            return iframelyPlayerHTML(src: source)
+            return iframelyPlayerHTML(src: source, initialPlaybackTime: initialPlaybackTime)
         }
 
-        private static func tiktokPlayerHTML(src: String) -> String {
+        private static func tiktokPlayerHTML(src: String, initialPlaybackTime: Double) -> String {
             """
             <!doctype html>
             <html>
@@ -2417,8 +2960,19 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
               </iframe>
               <script>
                 const iframe = document.getElementById('ounjePlayer');
-                let currentTime = 0;
+                const initialPlaybackTime = \(max(0, initialPlaybackTime));
+                let currentTime = initialPlaybackTime;
                 let paused = false;
+                let restoredInitialTime = initialPlaybackTime <= 0;
+
+                function notifyNative() {
+                  try {
+                    window.webkit.messageHandlers.ounjeVideoState.postMessage({
+                      currentTime: currentTime,
+                      isPlaying: !paused
+                    });
+                  } catch (_) {}
+                }
 
                 function post(type, value) {
                   if (!iframe || !iframe.contentWindow) return false;
@@ -2438,11 +2992,19 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
                     if (type === 'onStateChange') {
                       const state = String(value || '').toLowerCase();
                       paused = !(state === 'playing' || state === 'play' || state === '1');
+                      if (!restoredInitialTime && !paused) {
+                        restoredInitialTime = true;
+                        post('seekTo', initialPlaybackTime);
+                      }
+                      notifyNative();
                     }
 
                     if (type === 'onCurrentTime') {
                       const next = Number((value && (value.currentTime || value.current_time || value.time)) ?? value ?? 0);
-                      if (Number.isFinite(next)) currentTime = next;
+                      if (Number.isFinite(next)) {
+                        currentTime = next;
+                        notifyNative();
+                      }
                     }
                   } catch (_) {}
                 });
@@ -2463,6 +3025,16 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
                 window.ounjePauseVideo = function() {
                   paused = true;
                   post('pause');
+                  notifyNative();
+                  return true;
+                };
+
+                window.ounjeResumeAt = function(seconds) {
+                  currentTime = Math.max(0, Number(seconds) || 0);
+                  paused = false;
+                  post('seekTo', currentTime);
+                  post('play');
+                  notifyNative();
                   return true;
                 };
               </script>
@@ -2471,7 +3043,7 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
             """
         }
 
-        private static func iframelyPlayerHTML(src: String) -> String {
+        private static func iframelyPlayerHTML(src: String, initialPlaybackTime: Double) -> String {
             """
             <!doctype html>
             <html>
@@ -2495,20 +3067,36 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
                 const iframe = document.getElementById('ounjePlayer');
                 let player = null;
                 let paused = false;
-                let currentTime = 0;
+                let currentTime = \(max(0, initialPlaybackTime));
+
+                function notifyNative() {
+                  try {
+                    window.webkit.messageHandlers.ounjeVideoState.postMessage({
+                      currentTime: currentTime,
+                      isPlaying: !paused
+                    });
+                  } catch (_) {}
+                }
 
                 function boot() {
                   if (!window.playerjs || !iframe) return;
                   player = new playerjs.Player(iframe);
 
                   player.on('ready', function() {
+                    if (currentTime > 0) {
+                      try { player.setCurrentTime(currentTime); } catch (_) {}
+                    }
                     try { player.play(); paused = false; } catch (_) {}
+                    notifyNative();
                   });
-                  player.on('play', function() { paused = false; });
-                  player.on('pause', function() { paused = true; });
+                  player.on('play', function() { paused = false; notifyNative(); });
+                  player.on('pause', function() { paused = true; notifyNative(); });
                   player.on('timeupdate', function(data) {
                     const next = Number((data && (data.seconds || data.currentTime || data.time)) ?? 0);
-                    if (Number.isFinite(next)) currentTime = next;
+                    if (Number.isFinite(next)) {
+                      currentTime = next;
+                      notifyNative();
+                    }
                   });
                 }
 
@@ -2539,6 +3127,17 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
                   if (!player) return false;
                   paused = true;
                   try { player.pause(); } catch (_) {}
+                  notifyNative();
+                  return true;
+                };
+
+                window.ounjeResumeAt = function(seconds) {
+                  if (!player) return false;
+                  currentTime = Math.max(0, Number(seconds) || 0);
+                  paused = false;
+                  try { player.setCurrentTime(currentTime); } catch (_) {}
+                  try { player.play(); } catch (_) {}
+                  notifyNative();
                   return true;
                 };
               </script>
@@ -2556,8 +3155,21 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
                 .replacingOccurrences(of: ">", with: "&gt;")
         }
 
-        private static let videoOnlyJavaScript = """
+        private static func videoOnlyJavaScript(initialPlaybackTime: Double) -> String {
+            """
         (function() {
+          const initialPlaybackTime = \(max(0, initialPlaybackTime));
+
+          function notifyNative(video) {
+            if (!video) return;
+            try {
+              window.webkit.messageHandlers.ounjeVideoState.postMessage({
+                currentTime: Number(video.currentTime) || 0,
+                isPlaying: !video.paused
+              });
+            } catch (_) {}
+          }
+
           function rebuildIntoVideoOnly() {
             const videos = Array.from(document.querySelectorAll('video'));
             if (!videos.length) return false;
@@ -2599,6 +3211,13 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
               document.body.innerHTML = '';
               document.body.appendChild(video);
               window.ounjeVideo = video;
+              video.addEventListener('loadedmetadata', function() {
+                if (initialPlaybackTime > 0) video.currentTime = initialPlaybackTime;
+                notifyNative(video);
+              }, { once: true });
+              video.addEventListener('timeupdate', function() { notifyNative(video); });
+              video.addEventListener('play', function() { notifyNative(video); });
+              video.addEventListener('pause', function() { notifyNative(video); });
               video.play().catch(() => {});
             }
             return true;
@@ -2630,6 +3249,15 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
             return true;
           };
 
+          window.ounjeResumeAt = function(seconds) {
+            if (!window.ounjeVideo) return false;
+            const next = Math.max(0, Number(seconds) || 0);
+            const duration = Number.isFinite(window.ounjeVideo.duration) ? window.ounjeVideo.duration : 0;
+            window.ounjeVideo.currentTime = duration > 0 ? Math.min(duration, next) : next;
+            window.ounjeVideo.play().catch(() => {});
+            return true;
+          };
+
           if (!rebuildIntoVideoOnly()) {
             let attempts = 0;
             const timer = setInterval(function() {
@@ -2641,32 +3269,36 @@ struct RecipeInlineWebVideoView: UIViewRepresentable {
           }
         })();
         """
+        }
     }
 }
 
-struct RecipeNativeVideoView: UIViewRepresentable {
+struct RecipeNativeVideoView: UIViewControllerRepresentable {
     let player: AVPlayer
     let videoGravity: AVLayerVideoGravity
 
-    func makeUIView(context: Context) -> PlayerContainerView {
-        let view = PlayerContainerView()
-        view.playerLayer.player = player
-        view.playerLayer.videoGravity = videoGravity
-        view.backgroundColor = .black
-        return view
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.videoGravity = videoGravity
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = false
+        controller.entersFullScreenWhenPlaybackBegins = false
+        controller.exitsFullScreenWhenPlaybackEnds = false
+        controller.view.backgroundColor = .black
+        return controller
     }
 
-    func updateUIView(_ uiView: PlayerContainerView, context: Context) {
-        uiView.playerLayer.player = player
-        uiView.playerLayer.videoGravity = videoGravity
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        if controller.player !== player {
+            controller.player = player
+        }
+        controller.videoGravity = videoGravity
+        controller.showsPlaybackControls = true
     }
-}
 
-final class PlayerContainerView: UIView {
-    override class var layerClass: AnyClass { AVPlayerLayer.self }
-
-    var playerLayer: AVPlayerLayer {
-        layer as! AVPlayerLayer
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: Void) {
+        controller.player = nil
     }
 }
 
@@ -3483,7 +4115,6 @@ struct RecipeAskSheet: View {
     @State private var presentedAdaptedRecipe: PresentedRecipeDetail?
     @State private var isAddingAdaptedRecipeToPrep = false
     @State private var onboardingResult: RecipeAdaptationResponse?
-    @State private var isOnboardingGenerating = false
 
     private var accessToken: String? {
         store.authSession?.accessToken
@@ -3495,7 +4126,7 @@ struct RecipeAskSheet: View {
             return !(userID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
                 && !viewModel.isGenerating
         case .onboarding:
-            return !isOnboardingGenerating
+            return true
         }
     }
 
@@ -3504,7 +4135,7 @@ struct RecipeAskSheet: View {
         case .live:
             return viewModel.isGenerating
         case .onboarding:
-            return isOnboardingGenerating
+            return false
         }
     }
 
@@ -3549,7 +4180,7 @@ struct RecipeAskSheet: View {
         case .live:
             Task {
                 guard let session = await store.freshUserDataSession() else {
-                    viewModel.errorMessage = "Sign in again to ask Ounje."
+                    viewModel.errorMessage = "Sign in again to remix this recipe."
                     return
                 }
                 let response = await viewModel.adapt(
@@ -3566,14 +4197,8 @@ struct RecipeAskSheet: View {
             }
         case let .onboarding(config):
             guard let fixture = onboardingFixtures.first(where: { $0.intent == intent }) else { return }
-            onboardingResult = nil
-            isOnboardingGenerating = true
-
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 2_300_000_000)
-                guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
                 onboardingResult = fixture.makeResponse(from: config.demoRecipe)
-                isOnboardingGenerating = false
             }
         }
     }
@@ -3638,7 +4263,7 @@ struct RecipeAskSheet: View {
                 subtitle: detail.title,
                 systemImage: shouldReplaceOriginal ? "arrow.triangle.2.circlepath" : "plus.circle.fill",
                 thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
-                destination: .appTab(.prep)
+                destination: .plans
             )
         }
     }
@@ -3670,7 +4295,7 @@ struct RecipeAskSheet: View {
 
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .center) {
-                        SleeScriptDisplayText("Ask Ounje", size: 30, color: OunjePalette.primaryText)
+                        SleeScriptDisplayText("Make it yours", size: 30, color: OunjePalette.primaryText)
 
                         if isLiveMode {
                             Spacer(minLength: 12)
@@ -3701,13 +4326,13 @@ struct RecipeAskSheet: View {
                             .fontWeight(.bold)
                         + Text(isLiveMode
                             ? " Did you have a special request about this "
-                            : " Pick one of these guided edits for this "
+                            : " Pick a guided edit for "
                         )
                         + Text(recipeTitle)
                             .underline(true, color: OunjePalette.primaryText.opacity(0.86))
                         + Text(isLiveMode
-                            ? " recipe? I can modify it based on your dietary restrictions, taste preferences and more. Just ask!"
-                            : " recipe? Choose a direction and Ounje will show you how it changes."
+                            ? " recipe? Tell Ounje what you want changed, from taste and nutrition to time and technique."
+                            : ". Choose a direction and Ounje will show you how it changes."
                         )
                     )
                     .font(.system(size: 16, weight: .medium))
@@ -3825,9 +4450,12 @@ struct RecipeAskSheet: View {
                 toastCenter: toastCenter,
                 onOpenToastDestination: onOpenToastDestination,
                 onboardingContext: onboardingConfig.map { config in
-                    .adaptedDemo(onContinue: {
-                        completeOnboardingRecipeFlow(config)
-                    })
+                    .adaptedDemo(
+                        baseDetail: config.demoRecipe.detail,
+                        onContinue: {
+                            completeOnboardingRecipeFlow(config)
+                        }
+                    )
                 }
             )
             .environmentObject(savedStore)
@@ -3999,10 +4627,6 @@ struct OnboardingRecipeAskInlineResultPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             RecipeAskChangeSummaryText(summary: summary)
 
-            if result.recipeDetail.hasCompleteDisplayMacros {
-                OnboardingRecipeNutritionNote(detail: result.recipeDetail)
-            }
-
             RecipeAdaptedPreviewCard(
                 result: result,
                 baseImageURL: baseImageURL,
@@ -4034,53 +4658,6 @@ struct OnboardingRecipeAskInlineResultPanel: View {
             .disabled(isSaved)
         }
         .padding(.top, 6)
-    }
-}
-
-struct OnboardingRecipeNutritionNote: View {
-    let detail: RecipeDetailData
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "chart.bar.fill")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(OunjePalette.accent)
-
-            HStack(spacing: 6) {
-                if let kcal = detail.caloriesKcal {
-                    Text("~\(Int(kcal.rounded())) kcal")
-                        .font(.system(size: 11.5, weight: .black, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-                }
-                if let p = detail.proteinG {
-                    nutritionPill("\(Int(p.rounded()))g protein")
-                }
-                if let c = detail.carbsG {
-                    nutritionPill("\(Int(c.rounded()))g carbs")
-                }
-                if let f = detail.fatG {
-                    nutritionPill("\(Int(f.rounded()))g fat")
-                }
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.72))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(OunjePalette.accent.opacity(0.22), lineWidth: 1)
-                )
-        )
-    }
-
-    private func nutritionPill(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .semibold, design: .rounded))
-            .foregroundStyle(OunjePalette.secondaryText)
     }
 }
 
@@ -4303,7 +4880,7 @@ struct RecipeAdaptationResultSheet: View {
                 .disabled(isSaved)
 
                 Button(action: onAddToPrep) {
-                    Text("Add to prep")
+                    Text("Add to plan")
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.76)
@@ -4338,6 +4915,7 @@ struct RecipeAdaptedPreviewCard: View {
     let baseImageURL: URL?
     let showsOnboardingCue: Bool
     let onOpen: () -> Void
+    @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
     init(
         result: RecipeAdaptationResponse,
@@ -4358,13 +4936,20 @@ struct RecipeAdaptedPreviewCard: View {
         }
     }
 
+    private var resolvedTitleStyle: RecipeTypographyStyle {
+        showsOnboardingCue ? .playful : RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue)
+    }
+
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(result.adaptedRecipe.title)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(OunjePalette.primaryText)
+                    RecipeTypographyTitleText(
+                        result.adaptedRecipe.title,
+                        size: resolvedTitleStyle == .clean ? 18 : 20,
+                        color: OunjePalette.primaryText,
+                        style: resolvedTitleStyle
+                    )
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
 
@@ -5825,27 +6410,20 @@ struct RecipeDetailLoadingSections: View {
 
 struct RecipeDetailHydratingState: View {
     let isLoading: Bool
-    let message: String?
     let onRetry: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            if isLoading {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(OunjePalette.softCream)
-            } else {
-                Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.94, green: 0.53, blue: 0.49))
-            }
+            ProgressView()
+                .progressViewStyle(.circular)
+                .tint(OunjePalette.softCream)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(isLoading ? "Loading full recipe details" : "Full recipe details unavailable")
+                Text("Finishing recipe details")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(OunjePalette.primaryText)
 
-                Text(isLoading ? "Showing the saved card while Ounje hydrates ingredients and steps." : (message ?? "Try again to fetch ingredients and steps."))
+                Text(isLoading ? "Ingredients and steps are loading in the background." : "Refresh to continue loading ingredients and steps.")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -5854,7 +6432,7 @@ struct RecipeDetailHydratingState: View {
             Spacer(minLength: 8)
 
             if !isLoading {
-                Button("Retry", action: onRetry)
+                Button("Refresh", action: onRetry)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(OunjePalette.softCream)
                     .buttonStyle(.plain)
@@ -5867,35 +6445,6 @@ struct RecipeDetailHydratingState: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(OunjePalette.stroke.opacity(0.76), lineWidth: 1)
-                )
-        )
-    }
-}
-
-struct RecipeDetailLoadFailedState: View {
-    let message: String
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            RecipeDetailSectionHeader(title: "Recipe unavailable")
-
-            Text(message)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(OunjePalette.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button("Try again", action: onRetry)
-                .buttonStyle(PrimaryPillButtonStyle())
-                .frame(maxWidth: 180)
-        }
-        .padding(24)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(OunjePalette.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(OunjePalette.stroke, lineWidth: 1)
                 )
         )
     }

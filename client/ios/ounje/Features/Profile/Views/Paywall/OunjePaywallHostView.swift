@@ -267,14 +267,14 @@ struct OunjePaywallHostView: View {
     }
 
     private var paywallTitle: String {
-        "Try Ounje"
+        "Cook the recipes you save"
     }
 
     private var paywallBullets: [String] {
         [
-            "Unlimited Recipe Imports + AI Edits",
-            "Intelligent Shopping Agents",
-            "Fully Personalized Prep"
+            "Import from TikTok, Instagram, photos, and links",
+            "Adapt recipes to fit the way you eat",
+            "Keep plans and shopping lists connected"
         ]
     }
 
@@ -341,6 +341,9 @@ struct OunjePaywallHostView: View {
     }
 
     private func introTrialAvailable(for plan: OunjeMembershipPlan) -> Bool {
+        if OunjeLaunchFlags.forcePaywallPreview {
+            return true
+        }
         guard let snapshot = store.availableMembershipProducts[plan] else {
             return true
         }

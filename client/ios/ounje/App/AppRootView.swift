@@ -23,6 +23,7 @@ struct OunjeAppScene: View {
     @StateObject private var toastCenter = AppToastCenter()
     @StateObject private var notificationCenter = AppNotificationCenterManager()
     @StateObject private var realtimeCoordinator = AppRealtimeInvalidationCoordinator()
+    @StateObject private var firstRunGuide = FirstRunGuideCoordinator()
 
     var body: some View {
         AppRootView()
@@ -31,6 +32,7 @@ struct OunjeAppScene: View {
             .environmentObject(toastCenter)
             .environmentObject(notificationCenter)
             .environmentObject(realtimeCoordinator)
+            .environmentObject(firstRunGuide)
             .preferredColorScheme(.dark)
             .task {
                 // Wire the push-token registrar's session provider once, on
@@ -66,6 +68,13 @@ struct RootView: View {
             if !store.isAuthenticated {
                 AuthenticationView()
                     .id("auth-entry")
+            } else if OunjeLaunchFlags.forcePaywallPreview {
+                OunjePaywallHostView(
+                    initialTier: .plus,
+                    isDismissible: false,
+                    onClose: { }
+                )
+                .id("debug-paywall-preview")
             } else if OunjeLaunchFlags.forceOnboardingIncomplete {
                 FirstLoginOnboardingView()
                     .id("forced-profile-onboarding")
@@ -513,20 +522,21 @@ final class AppNotificationCenterManager: ObservableObject {
     func scheduleTrialEndingReminder(entitlement: AppUserEntitlement?) async -> Bool {
         await refreshAuthorizationStatus()
         guard canPresentLocalNotifications,
+              entitlement?.metadata["is_on_trial"]?.lowercased() == "true",
               let expiresAt = entitlement?.expiresAt,
               expiresAt > Date()
         else {
             return false
         }
 
-        let reminderDate = expiresAt.addingTimeInterval(-24 * 60 * 60)
+        let reminderDate = expiresAt.addingTimeInterval(-2 * 24 * 60 * 60)
         guard reminderDate > Date().addingTimeInterval(60) else { return false }
 
         let identifier = "ounje-trial-ending-reminder"
         notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
 
         let content = UNMutableNotificationContent()
-        content.title = "Your Ounje trial ends tomorrow"
+        content.title = "Your Ounje trial ends in 2 days"
         content.body = "Keep it if it’s helping. You can manage or cancel anytime in App Store subscriptions."
         content.sound = .default
         content.categoryIdentifier = "OUNJE_TRIAL_REMINDER"
@@ -622,11 +632,11 @@ final class AppNotificationCenterManager: ObservableObject {
 
         return await scheduleImmediateLocalNotification(
             identifier: identifier,
-            title: "Added to queue",
+            title: "Import started",
             body: body,
             categoryIdentifier: "OUNJE_RECIPE_IMPORT",
             threadIdentifier: "recipe-import",
-            deepLink: "ounje://imports"
+            deepLink: "ounje://import-status"
         )
     }
 
@@ -899,6 +909,7 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
     func reconcileCompletedImports(
         _ completedItems: [RecipeImportCompletedItem],
         accessToken: String?,
+        onCompletedSavedImport: ((RecipeImportCompletedItem) async -> Void)? = nil,
         onCompletedPreppedImport: ((RecipeImportResponse) async -> Void)? = nil
     ) async {
         let currentEnvelopes = (try? SharedRecipeImportInbox.readAll()) ?? []
@@ -907,15 +918,32 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
             return
         }
 
-        let matchedIDs: [String] = completedItems.isEmpty
+        let matchedCompletedImports: [(SharedRecipeImportEnvelope, RecipeImportCompletedItem)] = completedItems.isEmpty
             ? []
-            : currentEnvelopes
-                .filter { envelope in
-                    guard !envelope.isPinnedTypedImport else { return false }
-                    guard envelope.targetState != "prepped" else { return false }
-                    return completedItems.contains(where: { $0.matches(envelope: envelope) })
+            : currentEnvelopes.compactMap { envelope in
+                guard !envelope.isPinnedTypedImport else { return nil }
+                guard let item = completedItems.first(where: { $0.matches(envelope: envelope) }) else {
+                    return nil
                 }
-                .map(\.id)
+                return (envelope, item)
+            }
+        let matchedIDs = matchedCompletedImports.map { $0.0.id }
+
+        for (envelope, item) in matchedCompletedImports {
+            if envelope.targetState == "prepped" {
+                if let response = try? await RecipeImportAPIService.shared.fetchImportJob(
+                    jobID: item.id,
+                    accessToken: accessToken
+                ) {
+                    if let detail = response.recipeDetail {
+                        await RecipeDetailService.shared.cacheDetail(detail)
+                    }
+                    await onCompletedPreppedImport?(response)
+                }
+            } else {
+                await onCompletedSavedImport?(item)
+            }
+        }
 
         if !matchedIDs.isEmpty {
             matchedIDs.forEach { envelopeID in
@@ -1000,7 +1028,9 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
                     lastAttemptAt: envelope.lastAttemptAt,
                     serverSubmittedAt: envelope.serverSubmittedAt ?? response.job.sharedImportEnvelope.serverSubmittedAt,
                     lastError: response.job.errorMessage ?? envelope.lastError,
-                    updatedAt: Date()
+                    activeStage: response.job.sharedImportEnvelope.activeStage,
+                    stageStartedAt: response.job.sharedImportEnvelope.stageStartedAt,
+                    updatedAt: response.job.sharedImportEnvelope.updatedAt
                 )
                 try? SharedRecipeImportInbox.update(healedEnvelope)
             } catch {
@@ -1048,7 +1078,9 @@ private final class SharedRecipeImportInboxStore: ObservableObject {
                 lastAttemptAt: match.lastAttemptAt ?? localEnvelope.lastAttemptAt,
                 serverSubmittedAt: localEnvelope.serverSubmittedAt ?? match.serverSubmittedAt ?? match.createdAt,
                 lastError: match.lastError ?? localEnvelope.lastError,
-                updatedAt: Date()
+                activeStage: match.activeStage ?? localEnvelope.activeStage,
+                stageStartedAt: match.stageStartedAt ?? localEnvelope.stageStartedAt,
+                updatedAt: match.updatedAt ?? localEnvelope.updatedAt
             )
             try? SharedRecipeImportInbox.update(reconciled)
         }
@@ -1067,6 +1099,7 @@ private final class RecipeImportHistoryStore: ObservableObject {
     private var lastRefreshAt: Date?
     private let passiveRefreshTTL: TimeInterval = 45
     private var locallyDeletedQueueIDs: Set<String> = []
+    private var isRefreshing = false
 
     var badgeCount: Int {
         totalCompletedCount
@@ -1096,10 +1129,27 @@ private final class RecipeImportHistoryStore: ObservableObject {
            Date().timeIntervalSince(lastRefreshAt) < passiveRefreshTTL {
             return
         }
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         if let page = try? await RecipeImportAPIService.shared.fetchCompletedImports(userID: userID, accessToken: accessToken) {
-            completedItems = page.items.sorted { left, right in
-                completedImportSortDate(for: left) > completedImportSortDate(for: right)
-            }
+            completedItems = page.items
+                .enumerated()
+                .map { index, item in
+                    (
+                        index: index,
+                        item: item,
+                        date: completedImportSortDate(for: item)
+                    )
+                }
+                .sorted { left, right in
+                    if left.date == right.date {
+                        return left.index < right.index
+                    }
+                    return left.date > right.date
+                }
+                .map(\.item)
             totalCompletedCount = page.totalCount
         }
         if let page = try? await RecipeImportAPIService.shared.fetchImportQueue(userID: userID, accessToken: accessToken) {
@@ -1114,23 +1164,9 @@ private final class RecipeImportHistoryStore: ObservableObject {
     }
 
     private func completedImportSortDate(for item: RecipeImportCompletedItem) -> Date {
-        parseImportDate(item.createdAt)
-            ?? parseImportDate(item.completedAt)
+        RecipeImportDateParser.parse(item.createdAt)
+            ?? RecipeImportDateParser.parse(item.completedAt)
             ?? .distantPast
-    }
-
-    private func parseImportDate(_ raw: String?) -> Date? {
-        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
-            return nil
-        }
-        let fractionalFormatter = ISO8601DateFormatter()
-        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let parsed = fractionalFormatter.date(from: raw) {
-            return parsed
-        }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: raw)
     }
 
     func removeQueuedImportImmediately(_ envelope: SharedRecipeImportEnvelope) {
@@ -1145,23 +1181,39 @@ private final class RecipeImportHistoryStore: ObservableObject {
     }
 }
 
+private enum RecipeImportDateParser {
+    private static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let standardFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    static func parse(_ raw: String?) -> Date? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        return fractionalFormatter.date(from: raw) ?? standardFormatter.date(from: raw)
+    }
+}
+
 private func mergedSharedImportEnvelopes(
     local: [SharedRecipeImportEnvelope],
     backend: [SharedRecipeImportEnvelope],
     completed: [RecipeImportCompletedItem] = []
 ) -> [SharedRecipeImportEnvelope] {
-    let completedMatchedLocalIDs = Set(
-        local
-            .filter { envelope in
-                guard !envelope.isPinnedTypedImport else { return false }
-                guard !completed.isEmpty else { return false }
-                return completed.contains(where: { $0.matches(envelope: envelope) })
-            }
-            .map(\.id)
-    )
-    let filteredLocal = local.filter { !completedMatchedLocalIDs.contains($0.id) }
-    var merged = filteredLocal
-    var seenKeys = Set<String>()
+    let completedKeys = completed.reduce(into: Set<String>()) { keys, item in
+        keys.formUnion(item.reconciliationKeys)
+    }
+    let filteredLocal = local.filter { envelope in
+        envelope.isPinnedTypedImport
+            || completedKeys.isDisjoint(with: envelope.reconciliationKeys)
+    }
 
     func keys(for envelope: SharedRecipeImportEnvelope) -> [String] {
         [
@@ -1177,16 +1229,44 @@ private func mergedSharedImportEnvelopes(
         }
     }
 
-    for envelope in filteredLocal {
-        keys(for: envelope).forEach { seenKeys.insert($0) }
+    var backendByKey: [String: SharedRecipeImportEnvelope] = [:]
+    for envelope in backend {
+        for key in keys(for: envelope) {
+            backendByKey[key] = envelope
+        }
     }
 
-    for envelope in backend {
-        let envelopeKeys = keys(for: envelope)
-        guard envelopeKeys.allSatisfy({ !seenKeys.contains($0) }) else { continue }
-        merged.append(envelope)
-        envelopeKeys.forEach { seenKeys.insert($0) }
+    var consumedBackendIDs = Set<String>()
+    var merged = filteredLocal.map { localEnvelope in
+        guard let backendEnvelope = keys(for: localEnvelope).compactMap({ backendByKey[$0] }).first else {
+            return localEnvelope
+        }
+        consumedBackendIDs.insert(backendEnvelope.id)
+        return SharedRecipeImportEnvelope(
+            id: localEnvelope.id,
+            createdAt: localEnvelope.createdAt,
+            jobID: backendEnvelope.jobID ?? localEnvelope.jobID,
+            targetState: localEnvelope.targetState,
+            sourceText: localEnvelope.sourceText?.isEmpty == false ? localEnvelope.sourceText : backendEnvelope.sourceText,
+            sourceURLString: localEnvelope.sourceURLString ?? backendEnvelope.sourceURLString,
+            canonicalSourceURLString: backendEnvelope.canonicalSourceURLString ?? localEnvelope.canonicalSourceURLString,
+            sourceApp: localEnvelope.sourceApp ?? backendEnvelope.sourceApp,
+            attachments: localEnvelope.attachments,
+            processingState: nonRegressingImportState(
+                current: localEnvelope.normalizedProcessingState,
+                incoming: backendEnvelope.normalizedProcessingState
+            ),
+            attemptCount: backendEnvelope.attemptCount ?? localEnvelope.attemptCount,
+            lastAttemptAt: backendEnvelope.lastAttemptAt ?? localEnvelope.lastAttemptAt,
+            serverSubmittedAt: localEnvelope.serverSubmittedAt ?? backendEnvelope.serverSubmittedAt ?? backendEnvelope.createdAt,
+            lastError: backendEnvelope.lastError ?? localEnvelope.lastError,
+            activeStage: backendEnvelope.activeStage ?? localEnvelope.activeStage,
+            stageStartedAt: backendEnvelope.stageStartedAt ?? localEnvelope.stageStartedAt,
+            updatedAt: backendEnvelope.updatedAt ?? localEnvelope.updatedAt
+        )
     }
+
+    merged.append(contentsOf: backend.filter { !consumedBackendIDs.contains($0.id) })
 
     return merged
 }
@@ -1452,8 +1532,6 @@ private struct AuthenticationView: View {
     @State private var authStatusMessage: String?
     @State private var appleSignInNonce = ""
     @State private var revealContent = false
-    @State private var showQuickTour = false
-    @StateObject private var appleSignInDriver = AppleSignInPresentationDriver()
 
     var body: some View {
         ZStack {
@@ -1504,22 +1582,6 @@ private struct AuthenticationView: View {
                                     .padding(.bottom, 4)
                             }
 
-                            Button {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                showQuickTour = true
-                            } label: {
-                                Text("Take a quick tour")
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .foregroundStyle(.black.opacity(0.9))
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.plain)
-                            .frame(height: 48)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Color.white.opacity(0.94))
-                            )
-
                             SignInWithAppleButton(.signIn) { request in
                                 prepareAppleSignInRequest(request)
                             } onCompletion: { result in
@@ -1529,7 +1591,7 @@ private struct AuthenticationView: View {
                             .frame(height: 48)
                             .clipShape(Capsule(style: .continuous))
 
-                            if allowsLocalOnlyAuthFallback {
+                            if showsSimulatorLocalAuthShortcut {
                                 Button {
                                     Task { @MainActor in
                                         await completeSimulatorLocalSignIn()
@@ -1574,33 +1636,6 @@ private struct AuthenticationView: View {
                 revealContent = true
             }
         }
-        .fullScreenCover(isPresented: $showQuickTour) {
-            WelcomeQuickTourView(
-                onClose: {
-                    showQuickTour = false
-                },
-                onAppleRequest: { request in
-                    prepareAppleSignInRequest(request)
-                },
-                onAppleCompletion: { result in
-                    handleAppleSignIn(result)
-                },
-                onAppleSignInRequested: {
-                    startAppleSignIn()
-                }
-            )
-        }
-    }
-
-    private func startAppleSignIn() {
-        appleSignInDriver.start(
-            configure: { request in
-                prepareAppleSignInRequest(request)
-            },
-            completion: { result in
-                handleAppleSignIn(result)
-            }
-        )
     }
 
     private func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
@@ -1711,6 +1746,10 @@ private struct AuthenticationView: View {
         OunjeLaunchFlags.allowsLocalOnlyAuthFallback
     }
 
+    private var showsSimulatorLocalAuthShortcut: Bool {
+        false
+    }
+
     private func isSimulatorAppleAuthInfrastructureFailure(_ error: Error) -> Bool {
 #if DEBUG && targetEnvironment(simulator)
         guard let authError = error as? ASAuthorizationError else { return false }
@@ -1761,7 +1800,6 @@ private struct AuthenticationView: View {
             profile: localProfile,
             lastOnboardingStep: FirstLoginOnboardingView.SetupStep.completedRawValue
         )
-        showQuickTour = false
         authErrorMessage = nil
         authStatusMessage = fallbackStatusMessage ?? "Signed in locally for simulator."
         await store.refreshMembershipEntitlement(trigger: "simulator-local-sign-in")
@@ -1795,7 +1833,6 @@ private struct AuthenticationView: View {
         } else {
             store.persistAuthSession(session)
         }
-        showQuickTour = false
         authStatusMessage = cachedCompleted
             ? "Signed in with \(session.provider.title)."
             : "Signed in. Let's finish setup."
@@ -1905,52 +1942,6 @@ private struct AuthenticationView: View {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-}
-
-@MainActor
-private final class AppleSignInPresentationDriver: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
-    private var completion: ((Result<ASAuthorization, Error>) -> Void)?
-    private var isPresenting = false
-
-    func start(
-        configure: (ASAuthorizationAppleIDRequest) -> Void,
-        completion: @escaping (Result<ASAuthorization, Error>) -> Void
-    ) {
-        guard !isPresenting else { return }
-
-        let request = ASAuthorizationAppleIDProvider().createRequest()
-        configure(request)
-
-        self.completion = completion
-        isPresenting = true
-
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate = self
-        controller.presentationContextProvider = self
-        controller.performRequests()
-    }
-
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
-        finish(.success(authorization))
-    }
-
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        finish(.failure(error))
-    }
-
-    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow) ?? UIWindow()
-    }
-
-    private func finish(_ result: Result<ASAuthorization, Error>) {
-        let completion = completion
-        self.completion = nil
-        isPresenting = false
-        completion?(result)
-    }
 }
 
 private struct WelcomeVideoBackgroundView: View {
@@ -2088,186 +2079,6 @@ private final class WelcomeVideoPlayerView: UIView {
     }
 }
 
-private struct WelcomeQuickTourView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let onClose: () -> Void
-    let onAppleRequest: (ASAuthorizationAppleIDRequest) -> Void
-    let onAppleCompletion: (Result<ASAuthorization, Error>) -> Void
-    let onAppleSignInRequested: () -> Void
-
-    private let pages = WelcomeQuickTourPage.orderedPages
-
-    @State private var selectedPage = 0
-    @State private var cardEntered = false
-    @State private var isHandlingLastPageSwipe = false
-
-    var body: some View {
-        GeometryReader { proxy in
-            let topVisualHeight = min(proxy.size.height * 0.71, 640)
-            let tourBackground = Color(red: 0.085, green: 0.085, blue: 0.082)
-
-            ZStack {
-                tourBackground
-                    .ignoresSafeArea()
-
-                TabView(selection: $selectedPage) {
-                    ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
-                        VStack(spacing: 0) {
-                                ZStack(alignment: .bottom) {
-                                    Image(page.assetName)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: proxy.size.width, height: topVisualHeight)
-                                        .clipped()
-
-                                    LinearGradient(
-                                        colors: [
-                                            tourBackground.opacity(0),
-                                            tourBackground.opacity(0.62),
-                                            tourBackground
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                    .frame(height: 150)
-                                }
-                                .offset(y: cardEntered ? 0 : -180)
-                                .opacity(cardEntered ? 1 : 0)
-
-                            VStack(spacing: 8) {
-                                Text(page.title)
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.96))
-                                    .multilineTextAlignment(.center)
-
-                                Text(page.subtitle)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.58))
-                                    .multilineTextAlignment(.center)
-                                    .lineSpacing(1)
-                            }
-                            .frame(maxWidth: 290)
-                            .padding(.top, 30)
-
-                            Spacer(minLength: 16)
-                                .frame(minHeight: 92)
-                        }
-                        .ignoresSafeArea(edges: .top)
-                        .tag(index)
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .ignoresSafeArea(edges: .top)
-
-                VStack(spacing: 14) {
-                    HStack(spacing: 5) {
-                        ForEach(pages.indices, id: \.self) { pageIndex in
-                            Capsule(style: .continuous)
-                                .fill(pageIndex == selectedPage ? Color.white.opacity(0.94) : Color.white.opacity(0.22))
-                                .frame(width: pageIndex == selectedPage ? 14 : 4, height: 4)
-                                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: selectedPage)
-                        }
-                    }
-
-                    SignInWithAppleButton(.signIn) { request in
-                        onAppleRequest(request)
-                    } onCompletion: { result in
-                        onAppleCompletion(result)
-                    }
-                    .signInWithAppleButtonStyle(.black)
-                    .frame(width: max(1, min(340, proxy.size.width - 56)), height: 48)
-                    .clipShape(Capsule(style: .continuous))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, max(18, proxy.safeAreaInsets.bottom + 8))
-                .zIndex(6)
-
-                HStack {
-                    Spacer()
-                    Button {
-                        dismiss()
-                        onClose()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .contentShape(Rectangle())
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .padding(.top, max(12, proxy.safeAreaInsets.top + 4))
-                .padding(.trailing, 18)
-                .zIndex(8)
-            }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 28)
-                    .onEnded { value in
-                        guard selectedPage == pages.indices.last else { return }
-                        guard !isHandlingLastPageSwipe else { return }
-                        let horizontalIntent = abs(value.translation.width) > abs(value.translation.height) * 1.2
-                        let didSwipeForward = value.translation.width < -54 || value.predictedEndTranslation.width < -92
-                        guard horizontalIntent, didSwipeForward else { return }
-
-                        isHandlingLastPageSwipe = true
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        onAppleSignInRequested()
-
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            isHandlingLastPageSwipe = false
-                        }
-                    }
-            )
-            .onAppear {
-                withAnimation(.spring(response: 0.62, dampingFraction: 0.83).delay(0.06)) {
-                    cardEntered = true
-                }
-            }
-        }
-    }
-}
-
-private struct WelcomeQuickTourPage {
-    let assetName: String
-    let title: String
-    let subtitle: String
-
-    static let orderedPages: [WelcomeQuickTourPage] = [
-        WelcomeQuickTourPage(
-            assetName: "FeatureCard4",
-            title: "Ounje handles the hard part.",
-            subtitle: "We take care of the sourcing, plan, and shopping so you can just show up & do what you love."
-        ),
-        WelcomeQuickTourPage(
-            assetName: "FeatureCard5",
-            title: "Send recipes from anywhere.",
-            subtitle: "Share from TikTok or Instagram, or take a picture and we’ll build the recipe."
-        ),
-        WelcomeQuickTourPage(
-            assetName: "FeatureCard2",
-            title: "Build a smarter cart.",
-            subtitle: "Collapse your next prep into one shop list that remembers what you already have."
-        ),
-        WelcomeQuickTourPage(
-            assetName: "FeatureCard8",
-            title: "Agents shop with your say-so.",
-            subtitle: "Connect Instacart and Ounje can find better groceries. You review before checkout."
-        ),
-        WelcomeQuickTourPage(
-            assetName: "FeatureCard1",
-            title: "Edit any recipe with AI.",
-            subtitle: "Make it healthier, add protein, go keto, or change the vibe in one tap."
-        ),
-        WelcomeQuickTourPage(
-            assetName: "FeatureCard9",
-            title: "Build Ounje with us.",
-            subtitle: "Send feedback straight to the founders and help shape what ships next."
-        )
-    ]
-}
-
 private struct MealPlannerShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
@@ -2275,6 +2086,7 @@ private struct MealPlannerShellView: View {
     @EnvironmentObject private var notificationCenter: AppNotificationCenterManager
     @EnvironmentObject private var runtimeStore: UserRuntimeStore
     @EnvironmentObject private var realtimeCoordinator: AppRealtimeInvalidationCoordinator
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
     @ObservedObject private var toastCenter: AppToastCenter
     @StateObject private var sharedImportInbox = SharedRecipeImportInboxStore()
     @StateObject private var recipeImportHistory = RecipeImportHistoryStore()
@@ -2284,21 +2096,17 @@ private struct MealPlannerShellView: View {
     @Namespace private var recipeTransitionNamespace
     @State private var selectedTab: AppTab
     @State private var discoverSearchText = ""
-    @State private var cookbookSearchText = ""
     @State private var presentedRecipe: PresentedRecipeDetail?
     @State private var focusedCartRecipeID: String?
     @State private var requestedCookbookCycleID: String?
     @State private var requestedImportQueueTab: SharedRecipeImportQueueTab?
     @State private var isProcessingSharedImports = false
-    @State private var prewarmedCompletedImportIDs = Set<String>()
+    @State private var surfacedCompletedImportIDs = Set<String>()
     @State private var lastSharedImportRefreshAt = Date.distantPast
     @State private var previousSelectedTab: AppTab
     @State private var tabTransitionDirection: CGFloat = 1
     @State private var requestedCookbookImportText: String?
     @State private var isPhotoImportComposerPresented = false
-    @State private var photoImportComposerContext: CookbookComposerContext = .prepped
-    @State private var isProcessingPrepPhotoImport = false
-    @State private var showPrepCreateCue = false
 
     private enum SharedImportProcessingScope {
         case queued
@@ -2315,7 +2123,9 @@ private struct MealPlannerShellView: View {
             || nsError.code == NSURLErrorCannotConnectToHost
     }
 
-    private static let selectedTabStorageKey = "ounje-selected-tab-v1"
+    // Move existing installs onto the new Recipes-first home once. Their
+    // subsequent choice continues to persist under this key.
+    private static let selectedTabStorageKey = "ounje-selected-tab-v3"
 
     init(toastCenter: AppToastCenter) {
         let initialTab = Self.persistedSelectedTab()
@@ -2326,9 +2136,15 @@ private struct MealPlannerShellView: View {
     }
 
     private static func persistedSelectedTab() -> AppTab {
-        guard let rawValue = UserDefaults.standard.string(forKey: selectedTabStorageKey),
+        guard let rawValue = UserDefaults.standard.string(forKey: selectedTabStorageKey) else {
+            return .cookbook
+        }
+        if rawValue == "prep" {
+            return .cookbook
+        }
+        guard
               let tab = AppTab(rawValue: rawValue) else {
-            return .discover
+            return .cookbook
         }
         return tab
     }
@@ -2358,7 +2174,7 @@ private struct MealPlannerShellView: View {
                         )
                             .id(toast.id)
                             .padding(.horizontal, 16)
-                            .padding(.top, 12)
+                            .padding(.top, AppToastLayout.topInset)
                             .transition(
                                 .asymmetric(
                                     insertion: .modifier(
@@ -2391,7 +2207,9 @@ private struct MealPlannerShellView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 BottomNavigationDock(
                     selectedTab: $selectedTab,
-                    safeAreaBottom: proxy.safeAreaInsets.bottom
+                    onAddRecipe: {
+                        isPhotoImportComposerPresented = true
+                    }
                 )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .animation(OunjeMotion.tabSpring, value: selectedTab)
@@ -2418,11 +2236,13 @@ private struct MealPlannerShellView: View {
                 }
             }
         }
+        .firstRunGuideHost()
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
             savedStore.configureAuthSessionProvider {
                 await savedRecipesSession()
             }
+            savedStore.activate(authSession: store.authSession)
             savedStore.onSavedRecipesChanged = { userID, recipes in
                 runtimeStore.updateSavedRecipes(userID: userID, recipes: recipes)
             }
@@ -2430,19 +2250,47 @@ private struct MealPlannerShellView: View {
                 savedStore.applyRuntimeSnapshot(snapshot)
             }
         }
+        .onChange(of: store.authSession) { authSession in
+            savedStore.activate(authSession: authSession)
+        }
         .task(id: runtimeSavedSnapshotSeedKey) {
             if let snapshot = runtimeStore.snapshot {
                 savedStore.applyRuntimeSnapshot(snapshot)
             }
         }
         .task(id: store.authSession?.userID ?? "signed-out") {
-            prewarmedCompletedImportIDs.removeAll()
+            surfacedCompletedImportIDs.removeAll()
         }
         .task(id: savedStoreAuthKey) {
             await savedStore.bootstrap(authSession: await savedRecipesSession())
         }
         .task(id: "fresh-plan::\(store.authSession?.userID ?? "signed-out")") {
             await store.ensureFreshPlanIfNeeded()
+        }
+        .task(id: "\(firstRunGuideBootstrapKey)::\(scenePhase == .active ? "active" : "inactive")") {
+            guard scenePhase == .active else { return }
+#if DEBUG
+            if ProcessInfo.processInfo.environment["OUNJE_SHOW_FIRST_RUN_GUIDE"] == "1" {
+                await firstRunGuide.replay(
+                    userID: store.authSession?.userID,
+                    profile: store.profile,
+                    accessToken: store.authSession?.accessToken
+                )
+            } else {
+                await firstRunGuide.bootstrap(
+                    userID: store.authSession?.userID,
+                    profile: store.profile,
+                    accessToken: store.authSession?.accessToken
+                )
+            }
+#else
+            await firstRunGuide.bootstrap(
+                userID: store.authSession?.userID,
+                profile: store.profile,
+                accessToken: store.authSession?.accessToken
+            )
+#endif
+            prepareFirstRunGuideLanding()
         }
         .task(id: discoverPrewarmKey) {
             guard scenePhase == .active else { return }
@@ -2455,18 +2303,37 @@ private struct MealPlannerShellView: View {
             guard scenePhase == .active else { return }
             await CartSupportWarmupService.prewarmLatestPlanCartSupport(for: store)
         }
-        .task(id: "shared-import::\(store.authSession?.userID ?? "signed-out")") {
-            await refreshSharedImportState(force: true)
-        }
-        .task(id: "shared-import-inbox::\(store.authSession?.userID ?? "signed-out")") {
-            await sharedImportInbox.refresh()
-        }
-        .task(id: "recipe-import-history::\(store.authSession?.userID ?? "signed-out")") {
+        .task(id: "recipe-import-state::\(store.authSession?.userID ?? "signed-out")") {
             await refreshSharedImportState(force: true)
             lastSharedImportRefreshAt = .now
         }
         .onReceive(NotificationCenter.default.publisher(for: .recipeImportHistoryNeedsRefresh)) { _ in
             Task {
+                await refreshSharedImportState(force: true)
+                lastSharedImportRefreshAt = .now
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ounjeRemoteNotificationReceived)) { notification in
+            let kind = String(describing: notification.userInfo?["kind"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard kind == "recipe_import_completed" || kind == "recipe_import_failed" else { return }
+            let jobID = String(describing: notification.userInfo?["job_id"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            Task {
+                if kind == "recipe_import_completed", !jobID.isEmpty,
+                   let session = await store.freshUserDataSession(),
+                   let response = try? await RecipeImportAPIService.shared.fetchImportJob(
+                       jobID: jobID,
+                       accessToken: session.accessToken
+                   ) {
+                    if response.job.targetState == "prepped" {
+                        await handleCompletedPreppedImport(response)
+                    } else {
+                        await handleCompletedSavedImport(response)
+                    }
+                }
                 await refreshSharedImportState(force: true)
                 lastSharedImportRefreshAt = .now
             }
@@ -2492,7 +2359,7 @@ private struct MealPlannerShellView: View {
                 }
 
                 if hasQueuedWork {
-                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: false)
+                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
                 }
 
                 let shouldRefreshSharedState = hasLiveImport || Date().timeIntervalSince(lastSharedImportRefreshAt) >= 30
@@ -2525,11 +2392,14 @@ private struct MealPlannerShellView: View {
             guard phase == .active else { return }
             Task {
                 consumePendingNotificationDeepLink()
-                await store.runAutomationPassIfNeeded(trigger: "scene_active")
+                if store.hasLiveInstacartActivity
+                    || (store.profile?.isAutoshopOptedIn == true && store.isInstacartProviderConnected) {
+                    await store.runAutomationPassIfNeeded(trigger: "scene_active")
+                }
                 await refreshSharedImportState(force: false)
                 lastSharedImportRefreshAt = .now
                 if hasQueuedSharedImportWork || hasLiveSharedImportWork {
-                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: false)
+                    await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
                     await refreshSharedImportState(force: true)
                     lastSharedImportRefreshAt = .now
                 }
@@ -2543,55 +2413,66 @@ private struct MealPlannerShellView: View {
             if newTab != .discover {
                 discoverSearchText = ""
             }
-            if newTab != .prep {
-                showPrepCreateCue = false
+            if newTab == .discover, firstRunGuide.phase == .discover {
+                firstRunGuide.advance(to: .discoverRecipe)
             }
         }
-        .onAppear {
-            activateFirstPrepCoachIfNeeded()
+        .onChange(of: presentedRecipe == nil) { isDismissed in
+            guard isDismissed,
+                  firstRunGuide.phase == .addRecipe,
+                  firstRunGuide.isSpotlightSuspended else { return }
+            firstRunGuide.setSpotlightSuspended(false)
+            if selectedTab != .discover {
+                selectedTab = .discover
+            }
         }
-        .onChange(of: store.pendingFirstPrepCoach) { _ in
-            activateFirstPrepCoachIfNeeded()
+        .onReceive(NotificationCenter.default.publisher(for: .ounjeReplayFirstRunGuideRequested)) { _ in
+            Task {
+                await firstRunGuide.replay(
+                    userID: store.authSession?.userID,
+                    profile: store.profile,
+                    accessToken: store.authSession?.accessToken
+                )
+                withAnimation(OunjeMotion.screenSpring) {
+                    selectedTab = .cookbook
+                }
+            }
         }
         .sheet(isPresented: $isPhotoImportComposerPresented) {
-            DiscoverComposerSheet(context: photoImportComposerContext, initialText: nil)
+            DiscoverComposerSheet(initialText: nil)
                 .environmentObject(savedStore)
                 .environmentObject(sharedImportInbox)
                 .environmentObject(store)
                 .environmentObject(toastCenter)
+                .environmentObject(firstRunGuide)
                 .presentationDetents([.height(430), .fraction(0.62), .large])
                 .presentationDragIndicator(.hidden)
         }
     }
 
-    /// First-run prep coach: bounce to the Prep tab, toast "your prep is ready", and
-    /// reveal a pointer at the add-recipe button. Triggered once by the store after a
-    /// new user finishes onboarding with a non-empty prep.
-    private func activateFirstPrepCoachIfNeeded() {
-        guard store.pendingFirstPrepCoach else { return }
-        store.pendingFirstPrepCoach = false
+    private var firstRunGuideBootstrapKey: String {
+        let userID = store.authSession?.userID ?? "signed-out"
+        let seed = FirstRunGuideCatalog.seedRecipeID(in: store.profile) ?? "not-eligible"
+        return "first-run-guide::\(userID)::\(seed)"
+    }
 
-        withAnimation(OunjeMotion.screenSpring) {
-            selectedTab = .prep
-        }
-        withAnimation(.easeInOut(duration: 0.4).delay(0.45)) {
-            showPrepCreateCue = true
-        }
-        toastCenter.show(
-            title: "Your prep is ready",
-            subtitle: "Feel free to add more.",
-            systemImage: "sparkles"
-        )
+    private func prepareFirstRunGuideLanding() {
+        // Completing onboarding is the one transition that intentionally lands
+        // on Recipes. Later phases remain wherever the user left them; their
+        // persisted tab and the highlighted action carry the guide forward
+        // without an unsolicited redirect on relaunch.
+        guard firstRunGuide.phase == .recipeSuggestion,
+              selectedTab != .cookbook else { return }
+        selectedTab = .cookbook
+    }
 
-        // Fade the pointer out on its own if the user doesn't engage with it.
-        Task {
-            try? await Task.sleep(nanoseconds: 9_000_000_000)
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    showPrepCreateCue = false
-                }
-            }
+    private func openRecipePlans() {
+        if let batchID = store.activeBatch?.id ?? store.latestPlan?.batches?.first?.id {
+            requestedCookbookCycleID = batchID.uuidString
+        } else if let planID = store.latestPlan?.id {
+            requestedCookbookCycleID = planID.uuidString
         }
+        selectedTab = .cookbook
     }
 
     private var shellTabTransition: AnyTransition {
@@ -2630,39 +2511,15 @@ private struct MealPlannerShellView: View {
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
-        case .prep:
-            PrepTabView(
-                selectedTab: $selectedTab,
-                requestedCookbookCycleID: $requestedCookbookCycleID,
-                recipeTransitionNamespace: recipeTransitionNamespace,
-                showCreateRecipeCue: showPrepCreateCue,
-                onSelectRecipe: { plannedRecipe in
-                    presentRecipeDetail(PresentedRecipeDetail(plannedRecipe: plannedRecipe))
-                },
-                onImportFoodPhotos: { items in
-                    Task {
-                        await importFoodPhotosToPrep(items)
-                    }
-                },
-                onCaptureFoodPhoto: { image in
-                    Task {
-                        await importCapturedFoodPhotoToPrep(image)
-                    }
-                },
-                onCreateNewRecipe: {
-                    showPrepCreateCue = false
-                    photoImportComposerContext = .prepped
-                    DispatchQueue.main.async {
-                        isPhotoImportComposerPresented = true
-                    }
-                }
-            )
         case .discover:
             DiscoverTabView(
                 selectedTab: $selectedTab,
                 searchText: $discoverSearchText,
                 recipeTransitionNamespace: recipeTransitionNamespace,
                 onSelectRecipe: { recipe in
+                    if firstRunGuide.phase == .discoverRecipe {
+                        firstRunGuide.advance(to: .recipeSave)
+                    }
                     presentRecipeDetail(PresentedRecipeDetail(recipeCard: recipe))
                 },
                 viewModel: discoverRecipesViewModel,
@@ -2671,7 +2528,6 @@ private struct MealPlannerShellView: View {
         case .cookbook:
                 CookbookTabView(
                     selectedTab: $selectedTab,
-                    searchText: $cookbookSearchText,
                     requestedCycleID: $requestedCookbookCycleID,
                     requestedImportQueueTab: $requestedImportQueueTab,
                     requestedImportText: $requestedCookbookImportText,
@@ -2725,299 +2581,94 @@ private struct MealPlannerShellView: View {
         await sharedImportInbox.reconcileCompletedImports(
             recipeImportHistory.completedItems,
             accessToken: session?.accessToken,
+            onCompletedSavedImport: { item in
+                await handleCompletedSavedImport(item, accessToken: session?.accessToken)
+            },
             onCompletedPreppedImport: { response in
                 await handleCompletedPreppedImport(response)
             }
         )
-        await prewarmCompletedImportDetails()
+    }
+
+    @MainActor
+    private func handleCompletedSavedImport(
+        _ item: RecipeImportCompletedItem,
+        accessToken: String?
+    ) async {
+        let normalizedStatus = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedStatus == "saved" else { return }
+
+        let completionID = item.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !completionID.isEmpty, surfacedCompletedImportIDs.insert(completionID).inserted else { return }
+
+        let response = try? await RecipeImportAPIService.shared.fetchImportJob(
+            jobID: item.id,
+            accessToken: accessToken
+        )
+        if let response {
+            surfacedCompletedImportIDs.remove(completionID)
+            await handleCompletedSavedImport(response)
+            return
+        }
+
+        guard let recipe = item.savedRecipeCard else {
+            surfacedCompletedImportIDs.remove(completionID)
+            return
+        }
+
+        savedStore.saveImportedRecipe(recipe, showToast: false, respectUnsave: false)
+        toastCenter.show(
+            title: "Recipe ready",
+            subtitle: recipe.title,
+            systemImage: "checkmark.circle.fill",
+            thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString,
+            destination: nil
+        )
+        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
+    }
+
+    @MainActor
+    private func handleCompletedSavedImport(_ response: RecipeImportResponse) async {
+        let completionID = response.job.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !completionID.isEmpty, surfacedCompletedImportIDs.insert(completionID).inserted else { return }
+        if let detail = response.recipeDetail {
+            await RecipeDetailService.shared.cacheDetail(detail)
+        }
+        guard let recipe = response.recipe ?? response.recipeDetail.map(\.importedRecipeCard) else {
+            surfacedCompletedImportIDs.remove(completionID)
+            return
+        }
+
+        savedStore.saveImportedRecipe(recipe, showToast: false, respectUnsave: false)
+        toastCenter.show(
+            title: "Recipe ready",
+            subtitle: recipe.title,
+            systemImage: "checkmark.circle.fill",
+            thumbnailURLString: recipe.imageURLString ?? recipe.heroImageURLString,
+            destination: nil
+        )
+        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
     }
 
     @MainActor
     private func handleCompletedPreppedImport(_ response: RecipeImportResponse) async {
         guard let detail = response.recipeDetail else { return }
+        let completionID = response.job.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !completionID.isEmpty, surfacedCompletedImportIDs.insert(completionID).inserted else { return }
         await RecipeDetailService.shared.cacheDetail(detail)
+        let recipe = response.recipe ?? detail.importedRecipeCard
+        savedStore.saveImportedRecipe(recipe, showToast: false, respectUnsave: false)
         await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
         toastCenter.show(
             title: "Added to next prep",
             subtitle: detail.title,
             systemImage: "sparkles",
             thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
-            destination: .appTab(.prep)
+            destination: nil
         )
         AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
     }
 
-    @MainActor
-    private func importFoodPhotosToPrep(_ items: [PhotosPickerItem]) async {
-        guard !isProcessingPrepPhotoImport else { return }
-        let selectedItems = Array(items.prefix(4))
-        guard !selectedItems.isEmpty else { return }
-
-        isProcessingPrepPhotoImport = true
-        toastCenter.showPersistent(
-            title: "Checking photo",
-            subtitle: "Ounje is building a recipe from it.",
-            systemImage: "camera.viewfinder"
-        )
-        defer { isProcessingPrepPhotoImport = false }
-
-        do {
-            let session = await store.freshUserDataSession()
-            var drafts: [RecipeImportMediaDraft] = []
-            for item in selectedItems {
-                if let draft = try await RecipeImportMediaDraft.load(
-                    from: item,
-                    userID: session?.userID,
-                    accessToken: session?.accessToken
-                ) {
-                    drafts.append(draft)
-                }
-            }
-
-            await finishFoodPhotoImportToPrep(drafts: drafts, sourceApp: "Ounje Photo")
-        } catch {
-            toastCenter.show(
-                title: "Photo import failed",
-                subtitle: error.localizedDescription,
-                systemImage: "exclamationmark.circle.fill",
-                destination: nil
-            )
-        }
-    }
-
-    @MainActor
-    private func importCapturedFoodPhotoToPrep(_ image: UIImage) async {
-        guard !isProcessingPrepPhotoImport else { return }
-
-        isProcessingPrepPhotoImport = true
-        toastCenter.showPersistent(
-            title: "Checking photo",
-            subtitle: "Ounje is building a recipe from it.",
-            systemImage: "camera.viewfinder"
-        )
-        defer { isProcessingPrepPhotoImport = false }
-
-        do {
-            let session = await store.freshUserDataSession()
-            let draft = try await RecipeImportMediaDraft.loadCapturedImage(
-                image,
-                userID: session?.userID,
-                accessToken: session?.accessToken
-            )
-            await finishFoodPhotoImportToPrep(drafts: [draft], sourceApp: "Ounje Camera")
-        } catch {
-            toastCenter.show(
-                title: "Photo import failed",
-                subtitle: error.localizedDescription,
-                systemImage: "exclamationmark.circle.fill",
-                destination: nil
-            )
-        }
-    }
-
-    @MainActor
-    private func finishFoodPhotoImportToPrep(drafts: [RecipeImportMediaDraft], sourceApp: String) async {
-        do {
-            guard !drafts.isEmpty else {
-                toastCenter.show(
-                    title: "No photo found",
-                    subtitle: "Pick a clear food photo and try again.",
-                    systemImage: "exclamationmark.circle.fill",
-                    destination: nil
-                )
-                return
-            }
-
-            let envelopeID = UUID().uuidString
-            let persistedAttachments = try persistSharedImportMediaDrafts(drafts, envelopeID: envelopeID)
-            let localEnvelope = SharedRecipeImportEnvelope(
-                id: envelopeID,
-                createdAt: Date(),
-                jobID: nil,
-                targetState: "prepped",
-                sourceText: "",
-                sourceURLString: nil,
-                canonicalSourceURLString: nil,
-                sourceApp: sourceApp,
-                attachments: persistedAttachments,
-                processingState: "queued",
-                attemptCount: 1,
-                lastAttemptAt: Date(),
-                serverSubmittedAt: nil,
-                lastError: nil,
-                updatedAt: Date()
-            )
-            try? SharedRecipeImportInbox.write(localEnvelope)
-            await sharedImportInbox.refresh()
-            await notificationCenter.sendRecipeImportQueuedNotification(
-                sourceTitle: sourceApp,
-                targetState: localEnvelope.targetState,
-                identifierSuffix: localEnvelope.id
-            )
-
-            // Cycle through human-readable pipeline stages so the user sees progress
-            // instead of a stale "Checking photo" banner for 15–30 seconds.
-            let progressStages: [(title: String, subtitle: String, icon: String)] = [
-                ("Analyzing dish", "Looking at what's in your photo…", "fork.knife"),
-                ("Finding recipe", "Researching ingredients & steps…", "text.magnifyingglass"),
-                ("Building your recipe", "Almost there…", "sparkles"),
-            ]
-            let progressTask = Task { @MainActor [weak toastCenter] in
-                for stage in progressStages {
-                    try? await Task.sleep(nanoseconds: 7_000_000_000)
-                    guard !Task.isCancelled else { return }
-                    toastCenter?.update(title: stage.title, subtitle: stage.subtitle, systemImage: stage.icon)
-                }
-            }
-
-            let session = await store.freshUserDataSession()
-            let response = try await RecipeImportAPIService.shared.importRecipe(
-                userID: session?.userID,
-                accessToken: session?.accessToken,
-                sourceURL: nil,
-                sourceText: "",
-                targetState: "prepped",
-                attachments: drafts.map(\.payload),
-                photoContext: RecipeImportPhotoContextPayload(
-                    dishHint: nil,
-                    coarsePlaceContext: nil
-                )
-            )
-            progressTask.cancel()
-
-            NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
-
-            if let detail = response.recipeDetail {
-                await RecipeDetailService.shared.cacheDetail(detail)
-                await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
-            }
-
-            let backendState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let reviewState = response.job.reviewState.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let canDisplayRecipe = response.recipe != nil || response.recipeDetail != nil
-            let failureReason = [
-                response.job.errorMessage,
-                response.job.reviewReason,
-                "Ounje could not extract a displayable recipe from this photo."
-            ]
-            .compactMap { raw -> String? in
-                let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return trimmed.isEmpty ? nil : trimmed
-            }
-            .first
-            let shouldFail = backendState == "failed"
-                || (["draft", "needs_review"].contains(reviewState) && !canDisplayRecipe)
-            let isLiveState = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"].contains(backendState)
-
-            if shouldFail {
-                let failedEnvelope = SharedRecipeImportEnvelope(
-                    id: localEnvelope.id,
-                    createdAt: localEnvelope.createdAt,
-                    jobID: response.job.id,
-                    targetState: localEnvelope.targetState,
-                    sourceText: localEnvelope.sourceText,
-                    sourceURLString: nil,
-                    canonicalSourceURLString: response.job.sourceURL,
-                    sourceApp: localEnvelope.sourceApp,
-                    attachments: localEnvelope.attachments,
-                    processingState: "failed",
-                    attemptCount: localEnvelope.attemptCount,
-                    lastAttemptAt: Date(),
-                    serverSubmittedAt: localEnvelope.serverSubmittedAt ?? Date(),
-                    lastError: failureReason,
-                    updatedAt: Date()
-                )
-                try? SharedRecipeImportInbox.update(failedEnvelope)
-                await sharedImportInbox.refresh()
-                toastCenter.show(
-                    title: "Couldn’t read photo",
-                    subtitle: failureReason,
-                    systemImage: "exclamationmark.circle.fill",
-                    destination: .recipeImportQueue(.failed)
-                )
-                await notificationCenter.sendRecipeImportFailedNotification(
-                    sourceTitle: sourceApp,
-                    targetState: localEnvelope.targetState,
-                    errorMessage: failureReason,
-                    identifierSuffix: response.job.id
-                )
-                return
-            }
-
-            if isLiveState && !canDisplayRecipe {
-                let queuedEnvelope = SharedRecipeImportEnvelope(
-                    id: localEnvelope.id,
-                    createdAt: localEnvelope.createdAt,
-                    jobID: response.job.id,
-                    targetState: localEnvelope.targetState,
-                    sourceText: localEnvelope.sourceText,
-                    sourceURLString: nil,
-                    canonicalSourceURLString: response.job.sourceURL,
-                    sourceApp: localEnvelope.sourceApp,
-                    attachments: localEnvelope.attachments,
-                    processingState: backendState,
-                    attemptCount: localEnvelope.attemptCount,
-                    lastAttemptAt: Date(),
-                    serverSubmittedAt: localEnvelope.serverSubmittedAt ?? Date(),
-                    lastError: nil,
-                    updatedAt: Date()
-                )
-                try? SharedRecipeImportInbox.update(queuedEnvelope)
-                await sharedImportInbox.refresh()
-                toastCenter.show(
-                    title: "Photo queued",
-                    subtitle: "Ounje is checking the dish photo now.",
-                    systemImage: "camera.viewfinder",
-                    destination: .recipeImportQueue(.queued)
-                )
-                return
-            }
-
-            try? SharedRecipeImportInbox.delete(envelopeID: localEnvelope.id)
-            await sharedImportInbox.refresh()
-            selectedTab = .prep
-            toastCenter.show(
-                title: "Added to next prep",
-                subtitle: response.recipeDetail?.title ?? response.recipe?.title ?? "Photo recipe ready.",
-                systemImage: "sparkles",
-                thumbnailURLString: response.recipeDetail?.discoverCardImageURLString
-                    ?? response.recipeDetail?.heroImageURLString
-                    ?? response.recipe?.imageURLString,
-                destination: .appTab(.prep)
-            )
-            AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
-        } catch {
-            toastCenter.show(
-                title: "Photo import failed",
-                subtitle: error.localizedDescription,
-                systemImage: "exclamationmark.circle.fill",
-                destination: nil
-            )
-            await notificationCenter.sendRecipeImportFailedNotification(
-                sourceTitle: sourceApp,
-                targetState: "prepped",
-                errorMessage: error.localizedDescription,
-                identifierSuffix: UUID().uuidString
-            )
-        }
-    }
-
-    private func prewarmCompletedImportDetails() async {
-        let accessToken = await store.freshUserDataSession()?.accessToken
-        let recipeIDs = recipeImportHistory.completedItems.prefix(8).compactMap { item -> String? in
-            guard let id = item.recipeID?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
-                return nil
-            }
-            return id
-        }
-
-        for recipeID in recipeIDs {
-            guard prewarmedCompletedImportIDs.insert(recipeID).inserted else { continue }
-            Task(priority: .utility) {
-                _ = try? await RecipeDetailService.shared.fetchRecipeDetail(id: recipeID, accessToken: accessToken)
-            }
-        }
-    }
 
     @MainActor
     private func savedRecipesSession() async -> AuthSession? {
@@ -3070,6 +2721,9 @@ private struct MealPlannerShellView: View {
                 presentedRecipe = nil
                 requestedImportQueueTab = tab
                 selectedTab = .cookbook
+            case .plans:
+                presentedRecipe = nil
+                openRecipePlans()
             case .appTab(let tab):
                 presentedRecipe = nil
                 selectedTab = tab
@@ -3088,10 +2742,6 @@ private struct MealPlannerShellView: View {
         }
 
         guard SharedRecipeImportInbox.isShareImportURL(url) else { return }
-        withAnimation(OunjeMotion.heroSpring) {
-            requestedImportQueueTab = .queued
-            selectedTab = .cookbook
-        }
         Task {
             await sharedImportInbox.refresh()
             await processPendingSharedImports(scope: .queued, allowNewSubmissions: true)
@@ -3138,6 +2788,12 @@ private struct MealPlannerShellView: View {
                 selectedTab = .cookbook
             }
             return true
+        case "import-status", "import_status":
+            Task {
+                await refreshSharedImportState(force: true)
+                lastSharedImportRefreshAt = .now
+            }
+            return true
         case "imports", "import":
             withAnimation(OunjeMotion.heroSpring) {
                 requestedImportQueueTab = .completed
@@ -3151,7 +2807,7 @@ private struct MealPlannerShellView: View {
             return true
         case "prep":
             withAnimation(OunjeMotion.heroSpring) {
-                selectedTab = .prep
+                openRecipePlans()
             }
             return true
         default:
@@ -3308,6 +2964,17 @@ private struct MealPlannerShellView: View {
         }
     }
 
+    private var activeGlobalImportChipItem: SharedRecipeImportEnvelope? {
+        combinedSharedImportEnvelopes.first { envelope in
+            switch envelope.normalizedProcessingState {
+            case "queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized":
+                return !envelope.isRetryNeeded
+            default:
+                return false
+            }
+        }
+    }
+
     @MainActor
     private func processPendingSharedImports(
         scope: SharedImportProcessingScope = .queued,
@@ -3411,7 +3078,8 @@ private struct MealPlannerShellView: View {
                 let isSavedTarget = envelope.targetState
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .localizedCaseInsensitiveCompare("saved") == .orderedSame
-                if let importedRecipe = response.recipe, isSavedTarget {
+                let importedRecipe = response.recipe ?? response.recipeDetail.map(\.importedRecipeCard)
+                if let importedRecipe, isSavedTarget {
                     savedStore.saveImportedRecipe(
                         importedRecipe,
                         showToast: false,
@@ -3480,13 +3148,12 @@ private struct MealPlannerShellView: View {
                     )
                 } else if let detail = response.recipeDetail, envelope.targetState == "prepped" {
                     await store.updateLatestPlan(with: importedRecipePlanModel(from: detail), servings: detail.displayServings)
-                    selectedTab = .prep
                     toastCenter.show(
                         title: "Added to next prep",
                         subtitle: detail.title,
                         systemImage: "sparkles",
                         thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
-                        destination: .appTab(.prep)
+                        destination: nil
                     )
                     AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
                     try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
@@ -3527,25 +3194,18 @@ private struct MealPlannerShellView: View {
                         lastAttemptAt: Date(),
                         serverSubmittedAt: trackedEnvelope.serverSubmittedAt ?? response.job.sharedImportEnvelope.serverSubmittedAt ?? Date(),
                         lastError: nil,
-                        updatedAt: Date()
+                        activeStage: response.job.sharedImportEnvelope.activeStage,
+                        stageStartedAt: response.job.sharedImportEnvelope.stageStartedAt,
+                        updatedAt: response.job.sharedImportEnvelope.updatedAt
                     )
                     try? SharedRecipeImportInbox.update(queuedEnvelope)
-                    if !shouldPollExistingJob && (envelope.attemptCount ?? 0) <= 1 {
-                        toastCenter.show(
-                            title: "Import queued",
-                            subtitle: envelope.resolvedSourceText.isEmpty ? "Ounje is pulling your recipe in now." : envelope.resolvedSourceText,
-                            systemImage: "tray.and.arrow.down.fill",
-                            destination: .recipeImportQueue(.queued)
-                        )
-                    }
-                } else if ["draft", "needs_review", "saved"].contains(backendProcessingState) || response.recipe != nil {
-                    selectedTab = .cookbook
+                } else if ["draft", "needs_review", "saved"].contains(backendProcessingState) || importedRecipe != nil {
                     toastCenter.show(
                         title: "Saved",
-                        subtitle: response.recipe?.title ?? "Imported recipe",
+                        subtitle: importedRecipe?.title ?? "Imported recipe",
                         systemImage: "bookmark.fill",
-                        thumbnailURLString: response.recipe?.imageURL?.absoluteString,
-                        destination: response.recipe.map(AppToastDestination.recipe) ?? .recipeImportQueue(.completed)
+                        thumbnailURLString: importedRecipe?.imageURLString ?? importedRecipe?.heroImageURLString,
+                        destination: nil
                     )
                     AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
                     try? SharedRecipeImportInbox.delete(envelopeID: envelope.id)
@@ -3640,19 +3300,12 @@ struct HoppingCartIcon: View {
 private struct PulsingTrayIcon: View {
     let count: Int
     let isPulsing: Bool
-    @State private var pulse = false
+    @State private var shakeOffset: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             ZStack {
-                if isPulsing && !reduceMotion {
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        .stroke(OunjePalette.accent.opacity(pulse ? 0.14 : 0.42), lineWidth: 1.4)
-                        .frame(width: 44, height: 44)
-                        .scaleEffect(pulse ? 1.16 : 0.96)
-                }
-
                 Image(systemName: "tray.full")
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(OunjePalette.primaryText)
@@ -3665,7 +3318,7 @@ private struct PulsingTrayIcon: View {
                                     .stroke(OunjePalette.stroke, lineWidth: 1)
                             )
                     )
-                    .scaleEffect(isPulsing && !reduceMotion && pulse ? 1.04 : 1)
+                    .offset(x: isPulsing && !reduceMotion ? shakeOffset : 0)
             }
 
             if count > 0 {
@@ -3689,12 +3342,12 @@ private struct PulsingTrayIcon: View {
 
     private func updatePulseAnimation() {
         guard isPulsing, !reduceMotion else {
-            pulse = false
+            shakeOffset = 0
             return
         }
 
-        withAnimation(.easeInOut(duration: 0.92).repeatForever(autoreverses: true)) {
-            pulse = true
+        withAnimation(.linear(duration: 0.09).repeatForever(autoreverses: true)) {
+            shakeOffset = 1.25
         }
     }
 }
@@ -3866,66 +3519,6 @@ struct PurchasingCTAButton: View {
     }
 }
 
-enum CookbookSection: String, CaseIterable, Identifiable {
-    case prepped
-    case saved
-
-    var id: String { rawValue }
-
-    var motionIndex: Int {
-        switch self {
-        case .prepped:
-            return 0
-        case .saved:
-            return 1
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .saved: return "Saved"
-        case .prepped: return "Prep"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .saved:
-            return "Stored Recipes."
-        case .prepped:
-            return "Meals you’re cooking."
-        }
-    }
-}
-
-private enum CookbookComposerContext {
-    case prepped
-    case saved
-
-    var title: String {
-        switch self {
-        case .prepped: return "Add to prep"
-        case .saved: return "Add to saved"
-        }
-    }
-
-    var placeholder: String {
-        switch self {
-        case .prepped:
-            return "Import a recipe using a link, photo, video, or describe what you want in the next prep cycle."
-        case .saved:
-            return "Import a recipe using a link, photo, video, or describe what you want to save to your cookbook."
-        }
-    }
-
-    var primaryActionTitle: String {
-        switch self {
-        case .prepped: return "Add to next prep"
-        case .saved: return "Save to cookbook"
-        }
-    }
-}
-
 /// Glove pointer + label cue that appears under the cookbook Import button on
 /// first launch. Visually matches `OnboardingAskReturnCueView` (the cue used
 /// in the recipe-edit onboarding demo): a pulsing-hover hand icon paired with
@@ -3966,7 +3559,6 @@ private struct CookbookImportTapCue: View {
 
 private struct CookbookTabView: View {
     @Binding var selectedTab: AppTab
-    @Binding var searchText: String
     @Binding var requestedCycleID: String?
     @Binding var requestedImportQueueTab: SharedRecipeImportQueueTab?
     @Binding var requestedImportText: String?
@@ -3981,32 +3573,30 @@ private struct CookbookTabView: View {
 
     @EnvironmentObject private var savedStore: SavedRecipesStore
     @EnvironmentObject private var store: MealPlanningAppStore
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var selectedSection: CookbookSection = .prepped
-    @State private var selectedFilter: String = "All"
+    @State private var searchText = ""
     @State private var isComposerPresented = false
-    @State private var composerContext: CookbookComposerContext = .saved
     @State private var composerInitialText: String?
     @State private var selectedCycle: CookbookPreppedCycle?
     @State private var isImportQueuePresented = false
     @State private var importQueueInitialTab: SharedRecipeImportQueueTab?
-    @State private var previousSelectedSection: CookbookSection = .prepped
-    @State private var sectionTransitionDirection: CGFloat = 1
+    @State private var hasResetLibraryScrollPosition = false
     @State private var isNewCookbookPrepPromptPresented = false
     @State private var newCookbookPrepName = ""
-    @State private var pendingPrepTableScrollID: String?
-    @State private var cookbookPrepSuggestionStates: [UUID: CookbookPrepSuggestionState] = [:]
-
-    // Coachmark: first time a freshly-onboarded user lands in the cookbook,
-    // call out the Import button so they remember the share flow they just
-    // saw in onboarding. Backed by AppStorage so we only show it once per
-    // install. Reset on sign-out via `resetAll()` in MealPlanningAppStore.
-    @AppStorage("ounje.hasShownCookbookImportCoachmark") private var hasShownCookbookImportCoachmark: Bool = false
-    @State private var isShowingImportCoachmark: Bool = false
+    @State private var planRecipeSelectionBatchID: UUID?
+    @State private var planRecipeSelectionName = ""
+    @State private var selectedPlanRecipeIDs: Set<String> = []
+    @State private var isAddingSelectedPlanRecipes = false
+    @State private var planRecipeSelectionError: String?
+    @State private var planRecipeSelectionWiggleAngle: Double = 0
+    @State private var hasScrolledPlansToCreation = false
+    @State private var isSelectingFirstRunSuggestion = false
 
     private let columns = [
-        GridItem(.flexible(), spacing: 14, alignment: .top),
-        GridItem(.flexible(), spacing: 14, alignment: .top)
+        GridItem(.flexible(), spacing: 18, alignment: .top),
+        GridItem(.flexible(), spacing: 18, alignment: .top)
     ]
 
     private var combinedSharedImportEnvelopes: [SharedRecipeImportEnvelope] {
@@ -4025,23 +3615,14 @@ private struct CookbookTabView: View {
         combinedSharedImportEnvelopes.filter(\.isLiveQueueState).count
     }
 
-    private var filters: [String] {
-        var values = ["All"]
-        for value in savedStore.savedRecipes.compactMap(\.filterChipLabel) where !values.contains(value) {
-            values.append(value)
-        }
-        return Array(values.prefix(8))
-    }
-
     private var filteredRecipes: [DiscoverRecipeCardData] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return savedStore.savedRecipes }
+
         return savedStore.savedRecipes.filter { recipe in
-            let matchesFilter = selectedFilter == "All" || recipe.filterChipLabel == selectedFilter
-            let matchesQuery = query.isEmpty ||
-                recipe.title.lowercased().contains(query) ||
-                recipe.authorLabel.lowercased().contains(query) ||
-                recipe.filterLabel.lowercased().contains(query)
-            return matchesFilter && matchesQuery
+            recipe.title.lowercased().contains(query)
+                || recipe.authorLabel.lowercased().contains(query)
+                || recipe.filterLabel.lowercased().contains(query)
         }
     }
 
@@ -4056,7 +3637,7 @@ private struct CookbookTabView: View {
                     title: "Usual",
                     detail: "\(latestPlan.recipes.count) recipes",
                     prepDateLabel: nil,
-                    prepDateRangeLabel: prepDateRangeLabel(for: latestPlan),
+                    prepDateRangeLabel: nil,
                     themeIndex: 0,
                     recipes: latestPlan.recipes.map(DiscoverRecipeCardData.init(preppedRecipe:))
                 )
@@ -4069,7 +3650,7 @@ private struct CookbookTabView: View {
                 title: batch.name,
                 detail: "\(batch.recipes.count) recipes",
                 prepDateLabel: nil,
-                prepDateRangeLabel: prepDateRangeLabel(for: latestPlan),
+                prepDateRangeLabel: nil,
                 themeIndex: index,
                 recipes: batch.recipes.map(DiscoverRecipeCardData.init(preppedRecipe:))
             )
@@ -4086,45 +3667,20 @@ private struct CookbookTabView: View {
             : "Usual"
     }
 
-    private var shouldShowCookbookPrepControls: Bool {
-        store.latestPlan?.recipes.isEmpty == false || !cookbookPrepBatches.isEmpty
-    }
-
     private var previousCycles: [CookbookPreppedCycle] {
         store.completedMealPrepCycles.compactMap { cycle -> CookbookPreppedCycle? in
             let plan = cycle.plan
             guard !plan.recipes.isEmpty else { return nil }
             return CookbookPreppedCycle(
                 id: cycle.planID.uuidString,
-                title: (cycle.completedAtDate ?? plan.periodEnd).formatted(.dateTime.month(.wide).day()),
-                detail: prepDateLabel(for: plan),
-                prepDateLabel: prepShortDateLabel(for: plan),
-                prepDateRangeLabel: prepDateRangeLabel(for: plan),
+                title: "Previous plan",
+                detail: "\(plan.recipes.count) recipes",
+                prepDateLabel: nil,
+                prepDateRangeLabel: nil,
                 themeIndex: 0,
                 recipes: plan.recipes.map(DiscoverRecipeCardData.init(preppedRecipe:))
             )
         }
-    }
-
-    private func prepDateLabel(for plan: MealPlan) -> String {
-        plan.periodStart.formatted(.dateTime.weekday(.wide).month(.wide).day())
-    }
-
-    private func prepShortDateLabel(for plan: MealPlan) -> String {
-        plan.periodStart.formatted(.dateTime.month(.abbreviated).day())
-    }
-
-    private func prepDateRangeLabel(for plan: MealPlan) -> String {
-        let start = plan.periodStart.formatted(.dateTime.month(.abbreviated).day())
-        let end = plan.periodEnd.formatted(.dateTime.month(.abbreviated).day())
-        return "\(start) - \(end)"
-    }
-
-    private var sectionTabs: [CookbookSectionTabItem] {
-        [
-            CookbookSectionTabItem(section: .prepped),
-            CookbookSectionTabItem(section: .saved)
-        ]
     }
 
     private var hasSavedRecipes: Bool {
@@ -4137,63 +3693,26 @@ private struct CookbookTabView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 18) {
-                cookbookHeader
-
-                CookbookSectionTabs(
-                    selection: $selectedSection,
-                    tabs: sectionTabs
-                )
-                .zIndex(20)
-            }
-            .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
             cookbookFeedScroll
         }
         .background(OunjePalette.background.ignoresSafeArea())
-        .alert("Name this prep by intent", isPresented: $isNewCookbookPrepPromptPresented) {
-            TextField("Experimental, low calo...", text: $newCookbookPrepName)
-                .autocorrectionDisabled()
-            Button("Create") {
-                let name = newCookbookPrepName.trimmingCharacters(in: .whitespacesAndNewlines)
-                var createdBatchID: UUID?
-                if let batchID = store.addPrepBatch(name: name.isEmpty ? nil : name) {
-                    createdBatchID = batchID
-                    _ = store.setPrimePrepBatch(batchID: batchID)
-                    startCookbookPrepSuggestions(for: batchID, name: name)
-                    toastCenter.show(
-                        title: "Prime prep changed",
-                        subtitle: name.isEmpty ? "New prep is now driving Prep and Cart." : "\(name) is now driving Prep and Cart.",
-                        systemImage: "checkmark.circle.fill"
-                    )
-                } else {
-                    toastCenter.show(
-                        title: "Prep limit reached",
-                        subtitle: "You can keep up to \(MealPlanningAppStore.maxPrepBatchCount) prep brackets.",
-                        systemImage: "exclamationmark.circle.fill"
-                    )
-                }
-                newCookbookPrepName = ""
-                selectedSection = .prepped
-                pendingPrepTableScrollID = prepTableScrollID(for: createdBatchID?.uuidString)
-            }
-            Button("Cancel", role: .cancel) {
-                newCookbookPrepName = ""
-            }
+        .sheet(isPresented: $isNewCookbookPrepPromptPresented) {
+            NewCookbookPlanNameSheet(
+                name: $newCookbookPrepName,
+                onCancel: {
+                    isNewCookbookPrepPromptPresented = false
+                    newCookbookPrepName = ""
+                },
+                onCreate: createNewCookbookPlan
+            )
+            .presentationDetents([.height(306)])
+            .presentationDragIndicator(.hidden)
         }
-        .task(id: selectedSection == .saved ? (store.authSession?.userID ?? "guest") : "cookbook-idle") {
-            guard selectedSection == .saved else { return }
+        .task(id: store.authSession?.userID ?? "guest") {
             await savedStore.bootstrap(authSession: await savedRecipesSession())
         }
-        .task(id: "recipe-import-history::\(store.authSession?.userID ?? "signed-out")") {
-            await onRefreshSharedImports()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .recipeImportHistoryNeedsRefresh)) { _ in
-            Task {
-                await onRefreshSharedImports()
-            }
+        .task(id: planRecipeSelectionBatchID) {
+            await playPlanRecipeSelectionCue()
         }
         .onAppear {
             openRequestedCycleIfNeeded()
@@ -4207,7 +3726,7 @@ private struct CookbookTabView: View {
             presentRequestedImportComposerIfNeeded()
         }
         .sheet(isPresented: $isComposerPresented) {
-            DiscoverComposerSheet(context: composerContext, initialText: composerInitialText)
+            DiscoverComposerSheet(initialText: composerInitialText)
                 .presentationDetents([.height(430), .fraction(0.62), .large])
                 .presentationDragIndicator(.hidden)
                 .onDisappear {
@@ -4246,46 +3765,54 @@ private struct CookbookTabView: View {
                 selectedTab: $selectedTab,
                 toastCenter: toastCenter
             )
+            .environmentObject(firstRunGuide)
         }
         .onChange(of: requestedCycleID) { _ in
             openRequestedCycleIfNeeded()
-        }
-        .onChange(of: selectedSection) { newValue in
-            let previousSection = previousSelectedSection
-            sectionTransitionDirection = newValue.motionIndex >= previousSection.motionIndex ? 1 : -1
-            previousSelectedSection = newValue
-        }
-        .onChange(of: filters.joined(separator: "|")) { _ in
-            resetUnavailableSavedFilter()
         }
     }
 
     @ViewBuilder
     private var cookbookFeedScroll: some View {
         ScrollViewReader { proxy in
-            Group {
-                if selectedSection == .saved {
-                    ScrollView {
-                        cookbookFeedContent
+            ScrollView {
+                cookbookFeedContent
+            }
+            .scrollIndicators(.hidden)
+            .refreshable {
+                await refreshSavedCookbookFeed()
+            }
+            .onAppear {
+                guard !hasResetLibraryScrollPosition else { return }
+                DispatchQueue.main.async {
+                    if firstRunGuide.phase == .recipeSuggestion,
+                       !firstRunGuide.suggestedRecipes.isEmpty {
+                        proxy.scrollTo("first-guide-suggestion", anchor: .center)
+                    } else {
+                        proxy.scrollTo("recipe-library-top", anchor: .top)
                     }
-                    .scrollIndicators(.hidden)
-                    .refreshable {
-                        await refreshSavedCookbookFeed()
-                    }
-                } else {
-                    ScrollView {
-                        cookbookFeedContent
-                    }
-                    .scrollIndicators(.hidden)
+                    hasResetLibraryScrollPosition = true
                 }
             }
-            .onChange(of: pendingPrepTableScrollID) { scrollID in
-                guard let scrollID else { return }
-                DispatchQueue.main.async {
-                    withAnimation(OunjeMotion.screenSpring) {
-                        proxy.scrollTo(scrollID, anchor: .top)
+            .onChange(of: firstRunGuide.suggestedRecipes.count) { count in
+                guard firstRunGuide.phase == .recipeSuggestion, count == 4 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    withAnimation(OunjeMotion.quickSpring) {
+                        proxy.scrollTo("first-guide-suggestion", anchor: .center)
                     }
-                    pendingPrepTableScrollID = nil
+                }
+            }
+            .onChange(of: firstRunGuide.phase) { phase in
+                guard let phase else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    switch phase {
+                    case .recipeSuggestion:
+                        proxy.scrollTo("first-guide-suggestion", anchor: .center)
+                    case .planReady:
+                        proxy.scrollTo("first-guide-plan", anchor: .center)
+                    default:
+                        break
+                    }
                 }
             }
         }
@@ -4293,31 +3820,60 @@ private struct CookbookTabView: View {
 
     private var cookbookFeedContent: some View {
         VStack(alignment: .leading, spacing: 18) {
-            activeImportTracker
-
-            ZStack(alignment: .topLeading) {
-                currentSectionContent
-                    .id(selectedSection)
-                    .transition(cookbookSectionTransition)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .animation(OunjeMotion.screenSpring, value: selectedSection)
+            Color.clear
+                .frame(height: 0)
+                .id("recipe-library-top")
+            archiveUtilityRow
+            plansRow
+            savedSection
+        }
+        .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
+        .padding(.top, 0)
+        .padding(.bottom, 24)
     }
-    .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-    .padding(.top, 0)
-    .padding(.bottom, 24)
-}
 
-    private var cookbookHeader: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-                BiroScriptDisplayText("Cookbook", size: 30, color: OunjePalette.primaryText)
-                Text(selectedSection.subtitle)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.92)
+    private func saveFirstRunSuggestion(_ recipe: DiscoverRecipeCardData) {
+        guard firstRunGuide.phase == .recipeSuggestion,
+              !firstRunGuide.isLoadingCatalog,
+              !isSelectingFirstRunSuggestion
+        else { return }
+
+        isSelectingFirstRunSuggestion = true
+        savedStore.saveImportedRecipe(recipe, showToast: true, respectUnsave: false)
+
+        Task {
+            defer { isSelectingFirstRunSuggestion = false }
+            let hasPreset = await firstRunGuide.selectStarterRecipe(recipe.id, profile: store.profile)
+            guard hasPreset,
+                  let planID = firstRunGuide.planID
+            else {
+                firstRunGuide.advance(to: .discover)
+                return
             }
+
+            let installedPlan = store.installFirstRunGuidePresetPlan(
+                details: firstRunGuide.presetPlanRecipeDetails,
+                title: firstRunGuide.presetPlanTitle,
+                planID: planID,
+                preserveExistingPlans: firstRunGuide.isReplay
+            )
+            if installedPlan != nil {
+                firstRunGuide.advance(to: .planReady)
+            } else {
+                firstRunGuide.advance(to: .discover)
+            }
+        }
+    }
+
+    private var archiveUtilityRow: some View {
+        HStack(spacing: 8) {
+            SleeScriptDisplayText(
+                "ounje",
+                size: 36,
+                color: OunjePalette.softCream
+            )
+                .frame(width: 88, height: 42, alignment: .leading)
+                .accessibilityLabel("Ounje")
 
             Spacer(minLength: 0)
 
@@ -4330,182 +3886,280 @@ private struct CookbookTabView: View {
                 )
             }
             .buttonStyle(.plain)
-
-            Button {
-                openComposer(context: selectedSection == .prepped ? .prepped : .saved)
-                if isShowingImportCoachmark { dismissImportCoachmark() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .bold))
-                    Text("New Recipe")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                .foregroundStyle(OunjePalette.primaryText)
-                .padding(.horizontal, 14)
-                .frame(height: 42)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(hex: "174C32"))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(OunjePalette.accent.opacity(0.34), lineWidth: 1)
-                        )
-                )
-                .shadow(color: Color(hex: "174C32").opacity(0.34), radius: 12, x: 0, y: 6)
-            }
-            .buttonStyle(.plain)
-            .overlay(alignment: .topTrailing) {
-                if isShowingImportCoachmark {
-                    // Glove + label cue, same look the onboarding "Ask Ounje"
-                    // recipe edit demo uses to point at the Edit Recipe button.
-                    // We offset DOWN + RIGHT so the hand sits just under the
-                    // Import button and the label trails behind it.
-                    CookbookImportTapCue { dismissImportCoachmark() }
-                        .offset(x: 18, y: 56)
-                        .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .topTrailing)))
-                        .zIndex(10)
-                }
-            }
+            .accessibilityLabel("Recipe imports")
         }
-        .onAppear { maybeShowImportCoachmark() }
-    }
-
-    private func maybeShowImportCoachmark() {
-        guard !hasShownCookbookImportCoachmark, !isShowingImportCoachmark else { return }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                isShowingImportCoachmark = true
-            }
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            if isShowingImportCoachmark { dismissImportCoachmark() }
-        }
-    }
-
-    private func dismissImportCoachmark() {
-        withAnimation(.easeOut(duration: 0.22)) {
-            isShowingImportCoachmark = false
-        }
-        hasShownCookbookImportCoachmark = true
-    }
-
-    private func resetUnavailableSavedFilter() {
-        guard selectedFilter != "All", !filters.contains(selectedFilter) else { return }
-        selectedFilter = "All"
-    }
-
-    @ViewBuilder
-    private var activeImportTracker: some View {
-        if let activeImportProgressItem {
-            SharedRecipeImportProgressCard(
-                item: activeImportProgressItem,
-                onTap: { openImportQueue() }
-            )
-            .transition(.move(edge: .top).combined(with: .opacity))
-        }
-    }
-
-    @ViewBuilder
-    private var currentSectionContent: some View {
-        switch selectedSection {
-        case .prepped:
-            preppedSection
-        case .saved:
-            savedSection
-        }
-    }
-
-    private var cookbookSectionTransition: AnyTransition {
-        let insertionOffset: CGFloat = sectionTransitionDirection >= 0 ? 30 : -30
-        let removalOffset: CGFloat = sectionTransitionDirection >= 0 ? -14 : 14
-
-        return .asymmetric(
-            insertion: .modifier(
-                active: DirectionalSurfaceRevealModifier(
-                    xOffset: insertionOffset,
-                    yOffset: 8,
-                    scale: 0.988,
-                    blur: 8,
-                    opacity: 0.001
-                ),
-                identity: DirectionalSurfaceRevealModifier()
-            ),
-            removal: .modifier(
-                active: DirectionalSurfaceRevealModifier(
-                    xOffset: removalOffset,
-                    yOffset: -4,
-                    scale: 0.994,
-                    blur: 5,
-                    opacity: 0.001
-                ),
-                identity: DirectionalSurfaceRevealModifier()
-            )
-        )
+        .frame(height: 42)
     }
 
     @ViewBuilder
     private var savedSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .center, spacing: 10) {
+            if firstRunGuide.phase == .recipeSuggestion, !firstRunGuide.suggestedRecipes.isEmpty {
+                librarySectionHeader("Recipes")
+
+                LazyVGrid(columns: columns, spacing: 24) {
+                    ForEach(Array(firstRunGuide.suggestedRecipes.enumerated()), id: \.element.id) { index, recipe in
+                        RecipeLibraryVisualCard(
+                            recipe: recipe,
+                            guideTargetID: FirstRunGuideTargetID.suggestedRecipeTarget(at: index),
+                            onSelect: { saveFirstRunSuggestion(recipe) }
+                        )
+                        .accessibilityHint("Choose this recipe to create your Starter plan.")
+                    }
+                }
+                .id("first-guide-suggestion")
+            } else if planRecipeSelectionBatchID != nil {
+                planRecipeSelectionBar
+            } else {
+                librarySectionHeader("Recipes")
+            }
+
+            if firstRunGuide.phase != .recipeSuggestion {
                 CookbookSavedSearchField(
                     text: $searchText,
                     placeholder: "Search saved recipes"
                 )
 
-                Menu {
-                    ForEach(filters, id: \.self) { filter in
-                        Button {
-                            selectedFilter = filter
-                        } label: {
-                            Label(filter, systemImage: selectedFilter == filter ? "checkmark" : "line.3.horizontal.decrease.circle")
+                if filteredRecipes.isEmpty && savedStore.isSyncingRemote {
+                    LazyVGrid(columns: columns, spacing: 24) {
+                        ForEach(0..<4, id: \.self) { _ in
+                            DiscoverRecipeCardLoadingPlaceholder()
                         }
                     }
-                } label: {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(OunjePalette.surface.opacity(0.96))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(OunjePalette.stroke, lineWidth: 1)
-                        )
-                        .overlay {
-                            Image(systemName: "line.3.horizontal.decrease.circle")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(selectedFilter == "All" ? OunjePalette.primaryText : OunjePalette.accent)
+                } else if filteredRecipes.isEmpty {
+                    CookbookSavedEmptyState(
+                        hasSavedRecipes: !savedStore.savedRecipes.isEmpty,
+                        onBrowseDiscover: { selectedTab = .discover },
+                        onAddRecipe: {
+                            openComposer()
                         }
-                        .frame(width: 50, height: 50)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(selectedFilter == "All" ? "Filter saved recipes" : "Filter saved recipes, \(selectedFilter) selected")
-            }
-
-            if filteredRecipes.isEmpty && savedStore.isSyncingRemote {
-                LazyVGrid(columns: columns, spacing: 14) {
-                    ForEach(0..<4, id: \.self) { _ in
-                        DiscoverRecipeCardLoadingPlaceholder()
-                    }
-                }
-            } else if filteredRecipes.isEmpty {
-                CookbookSavedEmptyState(
-                    hasSavedRecipes: !savedStore.savedRecipes.isEmpty,
-                    onBrowseDiscover: { selectedTab = .discover },
-                    onAddRecipe: {
-                        openComposer(context: .saved)
-                    }
-                )
-            } else {
-                LazyVGrid(columns: columns, spacing: 14) {
-                    ForEach(filteredRecipes) { recipe in
-                        DiscoverRemoteRecipeCard(
-                            recipe: recipe,
-                            transitionNamespace: recipeTransitionNamespace
-                        ) {
-                            onSelectRecipe(recipe)
+                    )
+                } else {
+                    LazyVGrid(columns: columns, spacing: 24) {
+                        ForEach(filteredRecipes) { recipe in
+                            RecipeLibraryVisualCard(
+                                recipe: recipe,
+                                selectionState: planRecipeSelectionBatchID == nil
+                                    ? nil
+                                    : selectedPlanRecipeIDs.contains(recipe.id),
+                                selectionAction: { togglePlanRecipeSelection(recipe.id) },
+                                onSelect: {
+                                    if planRecipeSelectionBatchID != nil {
+                                        togglePlanRecipeSelection(recipe.id)
+                                    } else {
+                                        onSelectRecipe(recipe)
+                                    }
+                                }
+                            )
+                            .rotationEffect(
+                                .degrees(
+                                    planRecipeSelectionWiggleAngle
+                                        * planRecipeSelectionWiggleDirection(for: recipe.id)
+                                )
+                            )
                         }
                     }
                 }
             }
         }
+    }
+
+    private var planRecipeSelectionBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(planRecipeSelectionName)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1)
+
+                    Text("\(selectedPlanRecipeIDs.count) selected")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                }
+
+                Spacer(minLength: 8)
+
+                Button("Cancel", action: cancelPlanRecipeSelection)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .buttonStyle(.plain)
+                    .disabled(isAddingSelectedPlanRecipes)
+
+                Button(action: finishPlanRecipeSelection) {
+                    Group {
+                        if isAddingSelectedPlanRecipes {
+                            ProgressView()
+                                .tint(OunjePalette.background)
+                        } else {
+                            Text("Add")
+                        }
+                    }
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.background)
+                    .frame(width: 52, height: 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OunjePalette.softCream)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedPlanRecipeIDs.isEmpty || isAddingSelectedPlanRecipes)
+                .opacity(selectedPlanRecipeIDs.isEmpty ? 0.45 : 1)
+            }
+
+            if let planRecipeSelectionError {
+                Text(planRecipeSelectionError)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color(hex: "E1AE67"))
+            }
+        }
+    }
+
+    private var plansRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            librarySectionHeader("Plans")
+
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(visibleCookbookCycles) { cycle in
+                            CookbookPlanCard(
+                                cycle: cycle,
+                                guideTargetID: firstRunGuide.phase == .planReady && cycle.id == visibleCookbookCycles.first?.id
+                                    ? .firstPlan
+                                    : nil,
+                                onOpen: { openPlan(cycle) },
+                                onDelete: { deletePlan(cycle) }
+                            )
+                        }
+
+                        if firstRunGuide.phase == .recipeSuggestion
+                            || (!firstRunGuide.isActive && store.canAddPrepBatch) {
+                            newPlanFolderCard
+                                .id("new-plan-card")
+                        }
+                    }
+                    .padding(.horizontal, 1)
+                    .padding(.vertical, 2)
+                }
+                .onAppear {
+                    scrollPlansToCreation(proxy)
+                }
+                .onChange(of: visibleCookbookCycles.map(\.id)) { _ in
+                    scrollPlansToCreation(proxy)
+                }
+                .onChange(of: firstRunGuide.phase) { phase in
+                    guard phase == .planReady, let firstID = visibleCookbookCycles.first?.id else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                        withAnimation(OunjeMotion.quickSpring) {
+                            proxy.scrollTo(firstID, anchor: .leading)
+                        }
+                    }
+                }
+            }
+        }
+        .id("first-guide-plan")
+    }
+
+    private var visibleCookbookCycles: [CookbookPreppedCycle] {
+        guard firstRunGuide.isActive, let planID = firstRunGuide.planID else {
+            return upcomingBatchCycles
+        }
+        return upcomingBatchCycles.filter { $0.id == planID.uuidString }
+    }
+
+    private func openPlan(_ cycle: CookbookPreppedCycle) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if firstRunGuide.phase == .planReady {
+            firstRunGuide.advance(to: .planOpened)
+        }
+        selectedCycle = cycle
+    }
+
+    private func scrollPlansToCreation(_ proxy: ScrollViewProxy) {
+        guard firstRunGuide.phase != .planReady,
+              store.canAddPrepBatch,
+              !hasScrolledPlansToCreation else { return }
+        hasScrolledPlansToCreation = true
+        DispatchQueue.main.async {
+            proxy.scrollTo("new-plan-card", anchor: .trailing)
+        }
+    }
+
+    private func deletePlan(_ cycle: CookbookPreppedCycle) {
+        guard let batchID = UUID(uuidString: cycle.id) else { return }
+        if selectedCycle?.id == cycle.id {
+            selectedCycle = nil
+        }
+        store.deletePrepBatch(id: batchID)
+    }
+
+    private func librarySectionHeader(_ title: String) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .biroHeaderFont(22)
+                .foregroundStyle(OunjePalette.primaryText)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(OunjePalette.primaryText.opacity(0.72))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
+    }
+
+    private var newPlanFolderCard: some View {
+        Button {
+            presentNewCookbookPrepPrompt()
+        } label: {
+            VStack(alignment: .center, spacing: 8) {
+                NewCookbookPlanPreview(
+                    imageCandidates: firstRunGuide.phase == .recipeSuggestion
+                        ? []
+                        : newPlanPreviewRecipe?.imageCandidates ?? []
+                )
+                    .frame(width: 100, height: 100)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(
+                                OunjePalette.secondaryText.opacity(0.52),
+                                style: StrokeStyle(lineWidth: 1.25, dash: [6, 5])
+                            )
+                    )
+                    .overlay {
+                        Image(systemName: "plus")
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundStyle(OunjePalette.softCream)
+                            .shadow(color: .black.opacity(0.72), radius: 5, y: 2)
+                    }
+
+                Text("New plan")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Color.clear
+                    .frame(height: 13)
+            }
+            .frame(width: 100)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Create a new plan")
+    }
+
+    private var newPlanPreviewRecipe: DiscoverRecipeCardData? {
+        let recipes = savedStore.savedRecipes
+        return recipes.first(where: {
+            let title = $0.displayTitle.lowercased()
+            return title.contains("biscoff") && title.contains("banana")
+        }) ?? recipes.first(where: {
+            $0.displayTitle.localizedCaseInsensitiveContains("biscoff")
+        }) ?? recipes.first(where: {
+            $0.displayTitle.localizedCaseInsensitiveContains("banana bread")
+        }) ?? recipes.first
     }
 
     private func refreshSavedCookbookFeed() async {
@@ -4518,114 +4172,12 @@ private struct CookbookTabView: View {
         await store.freshUserDataSession()
     }
 
-    @ViewBuilder
-    private var preppedSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            if shouldShowCookbookPrepControls {
-                cookbookPrepControls
-            }
-
-            if upcomingBatchCycles.isEmpty && previousCycles.isEmpty {
-                CookbookPreppedEmptyState(
-                    title: "No prep meals yet",
-                    detail: "Once Ounje builds a cycle, the meals you’re cooking next and the ones you’ve already run will live here.",
-                    symbolName: "fork.knife.circle"
-                )
-            } else {
-                ForEach(upcomingBatchCycles) { cycle in
-                    VStack(spacing: 0) {
-                        CookbookCycleGroup(
-                            title: nil,
-                            subtitle: cycle.title,
-                            cycles: [cycle],
-                            showsRowMetadata: false,
-                            onSelectCycle: { selectedCycle = $0 }
-                        )
-
-                        if let batchID = UUID(uuidString: cycle.id),
-                           let suggestionState = cookbookPrepSuggestionStates[batchID],
-                           suggestionState.shouldRender {
-                            CookbookPrepSuggestionStrip(
-                                state: suggestionState,
-                                onSelectRecipe: { recipe in
-                                    addCookbookPrepSuggestion(recipe, to: batchID)
-                                },
-                                onDismiss: {
-                                    withAnimation(OunjeMotion.screenSpring) {
-                                        cookbookPrepSuggestionStates[batchID] = nil
-                                    }
-                                }
-                            )
-                            .padding(.top, 14)
-                        }
-                    }
-                    .id(prepTableScrollID(for: cycle.id))
-                }
-
-                if !previousCycles.isEmpty {
-                    CookbookCycleGroup(
-                        title: "Previous cycles",
-                        cycles: previousCycles,
-                        onSelectCycle: { selectedCycle = $0 }
-                    )
-                }
-            }
-        }
-    }
-
-    private var cookbookPrepControls: some View {
-        HStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    if cookbookPrepBatches.isEmpty {
-                        cookbookPrepPill(
-                            title: "Usual",
-                            isSelected: true,
-                            themeIndex: 0,
-                            action: {
-                                scrollToCookbookPrepTable(id: store.latestPlan?.id.uuidString)
-                            }
-                        )
-                    } else {
-                        ForEach(Array(cookbookPrepBatches.enumerated()), id: \.element.id) { index, batch in
-                            let isSelected = store.activeBatch?.id == batch.id || (store.activeBatch == nil && cookbookPrepBatches.first?.id == batch.id)
-                            cookbookPrepPill(
-                                title: batch.name,
-                                isSelected: isSelected,
-                                themeIndex: index,
-                                action: { scrollToCookbookPrepTable(id: batch.id.uuidString) }
-                            )
-                        }
-                    }
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 2)
-            }
-
-            if store.canAddPrepBatch {
-                Button {
-                    presentNewCookbookPrepPrompt()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 56, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .accessibilityLabel("New Prep")
-                .zIndex(100)
-            }
-        }
-        .zIndex(100)
-    }
 
     private func presentNewCookbookPrepPrompt() {
         guard store.canAddPrepBatch else {
             toastCenter.show(
-                title: "Prep limit reached",
-                subtitle: "You can keep up to \(MealPlanningAppStore.maxPrepBatchCount) prep brackets.",
+                title: "Plan limit reached",
+                subtitle: "You can keep up to \(MealPlanningAppStore.maxPrepBatchCount) plans.",
                 systemImage: "exclamationmark.circle.fill"
             )
             return
@@ -4635,254 +4187,150 @@ private struct CookbookTabView: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    private func cookbookPrepPill(title: String, isSelected: Bool, themeIndex: Int, action: @escaping () -> Void) -> some View {
-        let theme = CookbookPrepBracketTheme.theme(for: themeIndex)
-        return Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
-                .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.primaryText.opacity(0.78))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(isSelected ? theme.bubbleFill : theme.bubbleMutedFill.opacity(0.82))
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(theme.bubbleStroke.opacity(isSelected ? 0.58 : 0.34), lineWidth: 1)
-                        )
-                )
-                .shadow(color: theme.bubbleFill.opacity(isSelected ? 0.18 : 0), radius: 10, x: 0, y: 5)
-        }
-        .buttonStyle(.plain)
-    }
+    private func createNewCookbookPlan() {
+        let name = newCookbookPrepName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
 
-    private func prepTableScrollID(for id: String?) -> String {
-        "cookbook-prep-table-\(id ?? "current")"
-    }
-
-    private func scrollToCookbookPrepTable(id: String?) {
-        guard selectedSection == .prepped else {
-            selectedSection = .prepped
-            pendingPrepTableScrollID = prepTableScrollID(for: id)
+        guard let batchID = store.addPrepBatch(name: name) else {
+            isNewCookbookPrepPromptPresented = false
+            toastCenter.show(
+                title: "Plan limit reached",
+                subtitle: "You can keep up to \(MealPlanningAppStore.maxPrepBatchCount) plans.",
+                systemImage: "exclamationmark.circle.fill"
+            )
             return
         }
-        pendingPrepTableScrollID = prepTableScrollID(for: id)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+
+        _ = store.setPrimePrepBatch(batchID: batchID)
+        planRecipeSelectionBatchID = batchID
+        planRecipeSelectionName = name
+        selectedPlanRecipeIDs = []
+        planRecipeSelectionError = nil
+        newCookbookPrepName = ""
+        isNewCookbookPrepPromptPresented = false
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
-    private func startCookbookPrepSuggestions(for batchID: UUID, name: String) {
-        let resolvedName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "meal prep"
-            : name.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        cookbookPrepSuggestionStates[batchID] = CookbookPrepSuggestionState(
-            batchID: batchID,
-            batchName: resolvedName,
-            recipes: [],
-            addedRecipeIDs: [],
-            isLoading: true,
-            errorMessage: nil
-        )
-
-        Task {
-            await loadCookbookPrepSuggestions(for: batchID, name: resolvedName)
+    private func togglePlanRecipeSelection(_ recipeID: String) {
+        guard planRecipeSelectionBatchID != nil, !isAddingSelectedPlanRecipes else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        planRecipeSelectionError = nil
+        if selectedPlanRecipeIDs.contains(recipeID) {
+            selectedPlanRecipeIDs.remove(recipeID)
+        } else {
+            selectedPlanRecipeIDs.insert(recipeID)
         }
     }
 
     @MainActor
-    private func loadCookbookPrepSuggestions(for batchID: UUID, name: String) async {
-        await savedStore.bootstrap(authSession: await savedRecipesSession())
+    private func playPlanRecipeSelectionCue() async {
+        planRecipeSelectionWiggleAngle = 0
+        guard planRecipeSelectionBatchID != nil, !reduceMotion else { return }
 
-        let existingIDs = cookbookExistingPrepRecipeIDs()
-        let savedPicks = savedStore.savedRecipes
-            .filter { !existingIDs.contains($0.id) }
-            .shuffled()
-            .prefix(2)
-            .map { $0 }
-        let neededDiscoverCount = max(0, 4 - savedPicks.count)
-        var suggestions = savedPicks
+        try? await Task.sleep(nanoseconds: 220_000_000)
+        guard !Task.isCancelled else { return }
 
-        if neededDiscoverCount > 0 {
-            let query = cookbookPrepSuggestionQuery(name: name, savedPicks: savedPicks)
-            do {
-                let response = try await SupabaseDiscoverRecipeService.shared.fetchRankedRecipes(
-                    profile: store.profile,
-                    filter: "All",
-                    query: query,
-                    sessionSeed: "cookbook-prep-\(batchID.uuidString)",
-                    feedContext: DiscoverFeedContext.current.withSessionSeed("cookbook-prep-\(batchID.uuidString)"),
-                    limit: max(8, neededDiscoverCount * 4),
-                    offset: 0,
-                    forceRefresh: false
-                )
-                suggestions.append(
-                    contentsOf: cookbookUniqueSuggestionRecipes(
-                        response.recipes,
-                        excluding: existingIDs.union(Set(suggestions.map(\.id))),
-                        limit: neededDiscoverCount
-                    )
-                )
-            } catch {
-                do {
-                    let fallback = try await SupabaseDiscoverRecipeService.shared.fetchRecipes(limit: 12, offset: 0)
-                    suggestions.append(
-                        contentsOf: cookbookUniqueSuggestionRecipes(
-                            cookbookRankedFallbackSuggestions(fallback, query: query),
-                            excluding: existingIDs.union(Set(suggestions.map(\.id))),
-                            limit: neededDiscoverCount
-                        )
-                    )
-                } catch {
-                    var state = cookbookPrepSuggestionStates[batchID] ?? CookbookPrepSuggestionState(batchID: batchID, batchName: name)
-                    state.recipes = Array(suggestions.prefix(4))
-                    state.isLoading = false
-                    state.errorMessage = state.recipes.isEmpty ? "Couldn’t load suggestions right now." : nil
-                    cookbookPrepSuggestionStates[batchID] = state
-                    return
-                }
+        for angle in [-0.65, 0.65, -0.48, 0.48, -0.26, 0.26, 0] {
+            guard !Task.isCancelled else {
+                planRecipeSelectionWiggleAngle = 0
+                return
             }
-        }
-
-        var state = cookbookPrepSuggestionStates[batchID] ?? CookbookPrepSuggestionState(batchID: batchID, batchName: name)
-        state.recipes = Array(suggestions.prefix(4))
-        state.isLoading = false
-        state.errorMessage = state.recipes.isEmpty ? "No matching suggestions yet." : nil
-        cookbookPrepSuggestionStates[batchID] = state
-    }
-
-    private func cookbookPrepSuggestionQuery(name: String, savedPicks: [DiscoverRecipeCardData]) -> String {
-        var tokens = [name]
-        tokens.append(contentsOf: savedPicks.flatMap { [$0.title, $0.filterLabel] })
-        let query = tokens
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .prefix(5)
-            .joined(separator: " ")
-        return query.isEmpty ? "meal prep" : query
-    }
-
-    private func cookbookExistingPrepRecipeIDs() -> Set<String> {
-        Set(store.latestPlan?.allBatchRecipes.map { $0.recipe.id } ?? [])
-    }
-
-    private func cookbookUniqueSuggestionRecipes(
-        _ recipes: [DiscoverRecipeCardData],
-        excluding excludedIDs: Set<String>,
-        limit: Int
-    ) -> [DiscoverRecipeCardData] {
-        var seen = excludedIDs
-        var values: [DiscoverRecipeCardData] = []
-        for recipe in recipes where !seen.contains(recipe.id) {
-            seen.insert(recipe.id)
-            values.append(recipe)
-            if values.count >= limit { break }
-        }
-        return values
-    }
-
-    private func cookbookRankedFallbackSuggestions(
-        _ recipes: [DiscoverRecipeCardData],
-        query: String
-    ) -> [DiscoverRecipeCardData] {
-        let queryTokens = Set(query
-            .lowercased()
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .map(String.init)
-            .filter { $0.count > 2 })
-
-        guard !queryTokens.isEmpty else { return recipes.shuffled() }
-
-        return recipes.sorted { lhs, rhs in
-            cookbookSuggestionScore(lhs, queryTokens: queryTokens) > cookbookSuggestionScore(rhs, queryTokens: queryTokens)
+            withAnimation(.easeInOut(duration: 0.075)) {
+                planRecipeSelectionWiggleAngle = angle
+            }
+            try? await Task.sleep(nanoseconds: 75_000_000)
         }
     }
 
-    private func cookbookSuggestionScore(_ recipe: DiscoverRecipeCardData, queryTokens: Set<String>) -> Int {
-        let haystack = [
-            recipe.title,
-            recipe.description,
-            recipe.category,
-            recipe.recipeType,
-            recipe.filterLabel
-        ]
-            .compactMap { $0?.lowercased() }
-            .joined(separator: " ")
-        return queryTokens.reduce(0) { score, token in
-            haystack.contains(token) ? score + 1 : score
-        }
+    private func planRecipeSelectionWiggleDirection(for recipeID: String) -> Double {
+        let scalarTotal = recipeID.unicodeScalars.reduce(0) { $0 + Int($1.value) }
+        return scalarTotal.isMultiple(of: 2) ? 1 : -1
     }
 
-    private func addCookbookPrepSuggestion(_ recipe: DiscoverRecipeCardData, to batchID: UUID) {
-        guard cookbookPrepSuggestionStates[batchID]?.isAdding(recipe.id) != true else { return }
-        cookbookPrepSuggestionStates[batchID]?.addingRecipeIDs.insert(recipe.id)
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    private func cancelPlanRecipeSelection() {
+        guard !isAddingSelectedPlanRecipes else { return }
+        selectedPlanRecipeIDs = []
+        planRecipeSelectionBatchID = nil
+        planRecipeSelectionName = ""
+        planRecipeSelectionError = nil
+    }
+
+    private func finishPlanRecipeSelection() {
+        guard let batchID = planRecipeSelectionBatchID,
+              !selectedPlanRecipeIDs.isEmpty,
+              !isAddingSelectedPlanRecipes else { return }
+
+        let selectedRecipes = savedStore.savedRecipes.filter { selectedPlanRecipeIDs.contains($0.id) }
+        guard !selectedRecipes.isEmpty else { return }
+        isAddingSelectedPlanRecipes = true
+        planRecipeSelectionError = nil
 
         Task {
-            do {
-                let accessToken = await store.freshUserDataSession()?.accessToken
-                let detail = try await RecipeDetailService.shared.fetchRecipeDetail(
-                    id: recipe.id,
-                    accessToken: accessToken
-                )
-                let plannedRecipe = recipePlanModel(
-                    from: detail,
-                    targetServings: detail.displayServings,
-                    fallbackRecipe: nil
-                )
-                await store.updateLatestPlan(
-                    with: plannedRecipe,
-                    servings: plannedRecipe.servings,
-                    targetBatchID: batchID
-                )
-                await MainActor.run {
-                    cookbookPrepSuggestionStates[batchID]?.addingRecipeIDs.remove(recipe.id)
-                    cookbookPrepSuggestionStates[batchID]?.addedRecipeIDs.insert(recipe.id)
-                    toastCenter.show(
-                        title: "Added to prep",
-                        subtitle: "\(recipe.displayTitle) is now in this bracket.",
-                        systemImage: "checkmark.circle.fill"
+            let accessToken = await store.freshUserDataSession()?.accessToken
+            var failedRecipeIDs = Set<String>()
+
+            for recipe in selectedRecipes {
+                do {
+                    let detail = try await RecipeDetailService.shared.fetchRecipeDetail(
+                        id: recipe.id,
+                        accessToken: accessToken
                     )
+                    let plannedRecipe = recipePlanModel(
+                        from: detail,
+                        targetServings: detail.displayServings,
+                        fallbackRecipe: nil
+                    )
+                    await store.updateLatestPlan(
+                        with: plannedRecipe,
+                        servings: plannedRecipe.servings,
+                        targetBatchID: batchID
+                    )
+                } catch {
+                    failedRecipeIDs.insert(recipe.id)
                 }
-            } catch {
-                await MainActor.run {
-                    cookbookPrepSuggestionStates[batchID]?.addingRecipeIDs.remove(recipe.id)
-                    toastCenter.show(
-                        title: "Couldn’t add recipe",
-                        subtitle: "Recipe details were not available yet.",
-                        systemImage: "exclamationmark.circle.fill"
-                    )
+            }
+
+            await MainActor.run {
+                isAddingSelectedPlanRecipes = false
+                if failedRecipeIDs.isEmpty {
+                    selectedPlanRecipeIDs = []
+                    planRecipeSelectionBatchID = nil
+                    planRecipeSelectionName = ""
+                    planRecipeSelectionError = nil
+                    selectedCycle = upcomingBatchCycles.first { $0.id == batchID.uuidString }
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } else {
+                    selectedPlanRecipeIDs = failedRecipeIDs
+                    let noun = failedRecipeIDs.count == 1 ? "recipe" : "recipes"
+                    planRecipeSelectionError = "Couldn’t add \(failedRecipeIDs.count) \(noun). Tap Add to retry."
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
                 }
             }
         }
     }
+
 
     private func openRequestedCycleIfNeeded() {
         guard let requestedCycleID, !requestedCycleID.isEmpty else { return }
 
         if let upcomingCycle = upcomingBatchCycles.first(where: { $0.id == requestedCycleID }) {
-            selectedSection = .prepped
-            selectedCycle = upcomingCycle
+            openPlan(upcomingCycle)
             self.requestedCycleID = nil
             return
         }
 
         if let matchedPreviousCycle = previousCycles.first(where: { $0.id == requestedCycleID }) {
-            selectedSection = .prepped
-            selectedCycle = matchedPreviousCycle
+            openPlan(matchedPreviousCycle)
             self.requestedCycleID = nil
         }
     }
 
     private func openImportQueue(initialTab: SharedRecipeImportQueueTab? = nil) {
         importQueueInitialTab = initialTab
-        Task {
-            await onRefreshSharedImports()
-        }
         isImportQueuePresented = true
     }
 
-    private func openComposer(context: CookbookComposerContext, initialText: String? = nil) {
-        composerContext = context
+    private func openComposer(initialText: String? = nil) {
         composerInitialText = initialText
         isComposerPresented = true
     }
@@ -4897,203 +4345,210 @@ private struct CookbookTabView: View {
         guard let text = requestedImportText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             return
         }
-        selectedSection = .saved
-        openComposer(context: .saved, initialText: text)
+        openComposer(initialText: text)
         requestedImportText = nil
     }
 }
 
-private struct CookbookPrepSuggestionState: Equatable {
-    let batchID: UUID
-    var batchName: String
-    var recipes: [DiscoverRecipeCardData] = []
-    var addedRecipeIDs: Set<String> = []
-    var addingRecipeIDs: Set<String> = []
-    var isLoading = false
-    var errorMessage: String?
 
-    var shouldRender: Bool {
-        isLoading || !recipes.isEmpty || errorMessage != nil
+private struct NewCookbookPlanNameSheet: View {
+    @Binding var name: String
+    let onCancel: () -> Void
+    let onCreate: () -> Void
+
+    @FocusState private var isNameFocused: Bool
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func isAdded(_ recipeID: String) -> Bool {
-        addedRecipeIDs.contains(recipeID)
-    }
+    var body: some View {
+        ZStack {
+            OunjePalette.background
+                .ignoresSafeArea()
 
-    func isAdding(_ recipeID: String) -> Bool {
-        addingRecipeIDs.contains(recipeID)
+            VStack(alignment: .leading, spacing: 22) {
+                OunjeSheetHeader(
+                    title: "New plan",
+                    closeAccessibilityLabel: "Cancel",
+                    onClose: onCancel
+                )
+
+                TextField("Weeknight dinners, birthday...", text: $name)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .focused($isNameFocused)
+                    .onSubmit {
+                        guard !trimmedName.isEmpty else { return }
+                        onCreate()
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 52)
+                    .background(
+                        RoundedRectangle(cornerRadius: OunjeLayout.controlCornerRadius, style: .continuous)
+                            .fill(OunjePalette.surface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: OunjeLayout.controlCornerRadius, style: .continuous)
+                                    .stroke(OunjePalette.stroke, lineWidth: 1)
+                            )
+                    )
+
+                Button(action: onCreate) {
+                    Text("Choose recipes")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(OunjePalette.background)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: OunjeLayout.primaryButtonHeight)
+                        .background(
+                            RoundedRectangle(cornerRadius: OunjeLayout.controlCornerRadius, style: .continuous)
+                                .fill(OunjePalette.softCream)
+                        )
+                }
+                .buttonStyle(OunjeCardPressButtonStyle())
+                .disabled(trimmedName.isEmpty)
+                .opacity(trimmedName.isEmpty ? 0.42 : 1)
+            }
+            .padding(.horizontal, OunjeLayout.sheetHorizontalPadding)
+            .padding(.top, OunjeLayout.sheetTopPadding)
+            .padding(.bottom, OunjeLayout.sheetBottomPadding)
+        }
+        .ounjeSheetSurface()
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                isNameFocused = true
+            }
+        }
     }
 }
 
-private struct CookbookPrepSuggestionStrip: View {
-    let state: CookbookPrepSuggestionState
-    let onSelectRecipe: (DiscoverRecipeCardData) -> Void
-    let onDismiss: () -> Void
+private struct NewCookbookPlanPreview: View {
+    let imageCandidates: [URL]
+
+    @StateObject private var loader = DiscoverRecipeImageLoader()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Suggested for \(state.batchName)")
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-
-                    Text("Tap a card to add it to this prep.")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                }
-
-                Spacer(minLength: 0)
-
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            Circle()
-                                .fill(OunjePalette.surface.opacity(0.94))
-                                .overlay(Circle().stroke(OunjePalette.stroke, lineWidth: 1))
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Hide prep suggestions")
+        ZStack {
+            if let image = loader.image {
+                Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 100, height: 100)
+                .opacity(0.38)
+                .brightness(-0.05)
+                .blur(radius: 2.0)
+                .clipped()
+            } else {
+                OunjePalette.surface.opacity(0.62)
             }
 
-            content
+            Color.black.opacity(0.34)
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(OunjePalette.panel.opacity(0.7))
+        .frame(width: 100, height: 100)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .task(id: imageCandidates.map(\.absoluteString).joined(separator: "|")) {
+            await loader.load(from: imageCandidates)
+        }
+    }
+}
+
+private struct CookbookPlanCard: View {
+    let cycle: CookbookPreppedCycle
+    let guideTargetID: FirstRunGuideTargetID?
+    let onOpen: () -> Void
+    let onDelete: () -> Void
+
+    @StateObject private var loader = DiscoverRecipeImageLoader()
+
+    private var imageCandidates: [URL] {
+        cycle.recipes.first?.imageCandidates ?? []
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: onOpen) {
+                ZStack(alignment: .bottomLeading) {
+                    coverImage
+
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.82)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+
+                    if cycle.recipes.isEmpty {
+                        Image(systemName: "fork.knife")
+                            .font(.system(size: 26, weight: .medium))
+                            .foregroundStyle(OunjePalette.softCream)
+                    }
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(cycle.title)
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+
+                        Text("\(cycle.recipes.count) \(cycle.recipes.count == 1 ? "recipe" : "recipes")")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.78))
+                            .lineLimit(1)
+                    }
+                    .padding(8)
+                }
+                .frame(width: 100, height: 100)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .stroke(OunjePalette.stroke.opacity(0.78), lineWidth: 1)
                 )
-        )
+                .firstRunGuideTarget(guideTargetID)
+                .frame(width: 100, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(OunjeCardPressButtonStyle())
+
+            Menu {
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete plan", systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(OunjePalette.softCream)
+                    .frame(width: 30, height: 30)
+                    .background(.black.opacity(0.4), in: Circle())
+            }
+            .padding(8)
+        }
+        .accessibilityLabel("Plan: \(cycle.title)")
+        .task(id: imageCandidates.map(\.absoluteString).joined(separator: "|")) {
+            await loader.load(from: imageCandidates)
+        }
     }
 
     @ViewBuilder
-    private var content: some View {
-        if state.isLoading {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(0..<4, id: \.self) { _ in
-                        CookbookPrepSuggestionSkeleton()
-                            .frame(width: 146)
-                    }
+    private var coverImage: some View {
+        if let image = loader.image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 100, height: 100)
+        } else if loader.isLoading {
+            OunjePalette.surface
+                .overlay {
+                    ProgressView()
+                        .tint(OunjePalette.softCream)
                 }
-                .padding(.horizontal, 1)
-                .padding(.bottom, 2)
-            }
-        } else if let errorMessage = state.errorMessage, state.recipes.isEmpty {
-            Text(errorMessage)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(OunjePalette.secondaryText)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 6)
         } else {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(state.recipes) { recipe in
-                        suggestionCard(recipe)
-                            .frame(width: 146)
-                    }
-                }
-                .padding(.horizontal, 1)
-                .padding(.bottom, 2)
-            }
-        }
-    }
-
-    private func suggestionCard(_ recipe: DiscoverRecipeCardData) -> some View {
-        let isAdded = state.isAdded(recipe.id)
-        let isAdding = state.isAdding(recipe.id)
-
-        return DiscoverRemoteRecipeCard(
-            recipe: recipe,
-            showsSaveAction: false,
-            secondaryTopAction: DiscoverRemoteRecipeCardTopAction(
-                systemName: isAdded ? "checkmark" : "plus",
-                accessibilityLabel: isAdded ? "Added to prep" : "Add to prep",
-                showsBackground: true,
-                symbolSize: 13,
-                frameSize: 30,
-                action: {
-                    guard !isAdded, !isAdding else { return }
-                    onSelectRecipe(recipe)
-                }
-            ),
-            isInteractive: true,
-            showsTopActions: true,
-            layout: .compact,
-            onSelect: {
-                guard !isAdded, !isAdding else { return }
-                onSelectRecipe(recipe)
-            }
-        )
-        .opacity(isAdded ? 0.62 : (isAdding ? 0.72 : 1))
-        .overlay(alignment: .center) {
-            if isAdding {
-                ProgressView()
-                    .tint(OunjePalette.softCream)
-                    .frame(width: 34, height: 34)
-                    .background(
-                        Circle()
-                            .fill(OunjePalette.background.opacity(0.78))
-                    )
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if isAdded {
-                Text("Added")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(OunjePalette.background)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule(style: .continuous).fill(OunjePalette.softCream))
-                    .padding(8)
-            }
+            OunjePalette.surface
         }
     }
 }
 
-private struct CookbookPrepSuggestionSkeleton: View {
-    @State private var shimmerOffset: CGFloat = -1.2
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.9))
-                .frame(height: 116)
-                .modifier(LoadingSheen(offset: shimmerOffset))
-
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.86))
-                .frame(height: 12)
-                .modifier(LoadingSheen(offset: shimmerOffset))
-
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.72))
-                .frame(width: 92, height: 10)
-                .modifier(LoadingSheen(offset: shimmerOffset))
-        }
-        .padding(11)
-        .frame(height: DiscoverRemoteRecipeCardLayout.compact.cardHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(OunjePalette.surface.opacity(0.72))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .onAppear {
-            withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) {
-                shimmerOffset = 1.2
-            }
-        }
-    }
-}
 
 enum SharedRecipeImportQueueTab: String, CaseIterable, Identifiable {
     case queued = "Queued"
@@ -5113,8 +4568,7 @@ private struct SharedRecipeImportQueueSheet: View {
     let onDeleteFailed: (SharedRecipeImportEnvelope) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selectedTab: SharedRecipeImportQueueTab = .queued
-    @State private var revealedCompletedImportIDs: Set<String> = []
-    @State private var hasInitializedCompletedReveal = false
+    @State private var cachedQueueItems: [SharedRecipeImportEnvelope] = []
 
     private var queuedItems: [SharedRecipeImportEnvelope] {
         allItems.filter(\.isLiveQueueState)
@@ -5125,11 +4579,18 @@ private struct SharedRecipeImportQueueSheet: View {
     }
 
     private var allItems: [SharedRecipeImportEnvelope] {
-        mergedSharedImportEnvelopes(
-            local: items,
-            backend: historyStore.backendQueueEnvelopes,
-            completed: historyStore.completedItems
-        )
+        cachedQueueItems
+    }
+
+    private var queueMergeRevision: String {
+        let localRevision = items.map {
+            "\($0.id):\($0.jobID ?? ""):\($0.normalizedProcessingState):\($0.updatedAt?.timeIntervalSince1970 ?? 0)"
+        }
+        let backendRevision = historyStore.backendQueueEnvelopes.map {
+            "\($0.id):\($0.jobID ?? ""):\($0.normalizedProcessingState):\($0.updatedAt?.timeIntervalSince1970 ?? 0)"
+        }
+        let completedRevision = historyStore.completedItems.map(\.id)
+        return (localRevision + ["|"] + backendRevision + ["|"] + completedRevision).joined(separator: ";")
     }
 
     private var queuedTabCount: Int {
@@ -5185,6 +4646,7 @@ private struct SharedRecipeImportQueueSheet: View {
             }
         }
         .onAppear {
+            rebuildCachedQueueItems()
             if let initialTab {
                 selectedTab = initialTab
             } else if !queuedItems.isEmpty {
@@ -5194,25 +4656,26 @@ private struct SharedRecipeImportQueueSheet: View {
             } else if !historyStore.completedItems.isEmpty {
                 selectedTab = .completed
             }
-            initializeCompletedRevealIfNeeded()
         }
-        .onChange(of: completedImportRevealKey) { _ in
-            revealNewCompletedImports()
+        .onChange(of: queueMergeRevision) { _ in
+            rebuildCachedQueueItems()
         }
     }
 
+    private func rebuildCachedQueueItems() {
+        cachedQueueItems = mergedSharedImportEnvelopes(
+            local: items,
+            backend: historyStore.backendQueueEnvelopes,
+            completed: historyStore.completedItems
+        )
+    }
+
     private var header: some View {
-        HStack(alignment: .center) {
-            Text("Recipe imports")
-                .sleeDisplayFont(30)
-                .foregroundStyle(OunjePalette.primaryText)
-
-            Spacer(minLength: 0)
-
-            Button("Done") { dismiss() }
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(OunjePalette.secondaryText)
-        }
+        OunjeSheetHeader(
+            title: "Recipe imports",
+            closeAccessibilityLabel: "Close recipe imports",
+            onClose: { dismiss() }
+        )
         .padding(.horizontal, 18)
         .padding(.top, 18)
         .padding(.bottom, 8)
@@ -5287,9 +4750,9 @@ private struct SharedRecipeImportQueueSheet: View {
                     detail: "Fresh shares will show up here while Ounje is pulling and parsing them."
                 )
             } else {
-                    VStack(spacing: 12) {
+                    LazyVStack(spacing: 12) {
                         ForEach(queuedItems) { item in
-                            SharedRecipeImportQueueRow(item: item, onDelete: nil)
+                            SharedRecipeImportQueueRow(item: item, onRetry: nil, onDelete: nil)
                         }
                     }
             }
@@ -5300,10 +4763,11 @@ private struct SharedRecipeImportQueueSheet: View {
                     detail: "If a share needs another pass, it will land here with the retry reason."
                 )
                 } else {
-                    VStack(spacing: 12) {
+                    LazyVStack(spacing: 12) {
                         ForEach(failedItems) { item in
                             SharedRecipeImportQueueRow(
                                 item: item,
+                                onRetry: onRetryFailed,
                                 onDelete: {
                                     onDeleteFailed(item)
                                 }
@@ -5318,53 +4782,15 @@ private struct SharedRecipeImportQueueSheet: View {
                     detail: "Once Ounje finishes a shared recipe cleanly, it will show up here."
                 )
             } else {
-                VStack(spacing: 12) {
-                    ForEach(Array(historyStore.completedItems.enumerated()), id: \.element.id) { index, item in
+                LazyVStack(spacing: 12) {
+                    ForEach(historyStore.completedItems) { item in
                         RecipeImportCompletedRow(
                             item: item,
                             onOpenRecipe: { recipe in
                                 onOpenRecipe(recipe)
                             }
                         )
-                        .modifier(
-                            StaggeredRevealModifier(
-                                isVisible: revealedCompletedImportIDs.contains(item.id),
-                                delay: Double(index) * 0.045,
-                                yOffset: 12
-                            )
-                        )
                     }
-                }
-            }
-        }
-    }
-
-    private var completedImportRevealKey: String {
-        historyStore.completedItems.map(\.id).joined(separator: "|")
-    }
-
-    private func initializeCompletedRevealIfNeeded() {
-        guard !hasInitializedCompletedReveal else { return }
-        revealedCompletedImportIDs = Set(historyStore.completedItems.map(\.id))
-        hasInitializedCompletedReveal = true
-    }
-
-    private func revealNewCompletedImports() {
-        guard hasInitializedCompletedReveal else {
-            initializeCompletedRevealIfNeeded()
-            return
-        }
-
-        let missingIDs = historyStore.completedItems
-            .map(\.id)
-            .filter { !revealedCompletedImportIDs.contains($0) }
-
-        guard !missingIDs.isEmpty else { return }
-
-        for (index, id) in missingIDs.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.055) {
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                    _ = revealedCompletedImportIDs.insert(id)
                 }
             }
         }
@@ -5395,7 +4821,7 @@ private struct SharedRecipeImportQueueSheet: View {
                         .fill(OunjePalette.panel.opacity(0.96))
                         .overlay(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(OunjePalette.accent.opacity(0.22), lineWidth: 1)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
                         )
                 )
             }
@@ -5429,17 +4855,17 @@ private struct SharedRecipeImportQueueSheet: View {
         )
     }
 
-    private func countBadge(_ count: Int, isSelected: Bool) -> some View {
-        Text("\(count)")
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(isSelected ? OunjePalette.background : OunjePalette.primaryText)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(isSelected ? OunjePalette.accent : OunjePalette.stroke)
-            )
-    }
+private func countBadge(_ count: Int, isSelected: Bool) -> some View {
+    Text("\(count)")
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(OunjePalette.primaryText)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            Capsule(style: .continuous)
+                .fill(isSelected ? OunjePalette.surface.opacity(0.74) : OunjePalette.surface.opacity(0.6))
+        )
+}
 }
 
 private enum InstacartRunHistoryView: String, CaseIterable, Identifiable {
@@ -7998,7 +7424,7 @@ private struct SharedRecipeImportProgressCard: View {
     }
 
     private var progressGold: Color {
-        Color(hex: "D7A84C")
+        OunjePalette.secondaryText
     }
 
     var body: some View {
@@ -8057,11 +7483,92 @@ private struct SharedRecipeImportProgressCard: View {
     }
 }
 
+private struct SharedRecipeImportGlobalChip: View {
+    let item: SharedRecipeImportEnvelope
+    let onTap: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isPulsing = false
+
+    private var currentStage: RecipeImportProgressStage {
+        RecipeImportProgressStage.current(for: item)
+    }
+
+    private var sourceLabel: String {
+        let source = item.sourceApp?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let source, !source.isEmpty {
+            return source
+        }
+        if let url = item.sourceURLString.flatMap(URL.init(string:)),
+           let host = url.host?.replacingOccurrences(of: "www.", with: ""),
+           !host.isEmpty {
+            return host
+        }
+        return "recipe"
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(OunjePalette.surface.opacity(0.9))
+                    Image(systemName: "tray.and.arrow.down.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                }
+                .frame(width: 30, height: 30)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Import started")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1)
+
+                    Text("\(currentStage.statusWord) \(sourceLabel)")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.84)
+                        .opacity(isPulsing && !reduceMotion && currentStage != .saved ? 0.54 : 1)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 12)
+            .frame(height: 48)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(OunjePalette.background.opacity(0.94))
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(OunjePalette.stroke, lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.26), radius: 16, x: 0, y: 8)
+                )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: 360)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+                isPulsing = true
+            }
+        }
+    }
+}
+
 private struct SharedRecipeImportQueueRow: View {
     let item: SharedRecipeImportEnvelope
+    let onRetry: (() -> Void)?
     let onDelete: (() -> Void)?
 
-    private var titleText: String {
+    private var sourceText: String {
         let source = item.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let source, !source.isEmpty {
             return source
@@ -8079,13 +7586,76 @@ private struct SharedRecipeImportQueueRow: View {
         return "Imported recipe"
     }
 
-    private var stableActivityDate: Date {
-        item.stageStartedAt ?? item.lastAttemptAt ?? item.createdAt
+    private var sourceHostText: String {
+        if let source = item.sourceURLString,
+           let url = URL(string: source),
+           let host = url.host?.replacingOccurrences(of: "www.", with: "") {
+            return host
+        }
+
+        if let sourceApp = item.sourceApp?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !sourceApp.isEmpty {
+            return sourceApp
+        }
+
+        return "Shared import"
     }
 
+    private var sourceSummaryText: String {
+        let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ""
+
+        if let sourceURLString = item.sourceURLString?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !sourceURLString.isEmpty,
+           let url = URL(string: sourceURLString) {
+            let host = url.host?.replacingOccurrences(of: "www.", with: "") ?? sourceHostText
+            let pathParts = url.pathComponents.filter { part in
+                part != "/" && part != ""
+            }
+
+            if !pathParts.isEmpty {
+                return "\(host)/\(pathParts.prefix(2).joined(separator: "/"))"
+            }
+
+            return host
+        }
+
+        if !sourceText.isEmpty {
+            return sourceText.components(separatedBy: .newlines).first ?? sourceText
+        }
+
+        return sourceHostText
+    }
+
+    private var statusColor: Color {
+        if item.isRetryNeeded {
+            return OunjePalette.primaryText
+        }
+
+        return OunjePalette.secondaryText
+    }
+
+    private var statusBadgeBackground: Color {
+        if item.isRetryNeeded {
+            return OunjePalette.surface.opacity(0.94)
+        }
+
+        return OunjePalette.surface.opacity(0.86)
+    }
+
+    private var metadataRow: String {
+        if let attemptCount = item.attemptCount {
+            return "Attempted \(attemptCount) time\(attemptCount == 1 ? "" : "s")"
+        }
+
+        return "Import in progress"
+    }
+
+    private var stableActivityDate: Date { item.activityReferenceDate }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 11) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(OunjePalette.surface)
@@ -8093,17 +7663,38 @@ private struct SharedRecipeImportQueueRow: View {
 
                     Image(systemName: item.isRetryNeeded ? "exclamationmark.triangle.fill" : "tray.full.fill")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(item.isRetryNeeded ? Color.orange : OunjePalette.primaryText)
+                        .foregroundStyle(statusColor)
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(titleText)
-                        .font(.system(size: 16, weight: .semibold))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(item.queueStatusLabel)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(statusColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(statusBadgeBackground)
+                        )
+
+                        if let attemptCount = item.attemptCount {
+                            Text("Attempt \(attemptCount)")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(OunjePalette.secondaryText)
+                        }
+                    }
+
+                    Text(sourceHostText)
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(OunjePalette.primaryText)
+                        .lineLimit(1)
+
+                    Text(sourceSummaryText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
                         .lineLimit(2)
-                    Text(item.queueStatusLabel)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(item.isRetryNeeded ? Color.orange : OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
@@ -8115,11 +7706,15 @@ private struct SharedRecipeImportQueueRow: View {
                     } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Color.red)
-                            .frame(width: 44, height: 44)
+                            .foregroundStyle(OunjePalette.primaryText)
+                            .frame(width: 36, height: 36)
                             .background(
-                                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                    .fill(Color.red.opacity(0.12))
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(OunjePalette.surface.opacity(0.72))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(OunjePalette.stroke, lineWidth: 1)
+                                    )
                             )
                     }
                     .buttonStyle(.plain)
@@ -8128,23 +7723,48 @@ private struct SharedRecipeImportQueueRow: View {
                     .accessibilityLabel("Delete failed import")
                 }
             }
-            .zIndex(10)
+
+            HStack(spacing: 12) {
+                Text(item.lastError?.isEmpty == false ? "Retry needed" : metadataRow)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                Text(stableActivityDate.formatted(.relative(presentation: .named)))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(OunjePalette.secondaryText)
+            }
 
             if let error = item.lastError, !error.isEmpty {
                 Text(error)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(OunjePalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(spacing: 8) {
-                if let attemptCount = item.attemptCount {
-                    Text("Attempts: \(attemptCount)")
+            if item.isRetryNeeded, let onRetry {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onRetry()
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(OunjePalette.panel)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                                )
+                        )
                 }
-                Text(stableActivityDate.formatted(.relative(presentation: .named)))
+                .buttonStyle(.plain)
             }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(OunjePalette.secondaryText)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -8164,13 +7784,12 @@ private struct RecipeImportCompletedRow: View {
     let onOpenRecipe: ((DiscoverRecipeCardData) -> Void)?
 
     private var relativeTimestamp: String? {
-        let formatter = ISO8601DateFormatter()
         if let completedAt = item.completedAt,
-           let date = formatter.date(from: completedAt) {
+           let date = RecipeImportDateParser.parse(completedAt) {
             return date.formatted(.relative(presentation: .named))
         }
         if let createdAt = item.createdAt,
-           let date = formatter.date(from: createdAt) {
+           let date = RecipeImportDateParser.parse(createdAt) {
             return date.formatted(.relative(presentation: .named))
         }
         return nil
@@ -8223,12 +7842,12 @@ private struct RecipeImportCompletedRow: View {
                 if let sourceKindLabel = item.sourceKindLabel {
                     Text(sourceKindLabel)
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(OunjePalette.secondaryText)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(
                             Capsule(style: .continuous)
-                                .fill(OunjePalette.accent.opacity(0.9))
+                                .fill(OunjePalette.surface.opacity(0.92))
                         )
                 }
 
@@ -8248,15 +7867,15 @@ private struct RecipeImportCompletedRow: View {
 
             Spacer(minLength: 0)
 
-            Text("Done")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(OunjePalette.accent)
-                )
+                Text("Done")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(OunjePalette.primaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(OunjePalette.surface.opacity(0.92))
+                    )
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -8281,84 +7900,107 @@ private struct RecipeImportCompletedRow: View {
                 .fill(OunjePalette.surface)
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(OunjePalette.accent)
+                .foregroundStyle(OunjePalette.secondaryText)
         }
     }
 }
 
 private struct CustomTabBar: View {
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
     @Binding var selectedTab: AppTab
+    let onAddRecipe: () -> Void
     @Namespace private var selectionNamespace
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(AppTab.allCases) { tab in
-                Button {
-                    withAnimation(OunjeMotion.tabSpring) {
-                        selectedTab = tab
-                    }
-                    if tab == .discover {
-                        NotificationCenter.default.post(name: .ounjeDiscoverTabTapped, object: nil)
-                    }
-                } label: {
-                    VStack(spacing: 3) {
-                        if selectedTab == tab {
-                            Capsule(style: .continuous)
-                                .fill(OunjePalette.accent.opacity(0.92))
-                                .frame(width: 22, height: 3)
-                                .padding(.bottom, 3)
-                                .matchedGeometryEffect(id: "tab-indicator", in: selectionNamespace)
-                        } else {
-                            Capsule(style: .continuous)
-                                .fill(Color.clear)
-                                .frame(width: 22, height: 3)
-                                .padding(.bottom, 3)
-                        }
-
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: 22, weight: selectedTab == tab ? .semibold : .medium))
-                            .foregroundStyle(selectedTab == tab ? OunjePalette.primaryText : OunjePalette.secondaryText)
-                            .scaleEffect(selectedTab == tab ? 1.06 : 1)
-
-                        Text(tab.title)
-                            .sleeDisplayFont(selectedTab == tab ? 13 : 12)
-                            .foregroundStyle(selectedTab == tab ? OunjePalette.primaryText : OunjePalette.secondaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .contentShape(Rectangle())
-                    .background {
-                        if selectedTab == tab {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(OunjePalette.surface.opacity(0.68))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
-                                )
-                                .matchedGeometryEffect(id: "tab-highlight", in: selectionNamespace)
-                        }
-                    }
-                }
-                .buttonStyle(OunjeCardPressButtonStyle())
-            }
+            tabButton(.cookbook)
+            tabButton(.discover)
+            importButton
+            tabButton(.cart)
+            tabButton(.profile)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .frame(height: OunjeLayout.tabBarHeight)
+    }
+
+    private func tabButton(_ tab: AppTab) -> some View {
+        let isSelected = selectedTab == tab
+
+        return Button {
+            withAnimation(OunjeMotion.tabSpring) {
+                selectedTab = tab
+            }
+            if tab == .discover {
+                if firstRunGuide.phase == .discover {
+                    firstRunGuide.advance(to: .discoverRecipe)
+                }
+                NotificationCenter.default.post(name: .ounjeDiscoverTabTapped, object: nil)
+            }
+        } label: {
+            VStack(spacing: 3) {
+                ZStack(alignment: .top) {
+                    Capsule(style: .continuous)
+                        .fill(isSelected ? OunjePalette.accent : .clear)
+                        .frame(width: 20, height: 3)
+                        .matchedGeometryEffect(id: isSelected ? "tab-indicator" : "tab-indicator-empty-\(tab.rawValue)", in: selectionNamespace)
+
+                    Image(systemName: tab.symbol)
+                        .font(.system(size: 20, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                        .padding(.top, 7)
+                }
+                .frame(height: 30)
+
+                Text(tab.title)
+                    .sleeDisplayFont(isSelected ? 12 : 11)
+                    .foregroundStyle(isSelected ? OunjePalette.primaryText : OunjePalette.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(OunjeCardPressButtonStyle())
+        .firstRunGuideTarget(
+            .discoverTab,
+            enabled: tab == .discover && firstRunGuide.phase == .discover
+        )
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var importButton: some View {
+        Button(action: onAddRecipe) {
+            Image(systemName: "plus")
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(OunjePalette.background)
+                .frame(width: 58, height: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(OunjePalette.softCream)
+                )
+        }
+        .buttonStyle(OunjeCardPressButtonStyle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityLabel("Add recipe")
+        .firstRunGuideTarget(
+            .addRecipe,
+            enabled: firstRunGuide.phase == .addRecipe
+        )
     }
 }
 
 private struct BottomNavigationDock: View {
     @Binding var selectedTab: AppTab
-    var safeAreaBottom: CGFloat = 0
+    let onAddRecipe: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            CustomTabBar(selectedTab: $selectedTab)
+            CustomTabBar(selectedTab: $selectedTab, onAddRecipe: onAddRecipe)
+                .offset(y: 4)
                 .frame(
                     maxWidth: .infinity,
-                    minHeight: OunjeLayout.tabBarHeight + safeAreaBottom,
-                    maxHeight: OunjeLayout.tabBarHeight + safeAreaBottom,
+                    minHeight: OunjeLayout.tabBarHeight,
+                    maxHeight: OunjeLayout.tabBarHeight,
                     alignment: .center
                 )
         }
@@ -8376,76 +8018,24 @@ private struct BottomNavigationDock: View {
     }
 }
 
-private struct NewRecipeTargetSwitcher: View {
-    @Binding var selection: CookbookComposerContext
-
-    private let options: [CookbookComposerContext] = [.prepped, .saved]
-
-    var body: some View {
-        VStack(spacing: 3) {
-            tracker
-
-            HStack(spacing: 2) {
-                targetButton(.prepped, title: "Prep")
-                targetButton(.saved, title: "Save")
-            }
-            .padding(3)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(OunjePalette.surface.opacity(0.92))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
-                    )
-            )
-        }
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 8)
-                .onEnded { value in
-                    guard abs(value.translation.width) > 14 else { return }
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
-                        selection = value.translation.width < 0 ? .saved : .prepped
-                    }
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                }
+private extension RecipeDetailData {
+    var importedRecipeCard: DiscoverRecipeCardData {
+        DiscoverRecipeCardData(
+            id: id,
+            title: title,
+            description: description,
+            authorName: authorName,
+            authorHandle: authorHandle,
+            category: category ?? recipeType,
+            recipeType: recipeType ?? category,
+            cookTimeText: cookTimeText,
+            cookTimeMinutes: cookTimeMinutes,
+            publishedDate: nil,
+            imageURLString: discoverCardImageURLString ?? heroImageURLString,
+            heroImageURLString: heroImageURLString,
+            recipeURLString: originalRecipeURLString ?? recipeURLString,
+            source: source ?? sourcePlatform
         )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Recipe destination")
-        .accessibilityValue(selection == .prepped ? "Prep" : "Save")
-        .accessibilityHint("Tap or flick to choose where the recipe goes.")
-    }
-
-    private var tracker: some View {
-        HStack(spacing: 4) {
-            ForEach(options, id: \.self) { option in
-                Capsule(style: .continuous)
-                    .fill(option == selection ? OunjePalette.softCream.opacity(0.96) : OunjePalette.softCream.opacity(0.24))
-                    .frame(width: option == selection ? 13 : 4, height: 4)
-            }
-        }
-        .frame(height: 4)
-        .animation(.spring(response: 0.24, dampingFraction: 0.82), value: selection)
-    }
-
-    private func targetButton(_ target: CookbookComposerContext, title: String) -> some View {
-        Button {
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
-                selection = target
-            }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        } label: {
-            Text(title)
-                .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                .foregroundStyle(target == selection ? OunjePalette.background : OunjePalette.softCream.opacity(0.76))
-                .frame(width: 42, height: 24)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(target == selection ? OunjePalette.softCream : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
     }
 }
 
@@ -8455,9 +8045,8 @@ private struct DiscoverComposerSheet: View {
     @EnvironmentObject private var sharedImportInbox: SharedRecipeImportInboxStore
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var toastCenter: AppToastCenter
-    let context: CookbookComposerContext
+    @EnvironmentObject private var firstRunGuide: FirstRunGuideCoordinator
     let initialText: String?
-    @State private var selectedTargetContext: CookbookComposerContext
     @State private var draftText = ""
     @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var attachments: [RecipeImportMediaDraft] = []
@@ -8467,16 +8056,13 @@ private struct DiscoverComposerSheet: View {
     @State private var errorMessage: String?
     @State private var selectedMode: NewRecipeImportMode?
     @State private var activeImportMode: NewRecipeImportMode?
-    @State private var confirmation: NewRecipeImportConfirmation?
     @State private var isPhotoSourceDialogPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isImportCameraPresented = false
     @FocusState private var isTextFocused: Bool
 
-    init(context: CookbookComposerContext, initialText: String?) {
-        self.context = context
+    init(initialText: String?) {
         self.initialText = initialText
-        _selectedTargetContext = State(initialValue: context)
     }
 
     private var trimmedDraftText: String {
@@ -8514,28 +8100,18 @@ private struct DiscoverComposerSheet: View {
     }
 
     private var primaryActionTitle: String {
-        switch selectedTargetContext {
-        case .prepped:
-            return "Add to prep"
-        case .saved:
-            switch currentImportMode ?? .web {
-            case .create:
-                return "Create recipe"
-            case .web:
-                return hasPromptTextBeyondLinks ? "Generate recipe" : "Save to cookbook"
-            case .photo:
-                return "Save to cookbook"
-            }
+        switch currentImportMode ?? .web {
+        case .create:
+            return "Create recipe"
+        case .web:
+            return hasPromptTextBeyondLinks ? "Generate recipe" : "Save to recipes"
+        case .photo:
+            return "Save to recipes"
         }
     }
 
     private var submittingActionTitle: String {
-        switch selectedTargetContext {
-        case .prepped:
-            return "Saving..."
-        case .saved:
-            return currentImportMode == .create || (currentImportMode == .web && hasPromptTextBeyondLinks) ? "Generating..." : "Saving..."
-        }
+        currentImportMode == .create || (currentImportMode == .web && hasPromptTextBeyondLinks) ? "Generating..." : "Saving..."
     }
 
     private var mediaButtonTitle: String {
@@ -8555,9 +8131,7 @@ private struct DiscoverComposerSheet: View {
     private var placeholderCopy: String {
         switch currentImportMode ?? .create {
         case .create:
-            return selectedTargetContext == .prepped
-                ? "Write the dish you want to prep. Add notes, cravings, or ingredients."
-                : "Describe a base dish, combo, ingredients, macros, or constraints."
+            return "Describe a base dish, combo, ingredients, macros, or constraints."
         case .web:
             return ""
         case .photo:
@@ -8597,16 +8171,9 @@ private struct DiscoverComposerSheet: View {
                     .padding(.top, 6)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top) {
-                        Text("New recipe")
-                            .font(.system(size: 24, weight: .regular, design: .serif))
-                            .foregroundStyle(OunjePalette.primaryText)
-
-                        Spacer(minLength: 12)
-
-                        NewRecipeTargetSwitcher(selection: $selectedTargetContext)
-                            .offset(y: -11)
-                    }
+                    Text("New recipe")
+                        .font(.system(size: 24, weight: .regular, design: .serif))
+                        .foregroundStyle(OunjePalette.primaryText)
 
                     if !helperCopy.isEmpty {
                         Text(helperCopy)
@@ -8619,14 +8186,19 @@ private struct DiscoverComposerSheet: View {
 
                     newRecipeOptions
 
+                    if firstRunGuide.phase == .addRecipe {
+                        firstRunGuideSharePath
+                            .padding(.top, 8)
+                    }
+
                 }
             }
             .padding(.horizontal, 18)
             .padding(.top, 10)
             .padding(.bottom, 12)
-            .blur(radius: activeImportMode == nil && confirmation == nil ? 0 : 10)
-            .scaleEffect(activeImportMode == nil && confirmation == nil ? 1 : 0.985)
-            .allowsHitTesting(activeImportMode == nil && confirmation == nil)
+            .blur(radius: activeImportMode == nil ? 0 : 10)
+            .scaleEffect(activeImportMode == nil ? 1 : 0.985)
+            .allowsHitTesting(activeImportMode == nil)
 
             if let activeImportMode {
                 importEntryModal(mode: activeImportMode)
@@ -8634,15 +8206,9 @@ private struct DiscoverComposerSheet: View {
                     .zIndex(6)
             }
 
-            if let confirmation {
-                NewRecipeImportConfirmationOverlay(confirmation: confirmation)
-                    .transition(.opacity.combined(with: .scale(scale: 0.94)))
-                    .zIndex(10)
-            }
         }
         .onAppear {
             let trimmedInitialText = initialText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            selectedTargetContext = context
             if !trimmedInitialText.isEmpty {
                 draftText = trimmedInitialText
                 selectedMode = .web
@@ -8660,6 +8226,11 @@ private struct DiscoverComposerSheet: View {
                 if !trimmedInitialText.isEmpty {
                     isTextFocused = true
                 }
+            }
+        }
+        .onDisappear {
+            if firstRunGuide.phase == .addRecipe {
+                firstRunGuide.advance(to: .completed)
             }
         }
         .onChange(of: selectedMediaItems.count) { count in
@@ -8719,6 +8290,64 @@ private struct DiscoverComposerSheet: View {
         }
     }
 
+    private var firstRunGuideSharePath: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                HStack(spacing: -5) {
+                    ForEach(Array(["TikTokMark", "InstagramMark", "YouTubeMark"].enumerated()), id: \.element) { index, assetName in
+                        socialShareSourceLogo(assetName: assetName, rotation: Double(index - 1) * 7)
+                    }
+
+                    Image("PhotosAppIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 26, height: 26)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .rotationEffect(.degrees(12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(OunjePalette.background, lineWidth: 1.5)
+                        )
+                }
+                .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Or share to Ounje")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(OunjePalette.primaryText)
+                    Text("In TikTok, IG, YouTube, or Photos, tap Share → Ounje.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(OunjePalette.surface.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(OunjePalette.stroke, lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Share a recipe to Ounje from TikTok, IG, YouTube, or Photos.")
+    }
+
+    private func socialShareSourceLogo(assetName: String, rotation: Double) -> some View {
+        Image(assetName)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 26, height: 26)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .rotationEffect(.degrees(rotation))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(OunjePalette.background, lineWidth: 1.5)
+            )
+    }
+
     @ViewBuilder
     private func importEntryModal(mode: NewRecipeImportMode) -> some View {
         ZStack {
@@ -8729,15 +8358,10 @@ private struct DiscoverComposerSheet: View {
                 }
 
             VStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(mode.tint.opacity(0.18))
-                        .frame(width: 62, height: 62)
-
-                    Image(systemName: mode.systemImage)
-                        .font(.system(size: 25, weight: .bold))
-                        .foregroundStyle(mode.tint)
-                }
+                Text(mode.emoji)
+                    .font(.system(size: 47))
+                    .frame(width: 62, height: 62)
+                    .accessibilityHidden(true)
 
                 VStack(spacing: 7) {
                     Text(importModalTitle(for: mode))
@@ -9136,6 +8760,7 @@ private struct DiscoverComposerSheet: View {
             : nil
 
         Task {
+            var recoverableEnvelope: SharedRecipeImportEnvelope?
             do {
                 let session = await store.freshUserDataSession()
                 let trimmedAccessToken = session?.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -9150,7 +8775,7 @@ private struct DiscoverComposerSheet: View {
                     id: envelopeID,
                     createdAt: Date(),
                     jobID: nil,
-                    targetState: selectedTargetContext == .prepped ? "prepped" : "saved",
+                    targetState: "saved",
                     sourceText: sourceTextForImport,
                     sourceURLString: sourceURLForImport,
                     canonicalSourceURLString: nil,
@@ -9164,6 +8789,7 @@ private struct DiscoverComposerSheet: View {
                     updatedAt: Date()
                 )
                 try? SharedRecipeImportInbox.write(localEnvelope)
+                recoverableEnvelope = localEnvelope
                 await sharedImportInbox.refresh()
 
                 let response = try await RecipeImportAPIService.shared.importRecipe(
@@ -9171,7 +8797,7 @@ private struct DiscoverComposerSheet: View {
                     accessToken: trimmedAccessToken,
                     sourceURL: sourceURLForImport,
                     sourceText: sourceTextForImport,
-                    targetState: selectedTargetContext == .prepped ? "prepped" : "saved",
+                    targetState: "saved",
                     attachments: attachmentsForImport.map(\.payload),
                     photoContext: photoContext
                 )
@@ -9181,20 +8807,16 @@ private struct DiscoverComposerSheet: View {
                 }
 
                 await MainActor.run {
-                    let importedRecipe = response.recipe
-                    if let importedRecipe, selectedTargetContext == .saved {
+                    let importedRecipe = response.recipe ?? response.recipeDetail.map(\.importedRecipeCard)
+                    if let importedRecipe {
                         savedStore.saveImportedRecipe(
                             importedRecipe,
-                            showToast: selectedTargetContext == .saved,
-                            respectUnsave: true
+                            showToast: false,
+                            respectUnsave: false
                         )
                     }
                 }
                 NotificationCenter.default.post(name: .recipeImportHistoryNeedsRefresh, object: nil)
-
-                if selectedTargetContext == .prepped, let detail = response.recipeDetail {
-                    await store.updateLatestPlan(with: recipeFromImportedDetail(detail), servings: detail.displayServings)
-                }
 
                 let backendProcessingState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 let isLiveBackendState = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"].contains(backendProcessingState)
@@ -9220,7 +8842,7 @@ private struct DiscoverComposerSheet: View {
                         return "queued"
                     }
                 }()
-                let shouldTrackAsQueued = !shouldFailImport && ((selectedTargetContext == .saved && isTypedPromptImport) || isLiveBackendState)
+                let shouldTrackAsQueued = !shouldFailImport && (isTypedPromptImport || isLiveBackendState)
 
                 if shouldFailImport {
                     let failedEnvelope = SharedRecipeImportEnvelope(
@@ -9275,9 +8897,11 @@ private struct DiscoverComposerSheet: View {
                         processingState: normalizedProcessingState,
                         attemptCount: localEnvelope.attemptCount,
                         lastAttemptAt: Date(),
-                        serverSubmittedAt: localEnvelope.serverSubmittedAt ?? Date(),
+                        serverSubmittedAt: localEnvelope.serverSubmittedAt ?? response.job.sharedImportEnvelope.serverSubmittedAt ?? Date(),
                         lastError: nil,
-                        updatedAt: Date()
+                        activeStage: response.job.sharedImportEnvelope.activeStage,
+                        stageStartedAt: response.job.sharedImportEnvelope.stageStartedAt,
+                        updatedAt: response.job.sharedImportEnvelope.updatedAt
                     )
                     try? SharedRecipeImportInbox.update(queuedEnvelope)
                 } else {
@@ -9299,60 +8923,87 @@ private struct DiscoverComposerSheet: View {
                         dismiss()
                     } else if shouldTrackAsQueued {
                         toastCenter.show(
-                            title: "Import queued",
-                            subtitle: isPhotoRecipeImport ? "Ounje is checking the dish photo now." : "Ounje is pulling the recipe in now.",
+                            title: "Import started",
+                            subtitle: isPhotoRecipeImport ? "Ounje is reading the photo in the background." : "Ounje is working in the background.",
                             systemImage: isPhotoRecipeImport ? "camera.viewfinder" : "tray.and.arrow.down.fill",
                             destination: .recipeImportQueue(.queued)
                         )
-                        showConfirmation(
-                            title: "Importing recipe",
-                            subtitle: isPhotoRecipeImport ? "We’re reading the photo now. You’ll see it in imports when it’s ready." : "We’re pulling the recipe in now. You’ll see it in imports when it’s ready.",
-                            systemImage: isPhotoRecipeImport ? "camera.viewfinder" : "tray.and.arrow.down.fill",
-                            showsProgress: true
-                        )
-                    } else if selectedTargetContext == .prepped, let detail = response.recipeDetail {
-                        toastCenter.show(
-                            title: "Added to next prep",
-                            subtitle: detail.title,
-                            systemImage: "sparkles",
-                            thumbnailURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString ?? detail.imageURL?.absoluteString,
-                            destination: .appTab(.prep)
-                        )
-                        showConfirmation(
-                            title: "Saved to prep",
-                            subtitle: detail.title,
-                            systemImage: "calendar.badge.plus",
-                            showsProgress: false
-                        )
-                        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
-                    } else if selectedTargetContext == .saved {
-                        showConfirmation(
-                            title: "Saved to cookbook",
-                            subtitle: response.recipeDetail?.title ?? response.recipe?.title ?? "Recipe is ready in your cookbook.",
-                            systemImage: "bookmark.fill",
-                            showsProgress: false
-                        )
-                        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
-                    } else {
                         dismiss()
+                    } else {
+                        toastCenter.show(
+                            title: "Saved to recipes",
+                            subtitle: response.recipeDetail?.title ?? response.recipe?.title ?? "Recipe is ready in your recipes.",
+                            systemImage: "bookmark.fill",
+                            destination: nil
+                        )
+                        dismiss()
+                        AppReviewPromptCoordinator.promptAfterFirstRecipeImport()
                     }
                 }
             } catch {
+                let resolvedErrorMessage = (error as? RecipeImportServiceError).map {
+                    switch $0 {
+                    case .invalidRequest:
+                        return "The import request could not be built."
+                    case .invalidResponse:
+                        return "The import response came back in an unexpected format."
+                    case .requestFailed(let message):
+                        return message
+                    }
+                } ?? error.localizedDescription
+                let shouldRetryAutomatically = Self.isTransientImportTransportError(error)
+
+                if let recoverableEnvelope {
+                    let retainedEnvelope = SharedRecipeImportEnvelope(
+                        id: recoverableEnvelope.id,
+                        createdAt: recoverableEnvelope.createdAt,
+                        jobID: recoverableEnvelope.jobID,
+                        targetState: recoverableEnvelope.targetState,
+                        sourceText: recoverableEnvelope.sourceText,
+                        sourceURLString: recoverableEnvelope.sourceURLString,
+                        canonicalSourceURLString: recoverableEnvelope.canonicalSourceURLString,
+                        sourceApp: recoverableEnvelope.sourceApp,
+                        attachments: recoverableEnvelope.attachments,
+                        processingState: shouldRetryAutomatically ? "retryable" : "failed",
+                        attemptCount: recoverableEnvelope.attemptCount,
+                        lastAttemptAt: Date(),
+                        serverSubmittedAt: recoverableEnvelope.serverSubmittedAt,
+                        lastError: resolvedErrorMessage,
+                        updatedAt: Date()
+                    )
+                    try? SharedRecipeImportInbox.update(retainedEnvelope)
+                    await sharedImportInbox.refresh()
+                }
+
                 await MainActor.run {
                     isSubmitting = false
-                    errorMessage = (error as? RecipeImportServiceError).map {
-                        switch $0 {
-                        case .invalidRequest:
-                            return "The import request could not be built."
-                        case .invalidResponse:
-                            return "The import response came back in an unexpected format."
-                        case .requestFailed(let message):
-                            return message
-                        }
-                    } ?? error.localizedDescription
+                    if recoverableEnvelope != nil {
+                        toastCenter.show(
+                            title: shouldRetryAutomatically ? "Import queued" : "Couldn’t import recipe",
+                            subtitle: shouldRetryAutomatically
+                                ? "Ounje will retry automatically when the connection is ready."
+                                : resolvedErrorMessage,
+                            systemImage: shouldRetryAutomatically ? "arrow.clockwise" : "exclamationmark.circle.fill",
+                            destination: .recipeImportQueue(shouldRetryAutomatically ? .queued : .failed)
+                        )
+                        dismiss()
+                    } else {
+                        errorMessage = resolvedErrorMessage
+                    }
                 }
             }
         }
+    }
+
+    private static func isTransientImportTransportError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+        return nsError.code == NSURLErrorTimedOut
+            || nsError.code == NSURLErrorNetworkConnectionLost
+            || nsError.code == NSURLErrorNotConnectedToInternet
+            || nsError.code == NSURLErrorCannotConnectToHost
+            || nsError.code == NSURLErrorDNSLookupFailed
+            || nsError.code == NSURLErrorDataNotAllowed
     }
 
     private func prepareAttachments(from items: [PhotosPickerItem]) async {
@@ -9465,30 +9116,6 @@ private struct DiscoverComposerSheet: View {
 
         errorMessage = "Copy a link first, then tap Paste."
         isTextFocused = true
-    }
-
-    private func showConfirmation(
-        title: String,
-        subtitle: String,
-        systemImage: String,
-        showsProgress: Bool
-    ) {
-        withAnimation(OunjeMotion.screenSpring) {
-            activeImportMode = nil
-            confirmation = NewRecipeImportConfirmation(
-                title: title,
-                subtitle: subtitle,
-                systemImage: systemImage,
-                showsProgress: showsProgress
-            )
-        }
-        isTextFocused = false
-        Task {
-            try? await Task.sleep(nanoseconds: showsProgress ? 1_250_000_000 : 950_000_000)
-            await MainActor.run {
-                dismiss()
-            }
-        }
     }
 
     private func recipeFromImportedDetail(_ detail: RecipeDetailData) -> Recipe {
@@ -9654,11 +9281,11 @@ private enum NewRecipeImportMode: CaseIterable, Hashable {
         }
     }
 
-    var systemImage: String {
+    var emoji: String {
         switch self {
-        case .photo: return "photo.on.rectangle.angled"
-        case .web: return "square.and.arrow.down"
-        case .create: return "doc.badge.plus"
+        case .photo: return "📸"
+        case .web: return "🌐"
+        case .create: return "🎨"
         }
     }
 
@@ -9677,15 +9304,10 @@ private struct NewRecipeImportOptionRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(mode.tint.opacity(isSelected ? 0.22 : 0.13))
-                    .frame(width: 49, height: 49)
-
-                Image(systemName: mode.systemImage)
-                    .font(.system(size: 19, weight: .bold))
-                    .foregroundStyle(mode.tint)
-            }
+            Text(mode.emoji)
+                .font(.system(size: 32))
+                .frame(width: 49, height: 49)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(mode.title)
@@ -9770,68 +9392,6 @@ private struct RecipeImportAttachmentPreviewCard: View {
     }
 }
 
-private struct NewRecipeImportConfirmation: Identifiable {
-    let id = UUID()
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let showsProgress: Bool
-}
-
-private struct NewRecipeImportConfirmationOverlay: View {
-    let confirmation: NewRecipeImportConfirmation
-
-    var body: some View {
-        ZStack {
-            OunjePalette.background.opacity(0.72)
-                .ignoresSafeArea()
-
-            VStack(spacing: 18) {
-                ZStack {
-                    Circle()
-                        .fill(OunjePalette.accent.opacity(0.16))
-                        .frame(width: 72, height: 72)
-
-                    if confirmation.showsProgress {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(OunjePalette.softCream)
-                            .scaleEffect(1.1)
-                    } else {
-                        Image(systemName: confirmation.systemImage)
-                            .font(.system(size: 27, weight: .bold))
-                            .foregroundStyle(OunjePalette.softCream)
-                    }
-                }
-
-                VStack(spacing: 7) {
-                    Text(confirmation.title)
-                        .font(.system(size: 19, weight: .bold, design: .rounded))
-                        .foregroundStyle(OunjePalette.primaryText)
-                    Text(confirmation.subtitle)
-                        .font(.system(size: 13.5, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 30)
-            .frame(maxWidth: 330)
-            .background(
-                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                    .fill(OunjePalette.panel)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 34, style: .continuous)
-                            .stroke(OunjePalette.stroke.opacity(0.8), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.42), radius: 30, x: 0, y: 18)
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-}
-
 private struct RecipeImportMediaDraft: Identifiable {
     enum Kind {
         case image
@@ -9903,10 +9463,21 @@ private struct RecipeImportMediaDraft: Identifiable {
             throw RecipeImportMediaError.unreadable
         }
 
-        let prepared = image.ounjeResized(maxDimension: 1600)
-        let jpegData = prepared.jpegData(compressionQuality: 0.82) ?? data
-        let heroImage = image.ounjeCenterCroppedSquare().ounjeResized(maxDimension: 1200)
-        let heroData = heroImage.jpegData(compressionQuality: 0.86) ?? jpegData
+        guard let preparedSource = image.ounjeJPEGRepresentation(
+            maxDimension: 1600,
+            maxByteCount: 1_150_000,
+            preferredQuality: 0.84
+        ) else {
+            throw RecipeImportMediaError.unreadable
+        }
+        let prepared = preparedSource.image
+        let jpegData = preparedSource.data
+        let heroImage = image.ounjeCenterCroppedSquare()
+        let heroData = heroImage.ounjeJPEGRepresentation(
+            maxDimension: 1200,
+            maxByteCount: 750_000,
+            preferredQuality: 0.86
+        )?.data ?? jpegData
 
         let payload: RecipeImportAttachmentPayload
         if let userID, let accessToken, !userID.isEmpty, !accessToken.isEmpty,
@@ -9930,10 +9501,6 @@ private struct RecipeImportMediaDraft: Identifiable {
                 height: Int(prepared.size.height)
             )
         } else {
-            let fallbackLimit = 1_250_000
-            guard jpegData.count <= fallbackLimit else {
-                throw RecipeImportMediaError.uploadRequired
-            }
             payload = RecipeImportAttachmentPayload(
                 kind: "image",
                 sourceURL: nil,
@@ -10184,13 +9751,19 @@ private func makeRecipeImportImageAttachment(
         throw RecipeImportMediaError.unreadable
     }
 
-    let prepared = image.ounjeResized(maxDimension: 1600)
-    let jpegData = prepared.jpegData(compressionQuality: 0.82) ?? data
+    guard let preparedSource = image.ounjeJPEGRepresentation(
+        maxDimension: 1600,
+        maxByteCount: 1_150_000,
+        preferredQuality: 0.84
+    ) else {
+        throw RecipeImportMediaError.unreadable
+    }
+    let jpegData = preparedSource.data
     return RecipeImportAttachmentPayload(
         kind: "image",
         sourceURL: nil,
         dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
-        mimeType: mimeType ?? "image/jpeg",
+        mimeType: "image/jpeg",
         fileName: fileName,
         previewFrameURLs: []
     )
@@ -10565,6 +10138,28 @@ private enum RecipeImportMediaError: LocalizedError {
 }
 
 extension UIImage {
+    func ounjeJPEGRepresentation(
+        maxDimension: CGFloat,
+        maxByteCount: Int,
+        preferredQuality: CGFloat
+    ) -> (image: UIImage, data: Data)? {
+        let qualitySteps = [preferredQuality, 0.76, 0.68, 0.60, 0.52, 0.44]
+        var dimension = maxDimension
+
+        for _ in 0 ..< 5 {
+            let candidate = ounjeResized(maxDimension: dimension)
+            for quality in qualitySteps {
+                guard let data = candidate.jpegData(compressionQuality: quality) else { continue }
+                if data.count <= maxByteCount {
+                    return (candidate, data)
+                }
+            }
+            dimension *= 0.82
+        }
+
+        return nil
+    }
+
     func ounjeResized(maxDimension: CGFloat) -> UIImage {
         let largestDimension = max(size.width, size.height)
         guard largestDimension > maxDimension, largestDimension > 0 else {

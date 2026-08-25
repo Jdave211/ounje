@@ -5,6 +5,7 @@
 # Dependencies
 node_modules
 package-lock.json
+!website/package-lock.json
 
 # macOS
 .DS_Store
@@ -12,6 +13,7 @@ package-lock.json
 .LSOverride
 
 # Xcode
+build/
 client/ios/build/
 client/ios/DerivedData/
 client/ios/*.xcworkspace/xcuserdata/

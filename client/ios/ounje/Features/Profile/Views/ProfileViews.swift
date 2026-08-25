@@ -12,17 +12,19 @@ import AuthenticationServices
 import CryptoKit
 import Security
 
+extension Notification.Name {
+    static let ounjeReplayFirstRunGuideRequested = Notification.Name("ounje.first-run-guide.replay")
+}
+
 struct ProfileTabView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var savedStore: SavedRecipesStore
-    @State private var isRecurringRecipesPresented = false
-    @State private var isCadencePickerPresented = false
-    @State private var selectedCadence: MealCadence = .weekly
-    @State private var selectedAnchorDate = Date()
     @State private var isSettingsPresented = false
     @State private var isNameEditorPresented = false
     @State private var isFeedbackPresented = false
-    @State private var isBudgetSheetPresented = false
+    @State private var communityRatingStats = UserRecipeRatingStats.empty
+    @State private var isLoadingCommunityRatingStats = false
+    @State private var communityRatingRevision = 0
     let importedRecipeCount: Int
     let aiEditCount: Int
 
@@ -80,15 +82,16 @@ struct ProfileTabView: View {
                         onOpenSettings: { isSettingsPresented = true }
                     )
 
-                    ProfileMinimalActionGrid(actions: profileGridActions)
-
                     ProfileUsageBlock(
                         importedRecipeCount: importedRecipeCount,
                         savedRecipeCount: savedStore.savedRecipes.count,
                         aiEditCount: aiEditCount
                     )
 
-                    ProfileMinimalSection(rows: primaryProfileRows)
+                    ProfileCommunityBlock(
+                        stats: communityRatingStats,
+                        isLoading: isLoadingCommunityRatingStats
+                    )
                 } else {
                     RecipesEmptyState(
                         title: "No profile loaded",
@@ -111,162 +114,51 @@ struct ProfileTabView: View {
             .presentationDetents([.height(260)])
             .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $isBudgetSheetPresented) {
-            ProfileBudgetSheet()
-        }
         .sheet(isPresented: $isFeedbackPresented) {
             FeedbackSheet()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $isRecurringRecipesPresented) {
-            RecurringPrepRecipesSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $isCadencePickerPresented) {
-            DeliveryScheduleSheet(
-                selectedCadence: $selectedCadence,
-                selectedAnchorDate: $selectedAnchorDate,
-                onCancel: {
-                    isCadencePickerPresented = false
-                },
-                onSave: {
-                    saveCadenceScheduleChanges()
-                }
-            )
-            .presentationDetents([.height(640)])
-            .presentationDragIndicator(.visible)
-        }
         .fullScreenCover(isPresented: $isSettingsPresented) {
             ProfileSettingsPage()
         }
-    }
-
-    private var recurringRecipeSummary: String {
-        let activeCount = store.resolvedRecurringAnchorCount
-        if activeCount == 0 {
-            return "No active anchors"
+        .task(id: communityRatingTaskKey) {
+            await loadCommunityRatingStats()
         }
-        return activeCount == 1 ? "1 active anchor" : "\(activeCount) active anchors"
+        .onReceive(NotificationCenter.default.publisher(for: .ounjeRecipeRatingChanged)) { _ in
+            communityRatingRevision += 1
+        }
     }
 
     private var profileDisplayName: String {
         accountDisplayName.isEmpty ? "Ounje" : accountDisplayName
     }
 
-    private var profileGridActions: [ProfileGridActionModel] {
-        guard let profile else { return [] }
-
-        var actions: [ProfileGridActionModel] = [
-            .init(
-                title: "Schedule",
-                detail: "\(profile.cadenceScheduleSummary) · \(profile.deliveryTimeText)",
-                symbolName: "calendar",
-                tint: Color(hex: "8ED4FF"),
-                action: {
-                    selectedCadence = profile.cadence
-                    selectedAnchorDate = DeliveryScheduleSelectionBounds.clamped(
-                        profile.deliveryAnchorDate ?? profile.scheduledDeliveryDate()
-                    )
-                    isCadencePickerPresented = true
-                }
-            )
-        ]
-
-        if shouldShowBudgetTile(for: profile) {
-            actions.append(.init(
-                title: "Budget",
-                detail: profile.budgetSummary,
-                symbolName: "creditcard",
-                tint: OunjePalette.softCream,
-                action: { isBudgetSheetPresented = true }
-            ))
-        }
-
-        return actions
+    private var communityRatingTaskKey: String {
+        let userID = store.authSession?.userID ?? "signed-out"
+        return "community-ratings::\(userID)::\(communityRatingRevision)"
     }
 
-    private var primaryProfileRows: [ProfileMinimalRowModel] {
-        guard let profile else { return [] }
-
-        var rows: [ProfileMinimalRowModel] = []
-
-        rows.append(contentsOf: [
-            .init(
-                title: "Recurring meals",
-                detail: recurringRecipeSummary,
-                value: "Manage",
-                action: { isRecurringRecipesPresented = true }
-            ),
-            .init(
-                title: "Shop schedule",
-                detail: "\(profile.cadenceScheduleSummary) · \(profile.deliveryTimeText)",
-                value: "Edit",
-                action: {
-                    selectedCadence = profile.cadence
-                    selectedAnchorDate = DeliveryScheduleSelectionBounds.clamped(
-                        profile.deliveryAnchorDate ?? profile.scheduledDeliveryDate()
-                    )
-                    isCadencePickerPresented = true
-                }
-            )
-        ])
-
-        return rows
-    }
-
-    private var profileBackground: some View {
-        ZStack {
-            OunjePalette.background.ignoresSafeArea()
-
-            LinearGradient(
-                colors: [
-                    OunjePalette.background,
-                    OunjePalette.panel.opacity(0.9),
-                    OunjePalette.background
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-
-            Circle()
-                .fill(OunjePalette.accent.opacity(0.12))
-                .frame(width: 220, height: 220)
-                .blur(radius: 90)
-            .offset(x: 120, y: -340)
-        }
-    }
-
-    private func shouldShowBudgetTile(for profile: UserProfile) -> Bool {
-        let budgetGoalKeywords = [
-            "budget",
-            "save money",
-            "spend less",
-            "groceries",
-            "cheap",
-            "cost"
-        ]
-
-        return profile.mealPrepGoals.contains { goal in
-            let normalized = goal.lowercased()
-            return budgetGoalKeywords.contains { normalized.contains($0) }
-        }
-    }
-
-    private func saveCadenceScheduleChanges() {
-        guard var updated = store.profile else {
-            isCadencePickerPresented = false
+    @MainActor
+    private func loadCommunityRatingStats() async {
+        guard let session = await store.freshUserDataSession(),
+              let accessToken = session.accessToken else {
+            communityRatingStats = .empty
+            isLoadingCommunityRatingStats = false
             return
         }
 
-        let resolvedAnchor = DeliveryScheduleSelectionBounds.clamped(selectedAnchorDate)
-        updated.cadence = selectedCadence
-        updated.deliveryAnchorDate = resolvedAnchor
-        updated.deliveryAnchorDay = DeliveryAnchorDay.from(date: resolvedAnchor)
-        store.updateProfile(updated)
-        isCadencePickerPresented = false
+        isLoadingCommunityRatingStats = true
+        defer { isLoadingCommunityRatingStats = false }
+
+        do {
+            communityRatingStats = try await RecipeRatingService.shared.fetchUserStats(
+                userID: session.userID,
+                accessToken: accessToken
+            )
+        } catch {
+            communityRatingStats = .empty
+        }
     }
 
     private func updateProfileName(_ name: String) {
@@ -275,25 +167,6 @@ struct ProfileTabView: View {
         updated.preferredName = trimmed.isEmpty ? nil : trimmed
         store.updateProfile(updated)
     }
-}
-
-struct ProfileMinimalRowModel: Identifiable {
-    let title: String
-    let detail: String
-    let value: String
-    let action: () -> Void
-
-    var id: String { title }
-}
-
-struct ProfileGridActionModel: Identifiable {
-    let title: String
-    let detail: String
-    let symbolName: String
-    var tint: Color = OunjePalette.softCream
-    let action: () -> Void
-
-    var id: String { title }
 }
 
 struct ProfileMinimalHeader: View {
@@ -379,15 +252,12 @@ struct ProfileNameEditSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Profile name")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundStyle(OunjePalette.primaryText)
-
-                    Text("This is how Ounje addresses you in the app.")
-                        .font(.system(size: 13.5, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                }
+                OunjeSheetHeader(
+                    title: "Profile name",
+                    subtitle: "This is how Ounje addresses you in the app.",
+                    closeAccessibilityLabel: "Cancel editing profile name",
+                    onClose: { dismiss() }
+                )
 
                 TextField("Your name", text: $name)
                     .textInputAutocapitalization(.words)
@@ -406,83 +276,31 @@ struct ProfileNameEditSheet: View {
                     )
 
                 Spacer(minLength: 0)
+
+                Button {
+                    onSave(name)
+                    dismiss()
+                } label: {
+                    Text("Save name")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(OunjePalette.background)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: OunjeLayout.primaryButtonHeight)
+                        .background(
+                            RoundedRectangle(cornerRadius: OunjeLayout.controlCornerRadius, style: .continuous)
+                                .fill(OunjePalette.softCream)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .opacity(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
             }
             .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
             .padding(.top, 20)
+            .padding(.bottom, OunjeLayout.sheetBottomPadding)
             .background(OunjePalette.background.ignoresSafeArea())
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        onSave(name)
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
         }
-    }
-}
-
-struct ProfileMinimalActionGrid: View {
-    let actions: [ProfileGridActionModel]
-
-    private let columns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12)
-    ]
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(actions) { action in
-                Button(action: action.action) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .center, spacing: 0) {
-                            Image(systemName: action.symbolName)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .frame(width: 28, height: 28)
-
-                            Spacer(minLength: 0)
-
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(OunjePalette.secondaryText.opacity(0.48))
-                        }
-
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(action.title)
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .lineLimit(1)
-
-                            Text(action.detail)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 108, alignment: .topLeading)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(OunjePalette.panel.opacity(0.96))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.82), lineWidth: 2)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .buttonStyle(.plain)
-            }
-        }
+        .ounjeSheetSurface()
     }
 }
 
@@ -495,7 +313,7 @@ struct ProfileUsageBlock: View {
         [
             .init(title: "Imported", value: importedRecipeCount, symbolName: "square.and.arrow.down"),
             .init(title: "Saved", value: savedRecipeCount, symbolName: "bookmark.fill"),
-            .init(title: "AI edits", value: aiEditCount, symbolName: "sparkles")
+            .init(title: "Remixes", value: aiEditCount, symbolName: "sparkles")
         ]
     }
 
@@ -538,58 +356,80 @@ struct ProfileUsageBlock: View {
     }
 }
 
+struct ProfileCommunityBlock: View {
+    let stats: UserRecipeRatingStats
+    let isLoading: Bool
+
+    private var detailText: String {
+        guard stats.ratingCount > 0 else {
+            return "Your ratings help shape what people discover."
+        }
+        guard let averageRating = stats.averageRating else {
+            return stats.ratingCount == 1 ? "1 recipe rated" : "\(stats.ratingCount) recipes rated"
+        }
+        return "Your average is \(String(format: "%.1f", averageRating)) out of 5"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Community")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(OunjePalette.secondaryText)
+
+            HStack(spacing: 13) {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(OunjePalette.softCream)
+                    .frame(width: 42, height: 42)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(OunjePalette.surface)
+                    )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ratings")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(OunjePalette.primaryText)
+
+                    Text(detailText)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 10)
+
+                if isLoading {
+                    ProgressView()
+                        .tint(OunjePalette.softCream)
+                } else {
+                    Text("\(stats.ratingCount)")
+                        .font(.system(size: 22, weight: .heavy))
+                        .foregroundStyle(OunjePalette.primaryText)
+                        .monospacedDigit()
+                }
+            }
+            .padding(13)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(OunjePalette.panel.opacity(0.92))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(OunjePalette.stroke.opacity(0.72), lineWidth: 1)
+            )
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Ratings, \(stats.ratingCount). \(detailText)")
+        }
+    }
+}
+
 private struct ProfileUsageStat: Identifiable {
     let title: String
     let value: Int
     let symbolName: String
 
     var id: String { title }
-}
-
-struct ProfileMinimalSection: View {
-    let rows: [ProfileMinimalRowModel]
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                Button(action: row.action) {
-                    HStack(alignment: .center, spacing: 14) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(row.title)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(OunjePalette.primaryText)
-                                .lineLimit(1)
-
-                            Text(row.detail)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .lineLimit(2)
-                        }
-
-                        Spacer(minLength: 10)
-
-                        Text(row.value)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .lineLimit(1)
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(OunjePalette.secondaryText.opacity(0.45))
-                    }
-                    .padding(.vertical, 12)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if index < rows.count - 1 {
-                    Divider()
-                        .overlay(OunjePalette.stroke.opacity(0.48))
-                }
-            }
-        }
-    }
 }
 
 struct ProfileSettingsPage: View {
@@ -599,7 +439,6 @@ struct ProfileSettingsPage: View {
     @Environment(\.openURL) private var openURL
     @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
     @StateObject private var providersViewModel = GroceryProvidersViewModel()
-    @State private var isAutonomyPickerPresented = false
     @State private var isMembershipPresented = false
     @State private var isProvidersPresented = false
     @State private var isRecipeStylePresented = false
@@ -612,16 +451,6 @@ struct ProfileSettingsPage: View {
 
     private var currentTier: OunjePricingTier {
         store.effectivePricingTier
-    }
-
-    private var providersSummary: String {
-        if providersViewModel.isLoading {
-            return "Loading"
-        }
-
-        let connectedCount = providersViewModel.providers.filter(\.connected).count
-        guard !providersViewModel.providers.isEmpty else { return "Not connected" }
-        return connectedCount == 0 ? "Not connected" : connectedCount == 1 ? "1 connected" : "\(connectedCount) connected"
     }
 
     private var instacartProvider: GroceryProviderInfo? {
@@ -646,13 +475,6 @@ struct ProfileSettingsPage: View {
     private var instacartConnectionIcon: String {
         guard let provider = instacartProvider else { return "questionmark.circle.fill" }
         return provider.connected ? "checkmark.circle.fill" : "xmark.circle.fill"
-    }
-
-    private var settingsOrderingAutonomyOptions: [OrderingAutonomyLevel] {
-        if !OunjeLaunchFlags.paywallsEnabled {
-            return [.approvalRequired]
-        }
-        return OrderingAutonomyLevel.allCases.filter { $0 != .suggestOnly }
     }
 
     private var notificationStatusTitle: String {
@@ -680,7 +502,7 @@ struct ProfileSettingsPage: View {
                         icon: instacartConnectionIcon,
                         iconTint: instacartConnectionTint,
                         title: "Instacart",
-                        detail: "Connection status for cart filling",
+                        detail: "Used when you choose Let Ounje shop for you",
                         trailingValue: instacartConnectionSummary,
                         trailingTint: instacartConnectionTint,
                         action: {
@@ -697,17 +519,22 @@ struct ProfileSettingsPage: View {
                 ]
             ),
             ProfileSettingsSectionModel(
-                title: "Privacy and safety",
+                title: "Preferences",
                 rows: [
                     ProfileSettingsMenuRowModel(
                         icon: "bell.fill",
                         iconTint: notificationStatusTint,
                         title: "Notifications",
-                        detail: "Imports, shopping, promos, and prep reminders",
+                        detail: "Imports, shopping, suggestions, and reminders",
                         trailingValue: notificationStatusTitle,
                         trailingTint: notificationStatusTint,
                         action: { isNotificationPreferencesPresented = true }
-                    ),
+                    )
+                ]
+            ),
+            ProfileSettingsSectionModel(
+                title: "Support",
+                rows: [
                     ProfileSettingsMenuRowModel(
                         icon: "star.bubble.fill",
                         iconTint: OunjePalette.secondaryText,
@@ -716,12 +543,24 @@ struct ProfileSettingsPage: View {
                         trailingValue: nil,
                         trailingTint: OunjePalette.secondaryText,
                         action: { isFeedbackPresented = true }
-                    )
-                ]
-            ),
-            ProfileSettingsSectionModel(
-                title: "Support",
-                rows: [
+                    ),
+                    ProfileSettingsMenuRowModel(
+                        icon: "sparkles.rectangle.stack.fill",
+                        iconTint: OunjePalette.softCream,
+                        title: "Replay app guide",
+                        detail: "Recipes, plans, Cart, Discover, and adding recipes",
+                        trailingValue: nil,
+                        trailingTint: OunjePalette.secondaryText,
+                        action: {
+                            dismiss()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                NotificationCenter.default.post(
+                                    name: .ounjeReplayFirstRunGuideRequested,
+                                    object: nil
+                                )
+                            }
+                        }
+                    ),
                     ProfileSettingsMenuRowModel(
                         icon: "phone.fill",
                         iconTint: OunjePalette.secondaryText,
@@ -785,7 +624,7 @@ struct ProfileSettingsPage: View {
                         icon: "person.crop.circle.badge.xmark",
                         iconTint: Color(hex: "FF8E8E"),
                         title: "Delete account",
-                        detail: store.isDeactivatingAccount ? "Deactivating account..." : "Deactivate account and stop automation",
+                        detail: store.isDeactivatingAccount ? "Deactivating account..." : "Deactivate your account and sign out",
                         trailingValue: nil,
                         trailingTint: OunjePalette.secondaryText,
                         showsChevron: false,
@@ -813,7 +652,6 @@ struct ProfileSettingsPage: View {
                                 membershipTier: currentTier,
                                 membershipSummary: currentTier.subtitle,
                                 recipeStyle: RecipeTypographyStyle.resolved(from: recipeTypographyStyleRawValue),
-                                isAutoshopEnabled: autoshopOptInBinding,
                                 onOpenMembership: { isMembershipPresented = true },
                                 onOpenRecipeStyle: { isRecipeStylePresented = true }
                             )
@@ -907,23 +745,6 @@ struct ProfileSettingsPage: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        .confirmationDialog("Ordering autonomy", isPresented: $isAutonomyPickerPresented, titleVisibility: .visible) {
-            if let profile = store.profile {
-                ForEach(settingsOrderingAutonomyOptions) { autonomy in
-                    Button(autonomy.title) {
-                        if !OunjeLaunchFlags.paywallsEnabled, autonomy != .approvalRequired {
-                            return
-                        } else if currentTier.supports(autonomy) {
-                            var updated = profile
-                            updated.orderingAutonomy = autonomy
-                            store.updateProfile(updated)
-                        } else if OunjeLaunchFlags.paywallsEnabled {
-                            isMembershipPresented = true
-                        }
-                    }
-                }
-            }
-        }
         .confirmationDialog("Sign out of Ounje?", isPresented: $isSignOutDialogPresented, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) {
                 store.signOutToWelcome()
@@ -939,7 +760,7 @@ struct ProfileSettingsPage: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This deactivates your account, stops pending automation, disconnects provider sessions, and signs you out.")
+            Text("This deactivates your account, cancels pending shopping activity, disconnects providers, and signs you out.")
         }
         .alert("Couldn’t delete account", isPresented: Binding(
             get: { deleteAccountErrorMessage != nil },
@@ -963,20 +784,6 @@ struct ProfileSettingsPage: View {
         } catch {
             deleteAccountErrorMessage = (error as? OunjeAccountServiceError)?.errorDescription ?? error.localizedDescription
         }
-    }
-
-    private var autoshopOptInBinding: Binding<Bool> {
-        Binding(
-            get: {
-                store.profile?.orderingAutonomy == .approvalRequired
-            },
-            set: { isEnabled in
-                guard var updated = store.profile else { return }
-                updated.orderingAutonomy = isEnabled ? .approvalRequired : .suggestOnly
-                store.updateProfile(updated)
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            }
-        )
     }
 
     private var settingsHeader: some View {
@@ -1043,7 +850,6 @@ struct ProfileSettingsAccountSectionView: View {
     let membershipTier: OunjePricingTier
     let membershipSummary: String
     let recipeStyle: RecipeTypographyStyle
-    @Binding var isAutoshopEnabled: Bool
     let onOpenMembership: () -> Void
     let onOpenRecipeStyle: () -> Void
 
@@ -1071,12 +877,6 @@ struct ProfileSettingsAccountSectionView: View {
                     .overlay(OunjePalette.stroke.opacity(0.75))
                     .padding(.leading, 36)
 
-                ProfileSettingsAutoshopToggleRow(isEnabled: $isAutoshopEnabled)
-
-                Divider()
-                    .overlay(OunjePalette.stroke.opacity(0.75))
-                    .padding(.leading, 36)
-
                 ProfileSettingsMenuRow(
                     row: ProfileSettingsMenuRowModel(
                         icon: recipeStyle == .playful ? "signature" : "textformat",
@@ -1091,39 +891,6 @@ struct ProfileSettingsAccountSectionView: View {
             }
             .padding(.horizontal, 2)
         }
-    }
-}
-
-struct ProfileSettingsAutoshopToggleRow: View {
-    @Binding var isEnabled: Bool
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "cart.badge.plus")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(OunjePalette.secondaryText)
-                .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Autoshop")
-                    .font(.system(size: 15.5, weight: .semibold))
-                    .foregroundStyle(OunjePalette.primaryText)
-                    .lineLimit(1)
-
-                Text("Fill Instacart for review. Ounje never checks out.")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 10)
-
-            Toggle("", isOn: $isEnabled)
-                .labelsHidden()
-                .tint(OunjePalette.accent)
-        }
-        .padding(.vertical, 14)
-        .contentShape(Rectangle())
     }
 }
 
@@ -1326,16 +1093,12 @@ struct NotificationPreferencesSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Notifications")
-                            .font(.system(size: 28, weight: .heavy))
-                            .foregroundStyle(OunjePalette.primaryText)
-
-                        Text("Choose what should interrupt you. Ounje still keeps the in-app inbox for anything important.")
-                            .font(.system(size: 13.5, weight: .medium))
-                            .foregroundStyle(OunjePalette.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    OunjeSheetHeader(
+                        title: "Notifications",
+                        subtitle: "Choose what should interrupt you. Ounje still keeps the in-app inbox for anything important.",
+                        closeAccessibilityLabel: "Close notification settings",
+                        onClose: { dismiss() }
+                    )
 
                     Button(action: onOpenSystemSettings) {
                         HStack(spacing: 12) {
@@ -1391,8 +1154,8 @@ struct NotificationPreferencesSheet: View {
                             )
                         )
                         preferenceRow(
-                            title: "Agent shopping updates",
-                            detail: "Prep started, cart finished, checkout needed, and errors.",
+                            title: "Shopping updates",
+                            detail: "Cart-building progress, review requests, and errors.",
                             symbolName: "cart.badge.plus",
                             isOn: Binding(
                                 get: { preferences.agentShoppingGeneralUpdates },
@@ -1401,7 +1164,7 @@ struct NotificationPreferencesSheet: View {
                         )
                         preferenceRow(
                             title: "Shopping item updates",
-                            detail: "Item-by-item agent changes when Ounje is filling carts.",
+                            detail: "Item changes while Ounje builds your cart.",
                             symbolName: "list.bullet.rectangle",
                             isOn: Binding(
                                 get: { preferences.agentShoppingItemUpdates },
@@ -1410,7 +1173,7 @@ struct NotificationPreferencesSheet: View {
                         )
                         preferenceRow(
                             title: "Prep reminders",
-                            detail: "Meal prep ready and schedule reminders.",
+                            detail: "Helpful reminders for plans you’re cooking.",
                             symbolName: "calendar.badge.clock",
                             isOn: Binding(
                                 get: { preferences.prepReminders },
@@ -1424,12 +1187,8 @@ struct NotificationPreferencesSheet: View {
                 .padding(.bottom, 28)
             }
             .background(OunjePalette.background.ignoresSafeArea())
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
+        .ounjeSheetSurface()
         .preferredColorScheme(.dark)
         .onAppear {
             preferences = store.profile?.resolvedNotificationPreferences ?? OunjeNotificationPreferenceStore.load()
@@ -1549,15 +1308,12 @@ struct MembershipSettingsSheet: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Membership")
-                                .font(.system(size: 30, weight: .bold))
-                                .foregroundStyle(OunjePalette.primaryText)
-                            Text("Plan status, billing, and cancellation are managed through Apple.")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        OunjeSheetHeader(
+                            title: "Membership",
+                            subtitle: "Plan status, billing, and cancellation are managed through Apple.",
+                            closeAccessibilityLabel: "Close membership settings",
+                            onClose: { dismiss() }
+                        )
 
                         VStack(alignment: .leading, spacing: 16) {
                             HStack(alignment: .center, spacing: 12) {
@@ -1718,13 +1474,8 @@ struct MembershipSettingsSheet: View {
                     .padding(.bottom, 24)
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
+        .ounjeSheetSurface()
     }
 
     @MainActor
@@ -2762,185 +2513,6 @@ struct FeedbackPhotoAttachment: Identifiable {
         case video
 
         var serverValue: String { rawValue }
-    }
-}
-
-struct RecurringPrepRecipesSheet: View {
-    @EnvironmentObject private var store: MealPlanningAppStore
-    @EnvironmentObject private var toastCenter: AppToastCenter
-    @Environment(\.dismiss) private var dismiss
-    @State private var isUpdatingRecipeIDs: Set<String> = []
-
-    private var recurringRecipes: [RecurringPrepRecipe] {
-        store.recurringPrepRecipes
-            .filter(\.isEnabled)
-            .sorted { $0.sortDate > $1.sortDate }
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ThemedCard {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Recurring recipes")
-                                .biroHeaderFont(28)
-                                .foregroundStyle(OunjePalette.primaryText)
-
-                            Text("Recurring anchors are folded into the next prep generation automatically. Remove one here if you want future prep cycles to stop carrying it forward.")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(OunjePalette.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-
-                    if recurringRecipes.isEmpty {
-                        ThemedCard {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("No recurring recipes yet")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(OunjePalette.primaryText)
-                                Text("Tap the recurring icon on a prep card to pin it into future prep cycles.")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(OunjePalette.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    } else {
-                        VStack(spacing: 12) {
-                            ForEach(recurringRecipes) { recurring in
-                                Button {
-                                    guard !isUpdatingRecipeIDs.contains(recurring.recipeID) else { return }
-                                    guard !store.isRecurringPrepRecipeToggleInFlight(recipeID: recurring.recipeID) else { return }
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    toastCenter.show(
-                                        title: "Removed from recurring",
-                                        subtitle: recurring.recipe.title,
-                                        systemImage: "repeat.circle"
-                                    )
-                                    isUpdatingRecipeIDs.insert(recurring.recipeID)
-                                    Task {
-                                        let succeeded = await store.toggleRecurringPrepRecipe(recurring.recipe)
-                                        await MainActor.run {
-                                            isUpdatingRecipeIDs.remove(recurring.recipeID)
-                                            guard !succeeded else { return }
-                                            toastCenter.show(
-                                                title: "Couldn’t update recurring",
-                                                subtitle: "Check your connection and try again.",
-                                                systemImage: "exclamationmark.triangle.fill"
-                                            )
-                                        }
-                                    }
-                                } label: {
-                                    HStack(alignment: .top, spacing: 14) {
-                                        RecurringRecipeThumbnail(
-                                            recipe: DiscoverRecipeCardData(
-                                                preppedRecipe: PlannedRecipe(
-                                                    recipe: recurring.recipe,
-                                                    servings: 1,
-                                                    carriedFromPreviousPlan: false
-                                                )
-                                            )
-                                        )
-                                            .frame(width: 56, height: 56)
-
-                                        VStack(alignment: .leading, spacing: 5) {
-                                            Text(recurring.recipe.title)
-                                                .font(.system(size: 16, weight: .semibold))
-                                                .foregroundStyle(OunjePalette.primaryText)
-                                                .lineLimit(2)
-
-                                            Text("Will be pulled into the next prep build unless removed.")
-                                                .font(.system(size: 12.5, weight: .medium))
-                                                .foregroundStyle(OunjePalette.secondaryText)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                        }
-
-                                        Spacer(minLength: 8)
-
-                                        if isUpdatingRecipeIDs.contains(recurring.recipeID) {
-                                            ProgressView()
-                                                .tint(OunjePalette.accent)
-                                                .padding(.top, 10)
-                                        } else {
-                                            Text("Remove")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .foregroundStyle(OunjePalette.primaryText)
-                                                .padding(.horizontal, 10)
-                                                .padding(.vertical, 6)
-                                                .background(OunjePalette.surface, in: Capsule())
-                                        }
-                                    }
-                                    .padding(14)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                            .fill(OunjePalette.surface)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                                    .stroke(OunjePalette.stroke, lineWidth: 1)
-                                            )
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
-                .padding(.top, 14)
-                .padding(.bottom, 18)
-            }
-            .background(OunjePalette.background.ignoresSafeArea())
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-struct RecurringRecipeThumbnail: View {
-    let recipe: DiscoverRecipeCardData
-    @StateObject private var loader = DiscoverRecipeImageLoader()
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(OunjePalette.surface)
-
-            if let uiImage = loader.image {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 56, height: 56)
-                    .clipped()
-            } else if loader.isLoading {
-                ProgressView()
-                    .tint(OunjePalette.accent)
-            } else {
-                VStack(spacing: 4) {
-                    Text(String(recipe.displayTitle.prefix(2)).uppercased())
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(OunjePalette.primaryText)
-                    Text(recipe.filterLabel)
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                }
-                .padding(.horizontal, 4)
-            }
-        }
-        .frame(width: 56, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(OunjePalette.stroke, lineWidth: 1)
-        )
-        .task(id: recipe.imageCandidates.map(\.absoluteString).joined(separator: "|")) {
-            await loader.load(from: recipe.imageCandidates)
-        }
     }
 }
 

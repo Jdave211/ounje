@@ -2,11 +2,7 @@ import SwiftUI
 
 struct DiscoverHeaderView: View {
     @Binding var searchText: String
-    let filters: [String]
-    let selectedFilter: String
-    let resetToken: UUID
     let onSubmitSearch: () -> Void
-    let onSelectFilter: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -21,41 +17,9 @@ struct DiscoverHeaderView: View {
                 text: $searchText,
                 onSubmitSearch: onSubmitSearch
             )
-
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .firstTextBaseline, spacing: 26) {
-                        ForEach(filters, id: \.self) { filter in
-                            DiscoverPresetTextButton(
-                                title: filter,
-                                isSelected: selectedFilter == filter
-                            ) {
-                                onSelectFilter(filter)
-                            }
-                            .id(filter)
-                        }
-                    }
-                    .padding(.trailing, 10)
-                    .padding(.top, 2)
-                    .padding(.bottom, 4)
-                }
-                .onAppear {
-                    scrollFilterRailToStart(proxy)
-                }
-                .onChange(of: resetToken) { _ in
-                    scrollFilterRailToStart(proxy)
-                }
-            }
         }
         .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
         .padding(.top, 14)
-        .padding(.bottom, 10)
-    }
-
-    private func scrollFilterRailToStart(_ proxy: ScrollViewProxy) {
-        guard let firstFilter = filters.first else { return }
-        DispatchQueue.main.async {
-            proxy.scrollTo(firstFilter, anchor: .leading)
-        }
+        .padding(.bottom, 14)
     }
 }

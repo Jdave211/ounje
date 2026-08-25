@@ -53,5 +53,28 @@
       "top meal prep apps",
       "best apps to make grocery lists from recipes"
     ]
+  },
+  "creators": {
+    "candidate_target": 20,
+    "draft_target": 8,
+    "min_candidates_before_drafting": 8,
+    "min_relevance_score": 0.42,
+    "queries": [
+      "site:tiktok.com/@ \"saved recipes\" creator",
+      "site:tiktok.com/@ \"meal prep\" creator",
+      "site:tiktok.com/@ \"easy dinner\" creator",
+      "site:tiktok.com/@ \"restaurant copycat\" creator",
+      "site:instagram.com \"recipe developer\" \"meal prep\"",
+      "site:instagram.com \"food creator\" \"easy dinner\"",
+      "site:instagram.com \"grocery haul\" recipes",
+      "site:instagram.com \"ugc creator\" food app"
+    ],
+    "avoid_topics": [
+      "agency",
+      "fan page",
+      "meme account",
+      "brand account",
+      "minor-focused"
+    ]
   }
 }

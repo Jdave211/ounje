@@ -36,8 +36,28 @@ final class SavedRecipesStore: ObservableObject {
         savedRecipes.contains { $0.id == recipe.id }
     }
 
+    func discardUnavailableImportedRecipe(id recipeID: String) {
+        guard recipeID.hasPrefix("uir_") else { return }
+        savedRecipes.removeAll { $0.id == recipeID }
+        pendingRemoteSaveRecipeIDs.remove(recipeID)
+        pendingRemoteDeleteRecipeIDs.remove(recipeID)
+        deletedSavedRecipeIDs.insert(recipeID)
+        persist()
+    }
+
     func configureAuthSessionProvider(_ provider: @escaping () async -> AuthSession?) {
         authSessionProvider = provider
+    }
+
+    /// Binds local persistence to the account synchronously, before any user action
+    /// can race the initial remote refresh.
+    func activate(authSession: AuthSession?) {
+        let resolvedUserID = authSession?.userID
+        if activeUserID != resolvedUserID {
+            activeUserID = resolvedUserID
+            load(for: resolvedUserID, preserveExistingWhenMissing: true)
+        }
+        activeAccessToken = authSession?.accessToken
     }
 
     func applyRuntimeSnapshot(_ snapshot: UserRuntimeSnapshot) {
@@ -69,13 +89,7 @@ final class SavedRecipesStore: ObservableObject {
     }
 
     func bootstrap(authSession: AuthSession?) async {
-        let resolvedUserID = authSession?.userID
-
-        if activeUserID != resolvedUserID {
-            activeUserID = resolvedUserID
-            load(for: resolvedUserID, preserveExistingWhenMissing: true)
-        }
-        activeAccessToken = authSession?.accessToken
+        activate(authSession: authSession)
 
         guard let authSession else {
             isSyncingRemote = false
@@ -120,12 +134,7 @@ final class SavedRecipesStore: ObservableObject {
 
     func refreshFromRemote(authSession: AuthSession?, force: Bool = false) async {
         guard let authSession else { return }
-
-        if activeUserID != authSession.userID {
-            activeUserID = authSession.userID
-            load(for: authSession.userID, preserveExistingWhenMissing: true)
-        }
-        activeAccessToken = authSession.accessToken
+        activate(authSession: authSession)
         if !force, shouldSkipRemoteSync(for: authSession.userID) {
             return
         }
@@ -255,18 +264,14 @@ final class SavedRecipesStore: ObservableObject {
         // Guard this freshly imported card against being dropped by a remote refresh
         // that races ahead of the backend write.
         pendingRemoteSaveRecipeIDs.insert(recipe.id)
-        if let existingIndex {
-            savedRecipes[existingIndex] = resolved
-        } else {
-            savedRecipes.insert(resolved, at: 0)
-        }
+        savedRecipes.removeAll { $0.id == recipe.id }
+        savedRecipes.insert(resolved, at: 0)
         persist()
 
         if showToast {
             toastCenter.showSavedRecipe(resolved)
         }
 
-        guard existing == nil else { return }
         guard let userID = activeUserID else { return }
         let accessToken = activeAccessToken
         Task(priority: .utility) {
@@ -275,7 +280,8 @@ final class SavedRecipesStore: ObservableObject {
                 try await SupabaseSavedRecipesService.shared.upsertSavedRecipes(
                     userID: remoteSession.userID,
                     recipes: [resolved],
-                    accessToken: remoteSession.accessToken ?? accessToken
+                    accessToken: remoteSession.accessToken ?? accessToken,
+                    touchSavedAt: true
                 )
                 await SupabaseUserBootstrapService.shared.invalidateServerCache(
                     userID: remoteSession.userID,

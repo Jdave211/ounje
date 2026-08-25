@@ -88,22 +88,154 @@ final class OunjeAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-private final class OunjeShareImportBackgroundSessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDelegate {
+private final class OunjeShareImportBackgroundSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate, URLSessionDelegate {
     private let completionHandler: () -> Void
+    private var responseDataByTaskID: [Int: Data] = [:]
 
     init(completionHandler: @escaping () -> Void) {
         self.completionHandler = completionHandler
         super.init()
     }
 
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        responseDataByTaskID[dataTask.taskIdentifier, default: Data()].append(data)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        defer {
+            responseDataByTaskID[task.taskIdentifier] = nil
+        }
+
+        let envelopeID = backgroundImportEnvelopeID(for: task, session: session)
+
         if let error {
             print("[ShareImportBackground] upload failed:", error.localizedDescription)
+            requeueBackgroundImport(envelopeID: envelopeID, message: error.localizedDescription)
+            return
+        }
+
+        guard let envelopeID else {
+            return
+        }
+
+        guard let response = task.response as? HTTPURLResponse,
+              (200 ... 299).contains(response.statusCode) else {
+            print("[ShareImportBackground] upload returned non-success status")
+            let statusCode = (task.response as? HTTPURLResponse)?.statusCode
+            let message = statusCode.map { "Server rejected import handoff (\($0))." }
+                ?? "Import handoff did not receive a server response."
+            requeueBackgroundImport(envelopeID: envelopeID, message: message)
+            return
+        }
+
+        guard let data = responseDataByTaskID[task.taskIdentifier], !data.isEmpty else {
+            print("[ShareImportBackground] upload completed without response body")
+            requeueBackgroundImport(
+                envelopeID: envelopeID,
+                message: "Import handoff completed without a server acknowledgement."
+            )
+            return
+        }
+
+        do {
+            let importResponse = try JSONDecoder().decode(RecipeImportResponse.self, from: data)
+            try reconcileBackgroundImport(envelopeID: envelopeID, response: importResponse)
+        } catch {
+            print("[ShareImportBackground] response reconciliation failed:", error.localizedDescription)
+            requeueBackgroundImport(envelopeID: envelopeID, message: error.localizedDescription)
         }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         completionHandler()
+    }
+
+    private func reconcileBackgroundImport(envelopeID: String, response: RecipeImportResponse) throws {
+        let localEnvelope = (try? SharedRecipeImportInbox.readAll().first { $0.id == envelopeID })
+        let backendEnvelope = response.job.sharedImportEnvelope
+        let envelope = localEnvelope ?? backendEnvelope
+        let backendState = response.job.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let liveBackendStates: Set<String> = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"]
+        let localState = liveBackendStates.contains(backendState) ? backendState : (backendState.isEmpty ? "queued" : backendState)
+        let canonicalURL = [
+            response.recipeDetail?.originalRecipeURLString,
+            response.recipeDetail?.recipeURLString,
+            response.job.canonicalURL,
+            response.job.sourceURL,
+            envelope.canonicalSourceURLString
+        ]
+        .compactMap { raw -> String? in
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        .first
+
+        let updatedEnvelope = SharedRecipeImportEnvelope(
+            id: envelope.id,
+            createdAt: envelope.createdAt,
+            jobID: response.job.id,
+            targetState: envelope.targetState,
+            sourceText: envelope.sourceText,
+            sourceURLString: envelope.sourceURLString ?? response.job.sourceURL,
+            canonicalSourceURLString: canonicalURL,
+            sourceApp: envelope.sourceApp,
+            attachments: envelope.attachments,
+            processingState: localState,
+            attemptCount: response.job.attempts ?? envelope.attemptCount,
+            lastAttemptAt: Date(),
+            serverSubmittedAt: envelope.serverSubmittedAt ?? backendEnvelope.serverSubmittedAt ?? Date(),
+            lastError: response.job.errorMessage ?? response.job.reviewReason ?? envelope.lastError,
+            activeStage: response.job.activeStage,
+            stageStartedAt: backendEnvelope.stageStartedAt,
+            updatedAt: Date()
+        )
+        try SharedRecipeImportInbox.update(updatedEnvelope)
+    }
+
+    private func backgroundImportEnvelopeID(for task: URLSessionTask, session: URLSession) -> String? {
+        let taskDescription = task.taskDescription?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !taskDescription.isEmpty {
+            return taskDescription
+        }
+
+        let prefix = "net.ounje.share-import."
+        guard let identifier = session.configuration.identifier,
+              identifier.hasPrefix(prefix) else {
+            return nil
+        }
+        let suffix = identifier.dropFirst(prefix.count)
+        let envelopeID = suffix.split(separator: ".", maxSplits: 1).first.map(String.init) ?? ""
+        return envelopeID.isEmpty ? nil : envelopeID
+    }
+
+    private func requeueBackgroundImport(envelopeID: String?, message: String) {
+        guard let envelopeID,
+              let envelope = try? SharedRecipeImportInbox.readAll().first(where: { $0.id == envelopeID }) else {
+            return
+        }
+        let acknowledgedJobID = envelope.jobID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard acknowledgedJobID.isEmpty else {
+            return
+        }
+
+        let queuedEnvelope = SharedRecipeImportEnvelope(
+            id: envelope.id,
+            createdAt: envelope.createdAt,
+            jobID: nil,
+            targetState: envelope.targetState,
+            sourceText: envelope.sourceText,
+            sourceURLString: envelope.sourceURLString,
+            canonicalSourceURLString: envelope.canonicalSourceURLString,
+            sourceApp: envelope.sourceApp,
+            attachments: envelope.attachments,
+            processingState: "queued",
+            attemptCount: envelope.attemptCount,
+            lastAttemptAt: Date(),
+            serverSubmittedAt: nil,
+            lastError: message,
+            updatedAt: Date()
+        )
+        try? SharedRecipeImportInbox.update(queuedEnvelope)
     }
 }
 

@@ -4,6 +4,7 @@ import {
   applySourceCollationToItem,
   buildSourceEdgeCoverageSummary,
   canonicalizeIngredientName,
+  isNonShoppingWater,
   sourceEdgeIDsForItem,
 } from "./main-shop-collation.js";
 import { createLoggedOpenAI, withAIUsageContext } from "./openai-usage-logger.js";
@@ -122,20 +123,6 @@ function normalizedMergeKey(value) {
     .replace(/\b(or|and|with|plus|the|a|an)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function shouldPreferMergeMax(existingEntry, nextEntry) {
-  const existingUnit = String(existingEntry?.unit ?? "").trim().toLowerCase();
-  const nextUnit = String(nextEntry?.unit ?? "").trim().toLowerCase();
-  if (existingUnit && nextUnit && existingUnit === nextUnit) return false;
-
-  const packageUnit = String(
-    existingEntry?.shoppingContext?.packageRule?.packageUnit
-      ?? nextEntry?.shoppingContext?.packageRule?.packageUnit
-      ?? ""
-  ).trim().toLowerCase();
-
-  return ["bottle", "jar", "can", "tub", "pack", "carton"].includes(packageUnit);
 }
 
 const MAIN_SHOP_DESCRIPTOR_WORDS = new Set([
@@ -347,7 +334,8 @@ function normalizeMainShopToken(token) {
 }
 
 function normalizeMainShopFamilyName(value) {
-  let normalized = normalizeText(value);
+  const aliasCanonical = canonicalizeIngredientName(value).canonicalKey;
+  let normalized = normalizeText(aliasCanonical || value);
   if (!normalized) return "";
 
   const tokens = normalized
@@ -357,6 +345,115 @@ function normalizeMainShopFamilyName(value) {
     .filter((token) => !MAIN_SHOP_LEXICAL_STOP_WORDS.has(token));
 
   return tokens.join(" ").trim();
+}
+
+function normalizedShoppingUnit(value) {
+  const normalized = normalizeText(value);
+  const aliases = new Map([
+    ["teaspoon", "tsp"], ["teaspoons", "tsp"], ["tsp", "tsp"],
+    ["tablespoon", "tbsp"], ["tablespoons", "tbsp"], ["tbsp", "tbsp"],
+    ["cup", "cup"], ["cups", "cup"],
+    ["milliliter", "ml"], ["milliliters", "ml"], ["millilitre", "ml"], ["millilitres", "ml"], ["ml", "ml"],
+    ["liter", "l"], ["liters", "l"], ["litre", "l"], ["litres", "l"], ["l", "l"],
+    ["fluid ounce", "fl oz"], ["fluid ounces", "fl oz"], ["fl oz", "fl oz"],
+    ["gram", "g"], ["grams", "g"], ["g", "g"],
+    ["kilogram", "kg"], ["kilograms", "kg"], ["kg", "kg"],
+    ["ounce", "oz"], ["ounces", "oz"], ["oz", "oz"],
+    ["pound", "lb"], ["pounds", "lb"], ["lb", "lb"], ["lbs", "lb"],
+  ]);
+  if (aliases.has(normalized)) return aliases.get(normalized);
+  const leadingUnit = normalized.split(" ")[0] ?? "";
+  if (aliases.has(leadingUnit)) return aliases.get(leadingUnit);
+  if (/^(?:count|ct|each|item|items|unit|units|piece|pieces|clove|cloves|egg|eggs|breast|breasts|thigh|thighs|fillet|fillets)$/.test(normalized)) {
+    return "item";
+  }
+  return normalized;
+}
+
+function shoppingUnitConversion(unit) {
+  switch (normalizedShoppingUnit(unit)) {
+    case "tsp": return { dimension: "volume", factor: 1 };
+    case "tbsp": return { dimension: "volume", factor: 3 };
+    case "fl oz": return { dimension: "volume", factor: 6 };
+    case "cup": return { dimension: "volume", factor: 48 };
+    case "ml": return { dimension: "volume", factor: 0.202884 };
+    case "l": return { dimension: "volume", factor: 202.884 };
+    case "g": return { dimension: "mass", factor: 1 };
+    case "kg": return { dimension: "mass", factor: 1000 };
+    case "oz": return { dimension: "mass", factor: 28.3495 };
+    case "lb": return { dimension: "mass", factor: 453.592 };
+    case "item": return { dimension: "count", factor: 1 };
+    default: return null;
+  }
+}
+
+function convertedShoppingAmount(amount, fromUnit, toUnit) {
+  const from = shoppingUnitConversion(fromUnit);
+  const to = shoppingUnitConversion(toUnit);
+  if (!from || !to || from.dimension !== to.dimension) return null;
+  return (Math.max(0, Number(amount ?? 0)) * from.factor) / to.factor;
+}
+
+function parseShoppingMeasurementNumber(value) {
+  const normalized = String(value ?? "").trim().replace(/[,;]+$/g, "");
+  if (!normalized) return null;
+
+  const mixedFraction = normalized.match(/^(\d+(?:\.\d+)?)\s+(\d+)\/(\d+)$/);
+  if (mixedFraction) {
+    const whole = Number(mixedFraction[1]);
+    const numerator = Number(mixedFraction[2]);
+    const denominator = Number(mixedFraction[3]);
+    return denominator > 0 ? whole + (numerator / denominator) : null;
+  }
+
+  const fraction = normalized.match(/^(\d+)\/(\d+)$/);
+  if (fraction) {
+    const numerator = Number(fraction[1]);
+    const denominator = Number(fraction[2]);
+    return denominator > 0 ? numerator / denominator : null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolvedShoppingMeasurement(amount, unit) {
+  const rawUnit = String(unit ?? "").trim();
+  const alternateMatch = rawUnit.match(
+    /\(\s*((?:\d+(?:\.\d+)?\s+)?\d+\/\d+|\d+(?:\.\d+)?)\s+([^)]+?)\s*\)/i
+  );
+  if (!alternateMatch) return { amount, unit: rawUnit };
+
+  const alternateAmount = parseShoppingMeasurementNumber(alternateMatch[1]);
+  const alternateUnit = String(alternateMatch[2] ?? "").trim();
+  const primaryConversion = shoppingUnitConversion(rawUnit);
+  const alternateConversion = shoppingUnitConversion(alternateUnit);
+  if (
+    alternateAmount == null
+    || !primaryConversion
+    || !alternateConversion
+    || primaryConversion.dimension === alternateConversion.dimension
+  ) {
+    return { amount, unit: rawUnit };
+  }
+
+  return { amount: alternateAmount, unit: alternateUnit };
+}
+
+function shoppingUnitPreference(value) {
+  const normalized = normalizeText(value);
+  if (!normalized || /^(?:count|ct|each|item|items|unit|units|piece|pieces)$/.test(normalized)) {
+    return 0;
+  }
+  if (/^(?:bottle|bottles|jar|jars|can|cans|bag|bags|pack|packs|carton|cartons|tub|tubs)$/.test(normalized)) {
+    return 1;
+  }
+  switch (shoppingUnitConversion(value)?.dimension) {
+    case "count": return 2;
+    case "volume": return 3;
+    case "mass": return 4;
+    default: return 2;
+  }
 }
 
 function deriveFallbackSearchQuery(value, itemContext = {}) {
@@ -682,13 +779,13 @@ async function resolveMainShopClusterDecisions(clusters, resolver = null) {
 }
 
 function shouldExcludeFinalizedMainShopEntry(entry) {
-  const candidate = normalizeMainShopFamilyName(
+  const rawCandidate =
     entry?.shoppingContext?.canonicalName
       ?? entry?.canonicalName
       ?? entry?.name
-      ?? ""
-  );
-  return MAIN_SHOP_FINALIZER_EXCLUSIONS.has(candidate);
+      ?? "";
+  const candidate = normalizeMainShopFamilyName(rawCandidate);
+  return isNonShoppingWater(rawCandidate) || MAIN_SHOP_FINALIZER_EXCLUSIONS.has(candidate);
 }
 
 function mergeShoppingSpecCluster(items, decision = {}) {
@@ -696,8 +793,16 @@ function mergeShoppingSpecCluster(items, decision = {}) {
   const representative = sortedItems[0] ?? items[0];
   if (!representative) return null;
 
+  const representativeIdentity = canonicalizeIngredientName(
+    decision.canonicalName
+      || representative.shoppingContext?.canonicalName
+      || representative.canonicalName
+      || representative.name
+      || ""
+  );
   const preferredDisplayName = String(
     decision.preferredDisplayName
+      || representativeIdentity.preferredDisplayName
       || representative.name
       || representative.canonicalName
       || ""
@@ -711,20 +816,36 @@ function mergeShoppingSpecCluster(items, decision = {}) {
       || ""
   ) || preferredDisplayName || representative.name || representative.canonicalName || "";
 
+  const quantityRepresentative = sortedItems.reduce((preferred, item) => {
+    if (!preferred) return item;
+    return shoppingUnitPreference(item.unit) > shoppingUnitPreference(preferred.unit)
+      ? item
+      : preferred;
+  }, null);
   const preferredUnit = String(
     decision.preferredUnit
-      || representative.shoppingContext?.packageRule?.packageUnit
+      || quantityRepresentative?.unit
       || representative.unit
       || ""
   ).trim() || null;
   const mergeStrategy = String(decision.mergeAmountStrategy ?? "").trim().toLowerCase();
 
-  let mergedAmount = Math.max(0, Number(representative.amount ?? 0));
-  let probeEntry = representative;
-  for (const nextItem of sortedItems.slice(1)) {
+  let mergedAmount = Math.max(0, Number(quantityRepresentative?.amount ?? representative.amount ?? 0));
+  let probeEntry = quantityRepresentative ?? representative;
+  for (const nextItem of sortedItems.filter((item) => item !== quantityRepresentative)) {
     const nextAmount = Math.max(0, Number(nextItem.amount ?? 0));
-    const useMax = mergeStrategy === "max" || shouldPreferMergeMax(probeEntry, nextItem);
-    mergedAmount = useMax ? Math.max(mergedAmount, nextAmount) : mergedAmount + nextAmount;
+    const convertedAmount = convertedShoppingAmount(
+      nextAmount,
+      nextItem.unit,
+      preferredUnit ?? probeEntry.unit
+    );
+    if (convertedAmount == null) {
+      // Preserve one canonical row without adding a parser placeholder such as
+      // "2 items" to a concrete recipe measurement such as "1 tsp".
+      continue;
+    }
+    const useMax = mergeStrategy === "max";
+    mergedAmount = useMax ? Math.max(mergedAmount, convertedAmount) : mergedAmount + convertedAmount;
     probeEntry = {
       ...probeEntry,
       amount: mergedAmount,
@@ -1321,6 +1442,11 @@ function sanitizeShoppingUnit(unit, shoppingContext = null) {
 
   if (shoppingContext?.role === "produce" && !/\b(item|each|banana|bunch|head|lb|kg|g|oz)\b/.test(normalizedUnit)) {
     return "item";
+  }
+
+  const canonicalUnit = normalizedShoppingUnit(rawUnit);
+  if (shoppingUnitConversion(canonicalUnit)) {
+    return canonicalUnit;
   }
 
   return rawUnit;
@@ -2122,6 +2248,10 @@ export async function buildShoppingSpecEntries({ originalItems, plan = null, clu
   for (let index = 0; index < resolvedItems.length; index += 1) {
     const resolved = resolvedItems[index];
     const original = expandedItems[index] ?? {};
+    const measurement = resolvedShoppingMeasurement(
+      Math.max(0, Number(original.amount ?? 1)),
+      original.unit || "item"
+    );
     const shoppingContext = resolved.shoppingContext ?? {};
     const collation = original.shoppingCollation ?? canonicalizeIngredientName(original.name ?? resolved.query ?? "");
     const canonicalName = String(shoppingContext.canonicalName || resolved.canonicalName || resolved.query || collation.canonicalName || original.name || "").trim();
@@ -2138,8 +2268,8 @@ export async function buildShoppingSpecEntries({ originalItems, plan = null, clu
       originalName: original.originalName ?? original.name ?? resolved.query,
       canonicalName,
       canonicalKey,
-      amount: Math.max(0, Number(original.amount ?? 1)),
-      unit: original.unit || "item",
+      amount: measurement.amount,
+      unit: measurement.unit,
       estimatedPrice: Number(original.estimatedPrice ?? 0),
       sourceIngredients: Array.isArray(original.sourceIngredients) ? original.sourceIngredients : [],
       sourceEdgeIDs,
@@ -2167,22 +2297,10 @@ export async function buildShoppingSpecEntries({ originalItems, plan = null, clu
   const reconciled = await reconcileShoppingSpecEntries(resolvedEntries, { clusterDecisionResolver });
 
   const finalItems = reconciled.items.map((entry) => {
-    const packageRule = entry.shoppingContext?.packageRule ?? null;
-    const quantityStrategy = String(entry.shoppingContext?.quantityStrategy ?? "").trim();
-    const purchaseAmount = quantityStrategy === "single_package_minimum_count"
-      ? 1
-      : packageRule?.packageSize
-      ? Math.max(1, Math.ceil(entry.amount / packageRule.packageSize))
-      : Math.max(1, Math.ceil(entry.amount));
-    const purchaseUnit = quantityStrategy === "single_package_minimum_count"
-      ? "pack"
-      : packageRule?.packageUnit
-      ?? sanitizeShoppingUnit(entry.unit, entry.shoppingContext);
-
     return {
       ...entry,
-      amount: purchaseAmount,
-      unit: purchaseUnit,
+      amount: Math.max(0, Number(entry.amount ?? 0)),
+      unit: sanitizeShoppingUnit(entry.unit, entry.shoppingContext),
     };
   });
   const sourceCoverage = buildSourceEdgeCoverageSummary(expandedItems, finalItems);

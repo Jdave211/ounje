@@ -39,6 +39,7 @@ import {
 } from "../../lib/discover-brackets.js";
 import { createLoggedOpenAI, withAIUsageContext } from "../../lib/openai-usage-logger.js";
 import { createOrReuseRecipeShareLink, resolveRecipeShareLink } from "../../lib/recipe-share-links.js";
+import { normalizeRecipeRating, scoreRecipeCommunityRating } from "../../lib/recipe-ratings.js";
 import { acquireRedisLock, deleteRedisKey, readRedisJSON, releaseRedisLock, writeRedisJSON } from "../../lib/redis-cache.js";
 import { createRateLimit } from "../../lib/rate-limit.js";
 import { extractBearerToken, resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
@@ -135,6 +136,7 @@ const videoResolveRateLimit = createRateLimit({ name: "recipe-video-resolve", wi
 const recipeImportRateLimit = createRateLimit({ name: "recipe-import-enqueue", windowSeconds: 60, max: 20 });
 const enrichRateLimit = createRateLimit({ name: "recipe-enrich", windowSeconds: 60, max: 10 });
 const modelStatusRateLimit = createRateLimit({ name: "recipe-model-status", windowSeconds: 60, max: 10 });
+const recipeRatingRateLimit = createRateLimit({ name: "recipe-rating", windowSeconds: 60, max: 30 });
 
 const SEARCH_RESPONSE_CACHE_TTL_MS = 10 * 60 * 1000;
 const DISCOVER_FEED_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -191,7 +193,8 @@ const RECIPE_DETAIL_CACHE_TTL_MS = 30 * 60 * 1000;
 const IMPORTED_RECIPE_DETAIL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPE_IMPORT_JOB_LIVE_CACHE_TTL_MS = 2 * 1000;
 const RECIPE_IMPORT_JOB_TERMINAL_CACHE_TTL_MS = 60 * 1000;
-const RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const RECIPE_VIDEO_NATIVE_CACHE_TTL_MS = 2 * 60 * 1000;
+const RECIPE_VIDEO_EMBED_CACHE_TTL_MS = 30 * 60 * 1000;
 const SUPABASE_TABLE_FETCH_TIMEOUT_MS = 8_000;
 
 globalThis.__OUNJE_RECIPE_CACHE_STATS__ = () => ({
@@ -1112,6 +1115,53 @@ recipe_router.get("/recipe/model-status", modelStatusRateLimit, async (req, res)
   });
 });
 
+recipe_router.get("/recipe/:id/rating", recipeRatingRateLimit, async (req, res) => {
+  const recipeID = String(req.params.id ?? "").trim();
+  if (!recipeID || recipeID.startsWith("uir_")) {
+    return res.status(400).json({ error: "Community ratings are available for Discover recipes." });
+  }
+
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const summary = await fetchRecipeRatingSummary(recipeID, userID);
+    if (!summary) return res.status(404).json({ error: "Recipe not found." });
+    return res.json(summary);
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/rating");
+    }
+    console.error("[recipe/rating] fetch failed:", error.message);
+    return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
+  }
+});
+
+recipe_router.put("/recipe/:id/rating", recipeRatingRateLimit, async (req, res) => {
+  const recipeID = String(req.params.id ?? "").trim();
+  const rating = normalizeRecipeRating(req.body?.rating);
+  if (!recipeID || recipeID.startsWith("uir_")) {
+    return res.status(400).json({ error: "Community ratings are available for Discover recipes." });
+  }
+  if (rating == null) {
+    return res.status(400).json({ error: "Rating must be a whole number from 1 to 5." });
+  }
+
+  try {
+    const { userID } = await resolveAuthorizedUserID(req);
+    const existingSummary = await fetchRecipeRatingSummary(recipeID, userID);
+    if (!existingSummary) return res.status(404).json({ error: "Recipe not found." });
+
+    await upsertRecipeRating(recipeID, userID, rating);
+    clearDiscoverCachesAfterRatingChange();
+    return res.json(await fetchRecipeRatingSummary(recipeID, userID));
+  } catch (error) {
+    if (error?.statusCode === 401 || error?.statusCode === 403) {
+      return sendAuthError(res, error, "recipe/rating");
+    }
+    console.error("[recipe/rating] update failed:", error.message);
+    return res.status(Number(error?.statusCode) || 400).json({ error: error.message });
+  }
+});
+
 recipe_router.get("/recipe/detail/:id", async (req, res) => {
   const recipeId = String(req.params.id ?? "").trim();
 
@@ -1774,13 +1824,14 @@ recipe_router.post("/recipe/imports/:id/process", async (req, res) => {
 
 recipe_router.get("/recipe/video/resolve", videoResolveRateLimit, async (req, res) => {
   const rawURL = String(req.query.url ?? "").trim();
+  const forceRefresh = ["1", "true", "yes"].includes(String(req.query.force ?? "").trim().toLowerCase());
 
   if (!rawURL) {
     return res.status(400).json({ error: "Provide a video url." });
   }
 
   try {
-    const video = await resolveRecipeVideoURL(rawURL);
+    const video = await resolveRecipeVideoURL(rawURL, { forceRefresh });
     return res.json({ video });
   } catch (error) {
     return res.status(500).json({
@@ -5208,6 +5259,10 @@ const CANONICAL_RECIPE_SELECT_FIELDS = [
   "original_recipe_url",
   "attached_video_url",
   "source_provenance_json",
+  "average_rating",
+  "rating_count",
+  "bayesian_rating",
+  "cold_start_rating",
 ];
 
 const SEARCH_RECIPE_SELECT_FIELDS = [
@@ -5239,6 +5294,10 @@ const SEARCH_RECIPE_SELECT_FIELDS = [
   "servings_text",
   "servings_count",
   "prep_time_minutes",
+  "average_rating",
+  "rating_count",
+  "bayesian_rating",
+  "cold_start_rating",
 ];
 
 const RECIPE_DETAIL_SELECT = [
@@ -6312,7 +6371,10 @@ function rankPresetFocusedRecipes(recipes, { filter = "All", seed = "preset" }) 
   return shuffled
     .map((recipe, index) => ({
       recipe,
-      score: scorePresetAffinity(recipe, filter) + stableJitter(`${seed}|${recipe.id}|${index}`) * 8,
+      score:
+        scorePresetAffinity(recipe, filter)
+        + scoreRecipeCommunityRating(recipe)
+        + stableJitter(`${seed}|${recipe.id}|${index}`) * 8,
     }))
     .sort((left, right) => right.score - left.score)
     .map((entry) => entry.recipe);
@@ -6324,6 +6386,7 @@ function rankCueDrivenRecipes(recipes, { filter = "All", feedContext = null, see
       recipe,
       score:
         scoreCueAffinity(recipe, feedContext, filter)
+        + scoreRecipeCommunityRating(recipe)
         + Math.max(0, 34 - index * 0.45)
         + stableJitter(`${seed}|${recipe.id}`) * 22,
     }))
@@ -6337,6 +6400,7 @@ function rankProfileDrivenRecipes(recipes, { filter = "All", profile = null, see
       recipe,
       score:
         scoreProfileAffinity(recipe, profile, filter)
+        + scoreRecipeCommunityRating(recipe)
         + Math.max(0, 34 - index * 0.45)
         + stableJitter(`${seed}|${recipe.id}`) * 20,
     }))
@@ -6375,7 +6439,7 @@ function rerankSearchResults(recipes, parsedQuery, limit, profile = null) {
   const scored = recipes.map((recipe, index) => ({
     recipe,
     index,
-    score: scoreRecipeSearchMatch(recipe, parsedQuery, profile),
+    score: scoreRecipeSearchMatch(recipe, parsedQuery, profile) + scoreRecipeCommunityRating(recipe) * 0.35,
   }));
 
   const gated = scored.filter((entry) => passesSearchIntentGate(entry.recipe, parsedQuery, entry.score));
@@ -7113,6 +7177,7 @@ async function buildRecipeShareSnapshot(recipeId, { userID = null, accessToken =
     });
   }
 
+  recipeDetail = await hydrateRecipeDetailIngredientImages(recipeDetail);
   const recipeCard = toRecipeCardPayload(recipeDetail);
   return {
     recipe,
@@ -7238,6 +7303,11 @@ function extractCandidateIngredientNames(recipe) {
 }
 
 function toRecipeCardPayload(recipe) {
+  const ratingCount = Number(recipe.rating_count ?? 0);
+  const averageRating = Number(recipe.average_rating ?? recipe.rating_average);
+  const bayesianRating = Number(recipe.bayesian_rating);
+  const coldStartRating = Number(recipe.cold_start_rating);
+
   return {
     id: recipe.id,
     title: recipe.title,
@@ -7253,7 +7323,88 @@ function toRecipeCardPayload(recipe) {
     hero_image_url: recipe.hero_image_url ?? null,
     recipe_url: recipe.recipe_url ?? null,
     source: recipe.source ?? null,
+    average_rating: ratingCount > 0 && Number.isFinite(averageRating) ? averageRating : null,
+    rating_count: Number.isFinite(ratingCount) && ratingCount > 0 ? Math.floor(ratingCount) : 0,
+    bayesian_rating: Number.isFinite(bayesianRating) ? bayesianRating : null,
+    cold_start_rating: Number.isFinite(coldStartRating) ? coldStartRating : null,
   };
+}
+
+async function fetchRecipeRatingSummary(recipeID, userID) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Recipe ratings require Supabase service configuration.");
+  }
+
+  const [recipeRows, ratingRows] = await Promise.all([
+    fetchSupabaseTableRows(
+      "recipes",
+      "id,average_rating,rating_count,bayesian_rating,cold_start_rating",
+      [`id=eq.${encodeURIComponent(recipeID)}`],
+      [],
+      1,
+      SUPABASE_SERVICE_ROLE_KEY
+    ),
+    fetchSupabaseTableRows(
+      "recipe_ratings",
+      "rating",
+      [
+        `recipe_id=eq.${encodeURIComponent(recipeID)}`,
+        `user_id=eq.${encodeURIComponent(userID)}`,
+      ],
+      [],
+      1,
+      SUPABASE_SERVICE_ROLE_KEY
+    ),
+  ]);
+
+  const recipe = recipeRows[0];
+  if (!recipe) return null;
+
+  const count = Math.max(0, Number(recipe.rating_count) || 0);
+  const average = Number(recipe.average_rating);
+  const weighted = Number(recipe.bayesian_rating);
+  const coldStart = Number(recipe.cold_start_rating);
+  return {
+    recipe_id: recipeID,
+    average_rating: count > 0 && Number.isFinite(average) ? average : null,
+    rating_count: count,
+    bayesian_rating: Number.isFinite(weighted) ? weighted : (Number.isFinite(coldStart) ? coldStart : 3.5),
+    cold_start_rating: Number.isFinite(coldStart) ? coldStart : 3.5,
+    your_rating: normalizeRecipeRating(ratingRows[0]?.rating),
+  };
+}
+
+async function upsertRecipeRating(recipeID, userID, rating) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Recipe ratings require Supabase service configuration.");
+  }
+
+  const response = await fetch(
+    `${SUPABASE_URL.replace(/\/+$/, "")}/rest/v1/recipe_ratings?on_conflict=recipe_id,user_id`,
+    {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({ recipe_id: recipeID, user_id: userID, rating }),
+    }
+  );
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const error = new Error(payload?.message ?? payload?.error ?? "Could not save recipe rating.");
+    error.statusCode = response.status;
+    throw error;
+  }
+}
+
+function clearDiscoverCachesAfterRatingChange() {
+  searchResponseCache.clear();
+  discoverFeedCache.clear();
+  discoverBroadPoolCache.clear();
 }
 
 function filterRecipesByAllergies(recipes, profile) {
@@ -8309,27 +8460,53 @@ function normalizeDiscoverFilter(recipeType, category) {
   }
 }
 
-async function resolveRecipeVideoURL(sourceURL) {
+async function resolveRecipeVideoURL(sourceURL, { forceRefresh = false } = {}) {
   const normalizedSourceURL = String(sourceURL ?? "").trim();
   if (!normalizedSourceURL) {
     throw new Error("Recipe video URL is empty.");
   }
 
-  const cached = await readSharedTimedCache(
-    recipeVideoResolveCache,
-    normalizedSourceURL,
-    RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS,
-    "recipe-video-resolve"
-  );
-  if (cached) {
-    return cached;
+  if (isDirectPlayableVideoURL(normalizedSourceURL)) {
+    return {
+      mode: "native",
+      provider: inferVideoProvider(normalizedSourceURL),
+      source_url: normalizedSourceURL,
+      resolved_url: normalizedSourceURL,
+      poster_url: null,
+      duration_seconds: null,
+    };
+  }
+
+  if (!forceRefresh) {
+    const localVideoCacheEntry = recipeVideoResolveCache.get(normalizedSourceURL);
+    const cacheReadTTL = localVideoCacheEntry?.value?.mode === "native"
+      ? RECIPE_VIDEO_NATIVE_CACHE_TTL_MS
+      : RECIPE_VIDEO_EMBED_CACHE_TTL_MS;
+    const cached = await readSharedTimedCache(
+      recipeVideoResolveCache,
+      normalizedSourceURL,
+      cacheReadTTL,
+      "recipe-video-resolve"
+    );
+    if (cached) {
+      return cached;
+    }
   }
 
   const expandedSourceURL = await expandCanonicalVideoSourceURL(normalizedSourceURL);
+  const [directResult, iframeResult] = await Promise.allSettled([
+    resolveDirectVideoURLWithTimeout(expandedSourceURL, VIDEO_DIRECT_RESOLVE_TIMEOUT_MS),
+    buildHostedIframeFallback(expandedSourceURL),
+  ]);
 
-  const iframeFallback = await buildHostedIframeFallback(expandedSourceURL);
+  if (directResult.status === "rejected") {
+    console.warn("[recipe/video/resolve] direct resolve failed", expandedSourceURL, directResult.reason instanceof Error ? directResult.reason.message : directResult.reason);
+  }
+
+  const directVideo = directResult.status === "fulfilled" ? directResult.value : null;
+  const iframeFallback = iframeResult.status === "fulfilled" ? iframeResult.value : null;
   const fallbackEmbed = iframeFallback ?? buildVideoEmbedFallback(expandedSourceURL);
-  let resolved = fallbackEmbed ?? {
+  const resolved = directVideo ?? fallbackEmbed ?? {
     mode: "unavailable",
     provider: inferVideoProvider(expandedSourceURL),
     source_url: expandedSourceURL,
@@ -8338,25 +8515,28 @@ async function resolveRecipeVideoURL(sourceURL) {
     duration_seconds: null,
   };
 
-  try {
-    const directVideo = fallbackEmbed
-      ? await resolveDirectVideoURLWithTimeout(expandedSourceURL, VIDEO_DIRECT_RESOLVE_TIMEOUT_MS)
-      : await resolveDirectVideoURL(expandedSourceURL);
-    if (directVideo) {
-      resolved = directVideo;
-    }
-  } catch (error) {
-    console.warn("[recipe/video/resolve] direct resolve failed", expandedSourceURL, error instanceof Error ? error.message : error);
-  }
+  const cacheTTL = resolved.mode === "native"
+    ? RECIPE_VIDEO_NATIVE_CACHE_TTL_MS
+    : RECIPE_VIDEO_EMBED_CACHE_TTL_MS;
 
   await writeSharedTimedCache(
     recipeVideoResolveCache,
     normalizedSourceURL,
     resolved,
-    RECIPE_VIDEO_RESOLVE_CACHE_TTL_MS,
+    cacheTTL,
     "recipe-video-resolve"
   );
   return resolved;
+}
+
+function isDirectPlayableVideoURL(sourceURL) {
+  try {
+    const url = new URL(sourceURL);
+    if (!new Set(["http:", "https:"]).has(url.protocol.toLowerCase())) return false;
+    return new Set(["mp4", "m4v", "mov", "m3u8"]).has(url.pathname.split(".").pop()?.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 async function resolveDirectVideoURLWithTimeout(sourceURL, timeoutMs) {
@@ -8377,7 +8557,8 @@ async function expandCanonicalVideoSourceURL(sourceURL) {
     const host = url.host.toLowerCase();
     const components = url.pathname.split("/").filter(Boolean);
 
-    if (host.includes("tiktok.com") && (components[0] === "t" || components[0] === "vm")) {
+    const isTikTokShortHost = host === "vt.tiktok.com" || host === "vm.tiktok.com";
+    if (host.includes("tiktok.com") && (isTikTokShortHost || components[0] === "t" || components[0] === "vm")) {
       const response = await fetch(sourceURL, {
         redirect: "follow",
         headers: {

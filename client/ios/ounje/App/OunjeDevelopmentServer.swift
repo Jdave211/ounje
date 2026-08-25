@@ -2,6 +2,15 @@ import Foundation
 
 enum OunjeLaunchFlags {
     static let paywallsEnabled = true
+
+    static var forcePaywallPreview: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--ounje-paywall-preview")
+#else
+        false
+#endif
+    }
+
     static var forceOnboardingIncomplete: Bool {
 #if DEBUG && targetEnvironment(simulator)
         ProcessInfo.processInfo.environment["OUNJE_FORCE_ONBOARDING_INCOMPLETE"] == "1"
@@ -39,8 +48,8 @@ enum OunjeDevelopmentServer {
     static var candidateBaseURLs: [String] {
         deduplicated(
             [
-                explicitPrimaryBaseURL,
-                productionBaseURL
+                productionBaseURL,
+                explicitPrimaryBaseURL
             ].compactMap { $0 }
         )
     }
@@ -60,9 +69,9 @@ enum OunjeDevelopmentServer {
     static var workerCandidateBaseURLs: [String] {
         deduplicated(
             [
+                productionBaseURL,
                 explicitWorkerBaseURL,
-                explicitPrimaryBaseURL,
-                productionBaseURL
+                explicitPrimaryBaseURL
             ].compactMap { $0 }
         )
     }

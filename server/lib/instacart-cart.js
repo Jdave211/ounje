@@ -9,6 +9,7 @@ import { buildPlaywrightLaunchOptions } from "./playwright-runtime.js";
 import { installCaptchaHooksScript, maybeSolveCaptcha } from "./twocaptcha.js";
 import { createLoggedOpenAI } from "./openai-usage-logger.js";
 import { getServiceRoleSupabase } from "./supabase-clients.js";
+import { isNonShoppingWater } from "./main-shop-collation.js";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 const INSTACART_STORE_MODEL = process.env.INSTACART_STORE_MODEL ?? "gpt-5-mini";
@@ -5477,7 +5478,13 @@ export async function addItemsToInstacartCart({
         shoppingContext: item?.shoppingContext ?? null,
       };
     })
-    .filter((item) => item.name.trim().length > 0);
+    .filter((item) => item.name.trim().length > 0)
+    .filter((item) => ![
+      item.name,
+      item.originalName,
+      item.shoppingContext?.canonicalName,
+      item.shoppingContext?.familyKey,
+    ].some(isNonShoppingWater));
 
   if (!normalizedItems.length) {
     throw new Error("No items provided for Instacart cart add");
