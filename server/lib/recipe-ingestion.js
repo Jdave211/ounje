@@ -9090,9 +9090,11 @@ function isUnresolvedRecipeComponentIngredient(ingredient, recipe = null) {
   if (isExplicitShortcut || hasPackageQuantity) return false;
   if (isGenericCompletionIngredientName(name)) return true;
 
-  const normalizedName = normalizeKey(name);
+  const normalizedName = normalizeKey(name.replace(/\s*\([^)]*\)\s*$/g, ""));
   const componentMatch = normalizedName.match(/\b(batter|dough|mixture|filling|base|glaze|dressing|marinade|frosting|topping|rub|seasoning(?: mix| blend)?|spice mix|sauce)$/i);
   if (!componentMatch) return false;
+
+  if (/\b(?:blended|mixed|prepared|homemade)\b/i.test(normalizedName)) return true;
 
   const component = componentMatch[1].toLowerCase();
   const componentStart = componentMatch.index ?? normalizedName.length;
@@ -9113,13 +9115,15 @@ function isUnresolvedRecipeComponentIngredient(ingredient, recipe = null) {
   const stronglyComposite = /^(?:batter|dough|mixture|filling|base)$/i.test(component);
   if (selfReferencesDish && stronglyComposite) return true;
 
-  const preparationAction = /\b(?:make|prepare|mix|blend|combine|whisk|stir|cook|simmer|knead|form)\b/i;
-  const componentStem = componentToken(component);
+  const preparationActions = new Set(["make", "prepare", "create"]);
+  const ingredientWordCount = normalizedName.split(/\s+/).filter(Boolean).length;
   return (recipe?.steps ?? []).some((step) => {
     const stepText = normalizeKey(step?.text ?? step);
-    return preparationAction.test(stepText)
-      && stepText.includes(componentStem)
-      && descriptorTokens.some((token) => stepText.includes(token));
+    const words = stepText.split(/\s+/).filter(Boolean);
+    return words.some((word, index) => {
+      if (!preparationActions.has(word)) return false;
+      return words.slice(index + 1, index + ingredientWordCount + 5).join(" ").includes(normalizedName);
+    });
   });
 }
 

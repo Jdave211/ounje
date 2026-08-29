@@ -461,6 +461,28 @@ assert.equal(
     "legitimate packaged shortcuts must pass semantic quality review"
   );
 
+  const ordinarySauceRecipe = {
+    title: "Soy Chicken",
+    ingredients: [
+      { display_name: "Soy sauce", quantity_text: "2 tablespoons" },
+      { display_name: "Butter (for filling)", quantity_text: "2 tablespoons" },
+    ],
+    steps: [
+      { text: "Cook the chicken with soy sauce until glazed." },
+      { text: "Mix the butter with the remaining filling ingredients." },
+    ],
+  };
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(ordinarySauceRecipe.ingredients[0], ordinarySauceRecipe),
+    false,
+    "using a normal sauce while cooking must not imply that the sauce is a hidden sub-recipe"
+  );
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(ordinarySauceRecipe.ingredients[1], ordinarySauceRecipe),
+    false,
+    "a parenthetical role label must not turn an ordinary ingredient into a component"
+  );
+
   const normalizationIssues = buildFinalRecipeValidationIssues({
     ingredients: [
       { display_name: "1 whole tilapia fish (700–900 g), scaled and gutted", quantity_text: "1 whole" },
