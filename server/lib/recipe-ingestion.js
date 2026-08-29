@@ -9070,7 +9070,57 @@ function isGenericCompletionIngredientName(value) {
   return /^(?:seasonings?|spices?|spice mix|seasoning blend|spice blend|marinade|sauce base|(?:red )?pepper seasoning|pepper sauce seasoning|garnish)$/i.test(name)
     || /^(?:oil|pepper|red pepper|green pepper)[- ]based (?:seasoning|spice mix|spices|marinade|sauce)$/i.test(name)
     || /^(?:mixed|assorted|preferred|favorite|house) (?:seasonings?|spices?|spice mix|seasoning blend)$/i.test(name)
-    || /^(?:prepared\s+)?(?:moi[- ]?moi|moin[- ]?moin|bean|beans)\s+(?:bean\s+)?batter$/i.test(name);
+    || /^(?:batter|dough|filling|mixture|sauce mixture|seasoning mixture|spice mixture|glaze|dressing|frosting|topping)$/i.test(name);
+}
+
+function componentToken(value) {
+  return normalizeKey(value)
+    .replace(/(?:ing|ed|es|s)$/i, "")
+    .trim();
+}
+
+function isUnresolvedRecipeComponentIngredient(ingredient, recipe = null) {
+  const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? ingredient);
+  if (!name) return true;
+
+  const quantityText = normalizeText(ingredient?.quantity_text ?? ingredient?.quantityText ?? "");
+  const productText = `${name} ${quantityText}`.toLowerCase();
+  const isExplicitShortcut = /\b(?:store[- ]bought|ready[- ]made|pre[- ]made|premade|packaged|boxed|jarred|canned|frozen)\b/i.test(productText);
+  const hasPackageQuantity = /\b(?:box|boxes|packet|packets|package|packages|jar|jars|can|cans|tube|tubes|tub|tubs|bottle|bottles|pouch|pouches|sheet|sheets|ball|balls|roll|rolls)\b/i.test(quantityText);
+  if (isExplicitShortcut || hasPackageQuantity) return false;
+  if (isGenericCompletionIngredientName(name)) return true;
+
+  const normalizedName = normalizeKey(name);
+  const componentMatch = normalizedName.match(/\b(batter|dough|mixture|filling|base|glaze|dressing|marinade|frosting|topping|rub|seasoning(?: mix| blend)?|spice mix|sauce)$/i);
+  if (!componentMatch) return false;
+
+  const component = componentMatch[1].toLowerCase();
+  const componentStart = componentMatch.index ?? normalizedName.length;
+  const descriptorTokens = normalizedName
+    .slice(0, componentStart)
+    .split(/\s+/)
+    .map(componentToken)
+    .filter((token) => token.length >= 3 && !["prepared", "homemade", "special", "recipe"].includes(token));
+  if (!descriptorTokens.length) return true;
+
+  const titleTokens = new Set(
+    normalizeKey(recipe?.title ?? "")
+      .split(/\s+/)
+      .map(componentToken)
+      .filter((token) => token.length >= 3 && !["oven", "bake", "roast", "grill", "easy", "best", "recipe"].includes(token))
+  );
+  const selfReferencesDish = descriptorTokens.some((token) => titleTokens.has(token));
+  const stronglyComposite = /^(?:batter|dough|mixture|filling|base)$/i.test(component);
+  if (selfReferencesDish && stronglyComposite) return true;
+
+  const preparationAction = /\b(?:make|prepare|mix|blend|combine|whisk|stir|cook|simmer|knead|form)\b/i;
+  const componentStem = componentToken(component);
+  return (recipe?.steps ?? []).some((step) => {
+    const stepText = normalizeKey(step?.text ?? step);
+    return preparationAction.test(stepText)
+      && stepText.includes(componentStem)
+      && descriptorTokens.some((token) => stepText.includes(token));
+  });
 }
 
 function isRecipeEquipmentIngredientName(value) {
@@ -9096,14 +9146,17 @@ function recipeSemanticCompleteness(recipe) {
   const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
   const steps = Array.isArray(recipe?.steps) ? recipe.steps : [];
   const genericIngredients = ingredients
+    .filter((ingredient) => isUnresolvedRecipeComponentIngredient(ingredient, recipe))
     .map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name ?? ingredient))
-    .filter((name) => name && isGenericCompletionIngredientName(name));
+    .filter(Boolean);
   const equipmentIngredients = ingredients
     .map((ingredient) => normalizeText(ingredient?.display_name ?? ingredient?.name ?? ingredient))
     .filter((name) => name && isRecipeEquipmentIngredientName(name));
   const concreteIngredientCount = ingredients.filter((ingredient) => {
     const name = normalizeText(ingredient?.display_name ?? ingredient?.name ?? ingredient);
-    return name && !isGenericCompletionIngredientName(name) && !isRecipeEquipmentIngredientName(name);
+    return name
+      && !isUnresolvedRecipeComponentIngredient(ingredient, recipe)
+      && !isRecipeEquipmentIngredientName(name);
   }).length;
   const meaningfulStepCount = steps.filter((step) => {
     const text = normalizeText(step?.text ?? step);
@@ -9155,7 +9208,7 @@ function socialImportNeedsGroundedCompletion(recipe, source, qualityFlags = []) 
     || flag === "social_source_without_transcript"
   ));
   const genericIngredientCount = (recipe?.ingredients ?? []).filter((ingredient) => (
-    isGenericCompletionIngredientName(ingredient?.display_name ?? ingredient?.name ?? ingredient)
+    isUnresolvedRecipeComponentIngredient(ingredient, recipe)
   )).length;
   const sourceCoverageIsThin = coverage.usableFrameOCRCount < 2
     && (coverage.ingredientCandidateCount < 4 || coverage.instructionCandidateCount < 3)
@@ -9470,7 +9523,7 @@ function mergeGroundedSocialCompletion(baseRecipe, completedRecipe) {
   const completedIngredients = Array.isArray(completedRecipe?.ingredients) ? completedRecipe.ingredients : [];
   const requiredBaseIngredients = baseIngredients.filter((ingredient) => {
     const name = ingredient?.display_name ?? ingredient?.name ?? ingredient;
-    return !isGenericCompletionIngredientName(name) && !isRecipeEquipmentIngredientName(name);
+    return !isUnresolvedRecipeComponentIngredient(ingredient, baseRecipe) && !isRecipeEquipmentIngredientName(name);
   });
   const preservesSourceIdentity = requiredBaseIngredients.every((ingredient) => (
     completedIngredients.some((candidate) => ingredientNameMatches(
@@ -12906,6 +12959,7 @@ export {
   hasUsableRecipeShape,
   normalizeRecipeDisplayFields,
   isGenericCompletionIngredientName,
+  isUnresolvedRecipeComponentIngredient,
   isRecipeEquipmentIngredientName,
   isRecipeTeaserText,
   recipeSemanticCompleteness,

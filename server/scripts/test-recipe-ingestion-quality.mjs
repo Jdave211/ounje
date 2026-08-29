@@ -37,6 +37,7 @@ const {
   recipeIDForImportRestore,
   recipeImportTargetActions,
   isGenericCompletionIngredientName,
+  isUnresolvedRecipeComponentIngredient,
   isRecipeEquipmentIngredientName,
   normalizeRecipeDisplayFields,
   runSocialRecipeCompletionContext,
@@ -373,12 +374,22 @@ assert.equal(
   };
   assert.equal(
     isGenericCompletionIngredientName("Moi Moi batter"),
+    false,
+    "dish-specific components require recipe context rather than a name-specific exception"
+  );
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(unresolvedMoiMoiRecipe.ingredients[0], unresolvedMoiMoiRecipe),
     true,
-    "prepared moi moi batter must be treated as an unresolved component rather than a shopping ingredient"
+    "a dish-specific batter must be expanded when it merely refers back to the recipe"
   );
   assert.ok(
     recipeSemanticCompleteness(unresolvedMoiMoiRecipe).blockingIssues.some((issue) => issue.includes("Moi Moi batter")),
     "a recipe containing only moi moi batter must not pass semantic quality review"
+  );
+  assert.equal(
+    socialImportNeedsGroundedCompletion(unresolvedMoiMoiRecipe, sparsePepperFishSource, []),
+    true,
+    "an unresolved dish component must trigger grounded completion even without an explicit quality flag"
   );
   const expandedMoiMoi = mergeGroundedSocialCompletion(unresolvedMoiMoiRecipe, groundedMoiMoiCompletion);
   assert.deepEqual(
@@ -387,6 +398,68 @@ assert.equal(
     "grounded completion must expand moi moi batter into its concrete ingredients"
   );
   assert.equal(expandedMoiMoi.author_handle, "@lifeofrhemz", "moi moi completion must preserve the creator");
+
+  const unresolvedLayerCake = {
+    title: "Chocolate Layer Cake",
+    ingredients: [
+      { display_name: "Chocolate cake batter", quantity_text: "4 cups" },
+      { display_name: "Chocolate frosting", quantity_text: "2 cups" },
+    ],
+    steps: [
+      { text: "Mix the chocolate cake batter until smooth, then divide it between the tins." },
+      { text: "Make the chocolate frosting while the cake layers cool." },
+    ],
+  };
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(unresolvedLayerCake.ingredients[0], unresolvedLayerCake),
+    true,
+    "a self-referential cake batter must be expanded into its ingredients"
+  );
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(unresolvedLayerCake.ingredients[1], unresolvedLayerCake),
+    true,
+    "a frosting that the instructions say to make must be expanded"
+  );
+  assert.equal(
+    recipeSemanticCompleteness(unresolvedLayerCake).blockingIssues.length,
+    1,
+    "multiple hidden sub-recipes must block semantic quality review"
+  );
+
+  const packagedShortcutRecipe = {
+    title: "Weeknight Margherita Pizza",
+    ingredients: [
+      { display_name: "Pizza dough", quantity_text: "1 store-bought ball" },
+      { display_name: "Tomato sauce", quantity_text: "1 jar" },
+      { display_name: "Frosting", quantity_text: "1 tub" },
+      { display_name: "Mozzarella", quantity_text: "8 ounces" },
+    ],
+    steps: [
+      { text: "Stretch the pizza dough across the pan." },
+      { text: "Spread on the tomato sauce and top with mozzarella." },
+      { text: "Bake until the crust is browned and the cheese bubbles." },
+    ],
+  };
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(packagedShortcutRecipe.ingredients[0], packagedShortcutRecipe),
+    false,
+    "explicitly store-bought dough is a legitimate ingredient"
+  );
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(packagedShortcutRecipe.ingredients[1], packagedShortcutRecipe),
+    false,
+    "jarred sauce is a legitimate ingredient"
+  );
+  assert.equal(
+    isUnresolvedRecipeComponentIngredient(packagedShortcutRecipe.ingredients[2], packagedShortcutRecipe),
+    false,
+    "a component with an explicit packaged quantity is a legitimate ingredient"
+  );
+  assert.equal(
+    recipeSemanticCompleteness(packagedShortcutRecipe).blockingIssues.length,
+    0,
+    "legitimate packaged shortcuts must pass semantic quality review"
+  );
 
   const normalizationIssues = buildFinalRecipeValidationIssues({
     ingredients: [
