@@ -9069,7 +9069,8 @@ function isGenericCompletionIngredientName(value) {
   if (!name) return true;
   return /^(?:seasonings?|spices?|spice mix|seasoning blend|spice blend|marinade|sauce base|(?:red )?pepper seasoning|pepper sauce seasoning|garnish)$/i.test(name)
     || /^(?:oil|pepper|red pepper|green pepper)[- ]based (?:seasoning|spice mix|spices|marinade|sauce)$/i.test(name)
-    || /^(?:mixed|assorted|preferred|favorite|house) (?:seasonings?|spices?|spice mix|seasoning blend)$/i.test(name);
+    || /^(?:mixed|assorted|preferred|favorite|house) (?:seasonings?|spices?|spice mix|seasoning blend)$/i.test(name)
+    || /^(?:prepared\s+)?(?:moi[- ]?moi|moin[- ]?moin|bean|beans)\s+(?:bean\s+)?batter$/i.test(name);
 }
 
 function isRecipeEquipmentIngredientName(value) {
@@ -10319,6 +10320,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
                   maxFrames: 12,
                   textLimit: 1_000,
                 }), 8_000),
+                social_completion_context: source.social_completion_context ?? null,
               }),
               "For social video, restore every concrete source-supported ingredient that is missing from the top-level ingredients and the relevant steps. Do not replace the creator's recipe with a generic dish recipe.",
               "",

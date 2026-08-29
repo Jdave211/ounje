@@ -36,6 +36,7 @@ const {
   reconcileResolvedRecipeQualityFlags,
   recipeIDForImportRestore,
   recipeImportTargetActions,
+  isGenericCompletionIngredientName,
   isRecipeEquipmentIngredientName,
   normalizeRecipeDisplayFields,
   runSocialRecipeCompletionContext,
@@ -336,6 +337,56 @@ assert.equal(
     "grounded completion may expand generic seasoning labels when it preserves source-specific protein and sides"
   );
   assert.equal(expanded.author_handle, "@chefttk", "constituent expansion must preserve the creator");
+
+  const unresolvedMoiMoiRecipe = {
+    title: "Oven-Baked Moi Moi",
+    author_handle: "@lifeofrhemz",
+    ingredients: [
+      { display_name: "Moi Moi batter", quantity_text: "2 cups" },
+      { display_name: "fish", quantity_text: "1 cup, flaked" },
+      { display_name: "eggs", quantity_text: "2" },
+    ],
+    steps: [
+      { text: "Pour the moi moi batter into a baking dish." },
+      { text: "Fold in the fish and eggs." },
+      { text: "Bake until the moi moi is set." },
+    ],
+  };
+  const groundedMoiMoiCompletion = {
+    ...unresolvedMoiMoiRecipe,
+    ingredients: [
+      "peeled black-eyed peas",
+      "red bell pepper",
+      "onion",
+      "Scotch bonnet pepper",
+      "fish",
+      "eggs",
+      "stock or water",
+      "vegetable oil",
+      "seasoning cubes",
+      "ground crayfish",
+      "salt",
+    ].map((display_name) => ({ display_name, quantity_text: "1" })),
+    steps: Array.from({ length: 8 }, (_, index) => ({
+      text: `Detailed source-grounded moi moi instruction ${index + 1} using the listed ingredients.`,
+    })),
+  };
+  assert.equal(
+    isGenericCompletionIngredientName("Moi Moi batter"),
+    true,
+    "prepared moi moi batter must be treated as an unresolved component rather than a shopping ingredient"
+  );
+  assert.ok(
+    recipeSemanticCompleteness(unresolvedMoiMoiRecipe).blockingIssues.some((issue) => issue.includes("Moi Moi batter")),
+    "a recipe containing only moi moi batter must not pass semantic quality review"
+  );
+  const expandedMoiMoi = mergeGroundedSocialCompletion(unresolvedMoiMoiRecipe, groundedMoiMoiCompletion);
+  assert.deepEqual(
+    expandedMoiMoi.ingredients.map((ingredient) => ingredient.display_name),
+    groundedMoiMoiCompletion.ingredients.map((ingredient) => ingredient.display_name),
+    "grounded completion must expand moi moi batter into its concrete ingredients"
+  );
+  assert.equal(expandedMoiMoi.author_handle, "@lifeofrhemz", "moi moi completion must preserve the creator");
 
   const normalizationIssues = buildFinalRecipeValidationIssues({
     ingredients: [
