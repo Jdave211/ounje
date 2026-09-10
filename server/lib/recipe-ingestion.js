@@ -4062,12 +4062,22 @@ function isReusableExistingImportJob(job) {
   return Date.now() - timestamp <= FAILED_IMPORT_DEDUPE_REUSE_TTL_MS;
 }
 
+function recipeHasConflictingImportSource(recipe, request) {
+  const sourceIDs = [request?.canonical_url, request?.source_url, request?.original_recipe_url, request?.recipe_url]
+    .map(canonicalImportIdentityForURL).filter(Boolean);
+  const recipeIDs = [recipe?.original_recipe_url, recipe?.recipe_url, recipe?.attached_video_url]
+    .map(canonicalImportIdentityForURL).filter(Boolean);
+  return sourceIDs.length > 0 && recipeIDs.length > 0
+    && !sourceIDs.some((id) => recipeIDs.includes(id));
+}
+
 async function completedImportJobHasLiveRecipe(job) {
   const status = normalizeText(job?.status).toLowerCase();
   if (!["saved", "draft", "needs_review"].includes(status)) return true;
   const recipeID = normalizeText(job?.recipe_id ?? "");
   if (!recipeID) return false;
-  return Boolean(await fetchRecipeRowByID(recipeID).catch(() => null));
+  const recipe = await fetchRecipeRowByID(recipeID).catch(() => null);
+  return Boolean(recipe) && !recipeHasConflictingImportSource(recipe, job);
 }
 
 async function markDuplicateFailedImportsSuperseded(job, { reason = "Superseded by a successful import of the same source." } = {}) {
@@ -4246,7 +4256,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
         limit: 1,
       }
     );
-    if (rows[0]) return rows[0];
+    if (rows[0] && !recipeHasConflictingImportSource(rows[0], { ...request, canonical_url: canonicalURL })) return rows[0];
   }
 
   const candidateURLs = urlLookupVariants(
@@ -4269,7 +4279,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
         limit: 1,
       }
     );
-    if (rows[0]) return rows[0];
+    if (rows[0] && !recipeHasConflictingImportSource(rows[0], { ...request, canonical_url: canonicalURL })) return rows[0];
   }
 
   return null;
@@ -5997,7 +6007,7 @@ async function findExistingUserImportedRecipe(userID, normalized, dedupeKey = nu
         limit: 1,
       }
     );
-    if (direct[0]) return direct[0];
+    if (direct[0] && !recipeHasConflictingImportSource(direct[0], normalized)) return direct[0];
   }
 
   const candidateURLs = uniqueStrings([
@@ -6019,31 +6029,13 @@ async function findExistingUserImportedRecipe(userID, normalized, dedupeKey = nu
         limit: 12,
       }
     );
-    if (rows.length) return rows[0];
+    const match = rows.find((row) => !recipeHasConflictingImportSource(row, normalized));
+    if (match) return match;
   }
 
-  const title = normalizeText(normalized.title);
-  if (!title) return null;
-
-  const rows = await fetchRows(
-    USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-    "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key",
-    {
-      filters: [
-        `user_id=eq.${encodeURIComponent(userID)}`,
-        `title=ilike.${encodeURIComponent(title)}`,
-      ],
-      limit: 12,
-    }
-  );
-
-  const titleKey = normalizeKey(title);
-  const sourceKey = normalizeKey(normalized.source ?? normalized.source_platform ?? "");
-  return rows.find((row) => {
-    const rowTitleKey = normalizeKey(row.title);
-    const rowSourceKey = normalizeKey(row.source ?? "");
-    return rowTitleKey === titleKey && (!sourceKey || !rowSourceKey || rowSourceKey === sourceKey);
-  }) ?? null;
+  // A dish title is not an import identity. Different creators/posts routinely
+  // use the same title; substituting their contents discards fresh extraction.
+  return null;
 }
 
 async function persistNormalizedRecipe(
@@ -13174,6 +13166,8 @@ export {
   sourceRecipeIngredientIssues,
   sourceRecipeQuantityIssues,
   validateAndRepairImportedRecipe,
+  findExistingUserImportedRecipe,
+  completedImportJobHasLiveRecipe,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
