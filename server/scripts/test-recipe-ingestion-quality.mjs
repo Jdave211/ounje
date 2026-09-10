@@ -32,6 +32,10 @@ const {
   mergeGroundedSocialCompletion,
   calibrateSocialRecipeAssessment,
   assessSocialCompletionContext,
+  isMatchingCreatorRecipeReference,
+  sourceRecipeIngredientIssues,
+  sourceRecipeQuantityIssues,
+  recipeExtractionModelForSource,
   recipeSemanticCompleteness,
   reconcileResolvedRecipeQualityFlags,
   recipeIDForImportRestore,
@@ -45,6 +49,106 @@ const {
   SOCIAL_VIDEO_RECIPE_MODEL,
   RECIPE_IMPORT_HARD_COMPLETION_MODEL,
 } = await import("../lib/recipe-ingestion.js");
+
+
+// Live replay regression: weak OCR must still use the video model; exact creator
+// evidence must replace early guesses and preserve component measurements.
+{
+  assert.equal(recipeExtractionModelForSource({ source_type: "tiktok", frame_data_urls: ["frame"], frame_ocr_texts: [] }), SOCIAL_VIDEO_RECIPE_MODEL);
+  assert.equal(recipeExtractionModelForSource({ source_type: "web", frame_data_urls: [] }), "gpt-4o-mini");
+  const ingredient = (display_name, quantity_text) => ({ display_name, quantity_text });
+  const recipe = {
+    title: "Custard dessert",
+    ingredients: [ingredient("granulated sugar", "152-162 g, divided"), ingredient("heavy cream", "300 g, divided"), ingredient("lady fingers", "16")],
+    steps: [
+      { text: "Whisk 50 g granulated sugar into the custard.", ingredients: [ingredient("granulated sugar", "50 g")] },
+      { text: "Whip 120 g heavy cream until soft peaks form.", ingredients: [ingredient("heavy cream", "120 g")] },
+      { text: "Dip each ladyfinger in coffee and arrange in the dish.", ingredients: [] },
+    ],
+    calories_kcal: 570, prep_time_minutes: 390, cook_time_minutes: 15, cook_time_text: "PT15M",
+  };
+  const source = { source_type: "tiktok", creator_recipe_reference: { structured_recipe: {
+    recipeIngredient: ["50 g granulated sugar", "72 g granulated sugar", "30-40 g granulated sugar", "180 g heavy cream", "120 g heavy cream", "16 lady fingers"],
+    prepTime: "PT30M", cookTime: "PT15M", totalTime: "PT6H45M",
+  } } };
+  assert.deepEqual(sourceRecipeQuantityIssues(recipe, source), []);
+  for (const quantity of ["157 g total, divided (custard 50 g; crunch 72 g; top 35 g)", "divided: custard 50 g; crunch 72 g; top 35 g", "divided: custard 50 g; crunch 72 g; top 35 g; total 157 g", "1/4 cup (50 g) plus 6 tbsp (72 g) plus 3-4 tbsp (30-40 g), divided"]) {
+    assert.deepEqual(sourceRecipeQuantityIssues({ ...recipe, ingredients: [ingredient("granulated sugar", quantity), ...recipe.ingredients.slice(1)] }, source), [], "a valid point within the creator's quantity range is allowed");
+  }
+  const badTotal = { ...recipe, ingredients: [ingredient("granulated sugar", "165-175 g, divided"), ...recipe.ingredients.slice(1)] };
+  assert.ok(sourceRecipeQuantityIssues(badTotal, source)[0].includes("152-162 g"));
+  const cleaned = normalizeRecipeDisplayFields(recipe);
+  assert.equal(cleaned.steps[0].ingredients[0].quantity_text, "50 g", "a component amount must not become the whole-recipe total");
+  assert.ok(!buildFinalRecipeValidationIssues(cleaned, source).some((issue) => /lady fingers.*not clearly used/.test(issue)));
+  assert.ok(buildFinalRecipeValidationIssues({ ...recipe, steps: [{ text: "Prepare according to the recipe above." }] }, source).some((issue) => /Unresolved recipe reference/.test(issue)));
+  const preparedCrunch = ingredient("brûlée crunch", "50 g (made from the sugar)");
+  assert.equal(isUnresolvedRecipeComponentIngredient(preparedCrunch, { steps: [{ text: "Make the Brûlée Crunch: Melt the sugar until amber." }] }), true, "a component made by the recipe is not an extra shopping item");
+  assert.equal(isUnresolvedRecipeComponentIngredient({ ...preparedCrunch, quantity_text: "50 g, store-bought" }, recipe), false);
+  const creamParts = normalizeRecipeDisplayFields({ ...recipe, ingredients: [ingredient("heavy cream", "180 g plus 120 g")], steps: [{ text: "Fold the whipped heavy cream into the custard.", ingredients: [] }] });
+  assert.equal(creamParts.steps[0].ingredients[0].quantity_text, null, "combined component amounts must not be auto-filled into individual steps");
+  const merged = mergeGroundedSocialCompletion({ ...recipe, calories_kcal: 250, cook_time_minutes: 10 }, recipe, source);
+  assert.equal(merged.calories_kcal, 570, "verified completion replaces early nutrition guesses");
+  assert.equal(merged.prep_time_minutes, 30);
+  assert.equal(merged.cook_time_minutes, 15);
+  assert.equal(merged.cook_time_text, "6 hr 45 min");
+  assert.equal(shouldRunGroundedRecipeCompletion(recipe, { source_type: "tiktok", description: "Full recipe is on my blog." }), true);
+}
+
+// A reconstruction citing only its original TikTok cannot certify its own
+// invented ingredients. This was the creme brulee tiramisu regression.
+{
+  const base = {
+    title: "creme brulee tiramisu !!",
+    ingredients: ["mascarpone cheese", "heavy cream", "powdered sugar", "vanilla extract", "espresso", "ladyfingers", "granulated sugar"]
+      .map((display_name) => ({ display_name, quantity_text: "1 cup" })),
+    steps: [
+      { text: "Whisk mascarpone with heavy cream and powdered sugar until smooth." },
+      { text: "Dip ladyfingers into espresso and layer with the cream." },
+      { text: "Chill, sprinkle with sugar and torch the topping." },
+    ],
+  };
+  const circularContext = {
+    exact_match_supported: false,
+    match_confidence: 0.82,
+    reference_urls: ["https://www.tiktok.com/@testkitchen/video/123"],
+    completion_ingredients: base.ingredients.map((item) => item.display_name),
+    completion_steps: base.steps.map((step) => step.text),
+  };
+  assert.equal(assessSocialCompletionContext(circularContext).hasDetails, false);
+  assert.equal(assessSocialCompletionContext({ ...circularContext, exact_match_supported: true }).hasDetails, false);
+  assert.equal(calibrateSocialRecipeAssessment(
+    { confidence_score: 0.95, review_state: "approved" }, base,
+    { source_type: "tiktok", social_completion_context: circularContext }, ["missing_ingredients"]
+  ).review_state, "draft");
+
+  const reference = {
+    source_url: "https://www.testkitchen.com/creme-brulee-tiramisu/",
+    structured_recipe: {
+      name: "Crème Brûlée Tiramisu",
+      recipeIngredient: ["4 egg yolks", "1 tbsp cornstarch", "1 cup mascarpone", "1 vanilla bean or 2 tsp vanilla extract", "14-18 lady fingers (homemade lady finger recipe or store bought)"],
+      recipeInstructions: ["Cook the custard.", "Layer with caramel crunch."],
+    },
+  };
+  const source = { source_type: "tiktok", author_handle: "@testkitchen", creator_recipe_reference: reference };
+  assert.equal(isMatchingCreatorRecipeReference(reference, base, source), true, "accented creator recipe title must match the plain social title");
+  assert.equal(isMatchingCreatorRecipeReference({ ...reference, source_url: "https://testkitchen-copy.com/recipe" }, base, source), false);
+  assert.equal(isMatchingCreatorRecipeReference(reference, { title: "lemon cheesecake" }, source), false);
+  const issues = sourceRecipeIngredientIssues(base, source);
+  assert.equal(issues.length, 2, "detect missing yolks and cornstarch, while accepting vanilla alternatives and ladyfinger spelling");
+  assert.ok(issues.some((issue) => issue.includes("egg yolks")));
+  assert.ok(issues.every(isBlockingFinalRecipeValidationIssue));
+  assert.ok(buildFinalRecipeValidationIssues(base, source).some((issue) => issue.includes("egg yolks")));
+  assert.equal(shouldRunFinalRecipeValidation(base, { source_type: "tiktok", frame_data_urls: ["data:image/jpeg;base64,AA=="], frame_ocr_texts: [] }), true, "unreadable OCR must not skip visual component review");
+
+  const corrected = { ...base, ingredients: base.ingredients.filter((item) => item.display_name !== "powdered sugar").concat([
+    { display_name: "egg yolks", quantity_text: "4" },
+    { display_name: "cornstarch", quantity_text: "1 tbsp" },
+  ]) };
+  assert.deepEqual(sourceRecipeIngredientIssues(corrected, source), []);
+  assert.deepEqual(mergeGroundedSocialCompletion(base, corrected, source).ingredients, corrected.ingredients, "a verified creator recipe can remove an earlier invented ingredient");
+  const sourceWithChocolate = { ...base, ingredients: [...base.ingredients, { display_name: "dark chocolate", quantity_text: "20 g" }] };
+  assert.deepEqual(mergeGroundedSocialCompletion(sourceWithChocolate, corrected).ingredients, sourceWithChocolate.ingredients, "unverified references must preserve the base ingredients");
+}
 
 assert.deepEqual(
   recipeImportTargetActions("saved"),

@@ -664,6 +664,7 @@ Rules:
 - Preserve the identity of the imported dish from the original source evidence.
 - The current imported recipe is the base. Expand and clarify it; never replace it with a fresh or adjacent recipe.
 - Treat original source evidence as highest priority, then exact creator/cross-post evidence from Perplexity, then mainstream completion context.
+- A fetched creator_recipe_reference is the authoritative written recipe. Correct earlier inferred ingredients and quantities against it, including removing unsupported substitutions. Preserve every component, its preparation, and its assembly order.
 - Keep every non-generic source-supported ingredient and technique. Generic placeholders such as "oil-based seasoning" may be replaced by their researched constituent ingredients when the completion context supports that expansion.
 - When Perplexity marks exact_match_supported=false, add conservative, concrete details that make the existing dish fully cookable and add a grounded_completion_inferred quality flag. Non-exact means the additions are inferred; it does not justify leaving unusable component placeholders in the recipe.
 - Expand broad source labels such as "seasoning blend", "pepper seasoning", "marinade", or "sauce base" into individual shoppable ingredients when the grounded context provides a practical composition. Preserve the source label in the relevant step text when useful, but do not keep it as a separate ingredient row beside its constituents.
@@ -677,7 +678,8 @@ Rules:
 - Do not list several interchangeable serving suggestions as ingredients the user must buy. Keep creator-shown sides, choose one sensible default when alternatives are offered, and move the remaining alternatives to a serving note.
 - Preserve ingredients like honey, paprika, chili powder, garlic powder, fresh herbs, and other concrete grocery items explicitly when the source supports them.
 - Keep display_name to the ingredient name only. Put amounts, package sizes, preparation notes, and ranges in quantity_text or the method instead of embedding them in display_name.
-- List the same ingredient only once even when it is used in multiple components. Sum compatible quantities and mark quantity_text as "divided" when needed; do not create role-suffixed duplicates such as "vegetable oil" and "vegetable oil (for sauce)".
+- Never leave unresolved instructions such as "follow the recipe above/below"; include the component method or use a prepared ingredient only when the source permits it.
+- List the same ingredient only once even when it is used in multiple components. Sum compatible quantities accurately (using the source's metric amounts when provided), retain component-specific quantities in the steps, and mark quantity_text as "divided" when needed; do not create role-suffixed duplicates such as "vegetable oil" and "vegetable oil (for sauce)".
 - Do not include both a component label and its underlying ingredients. For example, do not list "meat sauce" if ground meat, tomato, onion, garlic, and seasonings are already listed; do not list both "parmesan cheese" and "parmesan cheese, grated".
 - If web references disagree, prefer the most mainstream consensus version that still matches the original source.
 - Never add niche embellishments that are not needed to make the recipe cookable.
@@ -693,8 +695,11 @@ Rules:
 - Fix only concrete consistency issues in the provided recipe. Do not rewrite for style alone.
 - Preserve source-supported dish identity, title, cuisine, and author/source metadata.
 - Ensure ingredients, quantities, and steps agree with each other.
+- Check every video frame for source-supported ingredients, component preparation, and assembly layers missing from the current recipe, even when OCR is unreadable.
+- When creator_recipe_reference is supplied, follow its full written ingredient list and method; correct unsupported earlier guesses instead of preserving them.
 - Keep display_name to the ingredient name only. Move amounts, size ranges, and preparation notes into quantity_text or the method.
 - Consolidate repeated ingredient rows across recipe components. Sum compatible quantities and use "divided" in quantity_text when appropriate instead of role suffixes such as "for sauce" in display_name.
+- A component made in the method is not an additional shopping ingredient. Do not add prepared custard, caramel crunch, or similar products when their constituent ingredients are already listed; keep component names in step text.
 - If a step mentions an ingredient that is not listed, either add a conservative ingredient only when clearly necessary, or rewrite the step to use an already listed equivalent.
 - Never add duplicate alias ingredients just to satisfy a step. Prefer rewriting step wording to use the existing listed ingredient name.
 - Do not list both a prepared component and its sub-ingredients unless the prepared component is actually bought as an ingredient.
@@ -705,6 +710,9 @@ Rules:
 - Prefer not to add non-shopping pantry liquids like water unless the recipe would be confusing without it.
 - Replace vague or technically wrong cooking verbs with practical cooking actions.
 - Keep steps concise, sequential, and cookable.
+- Never leave instructions like "follow the recipe above/below" when that recipe is not included. If the source explicitly permits a prepared/store-bought ingredient, instruct the cook to use it; otherwise include the supported component method.
+- For divided ingredients, sum the source quantities accurately for the shopping list and retain each component amount in its step. Never put the whole-recipe total into every component.
+- Preserve the source's conditional timing for alternative ingredients. Choosing an alternative must not cause the same allocation to be added twice in different steps; make the applicable branch explicit.
 - Use short snake_case identifiers for quality_flags, never prose sentences.
 - Keep ingredient quantities practical for the stated servings.
 - Return compact repairs only: include full ingredients or steps arrays only when those arrays need changes, and omit unchanged fields.
@@ -3058,6 +3066,7 @@ async function extractRecipeSearchSource(query, attachments = [], { source = nul
     recipe_sources: rankedSources.map((source) => ({
       title: source.title ?? null,
       site_name: source.site_name ?? null,
+      author_name: source.author_name ?? null,
       source_url: source.source_url ?? source.search_result_url ?? null,
       canonical_url: source.canonical_url ?? null,
       hero_image_url: source.hero_image_url ?? null,
@@ -3147,6 +3156,7 @@ function buildSourceProvenanceRecord(source, { reviewState = null, confidenceSco
     canonical_url: cleanURL(source.canonical_url ?? null),
     attached_video_url: cleanURL(source.attached_video_url ?? null),
     original_social_source: source.original_social_source ? compactJSON(source.original_social_source) : null,
+    creator_recipe_url: source.creator_recipe_reference?.canonical_url ?? source.creator_recipe_reference?.source_url ?? null,
     title: normalizeText(source.title ?? "") || null,
     description: normalizeText(source.description ?? source.meta_description ?? "") || null,
     author_name: normalizeText(source.author_name ?? "") || null,
@@ -4528,7 +4538,7 @@ async function createJobRow(request) {
       });
 
   const forceReprocess = request.force_reprocess === true;
-  const enqueueLockKey = dedupeKey && !forceReprocess
+  const enqueueLockKey = RECIPE_INGESTION_REDIS_LOCKING_ENABLED && dedupeKey && !forceReprocess
     ? recipeImportLockKey("enqueue", `${request.user_id ?? "anon"}:${dedupeKey}`)
     : null;
   const enqueueLockToken = enqueueLockKey
@@ -6281,6 +6291,7 @@ function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlag
 
   const flags = uniqueStrings(qualityFlags).map((flag) => normalizeText(flag).toLowerCase());
   const semanticQuality = recipeSemanticCompleteness(recipe);
+  semanticQuality.blockingIssues.push(...sourceRecipeIngredientIssues(recipe, source), ...sourceRecipeQuantityIssues(recipe, source), ...sourceRecipeAlternativeIssues(recipe, source));
   const missingGroundedContextFlag = flags.includes("grounded_completion_context_unavailable");
   const hasBlockingValidatorFlag = flags.some((flag) => [
     "final_validator_review_needed",
@@ -6306,7 +6317,7 @@ function calibrateSocialRecipeAssessment(assessment, recipe, source, qualityFlag
     ? (context.exact_match_supported ? 0.9 : 0.82)
     : 0.68;
   const confidence = Math.min(Number(assessment?.confidence_score ?? 0), confidenceCap);
-  const recipeShapeIsUsable = hasUsableRecipeShape(recipe) && semanticQuality.isUsable;
+  const recipeShapeIsUsable = hasUsableRecipeShape(recipe) && semanticQuality.isUsable && semanticQuality.blockingIssues.length === 0;
   const reviewState = hasGroundedContext && recipeShapeIsUsable && !hasBlockingValidatorFlag && confidence >= 0.72
     ? "approved"
     : "draft";
@@ -8516,6 +8527,14 @@ async function extractSourceMaterial(request) {
   return extractTextSource(request.source_text, request.attachments);
 }
 
+function recipeExtractionModelForSource(source) {
+  // A cooking video's pixels remain primary evidence when OCR/music yields no
+  // useful text. Do not downgrade the visual pass based on transcript quality.
+  return isSocialRecipeMaterial(source) && (source?.frame_data_urls?.length ?? 0) > 0
+    ? SOCIAL_VIDEO_RECIPE_MODEL
+    : RECIPE_INGESTION_MODEL;
+}
+
 async function extractRecipeWithModel(source) {
   if (!openai) {
     return {
@@ -8620,9 +8639,7 @@ async function extractRecipeWithModel(source) {
 
   content.push(...collectRecipeEvidenceImageInputs(source));
 
-  const extractionModel = socialSourceHasPrimaryRecipeEvidence(source)
-    ? SOCIAL_VIDEO_RECIPE_MODEL
-    : RECIPE_INGESTION_MODEL;
+  const extractionModel = recipeExtractionModelForSource(source);
   const response = await withRecipeAIStage("recipe_import.extract", () => openai.chat.completions.create({
     model: extractionModel,
     ...chatCompletionTemperatureParams(extractionModel, 0.1),
@@ -9091,7 +9108,7 @@ function isUnresolvedRecipeComponentIngredient(ingredient, recipe = null) {
   if (isGenericCompletionIngredientName(name)) return true;
 
   const normalizedName = normalizeKey(name.replace(/\s*\([^)]*\)\s*$/g, ""));
-  const componentMatch = normalizedName.match(/\b(batter|dough|mixture|filling|base|glaze|dressing|marinade|frosting|topping|rub|seasoning(?: mix| blend)?|spice mix|sauce)$/i);
+  const componentMatch = normalizedName.match(/\b(batter|dough|mixture|filling|base|glaze|dressing|marinade|frosting|topping|crunch|rub|seasoning(?: mix| blend)?|spice mix|sauce)$/i);
   if (!componentMatch) return false;
 
   if (/\b(?:blended|mixed|prepared|homemade)\b/i.test(normalizedName)) return true;
@@ -9218,7 +9235,11 @@ function socialImportNeedsGroundedCompletion(recipe, source, qualityFlags = []) 
     && (coverage.ingredientCandidateCount < 4 || coverage.instructionCandidateCount < 3)
     && !coverage.hasStrongTranscriptRecipeEvidence;
 
-  return hasExplicitIncompletenessFlag
+  const refersToWrittenRecipe = /\b(?:full|written)\s+recipe\b.{0,100}\b(?:blog|website|bio|link)\b/i.test(
+    normalizeText(source?.description ?? source?.caption_text ?? "")
+  );
+  return refersToWrittenRecipe
+    || hasExplicitIncompletenessFlag
     || metrics.needsRepair
     || (sourceCoverageIsThin && (genericIngredientCount > 0 || !hasUsableRecipeShape(recipe)));
 }
@@ -9280,6 +9301,129 @@ function recipeReferenceSummaryForArtifact(recipeSources) {
   })).filter((entry) => entry.title || entry.source_url);
 }
 
+function isMatchingCreatorRecipeReference(reference, recipe, source) {
+  const structured = reference?.structured_recipe;
+  if (!structured || (structured.recipeIngredient?.length ?? 0) < 3 || (structured.recipeInstructions?.length ?? 0) < 2) return false;
+  const key = (value) => normalizeKey(String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, ""));
+  const compact = (value) => key(value).replace(/[^a-z0-9]/g, "");
+  const handle = compact(source?.author_handle ?? "");
+  const hostLabels = hostForURL(reference.canonical_url ?? reference.source_url).replace(/^www\./, "").split(".");
+  const sameCreator = (handle.length >= 5 && hostLabels.length === 2 && compact(hostLabels[0]) === handle)
+    || (compact(source?.author_name).length >= 5 && compact(source?.author_name) === compact(reference.author_name));
+  const tokens = key(recipe?.title ?? "").split(/\s+/).filter((token) => token.length > 2);
+  const title = key(structured.name ?? reference.title ?? "");
+  return sameCreator && tokens.length > 0 && tokens.filter((token) => title.includes(token)).length / tokens.length >= 0.75;
+}
+
+function sourceRecipeIngredientIssues(recipe, source) {
+  const structured = source?.creator_recipe_reference?.structured_recipe ?? source?.structured_recipe;
+  if (!structured?.recipeIngredient?.length) return [];
+  const comparableName = (name) => normalizeText(name)
+    .replace(/\([^)]*\)/g, "")
+    .replace(/^\d+\s*[-–]\s*\d+\s*/, "")
+    .replace(/\blady\s+fingers\b/gi, "ladyfingers");
+  const names = recipeIngredientNames(recipe).map(comparableName);
+  const missing = [];
+  const sourceNames = [];
+  for (const line of structured.recipeIngredient) {
+    // Explicit source alternatives are interchangeable (e.g. vanilla bean OR
+    // vanilla extract); do not force both into the shopping list.
+    const alternatives = typeof line === "string" ? line.replace(/\([^)]*\)/g, "").split(/\s+or\s+/i) : [line];
+    const expected = alternatives.map(coerceIngredientItem).filter(Boolean)
+      .map((ingredient) => comparableName(ingredient.display_name ?? ingredient.name));
+    sourceNames.push(...expected);
+    if (expected.length && !expected.some((name) => names.some((candidate) => (
+      ingredientNameMatches(name, candidate)
+      || normalizeIngredientMatchSignature(candidate).startsWith(`${normalizeIngredientMatchSignature(name)} `)
+    )))) {
+      missing.push(`Source ingredient "${expected[0]}" is missing from the imported recipe. Restore it from the written recipe.`);
+    }
+  }
+  // Infer prepared components from the written method, not a vocabulary of
+  // dish names. Pesto, curd, praline, etc. must not become extra groceries when
+  // the source lists their constituents and instructs us to make them.
+  const preparationHeadings = parseSchemaRecipeInstructions(structured.recipeInstructions)
+    .map(normalizeKey)
+    .filter((text) => /^(?:make|prepare)\s+/.test(text))
+    .map((text) => text.replace(/^(?:make|prepare)\s+(?:the\s+)?/, ""));
+  for (const name of names) {
+    if (sourceNames.some((expected) => ingredientNameMatches(expected, name))) continue;
+    const key = normalizeKey(name);
+    if (key && preparationHeadings.some((heading) => heading === key || heading.startsWith(`${key} `))) {
+      missing.push(`Source ingredient "${name}" is a prepared component made in the written method, not an additional shopping item. Keep its constituent ingredients and preparation steps.`);
+    }
+  }
+  return uniqueStrings(missing);
+}
+
+function sourceRecipeAlternativeIssues(recipe, source) {
+  const structured = source?.creator_recipe_reference?.structured_recipe;
+  if (!structured?.recipeIngredient?.length) return [];
+  const sourceSteps = parseSchemaRecipeInstructions(structured.recipeInstructions);
+  const recipeSteps = (recipe?.steps ?? []).map((step) => step.text ?? "");
+  const additionCount = (steps, name) => steps.filter((text) => (
+    // Alternatives often share a word (vanilla bean / vanilla extract), so a
+    // fuzzy token match cannot distinguish their separate preparation paths.
+    ` ${normalizeKey(text)} `.includes(` ${normalizeKey(name)} `)
+    && /\b(?:add|pour|stir|whisk|fold|mix|melt)\b/i.test(text)
+  )).length;
+  const issues = [];
+  for (const line of structured.recipeIngredient) {
+    if (typeof line !== "string" || !/\s+or\s+/i.test(line)) continue;
+    for (const alternative of line.replace(/\([^)]*\)/g, "").split(/\s+or\s+/i)) {
+      const name = coerceIngredientItem(alternative)?.display_name;
+      if (!name) continue;
+      const expected = additionCount(sourceSteps, name);
+      const actual = additionCount(recipeSteps, name);
+      if (expected > 0 && actual > expected) {
+        issues.push(`Source alternative "${name}" appears in ${actual} addition steps but only ${expected} in the written method. Check for duplicate additions and preserve the source's conditional preparation timing.`);
+      }
+    }
+  }
+  return uniqueStrings(issues);
+}
+
+function sourceRecipeQuantityIssues(recipe, source) {
+  const structured = source?.creator_recipe_reference?.structured_recipe;
+  if (!structured?.recipeIngredient?.length) return [];
+  const metric = (value) => {
+    const text = normalizeText(value);
+    const totalText = text.match(/\btotal\b\s*[:=~]?\s*(?:about|approximately)?\s*(?=\d)[\s\S]*/i)?.[0];
+    const matches = [...(totalText ?? text).matchAll(/(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?\s*(g|grams?|ml|milliliters?)\b/gi)];
+    const quantities = matches.map((match) => ({ low: Number(match[1]), high: Number(match[2] ?? match[1]), unit: /^g/i.test(match[3]) ? "g" : "ml" }));
+    if (!totalText && (/^divided\b/i.test(text) || /\bplus\b/i.test(text)) && quantities.length > 1 && quantities.every((item) => item.unit === quantities[0].unit)) {
+      return quantities.reduce((sum, item) => ({ low: sum.low + item.low, high: sum.high + item.high, unit: sum.unit }), { low: 0, high: 0, unit: quantities[0].unit });
+    }
+    return quantities[0] ?? null;
+  };
+  const totals = new Map();
+  for (const line of structured.recipeIngredient) {
+    if (typeof line !== "string" || /\bor\b/i.test(line)) continue;
+    const name = coerceIngredientItem(line.replace(/^(\d+(?:\.\d+)?)\s*[-–]\s*\d+(?:\.\d+)?(?=\s)/, "$1"))?.display_name;
+    const quantity = metric(line);
+    if (!name || !quantity) continue;
+    const key = normalizeKey(name);
+    const total = totals.get(key) ?? { name, low: 0, high: 0, count: 0, unit: quantity.unit };
+    if (total.unit !== quantity.unit) continue;
+    total.low += quantity.low;
+    total.high += quantity.high;
+    total.count += 1;
+    totals.set(key, total);
+  }
+  const issues = [];
+  for (const total of totals.values()) {
+    const ingredient = (recipe?.ingredients ?? []).find((item) => normalizeKey(item.display_name ?? item.name) === normalizeKey(total.name))
+      ?? (recipe?.ingredients ?? []).find((item) => ingredientNameMatches(total.name, item.display_name ?? item.name));
+    const actual = metric(ingredient?.quantity_text);
+    if (!actual || actual.unit !== total.unit) continue;
+    const tolerance = Math.max(1, total.high * 0.015);
+    if (actual.low >= total.low - tolerance && actual.high <= total.high + tolerance) continue;
+    const amount = total.low === total.high ? `${total.low}` : `${total.low}-${total.high}`;
+    issues.push(`Source quantity for "${total.name}" totals ${amount} ${total.unit}${total.count > 1 ? " across components" : ""}, but the imported list says ${actual.low}-${actual.high} ${actual.unit}. Preserve the source amounts and component divisions.`);
+  }
+  return issues;
+}
+
 function assessSocialCompletionContext(context) {
   if (!context) {
     return {
@@ -9304,7 +9448,9 @@ function assessSocialCompletionContext(context) {
     }).length;
   const usefulStepCount = uniqueStrings(stepDetails)
     .filter((item) => normalizeText(item).length >= 24).length;
-  const referenceCount = uniqueStrings(context.reference_urls ?? []).filter(Boolean).length;
+  // The original social post is evidence for the dish, not independent written
+  // recipe research. Counting it let a made-up reconstruction certify itself.
+  const referenceCount = uniqueStrings(context.reference_urls ?? []).filter(isUsableRecipeSearchLink).length;
   const matchConfidence = Number(context.match_confidence ?? 0);
   const minimumIngredients = context.exact_match_supported ? 3 : 4;
   const minimumSteps = context.exact_match_supported ? 2 : 3;
@@ -9316,7 +9462,7 @@ function assessSocialCompletionContext(context) {
       concreteIngredientCount >= minimumIngredients
       && usefulStepCount >= minimumSteps
       && matchConfidence >= minimumConfidence
-      && (context.exact_match_supported || referenceCount > 0),
+      && referenceCount > 0,
     concreteIngredientCount,
     usefulStepCount,
     referenceCount,
@@ -9521,7 +9667,7 @@ async function runSocialRecipeCompletionContext(normalizedRecipe, source, { jobI
   }
 }
 
-function mergeGroundedSocialCompletion(baseRecipe, completedRecipe) {
+function mergeGroundedSocialCompletion(baseRecipe, completedRecipe, source = null) {
   const merged = mergeCompletedRecipe(baseRecipe, completedRecipe);
   const baseIngredients = Array.isArray(baseRecipe?.ingredients) ? baseRecipe.ingredients : [];
   const completedIngredients = Array.isArray(completedRecipe?.ingredients) ? completedRecipe.ingredients : [];
@@ -9529,7 +9675,7 @@ function mergeGroundedSocialCompletion(baseRecipe, completedRecipe) {
     const name = ingredient?.display_name ?? ingredient?.name ?? ingredient;
     return !isUnresolvedRecipeComponentIngredient(ingredient, baseRecipe) && !isRecipeEquipmentIngredientName(name);
   });
-  const preservesSourceIdentity = requiredBaseIngredients.every((ingredient) => (
+  const preservesSourceIdentity = Boolean(source?.creator_recipe_reference) || requiredBaseIngredients.every((ingredient) => (
     completedIngredients.some((candidate) => ingredientNameMatches(
       candidate?.display_name ?? candidate?.name ?? candidate,
       ingredient?.display_name ?? ingredient?.name ?? ingredient
@@ -9537,14 +9683,31 @@ function mergeGroundedSocialCompletion(baseRecipe, completedRecipe) {
   ));
   const completedSemantics = recipeSemanticCompleteness(completedRecipe);
   const canAdoptCompletedStructure = preservesSourceIdentity
-    && completedIngredients.length >= requiredBaseIngredients.length
+    && completedIngredients.length >= (source?.creator_recipe_reference ? 3 : requiredBaseIngredients.length)
     && Array.isArray(completedRecipe?.steps)
     && completedRecipe.steps.length >= Math.max(3, Math.min(baseRecipe?.steps?.length ?? 0, 5))
     && completedSemantics.blockingIssues.length === 0
-    && completedSemantics.concreteIngredientCount >= Math.max(3, requiredBaseIngredients.length);
+    && completedSemantics.concreteIngredientCount >= (source?.creator_recipe_reference ? 3 : Math.max(3, requiredBaseIngredients.length));
 
+  const creatorFields = {};
+  if (source?.creator_recipe_reference && canAdoptCompletedStructure) {
+    for (const field of ["description", "servings_text", "servings_count", "prep_time_minutes", "cook_time_minutes", "cook_time_text", "est_calories_text", "calories_kcal", "protein_g", "carbs_g", "fat_g", "skill_level"]) {
+      const value = completedRecipe[field];
+      if (value != null && value !== "") creatorFields[field] = value;
+    }
+    const written = source.creator_recipe_reference.structured_recipe;
+    const prep = parseDurationMinutes(written?.prepTime);
+    const cook = parseDurationMinutes(written?.cookTime);
+    const total = parseDurationMinutes(written?.totalTime);
+    if (prep != null) creatorFields.prep_time_minutes = prep;
+    if (cook != null) creatorFields.cook_time_minutes = cook;
+    // Preserve the creator's timing fields (some include chilling in prep),
+    // and display the full duration instead of an ISO string or cook time alone.
+    if (total != null || cook != null) creatorFields.cook_time_text = durationText(total ?? cook);
+  }
   return {
     ...merged,
+    ...creatorFields,
     title: baseRecipe?.title ?? merged.title,
     author_name: baseRecipe?.author_name ?? merged.author_name,
     author_handle: baseRecipe?.author_handle ?? merged.author_handle,
@@ -9666,7 +9829,9 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
-  const completionQuery = buildRecipeCompletionQuery(normalizedRecipe, source);
+  const completionQuery = isSocialRecipeMaterial(source)
+    ? buildSocialRecipeCompletionQuery(normalizedRecipe, source)
+    : buildRecipeCompletionQuery(normalizedRecipe, source);
   if (!completionQuery) {
     return {
       recipe: normalizedRecipe,
@@ -9676,19 +9841,19 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
-  const socialCompletionContext = isSocialRecipeMaterial(source)
+  let socialCompletionContext = isSocialRecipeMaterial(source)
     ? await runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID })
     : null;
   const socialContextAssessment = assessSocialCompletionContext(socialCompletionContext);
-  const hasGroundedSocialCompletionContext = socialContextAssessment.hasDetails;
-  const hasSocialCompletionContext = Boolean(
+  let hasGroundedSocialCompletionContext = socialContextAssessment.hasDetails;
+  let hasSocialCompletionContext = Boolean(
     socialCompletionContext
     && socialContextAssessment.referenceCount > 0
     && (socialContextAssessment.concreteIngredientCount > 0 || socialContextAssessment.usefulStepCount > 0)
   );
   const isSocialCompletion = isSocialRecipeMaterial(source);
   let lookupSource = null;
-  if (!hasSocialCompletionContext) {
+  if (!hasGroundedSocialCompletionContext || !socialCompletionContext?.exact_match_supported) {
     try {
       lookupSource = await extractRecipeSearchSource(completionQuery, [], { source, jobID });
     } catch (error) {
@@ -9712,6 +9877,23 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
   const recipeSources = Array.isArray(lookupSource?.recipe_sources)
     ? lookupSource.recipe_sources.slice(0, RECIPE_REFERENCE_MAX_SOURCES)
     : [];
+  source.creator_recipe_reference = recipeSources.find((entry) => isMatchingCreatorRecipeReference(entry, normalizedRecipe, source)) ?? null;
+  if (source.creator_recipe_reference) {
+    const reference = source.creator_recipe_reference;
+    source.social_completion_context = {
+      ...socialCompletionContext,
+      exact_match_supported: true,
+      match_confidence: 0.95,
+      reference_urls: [reference.canonical_url ?? reference.source_url],
+      source_supported_ingredients: reference.structured_recipe.recipeIngredient,
+      source_supported_steps: reference.structured_recipe.recipeInstructions,
+      completion_ingredients: [],
+      completion_steps: [],
+    };
+    socialCompletionContext = source.social_completion_context;
+    hasGroundedSocialCompletionContext = true;
+    hasSocialCompletionContext = true;
+  }
   await storeWebCompletionLookupArtifact(jobID, {
     completionQuery,
     source,
@@ -9728,7 +9910,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
-  const initialCompletionModel = isSocialCompletion && !hasSocialCompletionContext
+  const initialCompletionModel = isSocialCompletion && (!hasSocialCompletionContext || source.creator_recipe_reference)
     ? RECIPE_IMPORT_HARD_COMPLETION_MODEL
     : RECIPE_IMPORT_COMPLETION_MODEL;
 
@@ -9745,6 +9927,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     () => withRecipeAIStage("recipe_import.web_completion", () => openai.chat.completions.create({
       model: initialCompletionModel,
       ...chatCompletionTemperatureParams(initialCompletionModel, 0.08),
+      ...chatCompletionLatencyParams(initialCompletionModel, 10_000),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: RECIPE_IMPORT_COMPLETION_SYSTEM_PROMPT },
@@ -9768,10 +9951,11 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
               ingredient_candidates: source.ingredient_candidates ?? [],
               instruction_candidates: source.instruction_candidates ?? [],
               structured_recipe: source.structured_recipe ?? null,
+              creator_recipe_reference: source.creator_recipe_reference ?? null,
             }),
             "",
             "Grounded Perplexity completion context:",
-            JSON.stringify(socialCompletionContext),
+            JSON.stringify(source.social_completion_context ?? socialCompletionContext),
             "",
             "Web recipe references:",
             JSON.stringify(recipeSources.map((entry) => ({
@@ -9834,7 +10018,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
   let parsed = JSON.parse(rawContent);
   let completedRecipe = coerceStructuredRecipeCandidate(parsed.recipe ?? parsed, source);
   let mergedRecipe = isSocialCompletion
-    ? mergeGroundedSocialCompletion(normalizedRecipe, completedRecipe)
+    ? mergeGroundedSocialCompletion(normalizedRecipe, completedRecipe, source)
     : mergeCompletedRecipe(normalizedRecipe, completedRecipe);
   let selectedCompletionModel = initialCompletionModel;
   let hardRetryApplied = false;
@@ -9898,7 +10082,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
       const hardRawContent = hardResponse.choices?.[0]?.message?.content ?? "{}";
       const hardParsed = JSON.parse(hardRawContent);
       const hardCompletedRecipe = coerceStructuredRecipeCandidate(hardParsed.recipe ?? hardParsed, source);
-      const hardMergedRecipe = mergeGroundedSocialCompletion(normalizedRecipe, hardCompletedRecipe);
+      const hardMergedRecipe = mergeGroundedSocialCompletion(normalizedRecipe, hardCompletedRecipe, source);
       const hardSemantics = recipeSemanticCompleteness(hardMergedRecipe);
       const semanticScore = (quality) => (
         (quality.concreteIngredientCount * 3)
@@ -10175,8 +10359,9 @@ function recipeHasIngredientNamed(recipe, names = []) {
 }
 
 function ingredientNameMatchesText(ingredientName, text) {
-  const key = normalizeKey(ingredientName);
-  const haystack = normalizeKey(text);
+  const mentionKey = (value) => normalizeKey(value).replace(/\blady\s*fingers?\b/g, "ladyfinger");
+  const key = mentionKey(ingredientName);
+  const haystack = mentionKey(text);
   if (!key || !haystack) return false;
   if (haystack.includes(key)) return true;
   const compactName = normalizeKey(String(ingredientName ?? "").split(/\s+/).slice(-2).join(" "));
@@ -10198,7 +10383,10 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
   const stepText = normalizeText(steps.map((step) => step.text ?? "").join("\n"));
   const semanticQuality = recipeSemanticCompleteness(recipe);
 
-  issues.push(...semanticQuality.blockingIssues);
+  issues.push(...semanticQuality.blockingIssues, ...sourceRecipeIngredientIssues(recipe, source), ...sourceRecipeQuantityIssues(recipe, source), ...sourceRecipeAlternativeIssues(recipe, source));
+  if (/\b(?:recipe\s+(?:above|below)|(?:follow|according to|see)\s+(?:the\s+)?(?:linked|separate|other)\s+recipe)\b/i.test(stepText)) {
+    issues.push("Unresolved recipe reference in the method. Include the component instructions or use the source's permitted prepared ingredient.");
+  }
 
   if (/\bwater\b/i.test(stepText) && !recipeHasIngredientNamed(recipe, ["water"])) {
     issues.push("Steps mention water, but water is not listed. Either remove the water reference by using a listed liquid, or add water only if the recipe needs it.");
@@ -10308,14 +10496,15 @@ function buildFinalRecipeValidationIssues(recipe, source = null) {
 }
 
 function shouldRunFinalRecipeValidation(recipe, source = null) {
-  return socialSourceHasPrimaryRecipeEvidence(source)
+  return (isSocialRecipeMaterial(source) && (source?.frame_data_urls?.length ?? 0) > 0)
+    || socialSourceHasPrimaryRecipeEvidence(source)
     || buildFinalRecipeValidationIssues(recipe, source).length > 0;
 }
 
 function isBlockingFinalRecipeValidationIssue(issue) {
   const text = normalizeText(issue).toLowerCase();
   if (!text) return false;
-  return /unresolved component ingredients|equipment is listed as ingredients|source teaser|missing from the top-level ingredient list|missing quantities|consolidate repeated ingredient rows|listed but not clearly used|steps mention water/.test(text);
+  return /unresolved component ingredients|equipment is listed as ingredients|source teaser|missing from the top-level ingredient list|missing quantities|consolidate repeated ingredient rows|listed but not clearly used|steps mention water|source ingredient|source quantity|source alternative|unresolved recipe reference/.test(text);
 }
 
 async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } = {}) {
@@ -10357,8 +10546,8 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
           { role: "system", content: RECIPE_FINAL_VALIDATOR_SYSTEM_PROMPT },
           {
             role: "user",
-            content: [
-              "Repair only these detected consistency issues:",
+            content: [{ type: "text", text: [
+              "Check all attached frames and the written creator recipe for omitted ingredients, component preparation, and assembly layers; repair these along with the detected consistency issues:",
               JSON.stringify(validationIssues),
               "",
               "Recipe:",
@@ -10369,6 +10558,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
                 source_type: source.source_type ?? null,
                 platform: source.platform ?? null,
                 title: source.title ?? null,
+                creator_recipe_reference: source.creator_recipe_reference ?? null,
                 description: source.description ?? source.meta_description ?? null,
                 transcript_text: source.transcript_text ? limitText(source.transcript_text, 2_500) : null,
                 ingredient_candidates: (source.ingredient_candidates ?? []).slice(0, 40),
@@ -10400,7 +10590,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
                 quality_flags: ["string"],
                 review_reason: "string|null",
               }),
-            ].join("\n"),
+            ].join("\n") }, ...collectRecipeEvidenceImageInputs(source, { maxCount: RECIPE_EXTRACTION_MAX_IMAGE_INPUTS })],
           },
         ],
       }))
@@ -10428,7 +10618,9 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
       && issueCountImproved;
 
     const applied = shouldUseRepair && JSON.stringify(repaired) !== JSON.stringify(validationBaseRecipe);
-    const remainingBlockingIssues = repairedIssues.filter(isBlockingFinalRecipeValidationIssue);
+    // Assess the recipe actually returned, not a candidate rejected by the merge.
+    const acceptedIssues = applied ? repairedIssues : validationIssues;
+    const remainingBlockingIssues = acceptedIssues.filter(isBlockingFinalRecipeValidationIssue);
     const validationNotes = uniqueStrings([
       ...validationIssues,
       ...(Array.isArray(parsed.validation_notes) ? parsed.validation_notes : []),
@@ -10819,6 +11011,10 @@ async function synthesizeRecipeFromPhoto(source, { jobID = null } = {}) {
 }
 
 async function repairSparseImportedRecipe(normalizedRecipe, source) {
+  // Social imports have a dedicated grounded completion pass. A text-only repair
+  // here guesses from the title, and later stages can mistake those guesses for
+  // creator evidence (e.g. eggless whipped cream replacing cooked custard).
+  if (isSocialRecipeMaterial(source)) return normalizedRecipe;
   const metrics = recipeCoreMetrics(normalizedRecipe);
   if (!metrics.needsRepair) {
     return normalizedRecipe;
@@ -11590,7 +11786,7 @@ function cleanupStepIngredientReferences(steps = [], ingredients = [], replaceme
       cleanedRefs.push({
         ...baseRef,
         display_name: displayName,
-        quantity_text: normalizeText(baseRef.quantity_text ?? baseRef.quantity ?? matchedIngredient?.quantity_text ?? "") || null,
+        quantity_text: normalizeText(baseRef.quantity_text ?? baseRef.quantity ?? (/\b(?:divided|plus)\b/i.test(matchedIngredient?.quantity_text ?? "") ? "" : matchedIngredient?.quantity_text) ?? "") || null,
       });
     }
     const stepTextKey = normalizeKey(step?.text ?? "");
@@ -11615,7 +11811,7 @@ function cleanupStepIngredientReferences(steps = [], ingredients = [], replaceme
       seen.add(refKey);
       cleanedRefs.push({
         display_name: displayName,
-        quantity_text: normalizeText(ingredient?.quantity_text ?? ingredient?.quantity ?? "") || null,
+        quantity_text: /\b(?:divided|plus)\b/i.test(ingredient?.quantity_text ?? "") ? null : (normalizeText(ingredient?.quantity_text ?? ingredient?.quantity ?? "") || null),
       });
       changed = true;
     }
@@ -12065,7 +12261,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     quality_flags: finalQualityFlags,
     confidence_score: assessment.confidence_score,
     review_state: assessment.review_state,
-    review_reason: modelResult.review_reason ?? assessment.review_reason,
+    review_reason: assessment.review_state === "approved" ? null : (modelResult.review_reason ?? assessment.review_reason),
   };
 }
 
@@ -12957,6 +13153,9 @@ export {
   canonicalImportIdentityForURL,
   estimateRecipeMacrosLocally,
   extractRecipeSearchSource,
+  extractSourceMaterial,
+  buildNormalizedRecipe,
+  recipeExtractionModelForSource,
   fillRecipeMacrosWithDisplayFallback,
   guaranteeRecipeDisplayMacros,
   hasCompleteDisplayMacros,
@@ -12971,6 +13170,10 @@ export {
   recipeIDForImportRestore,
   recipeImportTargetActions,
   assessSocialCompletionContext,
+  isMatchingCreatorRecipeReference,
+  sourceRecipeIngredientIssues,
+  sourceRecipeQuantityIssues,
+  validateAndRepairImportedRecipe,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
