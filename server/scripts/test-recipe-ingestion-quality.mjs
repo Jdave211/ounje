@@ -974,3 +974,9 @@ assert.equal(
 );
 
 console.log("recipe-ingestion-quality: all assertions passed");
+
+for (const [name, amount] of [
+  ["vanilla bean or vanilla extract", "1 vanilla bean or 2 tsp vanilla extract"],
+  ["fresh yeast or instant yeast", "15 g fresh yeast or 5 g instant yeast"],
+  ["fresh basil or dried basil", "3 tbsp fresh basil or 1 tbsp dried basil"],
+]) assert.equal(cleanIngredientQuantityText(amount, name), amount, "alternative quantities retain their ingredient labels");

@@ -36,3 +36,8 @@ existing.quality_flags=['partial_steps'];
 assert.equal(await completedImportJobHasLiveRecipe({status:'saved',recipe_id:existing.id,canonical_url:'https://youtu.be/AAA'}),false,'old partial saved recipes must be re-extracted instead of reused from cache');
 existing.quality_flags=[];existing.source_provenance_json={quality_history:{final_completeness_verified:true}};
 assert.equal(await completedImportJobHasLiveRecipe({status:'saved',recipe_id:existing.id,canonical_url:'https://youtu.be/AAA'}),true,'verified saved recipes remain cacheable');
+
+existing.ingredients_json=[{display_name:'fresh yeast or instant yeast',quantity_text:'15 g or 5 g'}];
+assert.equal(await completedImportJobHasLiveRecipe({status:'saved',recipe_id:existing.id,canonical_url:'https://youtu.be/AAA'}),false,'ambiguous alternative amounts must not remain cached even after an older completeness check');
+existing.ingredients_json[0].quantity_text='15 g fresh yeast or 5 g instant yeast';
+assert.equal(await completedImportJobHasLiveRecipe({status:'saved',recipe_id:existing.id,canonical_url:'https://youtu.be/AAA'}),true,'fully labelled alternatives remain cacheable');

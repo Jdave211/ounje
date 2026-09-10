@@ -92,3 +92,9 @@ for (const [primary, alternative] of [['vanilla bean', 'vanilla extract'], ['but
   assert.ok(!buildFinalRecipeValidationIssues(doubleAddition, legitimatelyDivided).some((issue) => issue.startsWith('Source alternative')), 'source-supported repeated additions remain allowed');
 }
 console.log('source integrity: 3 dishes, 9 adversarial validator responses, divided quantities and 3 social platforms passed');
+
+const alternativeRecipe={title:'Bread',ingredients:[ingredient('fresh yeast or instant yeast','15 g or 5 g'),ingredient('flour','500 g'),ingredient('water','300 ml')],steps:[{text:'Mix the yeast, flour and water.'},{text:'Let the dough rise then bake the bread.'}]};
+const alternativeSource={creator_recipe_reference:{structured_recipe:{recipeIngredient:['15 g fresh yeast or 5 g instant yeast','500 g flour','300 ml water'],recipeInstructions:alternativeRecipe.steps.map(s=>s.text)}}};
+assert.ok(buildFinalRecipeValidationIssues(alternativeRecipe,alternativeSource).some(issue=>issue.includes('ambiguous quantities')));
+alternativeRecipe.ingredients[0].quantity_text='15 g fresh yeast or 5 g instant yeast';
+assert.ok(!buildFinalRecipeValidationIssues(alternativeRecipe,alternativeSource).some(issue=>issue.includes('ambiguous quantities')));

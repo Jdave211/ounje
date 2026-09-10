@@ -4071,7 +4071,16 @@ function recipeHasConflictingImportSource(recipe, request) {
     && !sourceIDs.some((id) => recipeIDs.includes(id));
 }
 
+function ingredientHasAmbiguousAlternatives(ingredient) {
+  const names = normalizeKey(ingredient?.display_name ?? ingredient?.name).split(/\s+or\s+/);
+  const amounts = normalizeKey(ingredient?.quantity_text).split(/\s+or\s+/);
+  if (names.length < 2 || amounts.length !== names.length || !amounts.every((amount) => /\d/.test(amount))) return false;
+  return names.some((name, index) => !name.split(/\s+/).filter((token) => token.length >= 3)
+    .some((token) => amounts[index].split(/\s+/).includes(token)));
+}
+
 function importedRecipeNeedsVerifiedRefresh(recipe) {
+  if ((recipe?.ingredients_json ?? recipe?.ingredients ?? []).some(ingredientHasAmbiguousAlternatives)) return true;
   return (recipe?.quality_flags ?? recipe?.source_provenance_json?.quality_flags ?? []).some((flag) => ["partial_ingredients", "partial_steps", "final_validator_review_needed", "grounded_completion_incomplete"].includes(flag))
     && recipe?.source_provenance_json?.quality_history?.final_completeness_verified !== true;
 }
@@ -4251,7 +4260,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
   if (dedupeKey) {
     const rows = await fetchRows(
       USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,quality_flags,source_provenance_json",
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,quality_flags,source_provenance_json,ingredients_json",
       {
         filters: [
           `user_id=eq.${encodeURIComponent(userID)}`,
@@ -4274,7 +4283,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
   for (const column of ["recipe_url", "original_recipe_url", "attached_video_url"]) {
     const rows = await fetchRows(
       USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,quality_flags,source_provenance_json",
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,quality_flags,source_provenance_json,ingredients_json",
       {
         filters: [
           `user_id=eq.${encodeURIComponent(userID)}`,
@@ -5209,6 +5218,9 @@ async function upsertPrepOverrideForUser(userID, recipeDetail) {
 function cleanIngredientQuantityText(quantityText, displayName) {
   let cleaned = normalizeText(quantityText);
   if (!cleaned || !/\d/.test(cleaned)) return cleaned || null;
+  // Names disambiguate quantities for alternatives: stripping them turns
+  // "1 vanilla bean or 2 tsp vanilla extract" into the misleading "1 or 2 tsp".
+  if (/\bor\b/i.test(cleaned)) return cleaned;
   const ignoredNameTokens = new Set([
     "whole", "fresh", "dried", "ground", "large", "medium", "small", "fine",
     "ripe", "chopped", "minced", "grated", "sliced", "optional", "divided",
@@ -9394,7 +9406,8 @@ function sourceRecipeAlternativeIssues(recipe, source) {
     ` ${normalizeKey(text)} `.includes(` ${normalizeKey(name)} `)
     && /\b(?:add|pour|stir|whisk|fold|mix|melt)\b/i.test(text)
   )).length;
-  const issues = [];
+  const issues = (recipe?.ingredients ?? []).filter(ingredientHasAmbiguousAlternatives).map((ingredient) =>
+    `Source alternative "${ingredient.display_name ?? ingredient.name}" has ambiguous quantities. Keep each amount attached to its ingredient name in quantity_text, using the written recipe.`);
   for (const line of structured.recipeIngredient) {
     if (typeof line !== "string" || !/\s+or\s+/i.test(line)) continue;
     for (const alternative of line.replace(/\([^)]*\)/g, "").split(/\s+or\s+/i)) {
