@@ -8567,7 +8567,7 @@ async function extractRecipeWithModel(source) {
         `description_hint: ${source.description ?? source.meta_description ?? ""}`,
         "",
         "Structured recipe candidate from source (may be partial):",
-        JSON.stringify(source.structured_recipe ?? null),
+        JSON.stringify(source.creator_recipe_reference?.structured_recipe ?? source.structured_recipe ?? null),
         "",
         "Ingredient candidates:",
         JSON.stringify(source.ingredient_candidates ?? []),
@@ -9194,10 +9194,11 @@ function recipeSemanticCompleteness(recipe) {
   };
 }
 
-function reconcileResolvedRecipeQualityFlags(recipe, qualityFlags = []) {
+function reconcileResolvedRecipeQualityFlags(recipe, qualityFlags = [], { source = null, verifiedComplete = false } = {}) {
   const flags = uniqueStrings(qualityFlags);
   const semantics = recipeSemanticCompleteness(recipe);
-  if (semantics.blockingIssues.length > 0 || !flags.includes("final_validator_applied")) return flags;
+  if (!semantics.isUsable || !flags.some((flag) => ["final_validator_applied", "final_validator_checked"].includes(flag))) return flags;
+  if (source && buildFinalRecipeValidationIssues(recipe, source).some(isBlockingFinalRecipeValidationIssue)) return flags;
   const resolvedFlags = new Set([
     "grounded_completion_incomplete",
     "unresolved_ingredient_components",
@@ -9205,6 +9206,13 @@ function reconcileResolvedRecipeQualityFlags(recipe, qualityFlags = []) {
     "source_teaser_text",
     "final_validator_review_needed",
   ]);
+  // A successful repair alone does not prove that every source component survived.
+  // Clear partial warnings only after the validator explicitly checked completeness
+  // against evidence and the accepted recipe also passes deterministic checks.
+  if (verifiedComplete && buildFinalRecipeValidationIssues(recipe, source).length === 0) {
+    resolvedFlags.add("partial_ingredients");
+    resolvedFlags.add("partial_steps");
+  }
   return flags.filter((flag) => !resolvedFlags.has(normalizeText(flag).toLowerCase()));
 }
 
@@ -9833,9 +9841,37 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     };
   }
 
-  let socialCompletionContext = isSocialRecipeMaterial(source)
+  const isSocialCompletion = isSocialRecipeMaterial(source);
+  let lookupSource = null;
+  let lookupAttempted = false;
+  const lookupReferences = async () => {
+    lookupAttempted = true;
+    try {
+      lookupSource = await extractRecipeSearchSource(completionQuery, [], { source, jobID });
+    } catch (error) {
+      await storeWebCompletionLookupArtifact(jobID, { completionQuery, source, error, status: "failed" });
+    }
+  };
+  // When the creator explicitly points to a written recipe, find and verify it
+  // first. Broader research is still required if no matching primary source exists.
+  const preferCreatorReference = isSocialCompletion
+    && Boolean(normalizeText(source.author_handle ?? source.author_name))
+    && /\b(?:full|written)\s+recipe\b.{0,100}\b(?:blog|website|bio|link)\b/i.test(
+      normalizeText(source.description ?? source.caption_text ?? "")
+    );
+  if (preferCreatorReference) await lookupReferences();
+  const matchingReference = () => (lookupSource?.recipe_sources ?? [])
+    .find((entry) => isMatchingCreatorRecipeReference(entry, normalizedRecipe, source)) ?? null;
+  let creatorReference = matchingReference();
+  const titleKey = (value) => normalizeKey(String(value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, ""));
+  // Similar titles can describe different variants by the same creator. Only an
+  // exact dish title may bypass research; looser matches keep the existing path.
+  const exactCreatorMatch = creatorReference
+    && titleKey(creatorReference.structured_recipe.name ?? creatorReference.title) === titleKey(normalizedRecipe.title);
+  let socialCompletionContext = isSocialCompletion && !exactCreatorMatch
     ? await runSocialRecipeCompletionContext(normalizedRecipe, source, { jobID })
     : null;
+  const usedResearchContext = Boolean(socialCompletionContext);
   const socialContextAssessment = assessSocialCompletionContext(socialCompletionContext);
   let hasGroundedSocialCompletionContext = socialContextAssessment.hasDetails;
   let hasSocialCompletionContext = Boolean(
@@ -9843,33 +9879,22 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     && socialContextAssessment.referenceCount > 0
     && (socialContextAssessment.concreteIngredientCount > 0 || socialContextAssessment.usefulStepCount > 0)
   );
-  const isSocialCompletion = isSocialRecipeMaterial(source);
-  let lookupSource = null;
-  if (!hasGroundedSocialCompletionContext || !socialCompletionContext?.exact_match_supported) {
-    try {
-      lookupSource = await extractRecipeSearchSource(completionQuery, [], { source, jobID });
-    } catch (error) {
-      await storeWebCompletionLookupArtifact(jobID, {
-        completionQuery,
-        source,
-        error,
-        status: "failed",
-      });
-      if (!isSocialCompletion) {
-        return {
-          recipe: normalizedRecipe,
-          quality_flags: ["web_completion_lookup_failed"],
-          review_reason: "Grounded web context was unavailable before recipe completion.",
-          applied: false,
-        };
-      }
-    }
+  if (!creatorReference && !lookupAttempted && (!hasGroundedSocialCompletionContext || !socialCompletionContext?.exact_match_supported)) {
+    await lookupReferences();
+    creatorReference = matchingReference();
   }
-
+  if (!lookupSource && lookupAttempted && !isSocialCompletion) {
+    return {
+      recipe: normalizedRecipe,
+      quality_flags: ["web_completion_lookup_failed"],
+      review_reason: "Grounded web context was unavailable before recipe completion.",
+      applied: false,
+    };
+  }
   const recipeSources = Array.isArray(lookupSource?.recipe_sources)
     ? lookupSource.recipe_sources.slice(0, RECIPE_REFERENCE_MAX_SOURCES)
     : [];
-  source.creator_recipe_reference = recipeSources.find((entry) => isMatchingCreatorRecipeReference(entry, normalizedRecipe, source)) ?? null;
+  source.creator_recipe_reference = creatorReference;
   if (source.creator_recipe_reference) {
     const reference = source.creator_recipe_reference;
     source.social_completion_context = {
@@ -9891,7 +9916,7 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
     source,
     lookupSource,
     recipeSources,
-    status: hasSocialCompletionContext ? "perplexity_context" : (recipeSources.length ? "ok" : "empty"),
+    status: source.creator_recipe_reference ? "creator_reference" : hasSocialCompletionContext ? "perplexity_context" : (recipeSources.length ? "ok" : "empty"),
   });
   if (!recipeSources.length && !hasSocialCompletionContext && !isSocialCompletion) {
     return {
@@ -10107,7 +10132,8 @@ async function completeImportedRecipeWithWebEvidence(normalizedRecipe, source, {
   const filledQuantities = ingredientQuantityCompletionChanges(normalizedRecipe, mergedRecipe);
   const qualityFlags = uniqueStrings([
     ...(Array.isArray(parsed.quality_flags) ? parsed.quality_flags : []),
-    ...(hasSocialCompletionContext ? ["perplexity_completion_context"] : []),
+    ...(usedResearchContext && hasSocialCompletionContext ? ["perplexity_completion_context"] : []),
+    ...(source.creator_recipe_reference ? ["creator_recipe_verified"] : []),
     ...(isSocialCompletion && !hasSocialCompletionContext ? ["grounded_completion_context_unavailable"] : []),
     ...(hasSocialCompletionContext && !hasGroundedSocialCompletionContext ? ["perplexity_completion_context_thin"] : []),
     ...(hasSocialCompletionContext && !socialCompletionContext.exact_match_supported ? ["grounded_completion_inferred"] : []),
@@ -10570,6 +10596,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
                   cautions: (source.social_completion_context.cautions ?? []).slice(0, 4),
                 } : null,
               }),
+              "Set source_completeness.ingredients_complete and source_completeness.steps_complete to true only after checking every ingredient, component preparation, assembly layer, chilling/resting time, and finishing step against the supplied primary evidence. Leave either false if evidence is insufficient or any omission remains. Judge the full resulting recipe including your patch, not just the patch.",
               "For social video, restore every concrete source-supported ingredient that is missing from the top-level ingredients and the relevant steps. Do not replace the creator's recipe with a generic dish recipe.",
               "",
               "Return JSON like:",
@@ -10578,6 +10605,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
                   ingredients: "only include this full array if ingredients changed",
                   steps: "only include this full array if steps changed",
                 },
+                source_completeness: { ingredients_complete: "boolean", steps_complete: "boolean" },
                 validation_notes: ["string"],
                 quality_flags: ["string"],
                 review_reason: "string|null",
@@ -10613,6 +10641,15 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
     // Assess the recipe actually returned, not a candidate rejected by the merge.
     const acceptedIssues = applied ? repairedIssues : validationIssues;
     const remainingBlockingIssues = acceptedIssues.filter(isBlockingFinalRecipeValidationIssue);
+    const verifiedComplete = shouldUseRepair
+      && acceptedIssues.length === 0
+      && parsed.source_completeness?.ingredients_complete === true
+      && parsed.source_completeness?.steps_complete === true
+      && Boolean(
+        ((source.creator_recipe_reference?.structured_recipe ?? source.structured_recipe)?.recipeIngredient?.length >= 3
+          && parseSchemaRecipeInstructions((source.creator_recipe_reference?.structured_recipe ?? source.structured_recipe)?.recipeInstructions).length >= 2)
+        || socialSourceHasPrimaryRecipeEvidence(source)
+      );
     const validationNotes = uniqueStrings([
       ...validationIssues,
       ...(Array.isArray(parsed.validation_notes) ? parsed.validation_notes : []),
@@ -10635,6 +10672,8 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
         content_type: "application/json",
         source_url: source.canonical_url ?? source.source_url ?? null,
         raw_json: compactJSON({
+          verified_complete: verifiedComplete,
+          source_completeness: parsed.source_completeness ?? null,
           detected_issues: validationIssues,
           repaired_issues: repairedIssues,
           validation_notes: validationNotes,
@@ -10653,6 +10692,7 @@ async function validateAndRepairImportedRecipe(recipe, source, { jobID = null } 
 
     return {
       recipe: applied ? repaired : validationBaseRecipe,
+      verified_complete: verifiedComplete,
       quality_flags: qualityFlags,
       review_reason: remainingBlockingIssues.length
         ? normalizeText(parsed.review_reason ?? "") || remainingBlockingIssues.join(" ")
@@ -10697,7 +10737,9 @@ async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
     || !normalizedRecipe.cook_time_text
     || !Number.isFinite(normalizedRecipe.cook_time_minutes)
     || !Number.isFinite(normalizedRecipe.prep_time_minutes)
-    || !normalizedRecipe.skill_level;
+    // A verified written recipe may omit a difficulty rating. Do not spend a
+    // whole inference call estimating that optional label when core fields exist.
+    || (!normalizedRecipe.skill_level && !source.creator_recipe_reference);
 
   if (!hasMissingIngredientQuantities && !hasMissingLightFields) {
     return normalizedRecipe;
@@ -10718,7 +10760,7 @@ async function enrichRecipeLowRiskFields(normalizedRecipe, source) {
           JSON.stringify(normalizedRecipe),
           "",
           "Structured source:",
-          JSON.stringify(source.structured_recipe ?? null),
+          JSON.stringify(source.creator_recipe_reference?.structured_recipe ?? source.structured_recipe ?? null),
           "",
           "Ingredient candidates:",
           JSON.stringify(source.ingredient_candidates ?? []),
@@ -10790,7 +10832,7 @@ async function enrichRecipeSecondaryFields(normalizedRecipe, source, { jobID = n
         JSON.stringify(normalizedRecipe),
         "",
         "Structured source:",
-        JSON.stringify(source.structured_recipe ?? null),
+        JSON.stringify(source.creator_recipe_reference?.structured_recipe ?? source.structured_recipe ?? null),
         "",
         "Ingredient candidates:",
         JSON.stringify(source.ingredient_candidates ?? []),
@@ -11989,6 +12031,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
 
   let normalized = coerceStructuredRecipeCandidate(modelResult.recipe ?? {}, source);
   let secondaryFillApplied = false;
+  let finalCompletenessVerified = false;
   const usedConceptFallback = source.source_type === "concept_prompt" && !hasUsableRecipeCore(modelResult.recipe ?? {});
   if (source.source_type === "concept_prompt" && (!normalized.ingredients.length || !normalized.steps.length)) {
     normalized = coerceStructuredRecipeCandidate(buildConceptFallbackRecipe(source), source);
@@ -12020,6 +12063,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     secondaryFillApplied = secondaryFill.applied;
     const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
     normalized = finalValidation.recipe;
+    finalCompletenessVerified = finalValidation.verified_complete === true;
     modelResult.quality_flags = uniqueStrings([
       ...(modelResult.quality_flags ?? []),
       ...(finalValidation.quality_flags ?? []),
@@ -12028,7 +12072,8 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
   }
   if (source.source_type !== "concept_prompt" && source.source_type !== "media_image") {
     normalized = await repairSparseImportedRecipe(normalized, source);
-    normalized = await enrichRecipeLowRiskFields(normalized, source);
+    const deferLightFill = isSocialRecipeMaterial(source);
+    if (!deferLightFill) normalized = await enrichRecipeLowRiskFields(normalized, source);
     // Only run the (slow) web-evidence completion + reference search when the recipe
     // is actually missing core data. Previously this fired on every import because the
     // intended gate (recipeNeedsCompletionPass) was never wired up and the completion
@@ -12045,6 +12090,8 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
       ]);
       modelResult.review_reason = completion.review_reason ?? modelResult.review_reason ?? null;
     }
+    // Resolve primary evidence before estimating fields that it may already supply.
+    if (deferLightFill) normalized = await enrichRecipeLowRiskFields(normalized, source);
     if (source.source_type === "recipe_search") {
       const verification = await verifyRecipeSearchSynthesis(normalized, source);
       normalized = coerceStructuredRecipeCandidate(verification.recipe ?? normalized, source);
@@ -12059,6 +12106,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     secondaryFillApplied = secondaryFill.applied;
     const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
     normalized = finalValidation.recipe;
+    finalCompletenessVerified = finalValidation.verified_complete === true;
     modelResult.quality_flags = uniqueStrings([
       ...(modelResult.quality_flags ?? []),
       ...(finalValidation.quality_flags ?? []),
@@ -12089,6 +12137,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     secondaryFillApplied = secondaryFill.applied;
     const finalValidation = await validateAndRepairImportedRecipe(normalized, source, { jobID });
     normalized = finalValidation.recipe;
+    finalCompletenessVerified = finalValidation.verified_complete === true;
     modelResult.quality_flags = uniqueStrings([
       ...(modelResult.quality_flags ?? []),
       ...(finalValidation.quality_flags ?? []),
@@ -12203,7 +12252,9 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     throw new Error("Could not extract ingredients or steps from this source.");
   }
 
-  modelResult.quality_flags = reconcileResolvedRecipeQualityFlags(normalized, modelResult.quality_flags ?? []);
+  const observedQualityFlags = uniqueStrings([...(modelResult.quality_flags ?? []), ...(normalized.quality_flags ?? [])]);
+  const reconciliation = { source, verifiedComplete: finalCompletenessVerified };
+  modelResult.quality_flags = reconcileResolvedRecipeQualityFlags(normalized, observedQualityFlags, reconciliation);
   if (
     modelResult.quality_flags.includes("final_validator_applied")
     && recipeSemanticCompleteness(normalized).blockingIssues.length === 0
@@ -12240,7 +12291,7 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
     ...normalized,
     source_provenance_json: sourceProvenance,
   });
-  const finalQualityFlags = uniqueStrings([
+  const finalObservedQualityFlags = uniqueStrings([
       ...(modelResult.quality_flags ?? []),
       ...(usedConceptFallback ? ["concept_prompt_fallback"] : []),
       ...(secondaryFillApplied ? ["secondary_fill_applied"] : []),
@@ -12248,8 +12299,15 @@ async function buildNormalizedRecipe(source, { accessToken = null, jobID = null 
       ...(Array.isArray(finalNormalizedRecipe.quality_flags) ? finalNormalizedRecipe.quality_flags : []),
     ]);
 
+  const finalQualityFlags = reconcileResolvedRecipeQualityFlags(finalNormalizedRecipe, finalObservedQualityFlags, reconciliation);
+  sourceProvenance.quality_flags = finalQualityFlags;
+  sourceProvenance.quality_history = {
+    observed_flags: uniqueStrings([...observedQualityFlags, ...finalObservedQualityFlags]),
+    resolved_flags: uniqueStrings([...observedQualityFlags, ...finalObservedQualityFlags]).filter((flag) => !finalQualityFlags.includes(flag)),
+    final_completeness_verified: finalCompletenessVerified,
+  };
   return {
-    normalized_recipe: finalNormalizedRecipe,
+    normalized_recipe: { ...finalNormalizedRecipe, quality_flags: finalQualityFlags, source_provenance_json: sourceProvenance },
     quality_flags: finalQualityFlags,
     confidence_score: assessment.confidence_score,
     review_state: assessment.review_state,
@@ -13177,6 +13235,7 @@ export {
   mergeGroundedSocialCompletion,
   calibrateSocialRecipeAssessment,
   runSocialRecipeCompletionContext,
+  completeImportedRecipeWithWebEvidence,
   selectRecipeEvidenceFrameDataURLs,
   socialSourceHasPrimaryRecipeEvidence,
   requiresUserScopedRecipeImport,
