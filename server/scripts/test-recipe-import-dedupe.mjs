@@ -31,3 +31,8 @@ for(const [a,b] of [['https://www.instagram.com/reel/AAA/','https://www.instagra
 existing={...existing,recipe_url:'https://www.youtube.com/watch?v=AAA',original_recipe_url:'https://www.youtube.com/watch?v=AAA'};
 assert.equal(await completedImportJobHasLiveRecipe({status:'saved',recipe_id:existing.id,canonical_url:'https://youtu.be/AAA'}),true,'equivalent URLs for one video remain reusable');
 console.log('import dedupe: title collision, user scope, stale keys/caches and social URL aliases passed');
+
+existing.quality_flags=['partial_steps'];
+assert.equal(await completedImportJobHasLiveRecipe({status:'saved',recipe_id:existing.id,canonical_url:'https://youtu.be/AAA'}),false,'old partial saved recipes must be re-extracted instead of reused from cache');
+existing.quality_flags=[];existing.source_provenance_json={quality_history:{final_completeness_verified:true}};
+assert.equal(await completedImportJobHasLiveRecipe({status:'saved',recipe_id:existing.id,canonical_url:'https://youtu.be/AAA'}),true,'verified saved recipes remain cacheable');

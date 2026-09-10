@@ -4071,13 +4071,18 @@ function recipeHasConflictingImportSource(recipe, request) {
     && !sourceIDs.some((id) => recipeIDs.includes(id));
 }
 
+function importedRecipeNeedsVerifiedRefresh(recipe) {
+  return (recipe?.quality_flags ?? recipe?.source_provenance_json?.quality_flags ?? []).some((flag) => ["partial_ingredients", "partial_steps", "final_validator_review_needed", "grounded_completion_incomplete"].includes(flag))
+    && recipe?.source_provenance_json?.quality_history?.final_completeness_verified !== true;
+}
+
 async function completedImportJobHasLiveRecipe(job) {
   const status = normalizeText(job?.status).toLowerCase();
   if (!["saved", "draft", "needs_review"].includes(status)) return true;
   const recipeID = normalizeText(job?.recipe_id ?? "");
   if (!recipeID) return false;
   const recipe = await fetchRecipeRowByID(recipeID).catch(() => null);
-  return Boolean(recipe) && !recipeHasConflictingImportSource(recipe, job);
+  return Boolean(recipe) && !importedRecipeNeedsVerifiedRefresh(recipe) && !recipeHasConflictingImportSource(recipe, job);
 }
 
 async function markDuplicateFailedImportsSuperseded(job, { reason = "Superseded by a successful import of the same source." } = {}) {
@@ -4246,7 +4251,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
   if (dedupeKey) {
     const rows = await fetchRows(
       USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key",
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,quality_flags,source_provenance_json",
       {
         filters: [
           `user_id=eq.${encodeURIComponent(userID)}`,
@@ -4256,7 +4261,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
         limit: 1,
       }
     );
-    if (rows[0] && !recipeHasConflictingImportSource(rows[0], { ...request, canonical_url: canonicalURL })) return rows[0];
+    if (rows[0] && !importedRecipeNeedsVerifiedRefresh(rows[0]) && !recipeHasConflictingImportSource(rows[0], { ...request, canonical_url: canonicalURL })) return rows[0];
   }
 
   const candidateURLs = urlLookupVariants(
@@ -4269,7 +4274,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
   for (const column of ["recipe_url", "original_recipe_url", "attached_video_url"]) {
     const rows = await fetchRows(
       USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key",
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,quality_flags,source_provenance_json",
       {
         filters: [
           `user_id=eq.${encodeURIComponent(userID)}`,
@@ -4279,7 +4284,7 @@ async function findExistingUserImportedRecipeForRequest(request, { canonicalURL 
         limit: 1,
       }
     );
-    if (rows[0] && !recipeHasConflictingImportSource(rows[0], { ...request, canonical_url: canonicalURL })) return rows[0];
+    if (rows[0] && !importedRecipeNeedsVerifiedRefresh(rows[0]) && !recipeHasConflictingImportSource(rows[0], { ...request, canonical_url: canonicalURL })) return rows[0];
   }
 
   return null;
@@ -5997,7 +6002,7 @@ async function findExistingUserImportedRecipe(userID, normalized, dedupeKey = nu
   if (dedupeKey) {
     const direct = await fetchRows(
       USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key",
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,updated_at",
       {
         filters: [
           `user_id=eq.${encodeURIComponent(userID)}`,
@@ -6020,7 +6025,7 @@ async function findExistingUserImportedRecipe(userID, normalized, dedupeKey = nu
     if (!candidateURLs.length) break;
     const rows = await fetchRows(
       USER_IMPORTED_RECIPE_TABLE_CONFIG.recipeTable,
-      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key",
+      "id,title,source,recipe_url,original_recipe_url,attached_video_url,dedupe_key,updated_at",
       {
         filters: [
           `user_id=eq.${encodeURIComponent(userID)}`,
@@ -6101,6 +6106,27 @@ async function persistNormalizedRecipe(
     const existingDetail = await fetchCanonicalRecipeDetailByID(recipeID);
     if (existingDetail) {
       const tableConfig = userID ? USER_IMPORTED_RECIPE_TABLE_CONFIG : tableConfigForRecipeID(recipeID);
+      if (userID && sourceJobID && reviewState === "approved"
+        && normalized.source_provenance_json?.quality_history?.final_completeness_verified === true
+        && !qualityFlags.some((flag) => ["partial_ingredients", "partial_steps", "final_validator_review_needed", "final_validator_failed"].includes(flag))) {
+        const hydrated = await hydrateIngredientIdentity({
+          ...normalized, id: recipeID,
+          hero_image_url: existingDetail.hero_image_url ?? normalized.hero_image_url,
+          discover_card_image_url: existingDetail.discover_card_image_url ?? normalized.discover_card_image_url,
+        });
+        const artifacts = buildUserImportedRecipeArtifacts(hydrated, {
+          userID, sourceJobID, dedupeKey, reviewState, confidenceScore, qualityFlags,
+        });
+        const refreshed = await callRpc("refresh_verified_user_import_recipe", {
+          p_recipe_id: recipeID, p_user_id: userID, p_job_id: sourceJobID,
+          p_expected_updated_at: existing.updated_at, p_artifacts: artifacts,
+        });
+        if (refreshed !== true) {
+          throw new Error("Saved recipe changed during verification; retry the import to refresh it safely.");
+        }
+        savedState = "refreshed";
+        normalized = await fetchCanonicalRecipeDetailByID(recipeID);
+      } else {
       const patch = missingDisplayMacroPatch(existingDetail, normalized);
       if (userID && dedupeKey && !normalizeText(existing?.dedupe_key)) {
         patch.dedupe_key = dedupeKey;
@@ -6119,6 +6145,7 @@ async function persistNormalizedRecipe(
         ...existingDetail,
         ...patch,
       };
+      }
     }
   }
 
@@ -13056,6 +13083,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
 	    job = await appendJobEvent(existingJob.id, "completed", {
 	      recipe_id: persisted.recipe_id,
 	      deduped: persisted.saved_state === "deduped",
+      refreshed: persisted.saved_state === "refreshed",
 	      review_state: extraction.review_state,
 	      final_status: finalStatus,
 	    }, {
@@ -13087,7 +13115,7 @@ export async function processRecipeIngestionJob(jobOrID, { workerID = `worker_${
       recipeDetail: persisted.recipe_detail,
     });
     await markDuplicateFailedImportsSuperseded(job);
-    if (existingJob.user_id && persisted.saved_state === "inserted") {
+    if (existingJob.user_id && ["inserted", "refreshed"].includes(persisted.saved_state)) {
       await scheduleUserImportEmbedding(persisted.recipe_id, persisted.recipe_detail, { jobID: existingJob.id });
     }
     invalidateUserBootstrapCache(existingJob.user_id);
@@ -13226,6 +13254,8 @@ export {
   validateAndRepairImportedRecipe,
   findExistingUserImportedRecipe,
   completedImportJobHasLiveRecipe,
+  importedRecipeNeedsVerifiedRefresh,
+  buildUserImportedRecipeArtifacts,
   normalizeNutritionEstimateFields,
   persistNormalizedRecipe,
   recipeNeedsCompletionPass,
