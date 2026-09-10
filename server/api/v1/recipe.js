@@ -1203,9 +1203,13 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     }
 
     const isPublic = !recipeId.startsWith("uir_");
+    // Imported recipes can be refreshed by another worker. Read the owner's
+    // current row before using a cached detail so the saved version is authoritative.
+    const importedRecipe = isPublic ? null : await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID);
+    if (!isPublic && !importedRecipe) return res.status(404).json({ error: "Recipe not found." });
     const detailCacheKey = isPublic
       ? `public:${recipeId}`
-      : `user:${authorizedUserID}:${recipeId}`;
+      : `user:${authorizedUserID}:${recipeId}:${importedRecipe.updated_at}`;
     const cached = await readSharedTimedCache(
       recipeDetailCache,
       detailCacheKey,
@@ -1224,9 +1228,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       return res.json(cached);
     }
 
-    const recipe = recipeId.startsWith("uir_")
-      ? await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID)
-      : await fetchRecipeById(recipeId, accessToken);
+    const recipe = isPublic ? await fetchRecipeById(recipeId, accessToken) : importedRecipe;
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found." });
     }
@@ -7009,7 +7011,7 @@ async function fetchAuthorizedUserImportRecipeById(id, userID) {
 
   const rows = await fetchSupabaseTableRows(
     "user_import_recipes",
-    "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,source_provenance_json,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
+    "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,source_provenance_json,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count,updated_at",
     [
       `id=eq.${encodeURIComponent(normalizedID)}`,
       `user_id=eq.${encodeURIComponent(normalizedUserID)}`,

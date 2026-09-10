@@ -9,7 +9,7 @@
   "scripts": {
     "server": "nodemon --watch server --ext js,mjs,json --exec \"bash server/scripts/start-server.sh\"",
     "start": "bash server/scripts/start-server.sh",
-    "test": "node server/scripts/test-recipe-ingestion-cost-guards.mjs && node server/scripts/test-recipe-ingestion-quality.mjs && node server/scripts/test-recipe-source-integrity.mjs && node server/scripts/test-recipe-completion-routing.mjs && node server/scripts/test-recipe-import-dedupe.mjs && node server/scripts/test-share-import-enqueue.mjs",
+    "test": "node server/scripts/test-recipe-ingestion-cost-guards.mjs && node server/scripts/test-recipe-ingestion-quality.mjs && node server/scripts/test-recipe-source-integrity.mjs && node server/scripts/test-recipe-completion-routing.mjs && node server/scripts/test-recipe-import-dedupe.mjs && node server/scripts/test-share-import-enqueue.mjs && node server/scripts/test-imported-recipe-detail-cache.mjs",
     "sync:ios-host": "bash server/scripts/start-server.sh --sync-only",
     "flavorgraph:index": "python3 server/scripts/build_flavorgraph_index.py",
     "recipes:export-corpus": "python3 server/scripts/export_recipe_training_corpus.py",
