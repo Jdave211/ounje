@@ -552,11 +552,6 @@ struct FirstLoginOnboardingView: View {
                 commitBudgetInput()
             }
         }
-        .onChange(of: isPaywallPresented) { isPresented in
-            if !isPresented {
-                completePendingOnboardingAfterPaywall()
-            }
-        }
         .onChange(of: cooksForOthers) { isCookingForOthers in
             if !isCookingForOthers {
                 adults = 1
@@ -3185,6 +3180,7 @@ struct FirstLoginOnboardingView: View {
 
         if OunjeLaunchFlags.paywallsEnabled
             && !OunjeLaunchFlags.usesSimulatorBillingBypass
+            && !store.hasActivePaidEntitlement
             && !hasCompletedOnboardingBeforePaywall {
             pendingCompletedOnboardingProfile = completedProfile
             pendingCompletedOnboardingStep = completedStep
@@ -3200,6 +3196,7 @@ struct FirstLoginOnboardingView: View {
     }
 
     private func completePendingOnboardingAfterPaywall() {
+        guard store.hasActivePaidEntitlement else { return }
         guard let pendingProfile = pendingCompletedOnboardingProfile else { return }
         let pendingStep = pendingCompletedOnboardingStep ?? SetupStep.completedRawValue
         pendingCompletedOnboardingProfile = nil

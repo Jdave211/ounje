@@ -748,6 +748,55 @@ struct RecipeDetailData: Identifiable, Codable, Hashable {
         )
     }
 
+    func replacingIngredients(_ ingredients: [RecipeDetailIngredient]) -> RecipeDetailData {
+        RecipeDetailData(
+            id: id,
+            title: title,
+            description: description,
+            authorName: authorName,
+            authorHandle: authorHandle,
+            authorURLString: authorURLString,
+            source: source,
+            sourcePlatform: sourcePlatform,
+            category: category,
+            subcategory: subcategory,
+            recipeType: recipeType,
+            skillLevel: skillLevel,
+            cookTimeText: cookTimeText,
+            servingsText: servingsText,
+            servingSizeText: servingSizeText,
+            dailyDietText: dailyDietText,
+            estCostText: estCostText,
+            estCaloriesText: estCaloriesText,
+            carbsText: carbsText,
+            proteinText: proteinText,
+            fatsText: fatsText,
+            caloriesKcal: caloriesKcal,
+            proteinG: proteinG,
+            carbsG: carbsG,
+            fatG: fatG,
+            prepTimeMinutes: prepTimeMinutes,
+            cookTimeMinutes: cookTimeMinutes,
+            heroImageURLString: heroImageURLString,
+            discoverCardImageURLString: discoverCardImageURLString,
+            recipeURLString: recipeURLString,
+            originalRecipeURLString: originalRecipeURLString,
+            attachedVideoURLString: attachedVideoURLString,
+            sourceProvenance: sourceProvenance,
+            detailFootnote: detailFootnote,
+            imageCaption: imageCaption,
+            dietaryTags: dietaryTags,
+            flavorTags: flavorTags,
+            cuisineTags: cuisineTags,
+            occasionTags: occasionTags,
+            mainProtein: mainProtein,
+            cookMethod: cookMethod,
+            ingredients: ingredients,
+            steps: steps,
+            servingsCount: servingsCount
+        )
+    }
+
     var compactTagSummary: String {
         let values = (dietaryTags + cuisineTags).prefix(2)
         return values.isEmpty ? "—" : values.joined(separator: " • ")
@@ -2753,10 +2802,21 @@ private struct RecipeRatingAggregateRow: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case recipeID = "recipe_id"
         case averageRating = "average_rating"
         case ratingCount = "rating_count"
         case bayesianRating = "bayesian_rating"
         case coldStartRating = "cold_start_rating"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+            ?? container.decode(String.self, forKey: .recipeID)
+        averageRating = try container.decodeIfPresent(Double.self, forKey: .averageRating)
+        ratingCount = try container.decode(Int.self, forKey: .ratingCount)
+        bayesianRating = try container.decode(Double.self, forKey: .bayesianRating)
+        coldStartRating = try container.decode(Double.self, forKey: .coldStartRating)
     }
 }
 
@@ -2797,10 +2857,16 @@ actor RecipeRatingService {
     }
 
     func fetchUserStats(userID: String, accessToken: String) async throws -> UserRecipeRatingStats {
-        let rows: [RecipeRatingUserRow] = try await performSupabaseRequest(
+        async let catalogRows: [RecipeRatingUserRow] = performSupabaseRequest(
             path: "recipe_ratings?select=rating&user_id=eq.\(userID)",
             accessToken: accessToken
         )
+        async let importedRows: [RecipeRatingUserRow] = performSupabaseRequest(
+            path: "user_import_recipe_ratings?select=rating&user_id=eq.\(userID)",
+            accessToken: accessToken
+        )
+        let (catalogRatings, importedRatings) = try await (catalogRows, importedRows)
+        let rows = catalogRatings + importedRatings
         guard !rows.isEmpty else { return .empty }
         let total = rows.reduce(0) { $0 + $1.rating }
         return UserRecipeRatingStats(
@@ -2849,11 +2915,15 @@ actor RecipeRatingService {
         userID: String,
         accessToken: String
     ) async throws -> RecipeRatingSummary {
-        let aggregatePath = "recipes?select=id,average_rating,rating_count,bayesian_rating,cold_start_rating&id=eq.\(recipeID)&limit=1"
-        let userPath = "recipe_ratings?select=rating&recipe_id=eq.\(recipeID)&user_id=eq.\(userID)&limit=1"
+        let isImportedRecipe = recipeID.hasPrefix("uir_")
+        let aggregatePath = isImportedRecipe
+            ? "user_import_recipe_rating_summaries?select=recipe_id,average_rating,rating_count,bayesian_rating,cold_start_rating&recipe_id=eq.\(recipeID)&limit=1"
+            : "recipes?select=id,average_rating,rating_count,bayesian_rating,cold_start_rating&id=eq.\(recipeID)&limit=1"
+        let ratingTable = isImportedRecipe ? "user_import_recipe_ratings" : "recipe_ratings"
+        let userPath = "\(ratingTable)?select=rating&recipe_id=eq.\(recipeID)&user_id=eq.\(userID)&limit=1"
         async let aggregateRows: [RecipeRatingAggregateRow] = performSupabaseRequest(
             path: aggregatePath,
-            accessToken: SupabaseConfig.anonKey
+            accessToken: isImportedRecipe ? accessToken : SupabaseConfig.anonKey
         )
         async let userRows: [RecipeRatingUserRow] = performSupabaseRequest(
             path: userPath,
@@ -2879,7 +2949,8 @@ actor RecipeRatingService {
         rating: Int,
         accessToken: String
     ) async throws {
-        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/recipe_ratings?on_conflict=recipe_id,user_id") else {
+        let ratingTable = recipeID.hasPrefix("uir_") ? "user_import_recipe_ratings" : "recipe_ratings"
+        guard let url = URL(string: "\(SupabaseConfig.url)/rest/v1/\(ratingTable)?on_conflict=recipe_id,user_id") else {
             throw SupabaseProfileStateError.invalidRequest
         }
         var request = URLRequest(url: url)

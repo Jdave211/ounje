@@ -1135,8 +1135,8 @@ recipe_router.get("/recipe/model-status", modelStatusRateLimit, async (req, res)
 
 recipe_router.get("/recipe/:id/rating", recipeRatingRateLimit, async (req, res) => {
   const recipeID = String(req.params.id ?? "").trim();
-  if (!recipeID || recipeID.startsWith("uir_")) {
-    return res.status(400).json({ error: "Community ratings are available for Discover recipes." });
+  if (!recipeID) {
+    return res.status(400).json({ error: "Provide a recipe id." });
   }
 
   try {
@@ -1156,8 +1156,8 @@ recipe_router.get("/recipe/:id/rating", recipeRatingRateLimit, async (req, res) 
 recipe_router.put("/recipe/:id/rating", recipeRatingRateLimit, async (req, res) => {
   const recipeID = String(req.params.id ?? "").trim();
   const rating = normalizeRecipeRating(req.body?.rating);
-  if (!recipeID || recipeID.startsWith("uir_")) {
-    return res.status(400).json({ error: "Community ratings are available for Discover recipes." });
+  if (!recipeID) {
+    return res.status(400).json({ error: "Provide a recipe id." });
   }
   if (rating == null) {
     return res.status(400).json({ error: "Rating must be a whole number from 1 to 5." });
@@ -1203,9 +1203,13 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
     }
 
     const isPublic = !recipeId.startsWith("uir_");
+    // Imported recipes can be refreshed by another worker. Read the owner's
+    // current row before using a cached detail so the saved version is authoritative.
+    const importedRecipe = isPublic ? null : await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID);
+    if (!isPublic && !importedRecipe) return res.status(404).json({ error: "Recipe not found." });
     const detailCacheKey = isPublic
       ? `public:${recipeId}`
-      : `user:${authorizedUserID}:${recipeId}`;
+      : `user:${authorizedUserID}:${recipeId}:${importedRecipe.updated_at}`;
     const cached = await readSharedTimedCache(
       recipeDetailCache,
       detailCacheKey,
@@ -1224,9 +1228,7 @@ recipe_router.get("/recipe/detail/:id", async (req, res) => {
       return res.json(cached);
     }
 
-    const recipe = recipeId.startsWith("uir_")
-      ? await fetchAuthorizedUserImportRecipeById(recipeId, authorizedUserID)
-      : await fetchRecipeById(recipeId, accessToken);
+    const recipe = isPublic ? await fetchRecipeById(recipeId, accessToken) : importedRecipe;
     if (!recipe) {
       return res.status(404).json({ error: "Recipe not found." });
     }
@@ -7009,7 +7011,7 @@ async function fetchAuthorizedUserImportRecipeById(id, userID) {
 
   const rows = await fetchSupabaseTableRows(
     "user_import_recipes",
-    "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,source_provenance_json,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count",
+    "id,user_id,title,description,author_name,author_handle,author_url,source,source_platform,category,subcategory,recipe_type,skill_level,cook_time_text,servings_text,serving_size_text,daily_diet_text,est_cost_text,est_calories_text,carbs_text,protein_text,fats_text,calories_kcal,protein_g,carbs_g,fat_g,prep_time_minutes,cook_time_minutes,hero_image_url,discover_card_image_url,recipe_url,original_recipe_url,attached_video_url,source_provenance_json,detail_footnote,image_caption,dietary_tags,flavor_tags,cuisine_tags,occasion_tags,main_protein,cook_method,published_date,ingredients_json,steps_json,servings_count,updated_at",
     [
       `id=eq.${encodeURIComponent(normalizedID)}`,
       `user_id=eq.${encodeURIComponent(normalizedUserID)}`,
@@ -7369,35 +7371,65 @@ async function fetchRecipeRatingSummary(recipeID, userID) {
     throw new Error("Recipe ratings require Supabase service configuration.");
   }
 
-  const [recipeRows, ratingRows] = await Promise.all([
-    fetchSupabaseTableRows(
-      "recipes",
-      "id,average_rating,rating_count,bayesian_rating,cold_start_rating",
-      [`id=eq.${encodeURIComponent(recipeID)}`],
-      [],
-      1,
-      SUPABASE_SERVICE_ROLE_KEY
-    ),
-    fetchSupabaseTableRows(
-      "recipe_ratings",
-      "rating",
-      [
-        `recipe_id=eq.${encodeURIComponent(recipeID)}`,
-        `user_id=eq.${encodeURIComponent(userID)}`,
-      ],
-      [],
-      1,
-      SUPABASE_SERVICE_ROLE_KEY
-    ),
-  ]);
+  const isImportedRecipe = recipeID.startsWith("uir_");
+  const ratingTable = isImportedRecipe ? "user_import_recipe_ratings" : "recipe_ratings";
+  const ratingPromise = fetchSupabaseTableRows(
+    ratingTable,
+    "rating",
+    [
+      `recipe_id=eq.${encodeURIComponent(recipeID)}`,
+      `user_id=eq.${encodeURIComponent(userID)}`,
+    ],
+    [],
+    1,
+    SUPABASE_SERVICE_ROLE_KEY
+  );
+  let summary;
+  let ratingRows;
+  if (isImportedRecipe) {
+    const [recipeRows, summaryRows, fetchedRatingRows] = await Promise.all([
+      fetchSupabaseTableRows(
+        "user_import_recipes",
+        "id",
+        [`id=eq.${encodeURIComponent(recipeID)}`],
+        [],
+        1,
+        SUPABASE_SERVICE_ROLE_KEY
+      ),
+      fetchSupabaseTableRows(
+        "user_import_recipe_rating_summaries",
+        "recipe_id,average_rating,rating_count,bayesian_rating,cold_start_rating",
+        [`recipe_id=eq.${encodeURIComponent(recipeID)}`],
+        [],
+        1,
+        SUPABASE_SERVICE_ROLE_KEY
+      ),
+      ratingPromise,
+    ]);
+    if (!recipeRows[0]) return null;
+    summary = summaryRows[0] ?? {};
+    ratingRows = fetchedRatingRows;
+  } else {
+    const [recipeRows, fetchedRatingRows] = await Promise.all([
+      fetchSupabaseTableRows(
+        "recipes",
+        "id,average_rating,rating_count,bayesian_rating,cold_start_rating",
+        [`id=eq.${encodeURIComponent(recipeID)}`],
+        [],
+        1,
+        SUPABASE_SERVICE_ROLE_KEY
+      ),
+      ratingPromise,
+    ]);
+    if (!recipeRows[0]) return null;
+    summary = recipeRows[0];
+    ratingRows = fetchedRatingRows;
+  }
 
-  const recipe = recipeRows[0];
-  if (!recipe) return null;
-
-  const count = Math.max(0, Number(recipe.rating_count) || 0);
-  const average = Number(recipe.average_rating);
-  const weighted = Number(recipe.bayesian_rating);
-  const coldStart = Number(recipe.cold_start_rating);
+  const count = Math.max(0, Number(summary.rating_count) || 0);
+  const average = Number(summary.average_rating);
+  const weighted = Number(summary.bayesian_rating);
+  const coldStart = Number(summary.cold_start_rating);
   return {
     recipe_id: recipeID,
     average_rating: count > 0 && Number.isFinite(average) ? average : null,
@@ -7413,8 +7445,11 @@ async function upsertRecipeRating(recipeID, userID, rating) {
     throw new Error("Recipe ratings require Supabase service configuration.");
   }
 
+  const ratingTable = recipeID.startsWith("uir_")
+    ? "user_import_recipe_ratings"
+    : "recipe_ratings";
   const response = await fetch(
-    `${SUPABASE_URL.replace(/\/+$/, "")}/rest/v1/recipe_ratings?on_conflict=recipe_id,user_id`,
+    `${SUPABASE_URL.replace(/\/+$/, "")}/rest/v1/${ratingTable}?on_conflict=recipe_id,user_id`,
     {
       method: "POST",
       headers: {

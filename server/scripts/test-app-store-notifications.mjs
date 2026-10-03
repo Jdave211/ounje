@@ -5,6 +5,10 @@ import {
   deriveEntitlementFromAppStoreNotification,
   processAppStoreNotification,
 } from "../lib/app-store-notifications.js";
+import {
+  isAllowedClientEntitlementSource,
+  isProtectedManualLifetimeEntitlement,
+} from "../lib/entitlement-policy.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW_MS = Date.now();
@@ -123,6 +127,15 @@ function cryptoRandomUUID(seed) {
 }
 
 async function run() {
+  assert.equal(isAllowedClientEntitlementSource("app_store"), true);
+  assert.equal(isAllowedClientEntitlementSource("manual"), false);
+  assert.equal(isAllowedClientEntitlementSource("system"), false);
+  assert.equal(isProtectedManualLifetimeEntitlement({
+    tier: "foundingLifetime",
+    status: "active",
+    source: "manual",
+  }), true);
+
   {
     const supabase = new MockSupabase();
     const result = await processAppStoreNotification({
@@ -238,6 +251,31 @@ async function run() {
     });
     assert.equal(result.protectedManualEntitlement, true);
     assert.equal(result.effectiveTier, "foundingLifetime");
+  }
+
+  {
+    const manualGrant = {
+      user_id: USER_ID,
+      tier: "foundingLifetime",
+      status: "active",
+      source: "manual",
+      product_id: null,
+      transaction_id: null,
+      original_transaction_id: null,
+      expires_at: null,
+      metadata: {},
+    };
+    const supabase = new MockSupabase({ entitlements: [manualGrant] });
+    const result = await processAppStoreNotification({
+      supabase,
+      notification: notification({ type: "DID_RENEW" }),
+      transactionInfo: transaction(),
+      renewalInfo: renewal(),
+      nowMs: NOW_MS,
+    });
+    assert.equal(result.protectedManualEntitlement, true);
+    assert.equal(result.effectiveTier, "foundingLifetime");
+    assert.deepEqual(supabase.entitlements.get(USER_ID), manualGrant);
   }
 
   {

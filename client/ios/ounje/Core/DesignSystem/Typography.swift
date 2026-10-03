@@ -172,11 +172,18 @@ struct SleeRecipeCardTitleText: View {
     let text: String
     let size: CGFloat
     let color: Color
+    let alignment: TextAlignment
 
-    init(_ text: String, size: CGFloat, color: Color = OunjePalette.primaryText) {
+    init(
+        _ text: String,
+        size: CGFloat,
+        color: Color = OunjePalette.primaryText,
+        alignment: TextAlignment = .leading
+    ) {
         self.text = text
         self.size = size
         self.color = color
+        self.alignment = alignment
     }
 
     private var leadingDigitPrefix: String? {
@@ -215,8 +222,11 @@ struct SleeRecipeCardTitleText: View {
         .truncationMode(.tail)
         .minimumScaleFactor(0.72)
         .allowsTightening(true)
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .multilineTextAlignment(alignment)
+        .frame(
+            maxWidth: alignment == .leading ? .infinity : nil,
+            alignment: alignment == .trailing ? .trailing : (alignment == .center ? .center : .leading)
+        )
         .clipped()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
@@ -228,17 +238,20 @@ struct RecipeTypographyTitleText: View {
     let size: CGFloat
     let color: Color
     let style: RecipeTypographyStyle
+    let alignment: TextAlignment
 
     init(
         _ text: String,
         size: CGFloat,
         color: Color = OunjePalette.primaryText,
-        style: RecipeTypographyStyle
+        style: RecipeTypographyStyle,
+        alignment: TextAlignment = .leading
     ) {
         self.text = text
         self.size = size
         self.color = color
         self.style = style
+        self.alignment = alignment
     }
 
     var body: some View {
@@ -250,7 +263,7 @@ struct RecipeTypographyTitleText: View {
                     .tracking(0)
                     .foregroundStyle(color)
             case .playful:
-                SleeRecipeCardTitleText(text, size: size, color: color)
+                SleeRecipeCardTitleText(text, size: size, color: color, alignment: alignment)
             }
         }
         .accessibilityElement(children: .ignore)

@@ -3,6 +3,22 @@ import Foundation
 enum OunjeLaunchFlags {
     static let paywallsEnabled = true
 
+    static var forcePhotoImportScreenshotPreview: Bool {
+#if DEBUG && targetEnvironment(simulator)
+        ProcessInfo.processInfo.arguments.contains("--ounje-photo-import-screenshot-preview")
+#else
+        false
+#endif
+    }
+
+    static var forceRecipeScreenshotPreview: Bool {
+#if DEBUG && targetEnvironment(simulator)
+        ProcessInfo.processInfo.arguments.contains("--ounje-recipe-screenshot-preview")
+#else
+        false
+#endif
+    }
+
     static var forcePaywallPreview: Bool {
 #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--ounje-paywall-preview")

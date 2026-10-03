@@ -191,6 +191,7 @@
 		FB10000000000000000000003 /* ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ounje/Features/FirstRunGuide/SpotlightGuideOverlay.swift; sourceTree = "<group>"; };
 		FB10000000000000000000004 /* ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ounje/Features/FirstRunGuide/FirstRunGuideCatalog.v1.json; sourceTree = "<group>"; };
 		FB10000000000000000000005 /* ounje/Resources/Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ounje/Resources/Images.xcassets; sourceTree = "<group>"; };
+		FB10000000000000000000006 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = "Preview Assets.xcassets"; path = "ounje/Preview Content/Preview Assets.xcassets"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -221,6 +222,7 @@
 				DAC00000000000000000027 /* ShareExtensionShared */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				FB10000000000000000000005 /* ounje/Resources/Images.xcassets */,
+				FB10000000000000000000006 /* Preview Assets.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* OunjeLaunch.storyboard */,
 				2995497FBC63264E7C61B613 /* PrivacyInfo.xcprivacy */,
@@ -826,6 +828,7 @@
 				CODE_SIGN_ENTITLEMENTS = ounje/ounje.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"ounje/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = ounje/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Ounje;
@@ -835,7 +838,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.3;
+				MARKETING_VERSION = 2.2.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
@@ -863,7 +866,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.3;
+				MARKETING_VERSION = 2.2.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje;
 				PRODUCT_NAME = ounje;
 				SWIFT_VERSION = 5.0;
@@ -1003,7 +1006,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.3;
+				MARKETING_VERSION = 2.2.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;
@@ -1031,7 +1034,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.3;
+				MARKETING_VERSION = 2.2.5;
 				PRODUCT_BUNDLE_IDENTIFIER = net.ounje.ShareExtension;
 				PRODUCT_NAME = OunjeShareExtension;
 				SKIP_INSTALL = YES;

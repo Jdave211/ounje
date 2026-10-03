@@ -86,6 +86,15 @@ struct RecipeDetailExperienceView: View {
     let transitionNamespace: Namespace.ID?
     let onOpenToastDestination: ((AppToastDestination) -> Void)?
     let onboardingContext: RecipeDetailOnboardingContext?
+    let titleOverride: String?
+    let descriptionOverride: String?
+    let hidesOriginalLink: Bool
+    let heroImageAssetOverride: String?
+    let heroImageScaleOverride: CGFloat?
+    let titleStyleOverride: RecipeTypographyStyle?
+    let titleAlignmentOverride: TextAlignment?
+    let ingredientsOverride: [RecipeDetailIngredient]?
+    let stepsOverride: [RecipeDetailStep]?
     @ObservedObject private var toastCenter: AppToastCenter
 
     @Environment(\.dismiss) private var dismiss
@@ -147,7 +156,16 @@ struct RecipeDetailExperienceView: View {
         onDismiss: (() -> Void)? = nil,
         transitionNamespace: Namespace.ID? = nil,
         onOpenToastDestination: ((AppToastDestination) -> Void)? = nil,
-        onboardingContext: RecipeDetailOnboardingContext? = nil
+        onboardingContext: RecipeDetailOnboardingContext? = nil,
+        titleOverride: String? = nil,
+        descriptionOverride: String? = nil,
+        hidesOriginalLink: Bool = false,
+        heroImageAssetOverride: String? = nil,
+        heroImageScaleOverride: CGFloat? = nil,
+        titleStyleOverride: RecipeTypographyStyle? = nil,
+        titleAlignmentOverride: TextAlignment? = nil,
+        ingredientsOverride: [RecipeDetailIngredient]? = nil,
+        stepsOverride: [RecipeDetailStep]? = nil
     ) {
         self.presentedRecipe = presentedRecipe
         self.onOpenCart = onOpenCart
@@ -155,6 +173,15 @@ struct RecipeDetailExperienceView: View {
         self.transitionNamespace = transitionNamespace
         self.onOpenToastDestination = onOpenToastDestination
         self.onboardingContext = onboardingContext
+        self.titleOverride = titleOverride
+        self.descriptionOverride = descriptionOverride
+        self.hidesOriginalLink = hidesOriginalLink
+        self.heroImageAssetOverride = heroImageAssetOverride
+        self.heroImageScaleOverride = heroImageScaleOverride
+        self.titleStyleOverride = titleStyleOverride
+        self.titleAlignmentOverride = titleAlignmentOverride
+        self.ingredientsOverride = ingredientsOverride
+        self.stepsOverride = stepsOverride
         _toastCenter = ObservedObject(wrappedValue: toastCenter)
         let launchDetail = presentedRecipe.initialDetail
             ?? RecipeDetailData.lightweightPreview(from: presentedRecipe.recipeCard)
@@ -202,7 +229,7 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var showsCommunityRating: Bool {
-        !isImportedRecipe && !isOnboardingDemo
+        !isOnboardingDemo
     }
 
     @MainActor
@@ -340,7 +367,8 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var titleText: String {
-        detail?.title ?? presentedRecipe.recipeCard.title
+        let override = titleOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return override.isEmpty ? (detail?.title ?? presentedRecipe.recipeCard.title) : override
     }
 
     private var isAdaptedRecipe: Bool {
@@ -428,6 +456,10 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var descriptionText: String? {
+        if let descriptionOverride,
+           !descriptionOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return descriptionOverride
+        }
         if let detailDescription = detail?.description, !detailDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return detailDescription
         }
@@ -477,7 +509,7 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var displayExternalURL: URL? {
-        externalURL
+        hidesOriginalLink ? nil : externalURL
     }
 
     private var authorURL: URL? {
@@ -621,6 +653,9 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var ingredientItems: [RecipeDetailIngredient] {
+        if let ingredientsOverride {
+            return ingredientsOverride.map { $0.scaled(by: servingsScale) }
+        }
         guard let detail else { return [] }
         if !detail.ingredients.isEmpty {
             return detail.ingredients.map { $0.scaled(by: servingsScale) }
@@ -638,6 +673,11 @@ struct RecipeDetailExperienceView: View {
     }
 
     private var instructionSteps: [RecipeDetailStep] {
+        if let stepsOverride {
+            return stepsOverride.map { step in
+                step.replacingIngredients(step.ingredients.map { $0.scaled(by: servingsScale) })
+            }
+        }
         guard let detail else { return [] }
         return detail.steps.map { step in
             step.replacingIngredients(step.ingredients.map { $0.scaled(by: servingsScale) })
@@ -937,7 +977,11 @@ struct RecipeDetailExperienceView: View {
                                 Color.clear
                                     .frame(height: heroHeight)
                                     .overlay(alignment: .topTrailing) {
-                                        RecipeDetailHeroImage(candidates: imageCandidates)
+                                        RecipeDetailHeroImage(
+                                            candidates: imageCandidates,
+                                            localAssetName: heroImageAssetOverride,
+                                            localAssetScale: heroImageScaleOverride ?? 1
+                                        )
                                             .frame(width: heroSize, height: heroSize)
                                             .offset(
                                                 x: heroSize * (isImportedRecipe ? 0.06 : 0.09),
@@ -962,8 +1006,10 @@ struct RecipeDetailExperienceView: View {
                                 RecipeModalTitle(
                                     text: titleText,
                                     isAdapted: isAdaptedRecipe,
-                                    styleOverride: isOnboardingDemo ? .playful : nil
+                                    styleOverride: titleStyleOverride ?? (isOnboardingDemo ? .playful : nil),
+                                    alignment: titleAlignmentOverride ?? .leading
                                 )
+                                .offset(x: titleAlignmentOverride == .trailing ? pageWidth * 0.28 : 0)
 
                                 VStack(alignment: .leading, spacing: 16) {
                                     if subtitleLine != nil || displayExternalURL != nil {
@@ -2025,6 +2071,7 @@ struct RecipeModalTitle: View {
     let text: String
     var isAdapted = false
     var styleOverride: RecipeTypographyStyle? = nil
+    var alignment: TextAlignment = .leading
     @AppStorage(RecipeTypographyStyle.storageKey) private var recipeTypographyStyleRawValue = RecipeTypographyStyle.defaultStyle.rawValue
 
     private var resolvedStyle: RecipeTypographyStyle {
@@ -2032,27 +2079,50 @@ struct RecipeModalTitle: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            RecipeTypographyTitleText(
-                text,
-                size: resolvedStyle == .clean ? 40 : 44,
+        Group {
+            if alignment == .trailing {
+                RecipeTypographyTitleText(
+                    text,
+                    size: resolvedStyle == .clean ? 40 : 44,
+                    color: OunjePalette.primaryText,
+                    style: resolvedStyle,
+                    alignment: .trailing
+                )
+                .multilineTextAlignment(.trailing)
+                .lineSpacing(2)
+                .lineLimit(5)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                RecipeTypographyTitleText(
+                    text,
+                    size: resolvedStyle == .clean ? 40 : 44,
                 color: OunjePalette.primaryText,
-                style: resolvedStyle
+                style: resolvedStyle,
+                alignment: alignment
             )
-                .multilineTextAlignment(.leading)
+                .multilineTextAlignment(alignment)
                 .lineSpacing(2)
                 .lineLimit(5)
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
 
-            if isAdapted {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(recipeAIEditedGold)
-                    .accessibilityLabel("Edited recipe")
+                    if isAdapted {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(recipeAIEditedGold)
+                            .accessibilityLabel("Edited recipe")
+                    }
+
+                    Spacer(minLength: 0)
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            maxWidth: .infinity,
+            alignment: alignment == .trailing ? .trailing : (alignment == .center ? .center : .leading)
+        )
     }
 }
 
@@ -2135,11 +2205,27 @@ struct RecipeCommunityRatingSection: View {
 
 struct RecipeDetailHeroImage: View {
     let candidates: [URL]
+    let localAssetName: String?
+    let localAssetScale: CGFloat
     @StateObject private var loader = DiscoverRecipeImageLoader()
+
+    init(candidates: [URL], localAssetName: String? = nil, localAssetScale: CGFloat = 1) {
+        self.candidates = candidates
+        self.localAssetName = localAssetName
+        self.localAssetScale = localAssetScale
+    }
 
     var body: some View {
         ZStack {
-            if let image = loader.image {
+            if let localAssetName {
+                Image(localAssetName)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .scaleEffect(localAssetScale)
+                    .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.24), radius: 18, y: 8)
+            } else if let image = loader.image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -2160,6 +2246,7 @@ struct RecipeDetailHeroImage: View {
             }
         }
         .task(id: candidates.map(\.absoluteString).joined(separator: "|")) {
+            guard localAssetName == nil else { return }
             await loader.load(from: candidates)
         }
     }

@@ -4,18 +4,22 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 final class OunjeShareViewController: UIViewController {
-    // The extension stays alive through this await, so the FOREGROUND POST reliably creates
-    // the job on the server before the share sheet closes — that's what makes imports land
-    // without ever opening the app. The API responds in ~1-4s; this generous ceiling only
-    // bounds the rare slow-network tail. (Was 6s, which the tail tripped — and the fallback
-    // is a fire-and-forget background upload that iOS drops when it kills the extension, so
-    // a tripped timeout silently lost the import.)
-    private static let foregroundBackendSubmitTimeout: TimeInterval = 20
+    // Uploads are owned by iOS from the start, so closing the share sheet does
+    // not cancel a handoff still waiting for the API or connectivity.
+    private var backgroundSubmitSession: URLSession?
+    private var backgroundSubmitDelegate: ShareImportUploadDelegate?
+    private var pendingEnvelope: SharedRecipeImportEnvelope?
+    private var retrySubmission = false
+    private let modalCard = UIView()
+    private let stateIconContainer = UIView()
+    private let stateIcon = UIImageView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let previewLabel = UILabel()
     private let doneButton = UIButton(type: .system)
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private var doneButtonHeightConstraint: NSLayoutConstraint?
+    private var doneButtonTopConstraint: NSLayoutConstraint?
 
     private var shareDraftSummary = ""
     private var providerCount = 0
@@ -40,77 +44,113 @@ final class OunjeShareViewController: UIViewController {
     }
 
     private func configureUI() {
-        view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.07, alpha: 1)
+        preferredContentSize = CGSize(width: 360, height: 270)
+        view.backgroundColor = UIColor.black.withAlphaComponent(0.58)
+
+        modalCard.translatesAutoresizingMaskIntoConstraints = false
+        modalCard.backgroundColor = UIColor(red: 0.075, green: 0.075, blue: 0.085, alpha: 1)
+        modalCard.layer.cornerRadius = 26
+        modalCard.layer.cornerCurve = .continuous
+        modalCard.layer.borderWidth = 1
+        modalCard.layer.borderColor = UIColor.white.withAlphaComponent(0.09).cgColor
+
+        stateIconContainer.translatesAutoresizingMaskIntoConstraints = false
+        stateIconContainer.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        stateIconContainer.layer.cornerRadius = 24
+        stateIconContainer.layer.cornerCurve = .continuous
+
+        stateIcon.translatesAutoresizingMaskIntoConstraints = false
+        stateIcon.image = UIImage(systemName: "paperplane.fill")
+        stateIcon.tintColor = UIColor(white: 0.94, alpha: 1)
+        stateIcon.contentMode = .scaleAspectFit
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "Adding to Ounje"
-        titleLabel.font = .systemFont(ofSize: 26, weight: .bold)
+        titleLabel.text = "Sharing recipe to Ounje"
+        titleLabel.font = .systemFont(ofSize: 21, weight: .bold)
         titleLabel.textColor = UIColor(white: 0.97, alpha: 1)
+        titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 2
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "Ounje is sending this to your cookbook."
+        subtitleLabel.text = "Sending it securely in the background."
         subtitleLabel.font = .systemFont(ofSize: 14, weight: .medium)
         subtitleLabel.textColor = UIColor(white: 0.7, alpha: 1)
+        subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0
 
         previewLabel.translatesAutoresizingMaskIntoConstraints = false
-        previewLabel.font = .systemFont(ofSize: 15, weight: .semibold)
-        previewLabel.textColor = UIColor(white: 0.92, alpha: 1)
+        previewLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        previewLabel.textColor = UIColor(white: 0.62, alpha: 1)
+        previewLabel.textAlignment = .center
         previewLabel.numberOfLines = 3
+        previewLabel.isHidden = true
 
         activityIndicator.translatesAutoresizingMaskIntoConstraints = false
         activityIndicator.hidesWhenStopped = true
-        activityIndicator.color = UIColor(red: 0.3, green: 0.74, blue: 0.53, alpha: 1)
-
-        let card = UIView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = UIColor(white: 0.13, alpha: 1)
-        card.layer.cornerRadius = 24
-        card.layer.cornerCurve = .continuous
-
-        [titleLabel, subtitleLabel, previewLabel, activityIndicator].forEach(card.addSubview)
+        activityIndicator.color = UIColor(white: 0.94, alpha: 1)
 
         doneButton.translatesAutoresizingMaskIntoConstraints = false
-        configurePrimaryButton(doneButton, title: "Done", tint: .white, background: UIColor(red: 0.15, green: 0.46, blue: 0.31, alpha: 1))
-        doneButton.alpha = 0
+        configurePrimaryButton(
+            doneButton,
+            title: "Done",
+            tint: UIColor(white: 0.96, alpha: 1),
+            background: UIColor.white.withAlphaComponent(0.1)
+        )
+        doneButton.isHidden = true
         doneButton.isEnabled = false
         doneButton.addTarget(self, action: #selector(handleDoneTap), for: .touchUpInside)
 
-        let buttonStack = UIStackView(arrangedSubviews: [doneButton])
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
-        buttonStack.axis = .vertical
-        buttonStack.spacing = 12
+        view.addSubview(modalCard)
+        modalCard.addSubview(stateIconContainer)
+        stateIconContainer.addSubview(stateIcon)
+        stateIconContainer.addSubview(activityIndicator)
+        [titleLabel, subtitleLabel, previewLabel, doneButton].forEach(modalCard.addSubview)
 
-        view.addSubview(card)
-        view.addSubview(buttonStack)
+        let cardWidthConstraint = modalCard.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -48)
+        cardWidthConstraint.priority = .defaultHigh
+        let collapsedDoneButtonHeight = doneButton.heightAnchor.constraint(equalToConstant: 0)
+        let collapsedDoneButtonTop = doneButton.topAnchor.constraint(equalTo: previewLabel.bottomAnchor)
+        doneButtonHeightConstraint = collapsedDoneButtonHeight
+        doneButtonTopConstraint = collapsedDoneButtonTop
 
         NSLayoutConstraint.activate([
-            card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            card.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 18),
+            modalCard.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            modalCard.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            modalCard.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
+            modalCard.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+            modalCard.widthAnchor.constraint(lessThanOrEqualToConstant: 340),
+            cardWidthConstraint,
 
-            titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
-            titleLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
-            titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 18),
+            stateIconContainer.topAnchor.constraint(equalTo: modalCard.topAnchor, constant: 24),
+            stateIconContainer.centerXAnchor.constraint(equalTo: modalCard.centerXAnchor),
+            stateIconContainer.widthAnchor.constraint(equalToConstant: 48),
+            stateIconContainer.heightAnchor.constraint(equalToConstant: 48),
+
+            stateIcon.centerXAnchor.constraint(equalTo: stateIconContainer.centerXAnchor),
+            stateIcon.centerYAnchor.constraint(equalTo: stateIconContainer.centerYAnchor),
+            stateIcon.widthAnchor.constraint(equalToConstant: 21),
+            stateIcon.heightAnchor.constraint(equalToConstant: 21),
+
+            activityIndicator.centerXAnchor.constraint(equalTo: stateIconContainer.centerXAnchor),
+            activityIndicator.centerYAnchor.constraint(equalTo: stateIconContainer.centerYAnchor),
+
+            titleLabel.leadingAnchor.constraint(equalTo: modalCard.leadingAnchor, constant: 22),
+            titleLabel.trailingAnchor.constraint(equalTo: modalCard.trailingAnchor, constant: -22),
+            titleLabel.topAnchor.constraint(equalTo: stateIconContainer.bottomAnchor, constant: 16),
 
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 7),
 
             previewLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             previewLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            previewLabel.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 18),
-            previewLabel.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -18),
+            previewLabel.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 12),
 
-            activityIndicator.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            activityIndicator.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-
-            buttonStack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            buttonStack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            buttonStack.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 18),
-            buttonStack.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -18),
-
-            doneButton.heightAnchor.constraint(equalToConstant: 54),
+            doneButton.leadingAnchor.constraint(equalTo: modalCard.leadingAnchor, constant: 20),
+            doneButton.trailingAnchor.constraint(equalTo: modalCard.trailingAnchor, constant: -20),
+            collapsedDoneButtonTop,
+            doneButton.bottomAnchor.constraint(equalTo: modalCard.bottomAnchor, constant: -20),
+            collapsedDoneButtonHeight,
         ])
     }
 
@@ -123,6 +163,12 @@ final class OunjeShareViewController: UIViewController {
         button.layer.cornerCurve = .continuous
     }
 
+    private func setDoneButtonVisible(_ visible: Bool) {
+        doneButton.isHidden = !visible
+        doneButtonHeightConstraint?.constant = visible ? 48 : 0
+        doneButtonTopConstraint?.constant = visible ? 18 : 0
+    }
+
     private func loadSummary() {
         loadSummaryTask = Task { [weak self] in
             guard let self else { return }
@@ -131,7 +177,7 @@ final class OunjeShareViewController: UIViewController {
                 self.shareDraftSummary = draft.summary
                 self.providerCount = draft.providerCount
                 let currentTitle = self.titleLabel.text ?? ""
-                if currentTitle != "Added" && currentTitle != "Couldn’t send" {
+                if currentTitle != "Added" && currentTitle != "Couldn’t send to Ounje" {
                     self.previewLabel.text = draft.summary
                 }
             }
@@ -145,53 +191,44 @@ final class OunjeShareViewController: UIViewController {
     }
 
     @objc private func handleDoneTap() {
-        extensionContext?.completeRequest(returningItems: nil)
+        if retrySubmission {
+            submit(targetState: pendingEnvelope?.targetState ?? "saved")
+        } else {
+            extensionContext?.completeRequest(returningItems: nil)
+        }
     }
 
     private func submit(targetState: String) {
+        setDoneButtonVisible(false)
         toggleBusy(true)
-        titleLabel.text = "Sending to Ounje"
-        subtitleLabel.text = "Ounje is adding this to your cookbook."
+        titleLabel.text = "Sharing recipe to Ounje"
+        subtitleLabel.text = "Sending it securely in the background."
+        previewLabel.isHidden = true
         submitTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let envelope = try await self.captureEnvelope(targetState: targetState)
+                let envelope: SharedRecipeImportEnvelope
+                if let pendingEnvelope = self.pendingEnvelope {
+                    envelope = pendingEnvelope
+                } else {
+                    envelope = try await self.captureEnvelope(targetState: targetState)
+                    self.pendingEnvelope = envelope
+                }
                 try SharedRecipeImportInbox.write(envelope)
-                await Self.sendQueuedNotificationIfAllowed(for: envelope)
 
-                if let authSession = self.sharedAuthSession() {
-                    var backendJobCreated = false
-
-                    if envelope.attachments.isEmpty {
-                        do {
-                            let response = try await self.submitEnvelopeToBackend(
-                                envelope,
-                                authSession: authSession,
-                                timeoutInterval: Self.foregroundBackendSubmitTimeout
-                            )
-                            try? SharedRecipeImportInbox.update(
-                                self.reconciledEnvelope(envelope, response: response)
-                            )
-                            backendJobCreated = true
-                        } catch {
-                            backendJobCreated = false
-                        }
-                    }
-
-                    if !backendJobCreated {
-                        // Foreground submit failed (slow network, expired token, or a
-                        // media-only share we can't POST synchronously). Fire the background
-                        // upload as a best effort, but LEAVE the envelope "queued" (don't mark
-                        // it "submitted"): the durable local copy then gets cleanly re-driven
-                        // the next time the app opens, instead of the stale watchdog stranding
-                        // it as "could not be matched to a server job". The server dedupes by
-                        // source URL, so a later re-send can never create a duplicate.
-                        try? await self.scheduleBackgroundBackendSubmit(envelope, authSession: authSession)
-                    }
-
-                    await MainActor.run {
-                        self.showSentStateAndComplete()
-                    }
+                if let authSession = self.sharedAuthSession(), authSession.hasBackendAuthorization {
+                    // A file-backed background task survives extension termination.
+                    // Never report "Added" until its response includes a server job.
+                    let submittingEnvelope = self.envelopeForSubmission(envelope)
+                    try SharedRecipeImportInbox.update(submittingEnvelope)
+                    self.pendingEnvelope = submittingEnvelope
+                    try await self.scheduleBackgroundBackendSubmit(submittingEnvelope, authSession: authSession)
+                    self.titleLabel.text = "Sharing recipe to Ounje"
+                    self.subtitleLabel.text = "You can close this. Ounje will keep sending it in the background."
+                    self.doneButton.setTitle("Done", for: .normal)
+                    self.setDoneButtonVisible(true)
+                    self.doneButton.isEnabled = true
+                    self.retrySubmission = false
                     return
                 }
 
@@ -199,14 +236,7 @@ final class OunjeShareViewController: UIViewController {
                     self.showSetupRequiredState()
                 }
             } catch {
-                await MainActor.run {
-                    self.toggleBusy(false)
-                    self.titleLabel.text = "Couldn’t send"
-                    self.subtitleLabel.text = "Try sharing the link itself or a shorter clip."
-                    self.previewLabel.text = "We couldn’t pull that share cleanly. Try sharing the link itself or a shorter clip."
-                    self.doneButton.alpha = 1
-                    self.doneButton.isEnabled = true
-                }
+                self.showSubmissionFailure(error)
             }
         }
     }
@@ -253,35 +283,69 @@ final class OunjeShareViewController: UIViewController {
             configuration.sessionSendsLaunchEvents = true
             configuration.isDiscretionary = false
             configuration.waitsForConnectivity = true
-            configuration.timeoutIntervalForRequest = 30
+            configuration.timeoutIntervalForRequest = 90
             configuration.timeoutIntervalForResource = 10 * 60
 
-            let session = URLSession(configuration: configuration)
+            let delegate = ShareImportUploadDelegate { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let response):
+                    do {
+                        try SharedRecipeImportInbox.update(self.reconciledEnvelope(envelope, response: response))
+                    } catch {
+                        // The durable server job still exists; the app's server queue
+                        // reconciliation can recover if the local inbox write fails.
+                        print("[ShareImport] Could not save server acknowledgement:", error.localizedDescription)
+                    }
+                    Task { await Self.sendQueuedNotificationIfAllowed(for: envelope) }
+                    self.showSentStateAndComplete()
+                case .failure(let error):
+                    self.showSubmissionFailure(error)
+                }
+            }
+            let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: .main)
+            self.backgroundSubmitDelegate = delegate
+            self.backgroundSubmitSession = session
             let task = session.uploadTask(with: request, fromFile: bodyURL)
             task.taskDescription = envelope.id
             task.resume()
-            session.finishTasksAndInvalidate()
             return
         }
 
         throw URLError(.badURL)
     }
 
+    private func showSubmissionFailure(_ error: Error) {
+        toggleBusy(false)
+        stateIcon.image = UIImage(systemName: "exclamationmark")
+        titleLabel.text = "Couldn’t send to Ounje"
+        subtitleLabel.text = "Your share is saved on this device. Retry here to send it to Ounje."
+        previewLabel.text = error.localizedDescription
+        previewLabel.isHidden = false
+        retrySubmission = true
+        doneButton.setTitle("Retry", for: .normal)
+        setDoneButtonVisible(true)
+        doneButton.isEnabled = true
+    }
+
     private func toggleBusy(_ busy: Bool) {
         doneButton.isEnabled = !busy
         if busy {
+            stateIcon.isHidden = true
             activityIndicator.startAnimating()
         } else {
             activityIndicator.stopAnimating()
+            stateIcon.isHidden = false
         }
     }
 
     private func showSentStateAndComplete() {
         toggleBusy(false)
+        stateIcon.image = UIImage(systemName: "checkmark")
         titleLabel.text = "Added"
         subtitleLabel.text = "Ounje is working in the background."
-        previewLabel.text = "Added. Ounje is working."
-        doneButton.alpha = 1
+        previewLabel.isHidden = true
+        setDoneButtonVisible(true)
         doneButton.isEnabled = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -291,10 +355,12 @@ final class OunjeShareViewController: UIViewController {
 
     private func showSetupRequiredState() {
         toggleBusy(false)
+        stateIcon.image = UIImage(systemName: "iphone.and.arrow.forward")
         titleLabel.text = "Open Ounje once"
         subtitleLabel.text = "Ounje needs to finish share setup before it can import in the background."
         previewLabel.text = "Open Ounje once, then share this recipe again."
-        doneButton.alpha = 1
+        previewLabel.isHidden = false
+        setDoneButtonVisible(true)
         doneButton.isEnabled = true
     }
 
@@ -502,80 +568,24 @@ final class OunjeShareViewController: UIViewController {
         }
     }
 
-    private func submitEnvelopeToBackend(
-        _ envelope: SharedRecipeImportEnvelope,
-        authSession: SharedAuthSession,
-        timeoutInterval: TimeInterval = 90
-    ) async throws -> RecipeImportResponse {
-        guard authSession.hasBackendAuthorization else {
-            throw URLError(.userAuthenticationRequired)
-        }
-
-        let attachments = try await makeRecipeImportAttachmentPayloads(from: envelope.attachments)
-        let sourceText = envelope.resolvedSourceText
-
-        var lastError: Error?
-        for baseURL in ImportSubmissionServer.candidateBaseURLs {
-            do {
-                return try await submitEnvelopeToBackend(
-                    baseURL: baseURL,
-                    envelope: envelope,
-                    authSession: authSession,
-                    sourceText: sourceText,
-                    attachments: attachments,
-                    timeoutInterval: timeoutInterval
-                )
-            } catch {
-                lastError = error
-            }
-        }
-
-        throw lastError ?? URLError(.badServerResponse)
-    }
-
-    private func submitEnvelopeToBackend(
-        baseURL: String,
-        envelope: SharedRecipeImportEnvelope,
-        authSession: SharedAuthSession,
-        sourceText: String,
-        attachments: [RecipeImportAttachmentPayload],
-        timeoutInterval: TimeInterval = 90
-    ) async throws -> RecipeImportResponse {
-        guard let url = URL(string: "\(baseURL)/v1/recipe/imports") else {
-            throw URLError(.badURL)
-        }
-        guard authSession.hasBackendAuthorization else {
-            throw URLError(.userAuthenticationRequired)
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = timeoutInterval
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        applyBackendAuthorization(authSession, to: &request)
-        request.setValue(authSession.userID, forHTTPHeaderField: "x-user-id")
-        request.setValue(envelope.id, forHTTPHeaderField: "x-ounje-import-envelope-id")
-        request.httpBody = try JSONEncoder().encode(
-            RecipeImportRequestPayload(
-                userID: authSession.userID,
-                sourceURL: envelope.sourceURLString,
-                sourceText: sourceText,
-                accessToken: authSession.accessToken,
-                targetState: envelope.targetState,
-                attachments: attachments
-            )
+    private func envelopeForSubmission(_ envelope: SharedRecipeImportEnvelope) -> SharedRecipeImportEnvelope {
+        SharedRecipeImportEnvelope(
+            id: envelope.id,
+            createdAt: envelope.createdAt,
+            jobID: envelope.jobID,
+            targetState: envelope.targetState,
+            sourceText: envelope.sourceText,
+            sourceURLString: envelope.sourceURLString,
+            canonicalSourceURLString: envelope.canonicalSourceURLString,
+            sourceApp: envelope.sourceApp,
+            attachments: envelope.attachments,
+            processingState: "submitted",
+            attemptCount: (envelope.attemptCount ?? 0) + 1,
+            lastAttemptAt: Date(),
+            serverSubmittedAt: Date(),
+            lastError: nil,
+            updatedAt: Date()
         )
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw URLError(.badServerResponse)
-        }
-
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-
-        return try JSONDecoder().decode(RecipeImportResponse.self, from: data)
     }
 
     private func reconciledEnvelope(
@@ -586,7 +596,7 @@ final class OunjeShareViewController: UIViewController {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         let liveBackendStates = ["queued", "submitted", "retryable", "processing", "fetching", "parsing", "normalized"]
-        let localState = liveBackendStates.contains(backendState) ? backendState : "queued"
+        let localState = liveBackendStates.contains(backendState) ? backendState : (backendState.isEmpty ? "queued" : backendState)
         return SharedRecipeImportEnvelope(
             id: envelope.id,
             createdAt: envelope.createdAt,
@@ -643,19 +653,12 @@ final class OunjeShareViewController: UIViewController {
         envelopeID: String,
         mediaDirectory: URL
     ) async throws -> SharedRecipeImportAttachment? {
-        let fileURL = try await loadFileRepresentation(from: provider, contentType: contentType)
-        guard let fileURL else { return nil }
-
-        let extensionName = fileURL.pathExtension.isEmpty
-            ? (contentType.preferredFilenameExtension ?? "bin")
-            : fileURL.pathExtension
+        let extensionName = contentType.preferredFilenameExtension ?? "bin"
         let fileName = UUID().uuidString + "." + extensionName
         let destinationURL = mediaDirectory.appendingPathComponent(fileName)
-
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
+        guard try await copyFileRepresentation(from: provider, contentType: contentType, to: destinationURL) else {
+            return nil
         }
-        try FileManager.default.copyItem(at: fileURL, to: destinationURL)
 
         return SharedRecipeImportAttachment(
             id: UUID().uuidString,
@@ -667,7 +670,7 @@ final class OunjeShareViewController: UIViewController {
         )
     }
 
-    private func loadFileRepresentation(from provider: NSItemProvider, contentType: UTType) async throws -> URL? {
+    private func copyFileRepresentation(from provider: NSItemProvider, contentType: UTType, to destinationURL: URL) async throws -> Bool {
         let identifier = provider.registeredTypeIdentifiers.first {
             UTType($0)?.conforms(to: contentType) == true
         } ?? contentType.identifier
@@ -676,13 +679,57 @@ final class OunjeShareViewController: UIViewController {
             provider.loadFileRepresentation(forTypeIdentifier: identifier) { url, error in
                 if let error {
                     continuation.resume(throwing: error)
+                } else if let url {
+                    do {
+                        try FileManager.default.copyItem(at: url, to: destinationURL)
+                        continuation.resume(returning: true)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
                 } else {
-                    continuation.resume(returning: url)
+                    continuation.resume(returning: false)
                 }
             }
         }
     }
 
+}
+
+/// Handles acknowledgements while the share sheet is alive. After termination,
+/// OunjeAppDelegate reconnects to the same session and handles its remaining events.
+private final class ShareImportUploadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private var responseData = Data()
+    private let completion: (Result<RecipeImportResponse, Error>) -> Void
+
+    init(completion: @escaping (Result<RecipeImportResponse, Error>) -> Void) {
+        self.completion = completion
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        responseData.append(data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        defer { session.finishTasksAndInvalidate() }
+        if let error {
+            completion(.failure(error))
+            return
+        }
+        guard let response = task.response as? HTTPURLResponse,
+              (200 ... 299).contains(response.statusCode) else {
+            completion(.failure(URLError(.badServerResponse)))
+            return
+        }
+        do {
+            let response = try JSONDecoder().decode(RecipeImportResponse.self, from: responseData)
+            guard !response.job.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw URLError(.badServerResponse)
+            }
+            completion(.success(response))
+        } catch {
+            completion(.failure(error))
+        }
+    }
 }
 
 private struct SharedAuthSession: Codable {

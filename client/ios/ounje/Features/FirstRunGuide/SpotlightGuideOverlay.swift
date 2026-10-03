@@ -131,11 +131,11 @@ private struct FirstRunGuideSpotlightOverlay: View {
         .ignoresSafeArea()
         .opacity(isFrameStable ? 1 : 0)
         .animation(.easeOut(duration: 0.18), value: isFrameStable)
+        .animation(.easeOut(duration: 0.16), value: frameStabilityKey)
         .allowsHitTesting(isFrameStable)
         .accessibilityElement(children: .contain)
-        .task(id: frameStabilityKey) {
-            isFrameStable = false
-            try? await Task.sleep(nanoseconds: 160_000_000)
+        .task {
+            try? await Task.sleep(nanoseconds: 90_000_000)
             guard !Task.isCancelled else { return }
             isFrameStable = true
         }

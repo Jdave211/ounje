@@ -10,6 +10,7 @@ import {
   Status,
 } from "@apple/app-store-server-library";
 import { deleteRedisKey } from "./redis-cache.js";
+import { isProtectedManualLifetimeEntitlement } from "./entitlement-policy.js";
 
 const ENTITLEMENTS_TABLE = "app_user_entitlements";
 const NOTIFICATION_EVENTS_TABLE = "app_store_notification_events";
@@ -359,13 +360,6 @@ async function fetchExistingEntitlement(supabase, userID) {
   return data ?? null;
 }
 
-function isProtectedManualEntitlement(existing, incomingStatus) {
-  return existing?.source === "manual"
-    && existing?.status === "active"
-    && existing?.tier === "foundingLifetime"
-    && incomingStatus !== "active";
-}
-
 function entitlementToResponse(row = null) {
   if (!row) return { entitlement: null, effectiveTier: "free" };
   const expiresAtMs = row.expires_at ? new Date(row.expires_at).getTime() : 0;
@@ -691,7 +685,7 @@ export async function processAppStoreNotification({
     existing = await fetchExistingEntitlement(supabase, resolvedUserID);
   }
 
-  if (isProtectedManualEntitlement(existing, entitlementState.status)) {
+  if (isProtectedManualLifetimeEntitlement(existing)) {
     notifyFounderSubscriptionEvent({
       supabase,
       notification,

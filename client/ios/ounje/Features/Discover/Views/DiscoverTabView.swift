@@ -24,9 +24,7 @@ struct DiscoverTabView: View {
     @State private var isShowingPullRefreshCue = false
     @State private var hasPresentedPullRefreshCue = false
     @State private var discoverPullDistance: CGFloat = 0
-    @State private var discoverPullBaseline: CGFloat?
-    @State private var isDiscoverAtTop = true
-    @State private var isPullGestureActive = false
+    @State private var isPullGestureEligible = false
     @State private var hasCrossedRefreshThreshold = false
     @State private var isShowingRefreshComplete = false
     @State private var lastAppliedDiscoverFeedKey: String?
@@ -77,14 +75,6 @@ struct DiscoverTabView: View {
                                 .frame(height: 0)
                                 .id(Self.feedTopAnchorID)
 
-                            GeometryReader { geometry in
-                                Color.clear.preference(
-                                    key: PullStretchRefreshOffsetPreferenceKey.self,
-                                    value: geometry.frame(in: .named("discover-feed-scroll")).minY
-                                )
-                            }
-                            .frame(height: 0)
-
                             if shouldShowDiscoverPullIndicator {
                                 PullStretchRefreshIndicator(
                                     phase: discoverPullRefreshPhase,
@@ -99,21 +89,16 @@ struct DiscoverTabView: View {
                         .padding(.horizontal, OunjeLayout.screenHorizontalPadding)
                         .padding(.top, 2)
                         .padding(.bottom, 140)
+                        .background {
+                            DiscoverScrollPanObserver(
+                                onBegan: beginDiscoverPullGesture,
+                                onChanged: updateDiscoverPullGesture,
+                                onEnded: finishDiscoverPullGesture
+                            )
+                            .frame(width: 0, height: 0)
+                        }
                     }
-                    .coordinateSpace(name: "discover-feed-scroll")
                     .scrollIndicators(.hidden)
-                    .onPreferenceChange(PullStretchRefreshOffsetPreferenceKey.self) { value in
-                        updateDiscoverPullDistance(value)
-                    }
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                updateDiscoverPullGesture(value)
-                            }
-                            .onEnded { _ in
-                                finishDiscoverPullGesture()
-                            }
-                    )
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
                 .onAppear {
@@ -268,22 +253,15 @@ struct DiscoverTabView: View {
         return .hint
     }
 
-    private func updateDiscoverPullDistance(_ offset: CGFloat) {
-        if discoverPullBaseline == nil {
-            discoverPullBaseline = offset
-        }
-
-        let baseline = discoverPullBaseline ?? offset
-        let distance = max(0, offset - baseline)
-        isDiscoverAtTop = offset >= baseline - 1
-        guard !isPullGestureActive else { return }
-        applyDiscoverPullDistance(distance)
+    private func beginDiscoverPullGesture(_ startedAtTop: Bool) {
+        isPullGestureEligible = startedAtTop && !isManualRefreshing
+        hasCrossedRefreshThreshold = false
+        discoverPullDistance = 0
     }
 
-    private func updateDiscoverPullGesture(_ value: DragGesture.Value) {
-        guard isDiscoverAtTop, !isManualRefreshing else { return }
-        isPullGestureActive = true
-        applyDiscoverPullDistance(max(0, value.translation.height))
+    private func updateDiscoverPullGesture(_ distance: CGFloat) {
+        guard isPullGestureEligible, !isManualRefreshing else { return }
+        applyDiscoverPullDistance(distance)
     }
 
     private func applyDiscoverPullDistance(_ distance: CGFloat) {
@@ -296,10 +274,11 @@ struct DiscoverTabView: View {
     }
 
     private func finishDiscoverPullGesture() {
-        let shouldRefresh = hasCrossedRefreshThreshold
+        let shouldRefresh = isPullGestureEligible
+            && hasCrossedRefreshThreshold
             && !isManualRefreshing
             && !viewModel.isLoading
-        isPullGestureActive = false
+        isPullGestureEligible = false
         hasCrossedRefreshThreshold = false
         withAnimation(.easeOut(duration: 0.18)) {
             discoverPullDistance = 0
@@ -471,6 +450,96 @@ struct DiscoverTabView: View {
             try? await Task.sleep(nanoseconds: 2_200_000_000)
             withAnimation(.easeInOut(duration: 0.24)) {
                 isShowingPullRefreshCue = false
+            }
+        }
+    }
+}
+
+private struct DiscoverScrollPanObserver: UIViewRepresentable {
+    let onBegan: (Bool) -> Void
+    let onChanged: (CGFloat) -> Void
+    let onEnded: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        context.coordinator.update(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded)
+        context.coordinator.attachWhenAvailable(from: view)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.update(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded)
+        context.coordinator.attachWhenAvailable(from: uiView)
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class Coordinator: NSObject {
+        private weak var scrollView: UIScrollView?
+        private var onBegan: (Bool) -> Void
+        private var onChanged: (CGFloat) -> Void
+        private var onEnded: () -> Void
+
+        init(
+            onBegan: @escaping (Bool) -> Void,
+            onChanged: @escaping (CGFloat) -> Void,
+            onEnded: @escaping () -> Void
+        ) {
+            self.onBegan = onBegan
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        func update(
+            onBegan: @escaping (Bool) -> Void,
+            onChanged: @escaping (CGFloat) -> Void,
+            onEnded: @escaping () -> Void
+        ) {
+            self.onBegan = onBegan
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        func attachWhenAvailable(from view: UIView) {
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view else { return }
+                var ancestor = view.superview
+                while let current = ancestor, !(current is UIScrollView) {
+                    ancestor = current.superview
+                }
+                guard let scrollView = ancestor as? UIScrollView,
+                      self.scrollView !== scrollView else { return }
+                self.detach()
+                self.scrollView = scrollView
+                scrollView.panGestureRecognizer.addTarget(self, action: #selector(self.handlePan(_:)))
+            }
+        }
+
+        func detach() {
+            scrollView?.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
+            scrollView = nil
+        }
+
+        @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+            guard let scrollView else { return }
+            let topOffset = -scrollView.adjustedContentInset.top
+
+            switch recognizer.state {
+            case .began:
+                onBegan(scrollView.contentOffset.y <= topOffset + 1)
+            case .changed:
+                onChanged(max(0, topOffset - scrollView.contentOffset.y))
+            case .ended, .cancelled, .failed:
+                onEnded()
+            default:
+                break
             }
         }
     }

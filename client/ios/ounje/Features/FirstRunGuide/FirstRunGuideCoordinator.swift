@@ -13,6 +13,8 @@ final class FirstRunGuideCoordinator: ObservableObject {
     private let defaults: UserDefaults
     private var accessToken: String?
     private var catalog: FirstRunGuideCatalog?
+    private var recipeDetailsByID: [String: RecipeDetailData] = [:]
+    private var starterPlanPreloadTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -96,16 +98,32 @@ final class FirstRunGuideCoordinator: ObservableObject {
         catalog = FirstRunGuideCatalog.load()
 
         let local = loadLocal(userID: userID)
-        let remote = await FirstRunGuideProgressService.shared.fetch(userID: userID, accessToken: accessToken)
-        let newest = [local, remote]
+        let remoteResult = await FirstRunGuideProgressService.shared.fetch(
+            userID: userID,
+            accessToken: accessToken
+        )
+        // A status lookup can be unavailable during the first authenticated app
+        // launch. Local progress still starts the guide immediately; the normal
+        // persistence path syncs it remotely once the session is usable.
+
+        let candidates = [local, remoteResult.progress]
             .compactMap { $0 }
             .filter { !$0.isReplay }
+        let terminalCandidates = candidates.filter {
+            $0.phase == .completed || $0.phase == .dismissed
+        }
+        let newest = (terminalCandidates.isEmpty ? candidates : terminalCandidates)
             .max(by: { $0.updatedAt < $1.updatedAt })
 
         if var newest {
             if newest.phase == .recipeSuggestion,
-               let profileSeedID = FirstRunGuideCatalog.seedRecipeID(in: profile),
-               catalog?.templates.contains(where: { $0.seedRecipeID == profileSeedID }) == true {
+               let catalog,
+               let profileSeedID = resolvedSeedRecipeID(
+                    profile: profile,
+                    catalog: catalog,
+                    userID: userID
+               ),
+               catalog.templates.contains(where: { $0.seedRecipeID == profileSeedID }) {
                 newest.seedRecipeID = profileSeedID
                 newest.presetPlanID = nil
                 newest.updatedAt = .now
@@ -147,8 +165,12 @@ final class FirstRunGuideCoordinator: ObservableObject {
             return
         }
 
-        guard let seedRecipeID = FirstRunGuideCatalog.seedRecipeID(in: profile),
-              let catalog,
+        guard let catalog,
+              let seedRecipeID = resolvedSeedRecipeID(
+                profile: profile,
+                catalog: catalog,
+                userID: userID
+              ),
               let selectedTemplate = catalog.templates.first(where: { $0.seedRecipeID == seedRecipeID }),
               let presetPlanID = choosePresetPlanID(
                 for: selectedTemplate,
@@ -183,7 +205,24 @@ final class FirstRunGuideCoordinator: ObservableObject {
         self.catalog = catalog
         self.accessToken = accessToken
         isSpotlightSuspended = false
-        let profileSeedID = FirstRunGuideCatalog.seedRecipeID(in: profile)
+        let persistedProgress: FirstRunGuideProgress? = {
+            if let progress, progress.userID == userID, !progress.isReplay {
+                return progress
+            }
+            return loadLocal(userID: userID)
+        }()
+        let reusablePlanID: UUID
+        if let persistedProgress {
+            reusablePlanID = persistedProgress.planID
+        } else {
+            reusablePlanID = await FirstRunGuideProgressService.shared
+                .fetch(userID: userID, accessToken: accessToken).progress?.planID ?? UUID()
+        }
+        let profileSeedID = resolvedSeedRecipeID(
+            profile: profile,
+            catalog: catalog,
+            userID: userID
+        )
         let seedID = profileSeedID.flatMap { candidate in
             catalog.templates.first(where: { $0.seedRecipeID == candidate })?.seedRecipeID
         } ?? catalog.templates.first?.seedRecipeID ?? ""
@@ -203,7 +242,7 @@ final class FirstRunGuideCoordinator: ObservableObject {
             phase: .recipeSuggestion,
             seedRecipeID: seedID,
             presetPlanID: presetPlanID,
-            planID: UUID(),
+            planID: reusablePlanID,
             isReplay: true,
             updatedAt: .now,
             completedAt: nil,
@@ -239,7 +278,11 @@ final class FirstRunGuideCoordinator: ObservableObject {
 
         if next.seedRecipeID == selectedTemplate.seedRecipeID,
            next.presetPlanID == presetPlanID,
-           !presetPlanRecipeDetails.isEmpty {
+           applyCachedPreset(
+                presetPlanID: presetPlanID,
+                selectedTemplate: selectedTemplate,
+                catalog: catalog
+           ) {
             return true
         }
 
@@ -248,8 +291,32 @@ final class FirstRunGuideCoordinator: ObservableObject {
         next.updatedAt = .now
         progress = next
         persist(next)
-        await loadGuideRecipes(profile: profile)
-        return !presetPlanRecipeDetails.isEmpty
+
+        if applyCachedPreset(
+            presetPlanID: presetPlanID,
+            selectedTemplate: selectedTemplate,
+            catalog: catalog
+        ) {
+            return true
+        }
+
+        await starterPlanPreloadTask?.value
+        if applyCachedPreset(
+            presetPlanID: presetPlanID,
+            selectedTemplate: selectedTemplate,
+            catalog: catalog
+        ) {
+            return true
+        }
+
+        guard let preset = catalog.planPreset(id: presetPlanID) else { return false }
+        let missingIDs = preset.recipeIDs.filter { recipeDetailsByID[$0] == nil }
+        cacheRecipeDetails(await fetchDetails(ids: missingIDs, accessToken: accessToken))
+        return applyCachedPreset(
+            presetPlanID: presetPlanID,
+            selectedTemplate: selectedTemplate,
+            catalog: catalog
+        )
     }
 
     func setSpotlightSuspended(_ suspended: Bool) {
@@ -299,29 +366,83 @@ final class FirstRunGuideCoordinator: ObservableObject {
 
     private func loadGuideRecipes(profile: UserProfile?) async {
         guard let catalog, let progress else { return }
+        starterPlanPreloadTask?.cancel()
+        starterPlanPreloadTask = nil
         isLoadingCatalog = true
         defer { isLoadingCatalog = false }
 
-        let presetPlanID = progress.presetPlanID
-        let presetPlan = presetPlanID.flatMap { catalog.planPreset(id: $0) }
-        let selectedTemplate = catalog.templates.first { $0.seedRecipeID == progress.seedRecipeID }
-        let planIDs = presetPlan?.recipeIDs ?? []
         let starterRecipeIDs = stableUnique(
             [progress.seedRecipeID]
                 + catalog.templates.map(\.seedRecipeID).filter { $0 != progress.seedRecipeID }
         )
+        let chosenPresets = catalog.templates.compactMap { template -> FirstRunGuideCatalog.PlanPreset? in
+            guard let presetID = choosePresetPlanID(
+                for: template,
+                in: catalog,
+                profile: profile,
+                userID: progress.userID
+            ) else { return nil }
+            return catalog.planPreset(id: presetID)
+        }
+        let planRecipeIDs = stableUnique(chosenPresets.flatMap(\.recipeIDs))
+        let missingPlanRecipeIDs = planRecipeIDs.filter { recipeDetailsByID[$0] == nil }
 
-        let details = await fetchDetails(ids: stableUnique(planIDs + starterRecipeIDs), accessToken: accessToken)
-        let byID = Dictionary(uniqueKeysWithValues: details.map { ($0.id, $0) })
-        suggestedRecipes = starterRecipeIDs.compactMap { byID[$0]?.firstRunGuideCard }
-        let fetchedPresetDetails = planIDs.compactMap { byID[$0] }
-        if !planIDs.isEmpty, fetchedPresetDetails.count == planIDs.count {
-            presetPlanRecipeDetails = fetchedPresetDetails
-            presetPlanTitle = selectedTemplate?.displayCopy.planTitle ?? "Starter"
-        } else {
+        if !missingPlanRecipeIDs.isEmpty {
+            let token = accessToken
+            starterPlanPreloadTask = Task { [weak self] in
+                guard let self else { return }
+                let fetched = await self.fetchDetails(ids: missingPlanRecipeIDs, accessToken: token)
+                guard !Task.isCancelled else { return }
+                self.cacheRecipeDetails(fetched)
+                if let current = self.progress,
+                   let presetPlanID = current.presetPlanID,
+                   let selectedTemplate = catalog.templates.first(where: { $0.seedRecipeID == current.seedRecipeID }) {
+                    _ = self.applyCachedPreset(
+                        presetPlanID: presetPlanID,
+                        selectedTemplate: selectedTemplate,
+                        catalog: catalog
+                    )
+                }
+                self.starterPlanPreloadTask = nil
+            }
+        }
+
+        let missingStarterIDs = starterRecipeIDs.filter { recipeDetailsByID[$0] == nil }
+        cacheRecipeDetails(await fetchDetails(ids: missingStarterIDs, accessToken: accessToken))
+        suggestedRecipes = starterRecipeIDs.compactMap { recipeDetailsByID[$0]?.firstRunGuideCard }
+
+        if let presetPlanID = progress.presetPlanID,
+           let selectedTemplate = catalog.templates.first(where: { $0.seedRecipeID == progress.seedRecipeID }) {
+            _ = applyCachedPreset(
+                presetPlanID: presetPlanID,
+                selectedTemplate: selectedTemplate,
+                catalog: catalog
+            )
+        }
+    }
+
+    private func cacheRecipeDetails(_ details: [RecipeDetailData]) {
+        for detail in details {
+            recipeDetailsByID[detail.id] = detail
+        }
+    }
+
+    @discardableResult
+    private func applyCachedPreset(
+        presetPlanID: String,
+        selectedTemplate: FirstRunGuideCatalog.Template,
+        catalog: FirstRunGuideCatalog
+    ) -> Bool {
+        guard let preset = catalog.planPreset(id: presetPlanID), !preset.recipeIDs.isEmpty else {
             presetPlanRecipeDetails = []
             presetPlanTitle = nil
+            return false
         }
+        let details = preset.recipeIDs.compactMap { recipeDetailsByID[$0] }
+        guard details.count == preset.recipeIDs.count else { return false }
+        presetPlanRecipeDetails = details
+        presetPlanTitle = selectedTemplate.displayCopy.planTitle
+        return true
     }
 
     private func fetchDetails(ids: [String], accessToken: String?) async -> [RecipeDetailData] {
@@ -368,6 +489,35 @@ final class FirstRunGuideCoordinator: ObservableObject {
         let stableInput = ([userID, template.seedRecipeID] + profileSignals.sorted())
             .joined(separator: "|")
         return finalists[stableBucket(for: stableInput, count: finalists.count)].id
+    }
+
+    private func resolvedSeedRecipeID(
+        profile: UserProfile?,
+        catalog: FirstRunGuideCatalog,
+        userID: String
+    ) -> String? {
+        if let explicitSeed = FirstRunGuideCatalog.seedRecipeID(in: profile),
+           catalog.templates.contains(where: { $0.seedRecipeID == explicitSeed }) {
+            return explicitSeed
+        }
+
+        guard !catalog.templates.isEmpty else { return nil }
+        let profileSignals = presetSelectionSignals(profile)
+        let scored = catalog.templates.map { template -> (template: FirstRunGuideCatalog.Template, score: Int) in
+            let presetSignals = template.presetPlanIDs
+                .compactMap { catalog.planPreset(id: $0) }
+                .reduce(into: Set<String>()) { result, preset in
+                    result.formUnion(normalizedSelectionSignals(preset.selectionTags))
+                }
+            return (template, presetSignals.intersection(profileSignals).count)
+        }
+        let highestScore = scored.map(\.score).max() ?? 0
+        let finalists = scored
+            .filter { $0.score == highestScore }
+            .map(\.template)
+            .sorted { $0.seedRecipeID < $1.seedRecipeID }
+        guard !finalists.isEmpty else { return nil }
+        return finalists[stableBucket(for: "guide-seed|\(userID)", count: finalists.count)].seedRecipeID
     }
 
     private func presetSelectionSignals(_ profile: UserProfile?) -> Set<String> {
@@ -506,10 +656,13 @@ final class FirstRunGuideCoordinator: ObservableObject {
     }
 
     private func resetInMemory() {
+        starterPlanPreloadTask?.cancel()
+        starterPlanPreloadTask = nil
         progress = nil
         suggestedRecipes = []
         presetPlanRecipeDetails = []
         presetPlanTitle = nil
+        recipeDetailsByID = [:]
         isSpotlightSuspended = false
     }
 }
@@ -543,6 +696,17 @@ private extension JSONDecoder {
             )
         }
         return decoder
+    }
+}
+
+private enum FirstRunGuideProgressFetchResult {
+    case found(FirstRunGuideProgress)
+    case missing
+    case unavailable
+
+    var progress: FirstRunGuideProgress? {
+        guard case let .found(progress) = self else { return nil }
+        return progress
     }
 }
 
@@ -613,16 +777,19 @@ private actor FirstRunGuideProgressService {
         }
     }
 
-    func fetch(userID: String, accessToken: String?) async -> FirstRunGuideProgress? {
+    func fetch(userID: String, accessToken: String?) async -> FirstRunGuideProgressFetchResult {
         guard let request = request(
             path: "first_run_guide_progress?select=*&user_id=eq.\(userID)&limit=1",
             accessToken: accessToken,
             method: "GET"
-        ) else { return nil }
+        ) else { return .unavailable }
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return .unavailable }
         let decoder = JSONDecoder.ounjeGuide
-        return (try? decoder.decode([Row].self, from: data))?.first?.progress
+        guard let rows = try? decoder.decode([Row].self, from: data) else { return .unavailable }
+        guard let row = rows.first else { return .missing }
+        guard let progress = row.progress else { return .unavailable }
+        return .found(progress)
     }
 
     func upsert(_ progress: FirstRunGuideProgress, accessToken: String?) async {

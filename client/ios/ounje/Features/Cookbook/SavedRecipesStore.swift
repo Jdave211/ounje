@@ -85,13 +85,28 @@ final class SavedRecipesStore: ObservableObject {
         }
 
         let remoteRecipes = snapshot.savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
-        let mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
+        let remoteCardIDs = Set(remoteRecipes.map(\.id))
+        let snapshotContainsEverySavedCard = snapshot.savedRecipeIDs.isSubset(of: remoteCardIDs)
+        let mergedRecipes: [DiscoverRecipeCardData]
+        if snapshotContainsEverySavedCard {
+            mergedRecipes = merge(local: savedRecipes, remote: remoteRecipes)
+        } else {
+            // The aggregate bootstrap deliberately caps full cards below the ID
+            // list. It is a fast preview, not an authoritative replacement for a
+            // larger cookbook already stored on-device.
+            pendingRemoteSaveRecipeIDs.subtract(remoteCardIDs)
+            mergedRecipes = deduplicated(
+                remoteRecipes + savedRecipes.filter { !deletedSavedRecipeIDs.contains($0.id) }
+            )
+        }
         if mergedRecipes != savedRecipes {
             savedRecipes = mergedRecipes
             persist(notifyRuntime: false)
         }
-        lastRemoteSyncUserID = snapshot.userID
-        lastRemoteSyncAt = snapshot.updatedAt
+        if snapshotContainsEverySavedCard {
+            lastRemoteSyncUserID = snapshot.userID
+            lastRemoteSyncAt = snapshot.updatedAt
+        }
     }
 
     /// Pulls the server's unsave tombstones into `deletedSavedRecipeIDs` and drops any

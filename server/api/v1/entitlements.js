@@ -7,6 +7,10 @@ import {
   deriveEntitlementFromAppStoreNotification,
   verifyAppStoreTransactionInfo,
 } from "../../lib/app-store-notifications.js";
+import {
+  isAllowedClientEntitlementSource,
+  isProtectedManualLifetimeEntitlement,
+} from "../../lib/entitlement-policy.js";
 import { getServiceRoleSupabase } from "../../lib/supabase-clients.js";
 
 const router = express.Router();
@@ -149,6 +153,9 @@ router.post("/entitlements/sync", async (req, res) => {
     const incomingTier = normalizeTier(req.body?.tier);
     const incomingStatus = normalizeStatus(req.body?.status);
     const incomingSource = normalizeSource(req.body?.source || "app_store");
+    if (!isAllowedClientEntitlementSource(incomingSource)) {
+      return res.status(403).json({ error: "Client entitlement sync only accepts App Store transactions." });
+    }
     const expiresAt = normalizeTimestamp(req.body?.expires_at ?? req.body?.expiresAt);
     let payload = {
       user_id: userID,
@@ -222,11 +229,7 @@ router.post("/entitlements/sync", async (req, res) => {
       throw error;
     });
 
-    if (existing?.source === "manual"
-        && normalizeStatus(existing.status) === "active"
-        && normalizeTier(existing.tier) === "foundingLifetime"
-        && incomingSource === "app_store"
-        && incomingStatus !== "active") {
+    if (isProtectedManualLifetimeEntitlement(existing)) {
       return res.json(entitlementToResponse(existing));
     }
 

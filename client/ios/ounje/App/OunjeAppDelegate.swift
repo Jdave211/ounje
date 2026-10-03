@@ -147,7 +147,12 @@ private final class OunjeShareImportBackgroundSessionDelegate: NSObject, URLSess
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        completionHandler()
+        session.finishTasksAndInvalidate()
+        // UIKit's background-session completion and app delegate bookkeeping
+        // must run on the main queue, not URLSession's delegate queue.
+        DispatchQueue.main.async { [completionHandler] in
+            completionHandler()
+        }
     }
 
     private func reconcileBackgroundImport(envelopeID: String, response: RecipeImportResponse) throws {

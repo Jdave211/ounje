@@ -422,6 +422,7 @@ struct OunjePaywallHostView: View {
     }
 
     private func handleUnlockSuccess() {
+        guard store.hasActivePaidEntitlement else { return }
         onUpgradeSuccess?()
         onClose()
     }

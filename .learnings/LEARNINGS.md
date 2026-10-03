@@ -409,3 +409,29 @@ Keep circle versus squircle classification on the web recipe page. For share met
 ### Resolution
 - **Resolved**: 2026-08-23T21:52:00-06:00
 - **Notes**: Replaced the dynamically rendered transparent PNG with a compressed opaque square JPEG and long-lived versioned caching; left webpage shape classification unchanged.
+## [LRN-20260828-001] correction.keep-screenshot-swaps-mechanical
+
+**Logged**: 2026-08-28T01:51:22Z
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Once a simulator screenshot harness exists, image swaps should be a mechanical asset replacement and a single verified build.
+
+### Details
+A requested food-photo swap took about eleven minutes because the work expanded into component parameterization, catalog research, repeated crop tuning, and three simulator builds. The visual result improved, but the turnaround was disproportionate to the request.
+
+### Suggested Action
+Keep the reusable photo-import screenshot route stable. For future swaps, preprocess the image once around the food subject, replace the preview asset, perform one build, and capture. Run catalog matching separately without blocking the visual preview.
+
+### Metadata
+- Source: user_feedback
+- Related Files: client/ios/ounje/App/AppRootView.swift, client/ios/ounje/Features/Prep/Views/PrepViews.swift
+- Tags: simulator, screenshots, workflow, speed
+- Pattern-Key: screenshot.swap_single_build
+- Recurrence-Count: 1
+- First-Seen: 2026-08-27
+- Last-Seen: 2026-08-27
+
+---

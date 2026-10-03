@@ -55,6 +55,418 @@ struct AppRootView: View {
     }
 }
 
+private struct PhotoImportScreenshotPreviewView: View {
+    private let imageName = "SteakPhotoImportMock"
+
+    var body: some View {
+        GeometryReader { proxy in
+            let topPanelHeight: CGFloat = 168
+            let bottomPanelHeight: CGFloat = 226
+            let viewfinderHeight = max(360, proxy.size.height - topPanelHeight - bottomPanelHeight)
+
+            ZStack {
+                Color.black
+
+                VStack(spacing: 0) {
+                    Color.black
+                        .frame(height: topPanelHeight)
+
+                    ZStack {
+                        Image(imageName)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: proxy.size.width, height: viewfinderHeight)
+
+                        PhotoImportScreenshotGrid()
+                            .stroke(Color.white.opacity(0.22), lineWidth: 0.75)
+                            .padding(.horizontal, 20)
+
+                        PhotoImportScreenshotFocusCorners()
+                            .stroke(
+                                Color.white.opacity(0.96),
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+                            )
+                            .frame(
+                                width: proxy.size.width - 52,
+                                height: min(viewfinderHeight - 44, proxy.size.width - 12)
+                            )
+                            .shadow(color: .black.opacity(0.28), radius: 3, x: 0, y: 2)
+                    }
+                    .frame(width: proxy.size.width, height: viewfinderHeight)
+                    .clipped()
+
+                    Color.black
+                        .frame(height: bottomPanelHeight)
+                }
+
+                VStack(spacing: 0) {
+                    HStack {
+                        screenshotCircleButton(systemImage: "xmark")
+                        Spacer()
+                        screenshotCircleButton(systemImage: "bolt.slash.fill")
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 62)
+
+                    SleeScriptDisplayText("Ounje", size: 32, color: .white)
+                        .padding(.top, 6)
+
+                    Spacer()
+
+                    VStack(spacing: 18) {
+                        HStack(spacing: 24) {
+                            Text("VIDEO")
+                                .foregroundStyle(.white.opacity(0.55))
+
+                            Text("PHOTO")
+                                .foregroundStyle(OunjePalette.softCream)
+                        }
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .tracking(1.8)
+
+                        HStack {
+                            Image(imageName)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 48, height: 48)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white.opacity(0.9), lineWidth: 1.5)
+                                }
+
+                            Spacer()
+
+                            ZStack {
+                                Circle()
+                                    .fill(Color.white.opacity(0.2))
+                                    .frame(width: 82, height: 82)
+                                Circle()
+                                    .fill(Color.white.opacity(0.97))
+                                    .frame(width: 66, height: 66)
+                                Circle()
+                                    .stroke(Color.white.opacity(0.96), lineWidth: 3)
+                                    .frame(width: 74, height: 74)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "camera.rotate.fill")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .background(Circle().fill(Color.black.opacity(0.42)))
+                                .overlay {
+                                    Circle()
+                                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                }
+                        }
+                        .frame(height: 82)
+                    }
+                    .padding(.horizontal, 34)
+                    .padding(.top, 20)
+                    .frame(height: bottomPanelHeight, alignment: .top)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .background(Color.black.ignoresSafeArea())
+    }
+
+    private func screenshotCircleButton(systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 38, height: 38)
+            .background(Circle().fill(Color.black.opacity(0.24)))
+            .overlay {
+                Circle()
+                    .stroke(Color.white.opacity(0.18), lineWidth: 1)
+            }
+    }
+}
+
+private struct PhotoImportScreenshotFocusCorners: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cornerLength = min(rect.width, rect.height) * 0.19
+        var path = Path()
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerLength))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + cornerLength, y: rect.minY))
+
+        path.move(to: CGPoint(x: rect.maxX - cornerLength, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerLength))
+
+        path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerLength))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - cornerLength, y: rect.maxY))
+
+        path.move(to: CGPoint(x: rect.minX + cornerLength, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cornerLength))
+
+        return path
+    }
+}
+
+private struct PhotoImportScreenshotGrid: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for index in 1...2 {
+            let fraction = CGFloat(index) / 3
+            let x = rect.minX + rect.width * fraction
+            path.move(to: CGPoint(x: x, y: rect.minY))
+            path.addLine(to: CGPoint(x: x, y: rect.maxY))
+
+            let y = rect.minY + rect.height * fraction
+            path.move(to: CGPoint(x: rect.minX, y: y))
+            path.addLine(to: CGPoint(x: rect.maxX, y: y))
+        }
+        return path
+    }
+}
+
+private struct RecipeScreenshotPreviewView: View {
+    private static let recipeID = "ad36b581-cd29-46cc-b697-61144297f132"
+    private static let screenshotTitle = "Roasted Squid Barbecue Skewers"
+    private static let screenshotDescription = "Whole squid skewered, roasted over high heat, and brushed with a sticky smoky-sweet BBQ glaze."
+
+    private static let screenshotIngredients: [RecipeDetailIngredient] = [
+        screenshotIngredient(
+            id: "squid",
+            name: "Cleaned whole squid",
+            quantity: "4 medium",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsquid.jpg?alt=media&token=750eebaf-b49b-44c4-b69f-43d73890f5c0"
+        ),
+        screenshotIngredient(
+            id: "bbq-sauce",
+            name: "Barbecue sauce",
+            quantity: "1/2 cup",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fbarbecue_sauce.jpg?alt=media&token=0f3cdbc3-644e-4fe9-9cb4-dbe029bb1d69"
+        ),
+        screenshotIngredient(
+            id: "soy-sauce",
+            name: "Soy sauce",
+            quantity: "2 tbsp",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsoy_sauce.jpg?alt=media&token=cf9e281c-3d92-45e7-b6db-de151ca4f318"
+        ),
+        screenshotIngredient(
+            id: "honey",
+            name: "Honey",
+            quantity: "2 tbsp",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fhoney.jpg?alt=media&token=9dbc4c54-d5f0-4fdc-bbaf-054905d54e3a"
+        ),
+        screenshotIngredient(
+            id: "garlic",
+            name: "Garlic",
+            quantity: "3 cloves",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fgarlic.jpg?alt=media&token=66108671-1517-41f3-a9c8-0aa8d48b3bf0"
+        ),
+        screenshotIngredient(
+            id: "ginger",
+            name: "Fresh ginger",
+            quantity: "1 tbsp grated",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fginger.jpg?alt=media&token=5fa4f972-e210-45f7-a372-2d2ada6f2fc5"
+        ),
+        screenshotIngredient(
+            id: "lime",
+            name: "Lime",
+            quantity: "1",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Flime.jpg?alt=media&token=8baf258f-277b-4976-afdc-99229c41b136"
+        ),
+        screenshotIngredient(
+            id: "sesame-oil",
+            name: "Toasted sesame oil",
+            quantity: "1 tbsp",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsesame_oil.jpg?alt=media&token=36a1cb20-31d2-46a3-bc8f-fc3df2d19335"
+        ),
+        screenshotIngredient(
+            id: "smoked-paprika",
+            name: "Smoked paprika",
+            quantity: "1 tsp",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fpaprika.jpg?alt=media&token=5047ebcb-f88d-479f-8558-dd990b3d8afd"
+        ),
+        screenshotIngredient(
+            id: "chili-flakes",
+            name: "Chili flakes",
+            quantity: "1/2 tsp",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fchili_flakes.jpg?alt=media&token=5e372122-e466-4fac-a826-56f4156b2ec4"
+        ),
+        screenshotIngredient(
+            id: "salt",
+            name: "Salt",
+            quantity: "1/2 tsp",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsalt.jpg?alt=media&token=0140d2fd-6e8a-4b50-8a82-19b316ccc8d7"
+        ),
+        screenshotIngredient(
+            id: "sesame-seeds",
+            name: "Toasted sesame seeds",
+            quantity: "1 tbsp",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fsesame_seeds.jpg?alt=media"
+        ),
+        screenshotIngredient(
+            id: "spring-onion",
+            name: "Spring onions",
+            quantity: "2, thinly sliced",
+            imageURL: "https://firebasestorage.googleapis.com/v0/b/julienne-3555a.appspot.com/o/ingredients%2Fspring_onion.jpg?alt=media"
+        )
+    ]
+
+    private static let screenshotSteps: [RecipeDetailStep] = [
+        RecipeDetailStep(
+            number: 1,
+            text: "Pat the cleaned squid completely dry. Lightly score the bodies, then thread the squid securely onto soaked wooden skewers.",
+            tipText: "Dry squid browns instead of steaming.",
+            ingredientRefs: ["Cleaned whole squid"],
+            ingredients: []
+        ),
+        RecipeDetailStep(
+            number: 2,
+            text: "Whisk together the barbecue sauce, soy sauce, honey, sesame oil, lime juice, garlic, ginger, smoked paprika, chili flakes, and salt.",
+            tipText: nil,
+            ingredientRefs: ["Barbecue sauce", "Soy sauce", "Honey", "Toasted sesame oil", "Lime", "Garlic", "Fresh ginger", "Smoked paprika", "Chili flakes", "Salt"],
+            ingredients: []
+        ),
+        RecipeDetailStep(
+            number: 3,
+            text: "Coat the squid with half of the glaze and leave it to marinate for 15 minutes. Reserve the remaining glaze for basting.",
+            tipText: nil,
+            ingredientRefs: ["Cleaned whole squid", "Barbecue sauce"],
+            ingredients: []
+        ),
+        RecipeDetailStep(
+            number: 4,
+            text: "Roast under a very hot broiler or grill for 2 to 3 minutes per side, basting as the squid cooks, until lightly charred and just opaque.",
+            tipText: "Avoid overcooking; squid turns firm quickly.",
+            ingredientRefs: ["Cleaned whole squid"],
+            ingredients: []
+        ),
+        RecipeDetailStep(
+            number: 5,
+            text: "Brush with a final layer of glaze, then finish with fresh lime, toasted sesame seeds, and sliced spring onions before serving immediately.",
+            tipText: nil,
+            ingredientRefs: ["Barbecue sauce", "Lime", "Toasted sesame seeds", "Spring onions"],
+            ingredients: []
+        )
+    ]
+
+    private static func screenshotIngredient(
+        id: String,
+        name: String,
+        quantity: String,
+        imageURL: String
+    ) -> RecipeDetailIngredient {
+        RecipeDetailIngredient(
+            id: "screenshot-\(id)",
+            ingredientID: nil,
+            displayName: name,
+            quantityText: quantity,
+            imageURLString: imageURL,
+            sortOrder: screenshotIngredientsSortOrder[id]
+        )
+    }
+
+    private static let screenshotIngredientsSortOrder: [String: Int] = [
+        "squid": 0,
+        "bbq-sauce": 1,
+        "soy-sauce": 2,
+        "honey": 3,
+        "garlic": 4,
+        "ginger": 5,
+        "lime": 6,
+        "sesame-oil": 7,
+        "smoked-paprika": 8,
+        "chili-flakes": 9,
+        "salt": 10,
+        "sesame-seeds": 11,
+        "spring-onion": 12
+    ]
+
+    @EnvironmentObject private var store: MealPlanningAppStore
+    @ObservedObject private var toastCenter: AppToastCenter
+    @StateObject private var savedStore: SavedRecipesStore
+    @State private var presentedRecipe: PresentedRecipeDetail?
+    @State private var loadError: String?
+
+    init(toastCenter: AppToastCenter) {
+        _toastCenter = ObservedObject(wrappedValue: toastCenter)
+        _savedStore = StateObject(wrappedValue: SavedRecipesStore(toastCenter: toastCenter))
+    }
+
+    var body: some View {
+        ZStack {
+            OunjePalette.background
+                .ignoresSafeArea()
+
+            if let presentedRecipe {
+                RecipeDetailExperienceView(
+                    presentedRecipe: presentedRecipe,
+                    onOpenCart: { },
+                    toastCenter: toastCenter,
+                    onDismiss: { },
+                    titleOverride: Self.screenshotTitle,
+                    descriptionOverride: Self.screenshotDescription,
+                    hidesOriginalLink: true,
+                    heroImageAssetOverride: "PhotoImportMock",
+                    heroImageScaleOverride: 1.14,
+                    titleStyleOverride: .playful,
+                    titleAlignmentOverride: .trailing,
+                    ingredientsOverride: Self.screenshotIngredients,
+                    stepsOverride: Self.screenshotSteps
+                )
+                .environmentObject(savedStore)
+            } else if let loadError {
+                VStack(spacing: 12) {
+                    SleeScriptDisplayText("Ounje", size: 34)
+                    Text(loadError)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(OunjePalette.secondaryText)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 32)
+            } else {
+                OunjeSplashLoaderView()
+            }
+        }
+        .task {
+            savedStore.activate(authSession: store.authSession)
+            await loadRecipe()
+        }
+    }
+
+    @MainActor
+    private func loadRecipe() async {
+        do {
+            let fetchedDetail = try await RecipeDetailService.shared.fetchRecipeDetail(id: Self.recipeID)
+            let detail = fetchedDetail.replacing(
+                ingredients: Self.screenshotIngredients,
+                steps: Self.screenshotSteps
+            )
+            let card = DiscoverRecipeCardData(
+                id: detail.id,
+                title: detail.title,
+                description: detail.description,
+                authorName: detail.authorName,
+                authorHandle: detail.authorHandle,
+                category: detail.category ?? detail.recipeType,
+                recipeType: detail.recipeType ?? detail.category,
+                cookTimeText: detail.cookTimeText,
+                cookTimeMinutes: detail.cookTimeMinutes,
+                publishedDate: nil,
+                imageURLString: detail.discoverCardImageURLString ?? detail.heroImageURLString,
+                heroImageURLString: detail.heroImageURLString,
+                recipeURLString: detail.originalRecipeURLString ?? detail.recipeURLString,
+                source: detail.source ?? detail.sourcePlatform
+            )
+            presentedRecipe = PresentedRecipeDetail(recipeCard: card, initialDetail: detail)
+        } catch {
+            loadError = "This recipe could not be loaded."
+        }
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var store: MealPlanningAppStore
     @EnvironmentObject private var runtimeStore: UserRuntimeStore
@@ -65,9 +477,12 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if !store.isAuthenticated {
-                AuthenticationView()
-                    .id("auth-entry")
+            if OunjeLaunchFlags.forcePhotoImportScreenshotPreview {
+                PhotoImportScreenshotPreviewView()
+                    .id("debug-photo-import-screenshot-preview")
+            } else if OunjeLaunchFlags.forceRecipeScreenshotPreview {
+                RecipeScreenshotPreviewView(toastCenter: toastCenter)
+                    .id("debug-recipe-screenshot-preview")
             } else if OunjeLaunchFlags.forcePaywallPreview {
                 OunjePaywallHostView(
                     initialTier: .plus,
@@ -75,6 +490,9 @@ struct RootView: View {
                     onClose: { }
                 )
                 .id("debug-paywall-preview")
+            } else if !store.isAuthenticated {
+                AuthenticationView()
+                    .id("auth-entry")
             } else if OunjeLaunchFlags.forceOnboardingIncomplete {
                 FirstLoginOnboardingView()
                     .id("forced-profile-onboarding")
@@ -218,14 +636,27 @@ struct RootView: View {
             return
         }
 
-        guard let snapshot = await runtimeStore.refresh(session: session) else {
+        // A cold Render service must never own the first usable screen. When
+        // there is no trusted planner route on disk, resolve the critical
+        // profile + plan state directly from Supabase first. The aggregate
+        // bootstrap still hydrates secondary state afterward.
+        let usedDirectCriticalBootstrap = !store.canRenderCachedPlannerState
+        if usedDirectCriticalBootstrap {
             await store.bootstrapFromSupabaseIfNeeded()
+        }
+
+        guard let snapshot = await runtimeStore.refresh(session: session) else {
+            if !usedDirectCriticalBootstrap {
+                await store.bootstrapFromSupabaseIfNeeded()
+            }
             return
         }
 
         let needsLegacyRecovery = store.needsLegacyBootstrapRecovery(for: snapshot)
         if needsLegacyRecovery {
-            await store.bootstrapFromSupabaseIfNeeded()
+            if !usedDirectCriticalBootstrap {
+                await store.bootstrapFromSupabaseIfNeeded()
+            }
             guard !store.needsLegacyBootstrapRecovery(for: snapshot) else {
                 store.markBootstrapRecoveryDeferred()
                 return
@@ -258,16 +689,16 @@ struct RootView: View {
         OunjeLaunchFlags.paywallsEnabled
             && !OunjeLaunchFlags.usesSimulatorBillingBypass
             && store.membershipEntitlementResolved
-            && !store.isRefreshingMembershipEntitlement
             && !store.hasActivePaidEntitlement
             && store.membershipEntitlementServerConfirmed
     }
 
     private var shouldShowMembershipRefreshGate: Bool {
-        // Entitlement refresh is now a background correctness sync. Blocking the
-        // shell/paywall here made sign-in feel stuck whenever the server or DB was
-        // slow, even after local StoreKit/runtime state had resolved the route.
-        false
+        OunjeLaunchFlags.paywallsEnabled
+            && !OunjeLaunchFlags.usesSimulatorBillingBypass
+            && store.membershipEntitlementResolved
+            && !store.hasActivePaidEntitlement
+            && !store.membershipEntitlementServerConfirmed
     }
 
     @MainActor
@@ -1579,6 +2010,8 @@ private struct AuthenticationView: View {
     @State private var authStatusMessage: String?
     @State private var appleSignInNonce = ""
     @State private var revealContent = false
+    @State private var showQuickTour = false
+    @StateObject private var appleSignInDriver = AppleSignInPresentationDriver()
 
     var body: some View {
         ZStack {
@@ -1628,6 +2061,22 @@ private struct AuthenticationView: View {
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding(.bottom, 4)
                             }
+
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                showQuickTour = true
+                            } label: {
+                                Text("Take a quick tour")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(.black.opacity(0.9))
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(height: 48)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
 
                             SignInWithAppleButton(.signIn) { request in
                                 prepareAppleSignInRequest(request)
@@ -1683,6 +2132,33 @@ private struct AuthenticationView: View {
                 revealContent = true
             }
         }
+        .fullScreenCover(isPresented: $showQuickTour) {
+            WelcomeQuickTourView(
+                onClose: {
+                    showQuickTour = false
+                },
+                onAppleRequest: { request in
+                    prepareAppleSignInRequest(request)
+                },
+                onAppleCompletion: { result in
+                    handleAppleSignIn(result)
+                },
+                onAppleSignInRequested: {
+                    startAppleSignIn()
+                }
+            )
+        }
+    }
+
+    private func startAppleSignIn() {
+        appleSignInDriver.start(
+            configure: { request in
+                prepareAppleSignInRequest(request)
+            },
+            completion: { result in
+                handleAppleSignIn(result)
+            }
+        )
     }
 
     private func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
@@ -1847,6 +2323,7 @@ private struct AuthenticationView: View {
             profile: localProfile,
             lastOnboardingStep: FirstLoginOnboardingView.SetupStep.completedRawValue
         )
+        showQuickTour = false
         authErrorMessage = nil
         authStatusMessage = fallbackStatusMessage ?? "Signed in locally for simulator."
         await store.refreshMembershipEntitlement(trigger: "simulator-local-sign-in")
@@ -1880,6 +2357,7 @@ private struct AuthenticationView: View {
         } else {
             store.persistAuthSession(session)
         }
+        showQuickTour = false
         authStatusMessage = cachedCompleted
             ? "Signed in with \(session.provider.title)."
             : "Signed in. Let's finish setup."
@@ -1989,6 +2467,52 @@ private struct AuthenticationView: View {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+}
+
+@MainActor
+private final class AppleSignInPresentationDriver: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    private var completion: ((Result<ASAuthorization, Error>) -> Void)?
+    private var isPresenting = false
+
+    func start(
+        configure: (ASAuthorizationAppleIDRequest) -> Void,
+        completion: @escaping (Result<ASAuthorization, Error>) -> Void
+    ) {
+        guard !isPresenting else { return }
+
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        configure(request)
+
+        self.completion = completion
+        isPresenting = true
+
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        controller.performRequests()
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+        finish(.success(authorization))
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        finish(.failure(error))
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) ?? UIWindow()
+    }
+
+    private func finish(_ result: Result<ASAuthorization, Error>) {
+        let completion = completion
+        self.completion = nil
+        isPresenting = false
+        completion?(result)
+    }
 }
 
 private struct WelcomeVideoBackgroundView: View {
@@ -2124,6 +2648,186 @@ private final class WelcomeVideoPlayerView: UIView {
     var playerLayer: AVPlayerLayer {
         layer as! AVPlayerLayer
     }
+}
+
+private struct WelcomeQuickTourView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let onClose: () -> Void
+    let onAppleRequest: (ASAuthorizationAppleIDRequest) -> Void
+    let onAppleCompletion: (Result<ASAuthorization, Error>) -> Void
+    let onAppleSignInRequested: () -> Void
+
+    private let pages = WelcomeQuickTourPage.orderedPages
+
+    @State private var selectedPage = 0
+    @State private var cardEntered = false
+    @State private var isHandlingLastPageSwipe = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let topVisualHeight = min(proxy.size.height * 0.71, 640)
+            let tourBackground = Color(red: 0.085, green: 0.085, blue: 0.082)
+
+            ZStack {
+                tourBackground
+                    .ignoresSafeArea()
+
+                TabView(selection: $selectedPage) {
+                    ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                        VStack(spacing: 0) {
+                                ZStack(alignment: .bottom) {
+                                    Image(page.assetName)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: proxy.size.width, height: topVisualHeight)
+                                        .clipped()
+
+                                    LinearGradient(
+                                        colors: [
+                                            tourBackground.opacity(0),
+                                            tourBackground.opacity(0.62),
+                                            tourBackground
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                    .frame(height: 150)
+                                }
+                                .offset(y: cardEntered ? 0 : -180)
+                                .opacity(cardEntered ? 1 : 0)
+
+                            VStack(spacing: 8) {
+                                Text(page.title)
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.96))
+                                    .multilineTextAlignment(.center)
+
+                                Text(page.subtitle)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.58))
+                                    .multilineTextAlignment(.center)
+                                    .lineSpacing(1)
+                            }
+                            .frame(maxWidth: 290)
+                            .padding(.top, 30)
+
+                            Spacer(minLength: 16)
+                                .frame(minHeight: 92)
+                        }
+                        .ignoresSafeArea(edges: .top)
+                        .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .ignoresSafeArea(edges: .top)
+
+                VStack(spacing: 14) {
+                    HStack(spacing: 5) {
+                        ForEach(pages.indices, id: \.self) { pageIndex in
+                            Capsule(style: .continuous)
+                                .fill(pageIndex == selectedPage ? Color.white.opacity(0.94) : Color.white.opacity(0.22))
+                                .frame(width: pageIndex == selectedPage ? 14 : 4, height: 4)
+                                .animation(.spring(response: 0.24, dampingFraction: 0.82), value: selectedPage)
+                        }
+                    }
+
+                    SignInWithAppleButton(.signIn) { request in
+                        onAppleRequest(request)
+                    } onCompletion: { result in
+                        onAppleCompletion(result)
+                    }
+                    .signInWithAppleButtonStyle(.black)
+                    .frame(width: max(1, min(340, proxy.size.width - 56)), height: 48)
+                    .clipShape(Capsule(style: .continuous))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, max(18, proxy.safeAreaInsets.bottom + 8))
+                .zIndex(6)
+
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                        onClose()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, max(12, proxy.safeAreaInsets.top + 4))
+                .padding(.trailing, 18)
+                .zIndex(8)
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 28)
+                    .onEnded { value in
+                        guard selectedPage == pages.indices.last else { return }
+                        guard !isHandlingLastPageSwipe else { return }
+                        let horizontalIntent = abs(value.translation.width) > abs(value.translation.height) * 1.2
+                        let didSwipeForward = value.translation.width < -54 || value.predictedEndTranslation.width < -92
+                        guard horizontalIntent, didSwipeForward else { return }
+
+                        isHandlingLastPageSwipe = true
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onAppleSignInRequested()
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            isHandlingLastPageSwipe = false
+                        }
+                    }
+            )
+            .onAppear {
+                withAnimation(.spring(response: 0.62, dampingFraction: 0.83).delay(0.06)) {
+                    cardEntered = true
+                }
+            }
+        }
+    }
+}
+
+private struct WelcomeQuickTourPage {
+    let assetName: String
+    let title: String
+    let subtitle: String
+
+    static let orderedPages: [WelcomeQuickTourPage] = [
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard5",
+            title: "Send recipes from anywhere.",
+            subtitle: "Share from TikTok or Instagram, or take a picture and we’ll build the recipe."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard1",
+            title: "Edit any recipe with AI.",
+            subtitle: "Make it healthier, add protein, go keto, or change the vibe in one tap."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard2",
+            title: "Build a smarter cart.",
+            subtitle: "Collapse your next prep into one shop list that remembers what you already have."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard8",
+            title: "Ounje shops with your say-so.",
+            subtitle: "Connect Instacart and Ounje can find better groceries. You review before checkout."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard4",
+            title: "Ounje handles the hard part.",
+            subtitle: "We take care of the sourcing, plan, and shopping so you can just show up & do what you love."
+        ),
+        WelcomeQuickTourPage(
+            assetName: "FeatureCard9",
+            title: "Build Ounje with us.",
+            subtitle: "Send feedback straight to the founders and help shape what ships next."
+        )
+    ]
 }
 
 private struct MealPlannerShellView: View {
@@ -2329,25 +3033,30 @@ private struct MealPlannerShellView: View {
         }
         .task(id: "\(firstRunGuideBootstrapKey)::\(scenePhase == .active ? "active" : "inactive")") {
             guard scenePhase == .active else { return }
+            guard store.authSession?.userID != nil else {
+                await firstRunGuide.bootstrap(userID: nil, profile: nil, accessToken: nil)
+                return
+            }
+            guard let guideSession = await store.freshUserDataSession() else { return }
 #if DEBUG
             if ProcessInfo.processInfo.environment["OUNJE_SHOW_FIRST_RUN_GUIDE"] == "1" {
                 await firstRunGuide.replay(
-                    userID: store.authSession?.userID,
+                    userID: guideSession.userID,
                     profile: store.profile,
-                    accessToken: store.authSession?.accessToken
+                    accessToken: guideSession.accessToken
                 )
             } else {
                 await firstRunGuide.bootstrap(
-                    userID: store.authSession?.userID,
+                    userID: guideSession.userID,
                     profile: store.profile,
-                    accessToken: store.authSession?.accessToken
+                    accessToken: guideSession.accessToken
                 )
             }
 #else
             await firstRunGuide.bootstrap(
-                userID: store.authSession?.userID,
+                userID: guideSession.userID,
                 profile: store.profile,
-                accessToken: store.authSession?.accessToken
+                accessToken: guideSession.accessToken
             )
 #endif
             prepareFirstRunGuideLanding()
@@ -2494,10 +3203,11 @@ private struct MealPlannerShellView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .ounjeReplayFirstRunGuideRequested)) { _ in
             Task {
+                guard let guideSession = await store.freshUserDataSession() else { return }
                 await firstRunGuide.replay(
-                    userID: store.authSession?.userID,
+                    userID: guideSession.userID,
                     profile: store.profile,
-                    accessToken: store.authSession?.accessToken
+                    accessToken: guideSession.accessToken
                 )
                 withAnimation(OunjeMotion.screenSpring) {
                     selectedTab = .cookbook
@@ -2519,7 +3229,22 @@ private struct MealPlannerShellView: View {
     private var firstRunGuideBootstrapKey: String {
         let userID = store.authSession?.userID ?? "signed-out"
         let seed = FirstRunGuideCatalog.seedRecipeID(in: store.profile) ?? "not-eligible"
-        return "first-run-guide::\(userID)::\(seed)"
+        let profileSignals: String
+        if let profile = store.profile {
+            profileSignals = (
+                profile.preferredCuisines.map(\.rawValue)
+                    + profile.cuisineCountries
+                    + profile.favoriteFoods
+                    + profile.favoriteFlavors
+                    + profile.foodGoals
+                    + profile.mealPrepGoals
+                    + [profile.foodPersona]
+            )
+            .joined(separator: "|")
+        } else {
+            profileSignals = "profile-loading"
+        }
+        return "first-run-guide::\(userID)::\(seed)::\(profileSignals)"
     }
 
     private func prepareFirstRunGuideLanding() {
@@ -3043,8 +3768,10 @@ private struct MealPlannerShellView: View {
 
     private var savedStoreAuthKey: String {
         let userKey = store.authSession?.userID ?? "signed-out"
-        let tokenKey = store.authSession?.accessToken?.suffix(18) ?? "no-token"
-        return "saved-store-auth::\(userKey)::\(tokenKey)"
+        // Token refreshes are expected during launch. The bootstrap obtains a
+        // fresh session itself, so changing tokens must not cancel the in-flight
+        // full cookbook fetch after only the aggregate preview has arrived.
+        return "saved-store-auth::\(userKey)"
     }
 
     private var discoverPrewarmKey: String {
@@ -4014,8 +4741,7 @@ private struct CookbookTabView: View {
             let installedPlan = store.installFirstRunGuidePresetPlan(
                 details: firstRunGuide.presetPlanRecipeDetails,
                 title: firstRunGuide.presetPlanTitle,
-                planID: planID,
-                preserveExistingPlans: firstRunGuide.isReplay
+                planID: planID
             )
             if installedPlan != nil {
                 firstRunGuide.advance(to: .planReady)
@@ -7761,25 +8487,6 @@ private struct SharedRecipeImportQueueRow: View {
         return "Shared import"
     }
 
-    // The import start time: fixed at the moment the user triggered the import.
-    // Using createdAt (never changes) as the anchor so the elapsed clock counts
-    // continuously upward and doesn't reset to 0 when lastAttemptAt is updated
-    // with each poll response.
-    private var importStartDate: Date { item.createdAt }
-
-    private var elapsedText: String {
-        // Use updatedAt as the stop-time for completed/failed imports so the
-        // clock shows the final duration rather than counting forever.
-        let endDate: Date = item.isLiveQueueState ? Date() : (item.updatedAt ?? Date())
-        let elapsed = max(0, endDate.timeIntervalSince(importStartDate))
-        if elapsed < 60 {
-            return "\(Int(elapsed))s"
-        }
-        let minutes = Int(elapsed) / 60
-        let seconds = Int(elapsed) % 60
-        return seconds == 0 ? "\(minutes)m" : "\(minutes)m \(seconds)s"
-    }
-
     private var sourceSummaryText: String {
         let sourceText = item.sourceText?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? ""
@@ -7829,8 +8536,6 @@ private struct SharedRecipeImportQueueRow: View {
 
         return "Import in progress"
     }
-
-    private var stableActivityDate: Date { item.activityReferenceDate }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -7903,18 +8608,10 @@ private struct SharedRecipeImportQueueRow: View {
                 }
             }
 
-            HStack(spacing: 12) {
-                Text(item.lastError?.isEmpty == false ? "Retry needed" : metadataRow)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-
-                Text(stableActivityDate.formatted(.relative(presentation: .named)))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-            }
+            Text(item.lastError?.isEmpty == false ? "Retry needed" : metadataRow)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OunjePalette.secondaryText)
+                .lineLimit(1)
 
             if let error = item.lastError, !error.isEmpty {
                 Text(error)
@@ -7945,22 +8642,6 @@ private struct SharedRecipeImportQueueRow: View {
                 .buttonStyle(.plain)
             }
 
-            // Elapsed clock: only shown while the import is actually in-flight. A
-            // failed/retry-needed import isn't timing anything — and because its
-            // createdAt can be hours/days old (e.g. it was queued before the app was
-            // last closed), an elapsed clock there renders nonsense like "1093m". The
-            // "Retry needed" label + error message already convey that state.
-            if item.isLiveQueueState {
-                TimelineView(.periodic(from: importStartDate, by: 1)) { _ in
-                    HStack(spacing: 8) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 11))
-                        Text(elapsedText)
-                    }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(OunjePalette.secondaryText)
-                }
-            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -7978,18 +8659,6 @@ private struct SharedRecipeImportQueueRow: View {
 private struct RecipeImportCompletedRow: View {
     let item: RecipeImportCompletedItem
     let onOpenRecipe: ((DiscoverRecipeCardData) -> Void)?
-
-    private var relativeTimestamp: String? {
-        if let completedAt = item.completedAt,
-           let date = RecipeImportDateParser.parse(completedAt) {
-            return date.formatted(.relative(presentation: .named))
-        }
-        if let createdAt = item.createdAt,
-           let date = RecipeImportDateParser.parse(createdAt) {
-            return date.formatted(.relative(presentation: .named))
-        }
-        return nil
-    }
 
     private var sourceLine: String {
         let parts = [item.source, item.cookTimeText]
@@ -8054,11 +8723,6 @@ private struct RecipeImportCompletedRow: View {
                         .lineLimit(1)
                 }
 
-                if let relativeTimestamp {
-                    Text(relativeTimestamp)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(OunjePalette.secondaryText)
-                }
             }
 
             Spacer(minLength: 0)
@@ -8554,8 +9218,9 @@ private struct DiscoverComposerSheet: View {
                 }
 
             VStack(spacing: 16) {
-                Text(mode.emoji)
-                    .font(.system(size: 47))
+                Image(mode.emojiAssetName)
+                    .resizable()
+                    .scaledToFit()
                     .frame(width: 62, height: 62)
                     .accessibilityHidden(true)
 
@@ -9483,11 +10148,11 @@ private enum NewRecipeImportMode: CaseIterable, Hashable {
         }
     }
 
-    var emoji: String {
+    var emojiAssetName: String {
         switch self {
-        case .photo: return "📸"
-        case .web: return "🌐"
-        case .create: return "🎨"
+        case .photo: return "NewRecipePhotoEmoji"
+        case .web: return "NewRecipeWebEmoji"
+        case .create: return "NewRecipeCreateEmoji"
         }
     }
 
@@ -9506,8 +10171,9 @@ private struct NewRecipeImportOptionRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            Text(mode.emoji)
-                .font(.system(size: 32))
+            Image(mode.emojiAssetName)
+                .resizable()
+                .scaledToFit()
                 .frame(width: 49, height: 49)
                 .accessibilityHidden(true)
 

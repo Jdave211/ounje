@@ -178,10 +178,8 @@ final class MealPlanningAppStore: ObservableObject {
     /// Used to hold the paywall gate splash until entitlement is confirmed.
     @Published private(set) var membershipEntitlementResolved: Bool = false
     @Published private(set) var isRefreshingMembershipEntitlement: Bool = false
-    /// True only after Phase 2 (server) of an entitlement refresh completes
-    /// successfully — as opposed to timing out. The subscription gate must not
-    /// block users when the server is unreachable: a timeout is not confirmation
-    /// that the user's subscription is gone.
+    /// True only after a server bootstrap or Phase 2 entitlement refresh confirms
+    /// the current account's membership state.
     @Published private(set) var membershipEntitlementServerConfirmed: Bool = false
     @Published var manualInstacartRerunQueuedAt: Date?
     @Published var isManualAutoshopRunning = false
@@ -223,6 +221,7 @@ final class MealPlanningAppStore: ObservableObject {
     private let legacyHistoryKey = "agentic-meal-history-v1"
     private let onboardingStepKey = "agentic-onboarding-step-v1"
     private let cachedEntryRouteKey = "agentic-cached-entry-route-v1"
+    private let pendingOnboardingCompletionKeyPrefix = "agentic-pending-onboarding-completion-v1"
     private let sharedAuthSessionKey = "agentic-share-auth-session-v1"
     private let liveUserIDKey = "agentic-live-user-id-v1"
     private let instacartProviderConnectionKeyPrefix = "agentic-instacart-provider-connected-v1"
@@ -306,6 +305,7 @@ final class MealPlanningAppStore: ObservableObject {
 
     var effectivePricingTier: OunjePricingTier {
         if OunjeLaunchFlags.paywallsEnabled {
+            guard entitlementBelongsToCurrentUser else { return .free }
             return membershipEntitlement?.effectiveTier ?? .free
         }
         return membershipEntitlement?.effectiveTier ?? profile?.pricingTier ?? .free
@@ -320,8 +320,21 @@ final class MealPlanningAppStore: ObservableObject {
             return true
         }
 #endif
-        return membershipEntitlement?.isActive == true
+        return entitlementBelongsToCurrentUser
+            && membershipEntitlement?.isActive == true
             && membershipEntitlement?.effectiveTier != .free
+    }
+
+    private var entitlementBelongsToCurrentUser: Bool {
+        guard let entitlementUserID = membershipEntitlement?.userID
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !entitlementUserID.isEmpty,
+              let currentUserID = (authSession?.userID ?? resolvedLiveUserID)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !currentUserID.isEmpty else {
+            return false
+        }
+        return entitlementUserID == currentUserID
     }
 
     var isAuthenticated: Bool {
@@ -346,11 +359,22 @@ final class MealPlanningAppStore: ObservableObject {
 
     func markBootstrapRecoveryDeferred() {
         guard isAuthenticated else { return }
-        hasResolvedInitialState = false
         isHydratingRemoteState = false
-        bootstrapDidConfirmOnboardingState = false
-        if profile == nil {
+        isRefreshingPrepRecipes = false
+        // Returning users with a cached plan can keep using the app while a
+        // partial bootstrap response is retried on the next foreground. Leaving
+        // this unresolved produced an indefinite full-screen splash.
+        let canUseCachedPlanner = hasCachedPlannerEvidence
+        hasResolvedInitialState = true
+        if canUseCachedPlanner {
+            bootstrapDidConfirmOnboardingState = false
+        } else {
+            // A confirmed account with no recoverable profile cannot render the
+            // planner. Route to profile setup instead of holding a permanent loader.
+            profile = profile ?? .starter
             isOnboarded = false
+            bootstrapDidConfirmOnboardingState = true
+            cacheAuthenticatedEntryRoute(.onboarding)
         }
     }
 
@@ -437,6 +461,7 @@ final class MealPlanningAppStore: ObservableObject {
         lastOnboardingStep remoteStep: Int = 0
     ) {
         authStateRevision += 1
+        resetMembershipStateIfNeeded(for: session.userID)
         if activeHistoryUserID != session.userID {
             loadHistory(for: session.userID)
             loadCompletedMealPrepCycleCache(for: session.userID)
@@ -475,6 +500,7 @@ final class MealPlanningAppStore: ObservableObject {
         authStateRevision += 1
         authSessionNeedsReauthentication = false
         let previousUserID = authSession?.userID ?? cachedLiveUserID
+        resetMembershipStateIfNeeded(for: session.userID)
         if previousUserID != session.userID {
             loadHistory(for: session.userID)
             loadCompletedMealPrepCycleCache(for: session.userID)
@@ -524,12 +550,21 @@ final class MealPlanningAppStore: ObservableObject {
         saveLiveUserID(snapshotUserID)
 
         if let state = snapshot.profileState {
+            let hasPendingCompletion = hasPendingOnboardingCompletion(for: snapshotUserID)
+                && isOnboarded
+                && profile != nil
             let localProfile = state.onboarded && snapshot.profile == nil && isPlaceholderStarterProfile(profile)
                 ? nil
                 : profile
             let recoveredProfile = snapshot.profile ?? localProfile
-            isOnboarded = shouldForceOnboardingIncomplete ? false : state.onboarded && recoveredProfile != nil
-            lastOnboardingStep = shouldForceOnboardingIncomplete ? 0 : max(0, state.lastOnboardingStep)
+            let effectiveOnboarded = state.onboarded || hasPendingCompletion
+            isOnboarded = shouldForceOnboardingIncomplete ? false : effectiveOnboarded && recoveredProfile != nil
+            lastOnboardingStep = shouldForceOnboardingIncomplete
+                ? 0
+                : max(
+                    hasPendingCompletion ? FirstLoginOnboardingView.SetupStep.completedRawValue : 0,
+                    state.lastOnboardingStep
+                )
             hasPersistedOnboardingState = true
             if source == .remote || snapshot.profile != nil {
                 bootstrapDidConfirmOnboardingState = true
@@ -537,6 +572,9 @@ final class MealPlanningAppStore: ObservableObject {
             cacheAuthenticatedEntryRoute(isOnboarded ? .planner : .onboarding)
             saveOnboardingState()
             saveOnboardingStep()
+            if source == .remote, state.onboarded, recoveredProfile != nil {
+                clearPendingOnboardingCompletion(for: snapshotUserID)
+            }
 
             if let authSession {
                 self.authSession = AuthSession(
@@ -583,6 +621,9 @@ final class MealPlanningAppStore: ObservableObject {
         if source == .remote || source == .disk || snapshot.entitlement?.isActive == true {
             membershipEntitlementResolved = true
             billingStatusMessage = nil
+        }
+        if source == .remote {
+            membershipEntitlementServerConfirmed = true
         }
 
         if let snapshotLatestPlan = snapshot.latestPlan,
@@ -801,11 +842,12 @@ final class MealPlanningAppStore: ObservableObject {
             }
             syncProfilePricingTierToEntitlement()
             membershipEntitlementResolved = true
-            // We couldn't reach the server but we've done the best local check we can.
-            // Mark server-confirmed so the paywall gate resolves rather than blocking
-            // forever when the session is in a needsReauthentication state. The paywall
-            // will still show correctly if there's no active entitlement.
-            membershipEntitlementServerConfirmed = true
+            // Missing authentication is not server confirmation. Keep a previously
+            // confirmed state only when it still belongs to this account; otherwise
+            // the root view holds behind membership verification instead of either
+            // showing a false paywall or exposing the app.
+            membershipEntitlementServerConfirmed = membershipEntitlementServerConfirmed
+                && entitlementBelongsToCurrentUser
             onRuntimeProfileStateChanged?(authSession?.userID ?? cachedLiveUserID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
             return
         }
@@ -901,7 +943,7 @@ final class MealPlanningAppStore: ObservableObject {
 
         guard plan.tier != .free, plan.tier != .foundingLifetime else {
             await refreshMembershipEntitlement(trigger: "billing-noop")
-            return true
+            return hasActivePaidEntitlement
         }
 
         isBillingBusy = true
@@ -946,7 +988,7 @@ final class MealPlanningAppStore: ObservableObject {
                 onRuntimeProfileStateChanged?(session.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
             }
 
-            return true
+            return hasActivePaidEntitlement
         } catch {
             billingStatusMessage = error.localizedDescription
             await refreshMembershipEntitlement(trigger: "billing-purchase-failed")
@@ -1112,10 +1154,20 @@ final class MealPlanningAppStore: ObservableObject {
         saveOnboardingState()
         saveOnboardingStep()
         onRuntimeProfileStateChanged?(resolvedLiveUserID ?? authSession?.userID, profile, isOnboarded, lastOnboardingStep, membershipEntitlement)
+
+        let shouldPersistCompletedState = !shouldForceOnboardingIncomplete
+        if shouldPersistCompletedState,
+           let userID = resolvedLiveUserID ?? authSession?.userID {
+            markPendingOnboardingCompletion(for: userID)
+        }
         isCompletingOnboarding = false
         Task { [weak self] in
             guard let self else { return }
-            await self.finalizeCompletedOnboarding(with: profile, lastStep: lastStep)
+            await self.finalizeCompletedOnboarding(
+                with: profile,
+                lastStep: lastStep,
+                persistCompletedState: shouldPersistCompletedState
+            )
         }
     }
 
@@ -1171,6 +1223,9 @@ final class MealPlanningAppStore: ObservableObject {
         saveOnboardingState()
         saveOnboardingStep()
         onRuntimeProfileStateChanged?(resolvedLiveUserID ?? currentSession?.userID, currentProfile, false, 0, membershipEntitlement)
+        if let userID = currentSession?.userID ?? resolvedLiveUserID {
+            clearPendingOnboardingCompletion(for: userID)
+        }
 
         guard let currentSession else { return }
         Task {
@@ -1236,17 +1291,25 @@ final class MealPlanningAppStore: ObservableObject {
             // We OR in the local "already onboarded" cache ONLY as a safety net for
             // the case where the remote state is missing a profile (network partial read).
             // When the server explicitly returns onboarded=false AND a profile exists,
-            // the server wins — this is what makes a manual DB reset re-trigger onboarding.
+            // the server wins unless this device has an unacknowledged completion write.
+            // That durable intent repairs an interrupted final write; without it, a
+            // deliberate server-side reset still re-triggers onboarding.
             // Without remoteState.profile being present, fall back to cached to avoid
             // a broken token clearing a returning user's onboarding state.
             let cachedCompleted = isOnboarded && profile != nil
-            let serverExplicitlyNotOnboarded = !remoteState.onboarded && remoteState.profile != nil
-            let persistedOnboarded = serverExplicitlyNotOnboarded ? false : (remoteState.onboarded || cachedCompleted)
+            let hasPendingCompletion = hasPendingOnboardingCompletion(for: session.userID) && cachedCompleted
+            let serverExplicitlyNotOnboarded = !remoteState.onboarded
+                && remoteState.profile != nil
+                && !hasPendingCompletion
+            let persistedOnboarded = hasPendingCompletion
+                || (serverExplicitlyNotOnboarded ? false : (remoteState.onboarded || cachedCompleted))
             let resolvedOnboarded = shouldForceOnboardingIncomplete ? false : persistedOnboarded
             let recoveredProfile = remoteState.profile ?? profile
             let recoveredStep = shouldForceOnboardingIncomplete
                 ? 0
-                : (
+                : (hasPendingCompletion
+                    ? FirstLoginOnboardingView.SetupStep.completedRawValue
+                    : (
                     persistedOnboarded
                         ? FirstLoginOnboardingView.SetupStep.latestStoredRawValue(
                             remoteState.lastOnboardingStep,
@@ -1256,6 +1319,7 @@ final class MealPlanningAppStore: ObservableObject {
                         // → trust the server's step so a manual reset restarts cleanly.
                         // Otherwise keep local step to avoid losing progress on a bad token read.
                         : FirstLoginOnboardingView.SetupStep.latestStoredRawValue(remoteState.lastOnboardingStep, serverExplicitlyNotOnboarded ? 0 : lastOnboardingStep)
+                    )
                 )
 
             authSession = AuthSession(
@@ -1350,16 +1414,21 @@ final class MealPlanningAppStore: ObservableObject {
                 recoveredProfile != nil && remoteState.profile == nil ||
                 recoveredStep != remoteState.lastOnboardingStep ||
                 remoteState.authProvider != session.provider) {
-                try? await SupabaseProfileStateService.shared.upsertProfile(
-                    userID: session.userID,
-                    email: remoteState.email ?? session.email,
-                    displayName: recoveredProfile?.trimmedPreferredName ?? remoteState.displayName ?? session.displayName,
-                    authProvider: session.provider,
-                    onboarded: persistedOnboarded,
-                    lastOnboardingStep: recoveredStep,
-                    profile: recoveredProfile,
-                    accessToken: session.accessToken
-                )
+                do {
+                    try await SupabaseProfileStateService.shared.upsertProfile(
+                        userID: session.userID,
+                        email: remoteState.email ?? session.email,
+                        displayName: recoveredProfile?.trimmedPreferredName ?? remoteState.displayName ?? session.displayName,
+                        authProvider: session.provider,
+                        onboarded: persistedOnboarded,
+                        lastOnboardingStep: recoveredStep,
+                        profile: recoveredProfile,
+                        accessToken: session.accessToken
+                    )
+                    if hasPendingCompletion, persistedOnboarded {
+                        clearPendingOnboardingCompletion(for: session.userID)
+                    }
+                } catch { }
             }
         } catch { }
     }
@@ -1473,6 +1542,28 @@ final class MealPlanningAppStore: ObservableObject {
         saveProfile()
     }
 
+    private func resetMembershipStateIfNeeded(for nextUserID: String) {
+        let normalizedNextUserID = nextUserID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedCurrentUserID = (authSession?.userID ?? cachedLiveUserID)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedEntitlementUserID = membershipEntitlement?.userID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let changedAccount = normalizedCurrentUserID.map {
+            !$0.isEmpty && $0 != normalizedNextUserID
+        } ?? false
+        let mismatchedEntitlement = normalizedEntitlementUserID.map {
+            !$0.isEmpty && $0 != normalizedNextUserID
+        } ?? false
+        guard changedAccount || mismatchedEntitlement else { return }
+
+        membershipEntitlement = nil
+        availableMembershipProducts = [:]
+        billingStatusMessage = nil
+        isBillingBusy = false
+        membershipEntitlementResolved = false
+        membershipEntitlementServerConfirmed = false
+    }
+
     private func shouldApplyRuntimeEntitlement(_ runtimeEntitlement: AppUserEntitlement?) -> Bool {
         if runtimeEntitlement?.isActive == true {
             return true
@@ -1577,23 +1668,21 @@ final class MealPlanningAppStore: ObservableObject {
     func installFirstRunGuidePresetPlan(
         details: [RecipeDetailData],
         title: String?,
-        planID: UUID,
-        preserveExistingPlans: Bool = false
+        planID: UUID
     ) -> MealPlan? {
-        if let latestPlan,
-           latestPlan.batches?.contains(where: { $0.id == planID && !$0.recipes.isEmpty }) == true {
-            return latestPlan
-        }
         guard let profile, !details.isEmpty else { return nil }
 
-        let plannedRecipes = details.map { detail in
-            let recipe = importedRecipePlanModel(from: detail)
-            return PlannedRecipe(
-                recipe: recipe,
-                servings: max(1, recipe.servings),
-                carriedFromPreviousPlan: false
-            )
-        }
+        var seenRecipeIDs = Set<String>()
+        let plannedRecipes = details
+            .filter { seenRecipeIDs.insert($0.id).inserted }
+            .map { detail in
+                let recipe = importedRecipePlanModel(from: detail)
+                return PlannedRecipe(
+                    recipe: recipe,
+                    servings: max(1, recipe.servings),
+                    carriedFromPreviousPlan: false
+                )
+            }
         let presetPlan = planner.buildPlanCartOnly(
             profile: profile,
             recipes: plannedRecipes,
@@ -1610,7 +1699,7 @@ final class MealPlanningAppStore: ObservableObject {
         )
 
         let installedPlan: MealPlan
-        if preserveExistingPlans, var existingPlan = latestPlan {
+        if var existingPlan = latestPlan, hasPersistablePrepContent(existingPlan) {
             var batches = existingPlan.batches ?? []
             batches.removeAll { $0.id == planID }
             batches.append(starterBatch)
@@ -2320,46 +2409,30 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    private func finalizeCompletedOnboarding(with profile: UserProfile, lastStep: Int) async {
+    private func finalizeCompletedOnboarding(
+        with profile: UserProfile,
+        lastStep: Int,
+        persistCompletedState: Bool
+    ) async {
         // Persist the completed profile first — the server must have the latest state
         // before we fire the plan generation (which uses the profile on the backend).
         if let session = await freshUserDataSession() {
-            await persistCompletedOnboardingState(
-                profile: profile,
-                lastStep: lastStep,
-                session: session
-            )
+            if persistCompletedState {
+                _ = await persistCompletedOnboardingState(
+                    profile: profile,
+                    lastStep: lastStep,
+                    session: session
+                )
+            }
             // Ping the backend so the founder gets a Slack notification for the new
             // signup. Fire-and-forget — the endpoint is idempotent, so it never
             // double-pings, and onboarding must never block on it.
             notifyFounderOnboardingComplete(session: session)
         }
 
-        // Run plan generation and membership refresh concurrently.
-        // generatePlan() is the dominant latency source (10–30 s of LLM inference);
-        // membership refresh should not serialize behind it.
+        // The first-run guide owns creation of the preset Starter plan. Onboarding
+        // must not race it by generating a separate plan in the background.
         async let membershipRefresh: Void = refreshMembershipEntitlement(trigger: "post-onboarding")
-        let usesFirstRunGuide = FirstRunGuideCatalog.seedRecipeID(in: profile) != nil
-        if profile.isPlanningReady, !usesFirstRunGuide {
-            // The first post-onboarding candidate fetch is the most failure-prone moment
-            // (cold backend, slow LLM curation). A single empty/timed-out attempt used to
-            // leave new users with no prep at all, so retry a few times with backoff
-            // before giving up.
-            let maxOnboardingPlanAttempts = 3
-            var onboardingPlanAttempt = 0
-            while onboardingPlanAttempt < maxOnboardingPlanAttempts {
-                // Compatibility fallback for onboarding sessions created before
-                // the guide catalog existed. Current first-run users fetch a
-                // named preset through FirstRunGuideCoordinator instead.
-                let generated = await generatePlan()
-                if let generated, !generated.recipes.isEmpty { break }
-                onboardingPlanAttempt += 1
-                if onboardingPlanAttempt < maxOnboardingPlanAttempts {
-                    try? await Task.sleep(nanoseconds: UInt64(onboardingPlanAttempt) * 2_000_000_000)
-                }
-            }
-            await ensureOnboardingUsualPrepBatch(profile: profile)
-        }
         await membershipRefresh
 
         // Load all prep / automation / tracking state in one parallel wave.
@@ -2386,52 +2459,11 @@ final class MealPlanningAppStore: ObservableObject {
         }
     }
 
-    private func ensureOnboardingUsualPrepBatch(profile: UserProfile) async {
-        guard var plan = latestPlan, !plan.recipes.isEmpty else { return }
-        var existingBatches = plan.batches ?? []
-        let seedRecipes = plan.recipes
-        let seededPlan = planner.rebuildPlanCartOnly(
-            profile: profile,
-            basePlan: plan,
-            recipes: seedRecipes,
-            history: planHistory,
-            recurringRecipeIDs: plan.recurringRecipeIDs ?? []
-        )
-        if let usualIndex = existingBatches.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame }),
-           !existingBatches[usualIndex].recipes.isEmpty {
-            let usualBatch = existingBatches[usualIndex]
-            _ = setPrimePrepBatch(batchID: usualBatch.id, persistRemote: false)
-            return
-        }
-
-        let existingEmptyUsual = existingBatches.first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame })
-        let usualBatch = PrepBatch(
-            id: existingEmptyUsual?.id ?? UUID(),
-            name: "Usual",
-            recipes: seedRecipes,
-            groceryItems: seededPlan.groceryItems,
-            recurringRecipeIDs: seededPlan.recurringRecipeIDs,
-            createdAt: existingEmptyUsual?.createdAt ?? Date()
-        )
-
-        if let emptyUsualIndex = existingBatches.firstIndex(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Usual") == .orderedSame }) {
-            existingBatches[emptyUsualIndex] = usualBatch
-            plan.batches = existingBatches
-        } else if existingBatches.isEmpty {
-            plan.batches = [usualBatch]
-        } else {
-            plan.batches = [usualBatch] + existingBatches
-        }
-        plan.activeBatchID = usualBatch.id
-        updateCurrentPlanCache(with: plan, persistRemote: false)
-        _ = await persistLatestPlanRemotelyIfPossible(plan)
-    }
-
     private func persistCompletedOnboardingState(
         profile: UserProfile,
         lastStep: Int,
         session: AuthSession
-    ) async {
+    ) async -> Bool {
         for attempt in 1...2 {
             do {
                 try await SupabaseProfileStateService.shared.upsertProfile(
@@ -2444,15 +2476,17 @@ final class MealPlanningAppStore: ObservableObject {
                     profile: profile,
                     accessToken: session.accessToken
                 )
-                return
+                clearPendingOnboardingCompletion(for: session.userID)
+                return true
             } catch {
                 guard attempt == 1 else {
                     print("[onboarding] failed to persist completed profile:", error.localizedDescription)
-                    return
+                    return false
                 }
                 try? await Task.sleep(nanoseconds: 450_000_000)
             }
         }
+        return false
     }
 
     func removeRecipeFromLatestPlan(recipeID: String) async {
@@ -2613,6 +2647,7 @@ final class MealPlanningAppStore: ObservableObject {
         hasPersistedOnboardingState = false
         bootstrapDidConfirmOnboardingState = false
         membershipEntitlementResolved = false
+        membershipEntitlementServerConfirmed = false
     }
 
     func signOutToWelcome() {
@@ -5420,6 +5455,22 @@ final class MealPlanningAppStore: ObservableObject {
 
     private func saveOnboardingStep() {
         UserDefaults.standard.set(lastOnboardingStep, forKey: onboardingStepKey)
+    }
+
+    private func pendingOnboardingCompletionKey(for userID: String) -> String {
+        "\(pendingOnboardingCompletionKeyPrefix)::\(userID)"
+    }
+
+    private func markPendingOnboardingCompletion(for userID: String) {
+        UserDefaults.standard.set(true, forKey: pendingOnboardingCompletionKey(for: userID))
+    }
+
+    private func hasPendingOnboardingCompletion(for userID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: pendingOnboardingCompletionKey(for: userID))
+    }
+
+    private func clearPendingOnboardingCompletion(for userID: String) {
+        UserDefaults.standard.removeObject(forKey: pendingOnboardingCompletionKey(for: userID))
     }
 
     private var provisionalAuthenticatedEntryRoute: CachedAuthenticatedEntryRoute? {
