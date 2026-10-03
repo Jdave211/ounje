@@ -21,16 +21,12 @@ final class OunjeShareViewController: UIViewController {
     private var doneButtonHeightConstraint: NSLayoutConstraint?
     private var doneButtonTopConstraint: NSLayoutConstraint?
 
-    private var shareDraftSummary = ""
-    private var providerCount = 0
-    private var loadSummaryTask: Task<Void, Never>?
     private var submitTask: Task<Void, Never>?
     private var didStartAutomaticSubmit = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
         configureUI()
-        loadSummary()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -39,7 +35,6 @@ final class OunjeShareViewController: UIViewController {
     }
 
     deinit {
-        loadSummaryTask?.cancel()
         submitTask?.cancel()
     }
 
@@ -169,21 +164,6 @@ final class OunjeShareViewController: UIViewController {
         doneButtonTopConstraint?.constant = visible ? 18 : 0
     }
 
-    private func loadSummary() {
-        loadSummaryTask = Task { [weak self] in
-            guard let self else { return }
-            let draft = await self.buildSummary()
-            await MainActor.run {
-                self.shareDraftSummary = draft.summary
-                self.providerCount = draft.providerCount
-                let currentTitle = self.titleLabel.text ?? ""
-                if currentTitle != "Added" && currentTitle != "Couldn’t send to Ounje" {
-                    self.previewLabel.text = draft.summary
-                }
-            }
-        }
-    }
-
     private func beginAutomaticSubmitIfNeeded() {
         guard !didStartAutomaticSubmit else { return }
         didStartAutomaticSubmit = true
@@ -223,12 +203,10 @@ final class OunjeShareViewController: UIViewController {
                     try SharedRecipeImportInbox.update(submittingEnvelope)
                     self.pendingEnvelope = submittingEnvelope
                     try await self.scheduleBackgroundBackendSubmit(submittingEnvelope, authSession: authSession)
-                    self.titleLabel.text = "Sharing recipe to Ounje"
-                    self.subtitleLabel.text = "You can close this. Ounje will keep sending it in the background."
-                    self.doneButton.setTitle("Done", for: .normal)
-                    self.setDoneButtonVisible(true)
-                    self.doneButton.isEnabled = true
-                    self.retrySubmission = false
+                    await Self.sendQueuedNotificationIfAllowed(for: submittingEnvelope)
+                    await MainActor.run {
+                        self.showSentStateAndComplete()
+                    }
                     return
                 }
 
@@ -297,10 +275,10 @@ final class OunjeShareViewController: UIViewController {
                         // reconciliation can recover if the local inbox write fails.
                         print("[ShareImport] Could not save server acknowledgement:", error.localizedDescription)
                     }
-                    Task { await Self.sendQueuedNotificationIfAllowed(for: envelope) }
-                    self.showSentStateAndComplete()
                 case .failure(let error):
-                    self.showSubmissionFailure(error)
+                    // The background session owns retries after the share sheet closes.
+                    // Persist the error for the app to surface if the upload cannot recover.
+                    print("[ShareImport] Background upload failed:", error.localizedDescription)
                 }
             }
             let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: .main)
@@ -345,10 +323,9 @@ final class OunjeShareViewController: UIViewController {
         titleLabel.text = "Added"
         subtitleLabel.text = "Ounje is working in the background."
         previewLabel.isHidden = true
-        setDoneButtonVisible(true)
-        doneButton.isEnabled = true
+        retrySubmission = false
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
             self?.extensionContext?.completeRequest(returningItems: nil)
         }
     }
@@ -393,41 +370,6 @@ final class OunjeShareViewController: UIViewController {
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         )
         try? await center.add(request)
-    }
-
-    private func buildSummary() async -> (summary: String, providerCount: Int) {
-        let providers = itemProviders()
-        var bits: [String] = []
-
-        for provider in providers {
-            if let url = try? await loadSharedURL(from: provider) {
-                bits.append(url.absoluteString)
-                break
-            }
-            if let text = try? await loadSharedText(from: provider), !text.isEmpty {
-                bits.append(text)
-                break
-            }
-        }
-
-        let imageCount = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) }.count
-        let videoCount = providers.filter {
-            $0.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
-                || $0.hasItemConformingToTypeIdentifier(UTType.video.identifier)
-        }.count
-
-        if imageCount > 0 {
-            bits.append(imageCount == 1 ? "1 image attached" : "\(imageCount) images attached")
-        }
-        if videoCount > 0 {
-            bits.append(videoCount == 1 ? "1 short video attached" : "\(videoCount) short videos attached")
-        }
-
-        if bits.isEmpty {
-            bits = ["We’ll grab the shared recipe and finish the import once Ounje opens."]
-        }
-
-        return (bits.joined(separator: "\n"), providers.count)
     }
 
     private func captureEnvelope(targetState: String) async throws -> SharedRecipeImportEnvelope {
