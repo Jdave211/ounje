@@ -20,6 +20,7 @@ import { acquireRedisLock, deleteRedisKey, publishRedisJSON, readRedisJSON, redi
 import { importQueueBusyError, recordDbOperation } from "./db-guardrails.js";
 import { invalidateUserBootstrapCache } from "./user-bootstrap-cache.js";
 import { createLoggedOpenAI, isOpenAIQuotaError, recordExternalAICall, verifyAIUsageLoggingConfiguration, withAIUsageContext } from "./openai-usage-logger.js";
+import { fetchPrivateAwsMedia, isAwsMediaReference, isPublicAwsMediaURL, uploadAwsMedia, usesAwsMedia } from "./media-storage.js";
 
 import {
   normalizeRecipeDetail as canonicalizeRecipeDetail,
@@ -1021,14 +1022,16 @@ function urlLookupVariants(...values) {
 
 function isRecipeImageStorageURL(raw) {
   const normalized = cleanURL(raw);
-  if (!normalized || !SUPABASE_URL) return false;
-  return normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/`);
+  if (!normalized) return false;
+  return isPublicAwsMediaURL(normalized, RECIPE_IMAGE_BUCKET)
+    || (Boolean(SUPABASE_URL) && normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/`));
 }
 
 function isRecipeVideoStorageURL(raw) {
   const normalized = cleanURL(raw);
-  if (!normalized || !SUPABASE_URL) return false;
-  return normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/`);
+  if (!normalized) return false;
+  return isPublicAwsMediaURL(normalized, RECIPE_VIDEO_BUCKET)
+    || (Boolean(SUPABASE_URL) && normalized.startsWith(`${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/`));
 }
 
 function guessImageExtension(contentType = "", sourceURL = "") {
@@ -1139,13 +1142,13 @@ async function persistRecipeImageToStorage(sourceURL, { recipeKey, imageRole = "
   const normalized = cleanURL(sourceURL);
   if (!normalized) return null;
   if (isRecipeImageStorageURL(normalized)) return normalized;
-  if (!SUPABASE_URL || !RECIPE_IMAGE_BUCKET) return normalized;
+  if ((!SUPABASE_URL && !usesAwsMedia()) || !RECIPE_IMAGE_BUCKET) return normalized;
 
   const storageBearer = (normalizeText(accessToken ?? "") || SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim();
-  if (!storageBearer) return normalized;
+  if (!usesAwsMedia() && !storageBearer) return normalized;
 
   try {
-    await ensureRecipeImageBucket();
+    if (!usesAwsMedia()) await ensureRecipeImageBucket();
     const response = await fetch(normalized, {
       redirect: "follow",
       headers: {
@@ -1168,6 +1171,10 @@ async function persistRecipeImageToStorage(sourceURL, { recipeKey, imageRole = "
       sourceURL: normalized,
       contentType,
     });
+
+    if (usesAwsMedia()) {
+      return await uploadAwsMedia({ logicalBucket: RECIPE_IMAGE_BUCKET, objectPath: storagePath, data: buffer, contentType });
+    }
 
     const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_IMAGE_BUCKET)}/${storagePath
       .split("/")
@@ -1196,10 +1203,10 @@ async function persistRecipeImageToStorage(sourceURL, { recipeKey, imageRole = "
 }
 
 async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole = "hero", accessToken = null, contentType = "image/png", sourceKey = null } = {}) {
-  if (!buffer || !buffer.length || !SUPABASE_URL || !RECIPE_IMAGE_BUCKET) return null;
+  if (!buffer || !buffer.length || (!SUPABASE_URL && !usesAwsMedia()) || !RECIPE_IMAGE_BUCKET) return null;
 
   const storageBearer = (normalizeText(accessToken ?? "") || SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim();
-  if (!storageBearer) return null;
+  if (!usesAwsMedia() && !storageBearer) return null;
 
   const storagePath = recipeImageStoragePath({
     recipeKey,
@@ -1207,6 +1214,15 @@ async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole =
     sourceURL: sourceKey ?? `${recipeKey}:${imageRole}`,
     contentType,
   });
+
+  if (usesAwsMedia()) {
+    try {
+      return await uploadAwsMedia({ logicalBucket: RECIPE_IMAGE_BUCKET, objectPath: storagePath, data: buffer, contentType });
+    } catch (error) {
+      console.warn("[recipe-ingestion] S3 image upload failed:", error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
 
   const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_IMAGE_BUCKET)}/${storagePath
     .split("/")
@@ -1237,12 +1253,12 @@ async function uploadRecipeImageBufferToStorage(buffer, { recipeKey, imageRole =
 // Returns the public MP4 URL, or null if upload is skipped (too large / unavailable).
 const PERSISTED_VIDEO_MAX_BYTES = 45 * 1024 * 1024; // 45MB cap
 async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", accessToken = null } = {}) {
-  if (!videoPath || !SUPABASE_URL || !RECIPE_VIDEO_BUCKET) {
-    console.warn("[recipe-ingestion] native video upload skipped: missing video path, Supabase URL, or video bucket");
+  if (!videoPath || (!SUPABASE_URL && !usesAwsMedia()) || !RECIPE_VIDEO_BUCKET) {
+    console.warn("[recipe-ingestion] native video upload skipped: missing video path or media configuration");
     return null;
   }
   const storageBearer = (normalizeText(accessToken ?? "") || SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY).trim();
-  if (!storageBearer) {
+  if (!usesAwsMedia() && !storageBearer) {
     console.warn("[recipe-ingestion] native video upload skipped: missing storage bearer");
     return null;
   }
@@ -1265,6 +1281,14 @@ async function persistRecipeVideoToStorage(videoPath, { recipeKey = "recipe", ac
 
   const keyHash = crypto.createHash("sha1").update(`${recipeKey}:video`).digest("hex").slice(0, 20);
   const storagePath = `${keyHash}.mp4`;
+  if (usesAwsMedia()) {
+    try {
+      return await uploadAwsMedia({ logicalBucket: RECIPE_VIDEO_BUCKET, objectPath: storagePath, filePath: videoPath, contentType: "video/mp4" });
+    } catch (error) {
+      console.warn("[recipe-ingestion] S3 video upload failed:", error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
   const uploadURL = `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(RECIPE_VIDEO_BUCKET)}/${encodeURIComponent(storagePath)}`;
   const publicVideoURL = `${SUPABASE_URL}/storage/v1/object/public/${RECIPE_VIDEO_BUCKET}/${storagePath}`;
 
@@ -3314,6 +3338,7 @@ async function callRpc(name, payload) {
 async function fetchSupabaseStorageObject(bucket, objectPath) {
   const normalizedBucket = normalizeText(bucket ?? "");
   const normalizedPath = normalizeText(objectPath ?? "", 1400);
+  if (isAwsMediaReference(normalizedBucket)) return fetchPrivateAwsMedia(normalizedBucket, normalizedPath);
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !normalizedBucket || !normalizedPath) return null;
 
   const encodedPath = normalizedPath

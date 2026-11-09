@@ -43,6 +43,7 @@ import { normalizeRecipeRating, scoreRecipeCommunityRating } from "../../lib/rec
 import { acquireRedisLock, deleteRedisKey, readRedisJSON, releaseRedisLock, writeRedisJSON } from "../../lib/redis-cache.js";
 import { createRateLimit } from "../../lib/rate-limit.js";
 import { extractBearerToken, resolveAuthorizedUserID, sendAuthError } from "../../lib/auth.js";
+import { awsMediaReference, publicAwsMediaURL, uploadAwsMedia, usesAwsMedia } from "../../lib/media-storage.js";
 import {
   getRecipeAdaptationContract,
   mergeEditSummaries,
@@ -640,6 +641,16 @@ function normalizeImageContentType(value) {
 }
 
 async function uploadRecipeImportBuffer({ bucket, path, buffer, contentType }) {
+  if (usesAwsMedia()) {
+    await uploadAwsMedia({
+      logicalBucket: bucket,
+      objectPath: path,
+      data: buffer,
+      contentType,
+      privateObject: bucket === RECIPE_IMPORT_MEDIA_BUCKET,
+    });
+    return;
+  }
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("Recipe media upload requires Supabase service role configuration");
   }
@@ -1675,9 +1686,11 @@ recipe_router.post("/recipe/import-media/photo-pair", async (req, res) => {
     });
 
     return res.status(201).json({
-      private_bucket: RECIPE_IMPORT_MEDIA_BUCKET,
+      private_bucket: usesAwsMedia() ? awsMediaReference(RECIPE_IMPORT_MEDIA_BUCKET) : RECIPE_IMPORT_MEDIA_BUCKET,
       private_path: sourcePath,
-      public_hero_url: `${SUPABASE_URL.replace(/\/+$/, "")}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/${heroPath}`,
+      public_hero_url: usesAwsMedia()
+        ? publicAwsMediaURL(RECIPE_IMAGE_BUCKET, heroPath)
+        : `${SUPABASE_URL.replace(/\/+$/, "")}/storage/v1/object/public/${RECIPE_IMAGE_BUCKET}/${heroPath}`,
     });
   } catch (error) {
     console.error("[recipe/import-media/photo-pair] upload failed:", error.message);
