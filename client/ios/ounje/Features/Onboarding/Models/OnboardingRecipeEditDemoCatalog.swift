@@ -1124,8 +1124,8 @@ actor OnboardingRecipeEditDemoService {
             cookTimeText: "40-45 minutes",
             cookTimeMinutes: 61,
             publishedDate: nil,
-            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/peri-peri-chicken-with-peri-salted-chips/card/7e53e064f923d9822ed08823.jpg",
-            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/peri-peri-chicken-with-peri-salted-chips/hero/7e53e064f923d9822ed08823.jpg",
+            imageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/peri-peri-chicken-with-peri-salted-chips/card/7e53e064f923d9822ed08823.jpg",
+            heroImageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/peri-peri-chicken-with-peri-salted-chips/hero/7e53e064f923d9822ed08823.jpg",
             recipeURLString: "https://www.tiktok.com/@dishesandbeats/video/7639147193617681686",
             source: "TikTok"
         ),
@@ -1140,9 +1140,9 @@ actor OnboardingRecipeEditDemoService {
             cookTimeText: "60-65 minutes",
             cookTimeMinutes: 65,
             publishedDate: nil,
-            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/biscoff-banana-bread/hero/90780d141f292102b4e4b928.jpg",
-            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/biscoff-banana-bread/hero/90780d141f292102b4e4b928.jpg",
-            recipeURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-videos/a11310fd870947a2ca94.mp4",
+            imageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/biscoff-banana-bread/hero/90780d141f292102b4e4b928.jpg",
+            heroImageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/biscoff-banana-bread/hero/90780d141f292102b4e4b928.jpg",
+            recipeURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-videos/a11310fd870947a2ca94.mp4",
             source: "TikTok"
         ),
         DiscoverRecipeCardData(
@@ -1156,9 +1156,9 @@ actor OnboardingRecipeEditDemoService {
             cookTimeText: nil,
             cookTimeMinutes: 0,
             publishedDate: nil,
-            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/watermelon-drink/hero/7d8b8c8b4b7e6440d005ef5b.jpg",
-            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/watermelon-drink/hero/7d8b8c8b4b7e6440d005ef5b.jpg",
-            recipeURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-videos/dc6e92ead77f84efc255.mp4",
+            imageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/watermelon-drink/hero/7d8b8c8b4b7e6440d005ef5b.jpg",
+            heroImageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/watermelon-drink/hero/7d8b8c8b4b7e6440d005ef5b.jpg",
+            recipeURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-videos/dc6e92ead77f84efc255.mp4",
             source: "TikTok"
         ),
         DiscoverRecipeCardData(
@@ -1172,8 +1172,8 @@ actor OnboardingRecipeEditDemoService {
             cookTimeText: "20-25 minutes",
             cookTimeMinutes: 25,
             publishedDate: nil,
-            imageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/airfryer-chicken-thighs-with-jollof-rice/card/bc601b7b5f48bb642c76a94e.jpg",
-            heroImageURLString: "https://ztqptjimmcdoriefkqcx.supabase.co/storage/v1/object/public/recipe-images/airfryer-chicken-thighs-with-jollof-rice/hero/bc601b7b5f48bb642c76a94e.jpg",
+            imageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/airfryer-chicken-thighs-with-jollof-rice/card/bc601b7b5f48bb642c76a94e.jpg",
+            heroImageURLString: "https://d1nhd4wbqcr4xa.cloudfront.net/recipe-images/airfryer-chicken-thighs-with-jollof-rice/hero/bc601b7b5f48bb642c76a94e.jpg",
             recipeURLString: "https://www.tiktok.com/@on_todays_bake/video/7613740233862958358",
             source: "TikTok"
         ),

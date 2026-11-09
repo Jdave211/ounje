@@ -56,6 +56,20 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: OUNJE_MEDIA_STORAGE_PROVIDER
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2
+      - key: OUNJE_MEDIA_PUBLIC_BUCKET
+        value: ounje-media-publicmediabucket-gtoemgihhdrk
+      - key: OUNJE_MEDIA_PRIVATE_BUCKET
+        value: ounje-media-privatemediabucket-qpmh4rhgjggx
+      - key: OUNJE_MEDIA_PUBLIC_BASE_URL
+        value: https://d1nhd4wbqcr4xa.cloudfront.net
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
       - key: KROGER_CLIENT_ID
         sync: false
       - key: KROGER_CLIENT_SECRET
@@ -118,6 +132,20 @@ services:
       - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OUNJE_MEDIA_STORAGE_PROVIDER
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2
+      - key: OUNJE_MEDIA_PUBLIC_BUCKET
+        value: ounje-media-publicmediabucket-gtoemgihhdrk
+      - key: OUNJE_MEDIA_PRIVATE_BUCKET
+        value: ounje-media-privatemediabucket-qpmh4rhgjggx
+      - key: OUNJE_MEDIA_PUBLIC_BASE_URL
+        value: https://d1nhd4wbqcr4xa.cloudfront.net
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
