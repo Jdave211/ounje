@@ -54,3 +54,9 @@ sb_backup
 .codex-deriveddata/
 dropletsshkey
 dropletsshkey.pub
+.media-migration-state.json
+.media-rebuild-state.json
+.media-image-rebuild-state.json
+.media-frame-rebuild-state.json
+.media-page-rebuild-state.json
+.media-*-state.json.tmp

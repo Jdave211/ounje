@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private S3 media storage with CloudFront playback for Ounje recipe assets.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: Public recipe files use CloudFront; private photo imports are read only by the API worker.
+    must:
+      - Keep both S3 buckets private; only CloudFront may read public media.
+      - Deploy regional resources in the Ounje AWS project Region.
+Resources:
+  PublicMediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Durable recipe videos and images, served only through CloudFront.
+        must:
+          - Do not grant public S3 access.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+  PrivateMediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Source photos for recipe ingestion; the API and worker read these through IAM.
+        must:
+          - Never expose private photo imports through CloudFront.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+  MediaOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: CloudFront signs origin requests so the media bucket stays private.
+        must:
+          - Keep signing enabled with SigV4.
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-media-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  MediaDistribution:
+    Type: AWS::CloudFront::Distribution
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: HTTPS playback and caching for immutable recipe files.
+        must:
+          - Origin must remain the private public-media bucket with origin access control.
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: OunjePublicMedia
+            DomainName: !GetAtt PublicMediaBucket.RegionalDomainName
+            OriginAccessControlId: !Ref MediaOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: OunjePublicMedia
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD, OPTIONS]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+  PublicMediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Permit only this CloudFront distribution to read recipe files and require TLS.
+        must:
+          - Scope CloudFront read access to the distribution ARN.
+    Properties:
+      Bucket: !Ref PublicMediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt PublicMediaBucket.Arn
+              - !Sub '${PublicMediaBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${PublicMediaBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${MediaDistribution}'
+  PrivateMediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Require TLS for source photos and other private media.
+        must:
+          - Keep all public access blocked.
+    Properties:
+      Bucket: !Ref PrivateMediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt PrivateMediaBucket.Arn
+              - !Sub '${PrivateMediaBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+Outputs:
+  PublicMediaBucketName:
+    Description: S3 bucket for public recipe media, readable through CloudFront only.
+    Value: !Ref PublicMediaBucket
+  PrivateMediaBucketName:
+    Description: S3 bucket for private source photos.
+    Value: !Ref PrivateMediaBucket
+  MediaDistributionId:
+    Description: CloudFront distribution identifier.
+    Value: !Ref MediaDistribution
+  MediaBaseURL:
+    Description: HTTPS base URL for recipe videos and images.
+    Value: !Sub 'https://${MediaDistribution.DomainName}'

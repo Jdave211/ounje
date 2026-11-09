@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 
 import { getServiceRoleSupabase } from "../lib/supabase-clients.js";
+import { publicAwsMediaURL, uploadAwsMedia, usesAwsMedia } from "../lib/media-storage.js";
 import { runYoutubeDl } from "../lib/youtube-dl-wrapper.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -85,15 +86,20 @@ async function main() {
       if (!data.length) throw new Error("Downloaded video was empty.");
       const digest = createHash("sha256").update(data).digest("hex").slice(0, 20);
       const objectPath = `catalog/${recipe.id}-${digest}.mp4`;
-      const { error: uploadError } = await supabase.storage
-        .from(bucket)
-        .upload(objectPath, data, { contentType: "video/mp4", upsert: false });
-      if (uploadError && !/already exists/i.test(uploadError.message)) {
-        throw new Error(uploadError.message);
+      let hostedURL;
+      if (usesAwsMedia()) {
+        await uploadAwsMedia({ logicalBucket: bucket, objectPath, data, contentType: "video/mp4" });
+        hostedURL = publicAwsMediaURL(bucket, objectPath);
+      } else {
+        const { error: uploadError } = await supabase.storage
+          .from(bucket)
+          .upload(objectPath, data, { contentType: "video/mp4", upsert: false });
+        if (uploadError && !/already exists/i.test(uploadError.message)) {
+          throw new Error(uploadError.message);
+        }
+        const { data: publicURLData } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+        hostedURL = publicURLData?.publicUrl;
       }
-
-      const { data: publicURLData } = supabase.storage.from(bucket).getPublicUrl(objectPath);
-      const hostedURL = publicURLData?.publicUrl;
       if (!hostedURL) throw new Error("Storage did not return a public video URL.");
 
       const playbackResponse = await fetch(hostedURL, {
